@@ -5,6 +5,7 @@
   import type { Attachment } from '../lib/types'
   import ToolCard from './ToolCard.svelte'
   import PermissionGate from './PermissionGate.svelte'
+  import Markdown from './Markdown.svelte'
 
   let { chat }: { chat: ChatConnection } = $props()
 
@@ -103,7 +104,7 @@
             <div class="assistant">
               {#each item.blocks as b, j (j)}
                 {#if b.type === 'text' && b.text}
-                  <p class="prose">{b.text}</p>
+                  <Markdown text={b.text} />
                 {:else if b.type === 'tool_use'}
                   <ToolCard name={b.name ?? 'tool'} input={b.input} />
                 {:else if b.type === 'thinking' && b.text}
@@ -121,7 +122,7 @@
           <div class="assistant">
             {#if chat.thinking}<div class="thinking mono">{chat.thinking}</div>{/if}
             {#if chat.streaming}
-              <p class="prose">{chat.streaming}<span class="caret"></span></p>
+              <Markdown text={chat.streaming} />
             {:else if running}
               <span class="caret solo"></span>
             {/if}
@@ -136,21 +137,17 @@
   <PermissionGate {chat} />
 
   <div class="dock">
-    {#if attachments.length}
-      <div class="chips">
-        {#each attachments as a (a.id)}
-          <span class="chip">
-            <span class="cn mono">{a.name}</span>
-            <button class="cx" onclick={() => removeAttachment(a.id)} aria-label="Remove">✕</button>
-          </span>
-        {/each}
-      </div>
-    {/if}
-    <div class="composer">
-      <button class="attach" onclick={() => fileInput?.click()} aria-label="Attach file" title="Attach">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3 3 0 014.24 4.24l-9.2 9.19a1 1 0 01-1.41-1.41l8.49-8.49" /></svg>
-      </button>
-      <input type="file" multiple bind:this={fileInput} onchange={onFiles} hidden />
+    <div class="field">
+      {#if attachments.length}
+        <div class="chips">
+          {#each attachments as a (a.id)}
+            <span class="chip">
+              <span class="cn mono">{a.name}</span>
+              <button class="cx" onclick={() => removeAttachment(a.id)} aria-label="Remove">✕</button>
+            </span>
+          {/each}
+        </div>
+      {/if}
       <textarea
         bind:this={textarea}
         bind:value={draft}
@@ -159,18 +156,23 @@
         rows="1"
         placeholder={chat.status === 'online' ? 'Message Claude…' : 'Reconnecting…'}
       ></textarea>
-      {#if running}
-        <button class="stop" onclick={() => chat.interrupt()} aria-label="Stop">
-          <span class="sq"></span>
+      <div class="bar">
+        <button class="attach" onclick={() => fileInput?.click()} aria-label="Attach file" title="Attach">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3 3 0 014.24 4.24l-9.2 9.19a1 1 0 01-1.41-1.41l8.49-8.49" /></svg>
         </button>
-      {:else}
-        <button
-          class="send"
-          class:ready={draft.trim() || attachments.length}
-          onclick={send}
-          disabled={(!draft.trim() && attachments.length === 0) || chat.status !== 'online'}
-          aria-label="Send">↑</button>
-      {/if}
+        <input type="file" multiple bind:this={fileInput} onchange={onFiles} hidden />
+        <span class="spacer"></span>
+        {#if running}
+          <button class="stop" onclick={() => chat.interrupt()} aria-label="Stop"><span class="sq"></span></button>
+        {:else}
+          <button
+            class="send"
+            class:ready={draft.trim() || attachments.length}
+            onclick={send}
+            disabled={(!draft.trim() && attachments.length === 0) || chat.status !== 'online'}
+            aria-label="Send">↑</button>
+        {/if}
+      </div>
     </div>
   </div>
 </div>
@@ -314,22 +316,35 @@
 
   .dock {
     border-top: 1px solid var(--border);
+    padding: 12px 18px calc(var(--safe-bottom) + 14px);
+  }
+  .field {
+    max-width: 720px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    padding: 8px 10px 8px 14px;
+    transition: border-color 0.12s;
+  }
+  .field:focus-within {
+    border-color: var(--border-2);
   }
   .chips {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 10px 18px 0;
+    padding: 2px 0 8px;
   }
   .chip {
     display: inline-flex;
     align-items: center;
     gap: 8px;
     max-width: 60%;
-    padding: 5px 8px 5px 11px;
-    background: var(--panel);
+    padding: 4px 7px 4px 10px;
+    background: var(--panel-2);
     border: 1px solid var(--border);
     border-radius: 100px;
     font-size: 11.5px;
@@ -343,19 +358,32 @@
   .cx {
     color: var(--text-4);
   }
-  .composer {
+  textarea {
+    width: 100%;
+    resize: none;
+    background: none;
+    border: none;
+    padding: 4px 0 2px;
+    font-size: 14.5px;
+    line-height: 1.5;
+    max-height: 180px;
+    outline: none;
+  }
+  textarea::placeholder {
+    color: var(--text-4);
+  }
+  .bar {
     display: flex;
-    align-items: flex-end;
-    gap: 8px;
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 12px 18px calc(var(--safe-bottom) + 14px);
+    align-items: center;
+    padding-top: 4px;
+  }
+  .spacer {
+    flex: 1;
   }
   .attach {
-    flex: none;
-    width: 38px;
-    height: 38px;
-    border-radius: var(--r);
+    width: 32px;
+    height: 32px;
+    border-radius: var(--r-sm);
     color: var(--text-3);
     display: flex;
     align-items: center;
@@ -363,30 +391,13 @@
   }
   .attach:hover {
     color: var(--text);
-    background: var(--panel);
-  }
-  textarea {
-    flex: 1;
-    resize: none;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--r);
-    padding: 10px 13px;
-    font-size: 14.5px;
-    line-height: 1.45;
-    max-height: 160px;
-    outline: none;
-    transition: border-color 0.12s;
-  }
-  textarea:focus {
-    border-color: var(--border-2);
+    background: var(--panel-2);
   }
   .send,
   .stop {
-    flex: none;
-    width: 38px;
-    height: 38px;
-    border-radius: var(--r);
+    width: 32px;
+    height: 32px;
+    border-radius: var(--r-sm);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -394,7 +405,7 @@
   .send {
     background: var(--panel-2);
     color: var(--text-4);
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
   }
   .send.ready {
@@ -406,8 +417,8 @@
     color: var(--text-2);
   }
   .sq {
-    width: 10px;
-    height: 10px;
+    width: 9px;
+    height: 9px;
     border-radius: 2px;
     background: currentColor;
   }
