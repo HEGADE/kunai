@@ -19,10 +19,9 @@ export default defineConfig({
         name: 'Kunai',
         short_name: 'Kunai',
         description: 'Self-hosted, relay-free mobile client for Claude Code',
-        theme_color: '#0e0f12',
-        background_color: '#0e0f12',
+        theme_color: '#0b0b0c',
+        background_color: '#0b0b0c',
         display: 'standalone',
-        orientation: 'portrait',
         start_url: '/',
         scope: '/',
         icons: [

@@ -2,11 +2,14 @@ import { listSessions } from './api'
 import { ChatConnection } from './chat.svelte'
 import type { Meta } from './types'
 
-// Top-level app state: which screen is showing and the live session list.
+// Top-level app state. The UI is a two-pane shell (sessions + conversation) on
+// wide screens and a stacked flow on phones; both share this state. "New session"
+// is a modal overlay in both layouts.
 class AppStore {
-  view = $state<'list' | 'new' | 'chat'>('list')
   sessions = $state<Meta[]>([])
   chat = $state<ChatConnection | null>(null)
+  activeId = $state<string | null>(null)
+  showNew = $state(false)
   listError = $state('')
 
   private poll?: ReturnType<typeof setInterval>
@@ -23,26 +26,32 @@ class AppStore {
   startPolling() {
     this.refresh()
     clearInterval(this.poll)
-    this.poll = setInterval(() => {
-      if (this.view !== 'chat') this.refresh()
-    }, 4000)
+    this.poll = setInterval(() => this.refresh(), 4000)
   }
 
   open(id: string) {
+    if (this.activeId === id) {
+      this.showNew = false
+      return
+    }
     this.chat?.destroy()
     this.chat = new ChatConnection(id)
-    this.view = 'chat'
+    this.activeId = id
+    this.showNew = false
   }
 
   back() {
     this.chat?.destroy()
     this.chat = null
-    this.view = 'list'
+    this.activeId = null
     this.refresh()
   }
 
   newSession() {
-    this.view = 'new'
+    this.showNew = true
+  }
+  closeNew() {
+    this.showNew = false
   }
 }
 

@@ -16,106 +16,117 @@
 
 {#if current}
   <div class="gate">
-    <div class="head">
-      <span class="tag label">authorize{extra > 0 ? ` · +${extra}` : ''}</span>
-      <span class="tool mono">{current.tool_name}</span>
+    <div class="inner">
+      <div class="head">
+        <span class="k">Authorize</span>
+        <span class="tool mono">{current.tool_name}</span>
+        {#if extra > 0}<span class="more">+{extra} more</span>{/if}
+      </div>
+      <p class="ask">{current.perm_title || `Claude wants to run ${current.tool_name}`}</p>
+      <pre class="detail mono">{detail}</pre>
+      <div class="actions">
+        <button class="deny" onclick={() => chat.resolve(current.request_id, 'deny')}>Deny</button>
+        <button class="allow" onclick={() => chat.resolve(current.request_id, 'allow')}>Allow</button>
+      </div>
+      <button class="always" onclick={() => chat.resolve(current.request_id, 'allow', true)}>
+        Always allow {current.tool_name} this session
+      </button>
     </div>
-    <p class="ask">{current.perm_title || `Claude wants to run ${current.tool_name}`}</p>
-    <pre class="detail mono">{detail}</pre>
-    <div class="actions">
-      <button class="deny" onclick={() => chat.resolve(current.request_id, 'deny')}>Deny</button>
-      <button class="allow" onclick={() => chat.resolve(current.request_id, 'allow')}>Allow</button>
-    </div>
-    <button class="always mono" onclick={() => chat.resolve(current.request_id, 'allow', true)}>
-      always allow {current.tool_name} this session
-    </button>
   </div>
 {/if}
 
 <style>
   .gate {
-    background: var(--bg-2);
-    border-top: 2px solid var(--amber);
-    box-shadow: 0 -16px 36px rgba(0, 0, 0, 0.5);
-    padding: 13px 16px calc(var(--safe-bottom) + 12px);
-    animation: rise 0.2s ease-out;
+    background: var(--panel);
+    border-top: 1px solid var(--border-2);
+    animation: rise 0.16s ease-out;
   }
   @keyframes rise {
     from {
-      transform: translateY(10px);
+      transform: translateY(8px);
       opacity: 0;
     }
+  }
+  .inner {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 15px 20px calc(var(--safe-bottom) + 14px);
   }
   .head {
     display: flex;
     align-items: baseline;
-    justify-content: space-between;
-    margin-bottom: 7px;
+    gap: 9px;
+    margin-bottom: 8px;
   }
-  .tag {
-    color: var(--amber);
+  .k {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-3);
   }
   .tool {
     font-size: 12.5px;
-    font-weight: 600;
-    color: var(--amber);
+    font-weight: 500;
+    color: var(--text);
+  }
+  .more {
+    font-size: 11px;
+    color: var(--text-4);
+    margin-left: auto;
   }
   .ask {
-    margin: 0 0 9px;
-    font-size: 15px;
-    font-weight: 550;
-    color: var(--ink);
+    margin: 0 0 10px;
+    font-size: 14.5px;
+    color: var(--text);
   }
   .detail {
     margin: 0 0 13px;
     padding: 10px 12px;
     background: var(--bg);
-    border: 1px solid var(--line);
+    border: 1px solid var(--border);
     border-radius: var(--r-sm);
     font-size: 12px;
     line-height: 1.5;
-    color: var(--ink-dim);
+    color: var(--text-2);
     white-space: pre-wrap;
     word-break: break-word;
-    max-height: 118px;
+    max-height: 116px;
     overflow: auto;
   }
   .actions {
     display: grid;
-    grid-template-columns: 1fr 1.5fr;
-    gap: 10px;
+    grid-template-columns: 1fr 1fr;
+    gap: 9px;
   }
   .deny,
   .allow {
-    padding: 14px;
+    padding: 12px;
     border-radius: var(--r);
-    font-weight: 650;
-    font-size: 15px;
+    font-weight: 550;
+    font-size: 14px;
   }
   .deny {
-    background: var(--stop-dim);
-    color: var(--stop);
-    border: 1px solid transparent;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
   }
-  .deny:active {
-    border-color: var(--stop);
+  .deny:hover {
+    border-color: var(--border-2);
   }
   .allow {
-    background: var(--go);
-    color: #062015;
+    background: var(--white);
+    color: #0b0b0c;
   }
-  .allow:active {
-    filter: brightness(1.1);
+  .allow:hover {
+    opacity: 0.9;
   }
   .always {
     width: 100%;
     margin-top: 9px;
-    padding: 9px;
-    font-size: 11.5px;
-    letter-spacing: 0.04em;
-    color: var(--ink-faint);
+    padding: 8px;
+    font-size: 12px;
+    color: var(--text-3);
   }
-  .always:active {
-    color: var(--go);
+  .always:hover {
+    color: var(--text);
   }
 </style>

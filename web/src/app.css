@@ -1,68 +1,65 @@
-/* Kunai — an operator's console on a direct wire.
-   Not a chat app: a monospace-structured transcript over a live signal line.
-   Gunmetal surfaces, warm paper-ink text, one steel-cyan signal accent. Amber is
-   reserved for "the wire needs you" (permission); go/stop live only in the gate. */
+/* Kunai — minimal. Near-monochrome, flat, quiet. No gradients, no glows, no
+   decoration. Depth comes from a restrained neutral scale and generous space;
+   the only "color" is white for the single primary action and small muted dots
+   for status. Type and spacing do the work. */
 
 :root {
-  --bg: #0e0f12;
-  --bg-2: #15171c;
-  --bg-3: #1b1e25;
-  --line: #262a33;
-  --line-bright: #363b47;
+  --bg: #0b0b0c;
+  --panel: #131315;
+  --panel-2: #191a1c;
+  --panel-3: #202124;
+  --border: #232427;
+  --border-2: #303236;
 
-  --ink: #e8e5dd; /* warm off-white — ink on the console */
-  --ink-dim: #9b9d98;
-  --ink-faint: #63666e;
+  --text: #ededee;
+  --text-2: #9a9ba1;
+  --text-3: #67686e;
+  --text-4: #454649;
 
-  --wire: #56c7d6; /* steel-cyan signal — the live line, the brand */
-  --wire-bright: #86e2ee;
-  --wire-dim: rgba(86, 199, 214, 0.13);
+  /* muted, flat status — only ever a small dot or a word, never a fill/glow */
+  --live: #4f9e7f;
+  --busy: #c6a15e;
+  --alert: #cf6f66;
 
-  --amber: #e4a838; /* needs-you */
-  --amber-dim: rgba(228, 168, 56, 0.13);
-  --go: #5cc389;
-  --go-dim: rgba(92, 195, 137, 0.14);
-  --stop: #e0685f;
-  --stop-dim: rgba(224, 104, 95, 0.14);
+  --white: #f2f2f3;
 
-  --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Menlo', monospace;
-  --sans: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
+  --sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
 
   --r: 10px;
-  --r-sm: 6px;
+  --r-lg: 14px;
+  --r-sm: 7px;
 
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  --sidebar-w: 288px;
 }
 
 * {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
 }
-
 html,
 body {
   margin: 0;
   height: 100%;
   overscroll-behavior-y: none;
 }
-
 body {
   background: var(--bg);
-  color: var(--ink);
+  color: var(--text);
   font-family: var(--sans);
-  font-size: 15px;
+  font-size: 14.5px;
   line-height: 1.55;
+  letter-spacing: -0.006em;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
-
 #app {
   height: 100dvh;
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
 }
-
 button {
   font-family: inherit;
   color: inherit;
@@ -76,21 +73,28 @@ textarea {
   color: inherit;
 }
 
-/* Structural micro-labels — the console's own voice. */
-.label {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
 .mono {
   font-family: var(--mono);
+  letter-spacing: 0;
+}
+.eyebrow {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-3);
 }
 
 ::-webkit-scrollbar {
-  width: 0;
-  height: 0;
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-2);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {
