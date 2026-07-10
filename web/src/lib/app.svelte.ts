@@ -53,6 +53,14 @@ class AppStore {
   closeNew() {
     this.showNew = false
   }
+
+  async closeSessionActive() {
+    const id = this.activeId
+    if (!id) return
+    const { closeSession } = await import('./api')
+    await closeSession(id)
+    this.back()
+  }
 }
 
 export const app = new AppStore()

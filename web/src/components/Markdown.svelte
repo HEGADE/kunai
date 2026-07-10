@@ -27,8 +27,9 @@
 <style>
   .md {
     color: var(--text);
-    line-height: 1.7;
-    font-size: 14.5px;
+    font-family: var(--serif);
+    font-size: 16.5px;
+    line-height: 1.62;
     overflow-wrap: anywhere;
   }
   .md :global(> :first-child) {
@@ -44,22 +45,22 @@
   .md :global(h2),
   .md :global(h3),
   .md :global(h4) {
+    font-family: var(--serif);
     font-weight: 600;
-    line-height: 1.3;
-    margin: 22px 0 10px;
-    letter-spacing: -0.01em;
+    line-height: 1.25;
+    margin: 24px 0 11px;
   }
   .md :global(h1) {
-    font-size: 20px;
+    font-size: 23px;
   }
   .md :global(h2) {
-    font-size: 17px;
+    font-size: 20px;
   }
   .md :global(h3) {
-    font-size: 15px;
+    font-size: 17px;
   }
   .md :global(h4) {
-    font-size: 14px;
+    font-size: 15.5px;
     color: var(--text-2);
   }
   .md :global(ul),

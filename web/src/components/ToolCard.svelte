@@ -14,58 +14,70 @@
   const pretty = $derived(JSON.stringify(input ?? {}, null, 2))
 </script>
 
-<div class="tool">
+<div class="tool" class:open>
   <button class="head" onclick={() => (open = !open)}>
-    <span class="name mono">{name}</span>
+    <span class="ic">
+      <svg width="9" height="9" viewBox="0 0 8 8" fill="currentColor"><path d="M2 0l4 4-4 4z" /></svg>
+    </span>
+    <span class="name">{name}</span>
     {#if summary}<span class="sum mono">{summary}</span>{/if}
-    <span class="chev">{open ? '−' : '+'}</span>
   </button>
   {#if open}<pre class="body mono">{pretty}</pre>{/if}
 </div>
 
 <style>
   .tool {
-    border: 1px solid var(--border);
     border-radius: var(--r-sm);
-    background: var(--panel);
-    overflow: hidden;
   }
   .head {
     width: 100%;
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 9px 12px;
+    gap: 9px;
+    padding: 7px 8px;
     text-align: left;
-    font-size: 12.5px;
+    border-radius: var(--r-sm);
+    font-size: 13px;
+    color: var(--text-2);
+  }
+  .head:hover {
+    background: var(--panel);
+  }
+  .ic {
+    flex: none;
+    display: inline-flex;
+    color: var(--text-4);
+    transition: transform 0.15s;
+  }
+  .open .ic {
+    transform: rotate(90deg);
+    color: var(--text-3);
   }
   .name {
-    font-weight: 500;
-    color: var(--text);
     flex: none;
+    font-weight: 550;
+    color: var(--text);
   }
   .sum {
-    color: var(--text-3);
+    color: var(--text-4);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     flex: 1;
     min-width: 0;
-  }
-  .chev {
-    color: var(--text-4);
-    flex: none;
-    font-family: var(--mono);
+    font-size: 12px;
   }
   .body {
-    margin: 0;
+    margin: 4px 0 2px;
     padding: 11px 12px;
-    border-top: 1px solid var(--border);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
     font-size: 12px;
     line-height: 1.55;
     color: var(--text-2);
     white-space: pre-wrap;
     word-break: break-word;
-    background: var(--bg);
+    overflow-x: auto;
   }
 </style>

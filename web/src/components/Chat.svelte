@@ -15,6 +15,7 @@
   let fileInput = $state<HTMLInputElement | null>(null)
   let attachments = $state<Attachment[]>([])
   let uploading = $state(false)
+  let menuOpen = $state(false)
 
   $effect(() => {
     chat.items.length
@@ -80,27 +81,36 @@
 
 <div class="screen">
   <header>
-    <button class="back" onclick={() => app.back()} aria-label="Back">‹</button>
-    <div class="ident">
-      <span class="title">{chat.title || chat.cwd.split('/').slice(-1)[0] || 'session'}</span>
-      <span class="path mono">{chat.cwd}</span>
+    <button class="hbtn back" onclick={() => app.back()} aria-label="Back">
+      <svg width="10" height="16" viewBox="0 0 10 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1L2 8l6 7" /></svg>
+    </button>
+    <div class="htitle">
+      <span class="title">
+        <span class="sdot" data-k={status.k}></span>{chat.title || chat.cwd.split('/').slice(-1)[0] || 'session'}
+      </span>
+      <span class="subtitle mono">{chat.cwd}</span>
     </div>
-    <span class="status">
-      <span class="sdot" data-k={status.k}></span>{status.t}
-    </span>
+    <button class="hbtn menu" onclick={() => (menuOpen = !menuOpen)} aria-label="Menu">⋯</button>
+    {#if menuOpen}
+      <button class="menu-scrim" onclick={() => (menuOpen = false)} aria-label="Close menu"></button>
+      <div class="menu-pop">
+        {#if running}
+          <button onclick={() => { chat.interrupt(); menuOpen = false }}>Interrupt</button>
+        {/if}
+        <button class="danger" onclick={() => { app.closeSessionActive(); menuOpen = false }}>Close session</button>
+      </div>
+    {/if}
   </header>
 
   <div class="scroll" bind:this={scroller}>
     <div class="log">
       {#each chat.items as item, i (i)}
         {#if item.role === 'user'}
-          <div class="turn">
-            <div class="role">You</div>
-            <div class="user">{item.text}</div>
+          <div class="turn user">
+            <div class="ubbl">{item.text}</div>
           </div>
         {:else if hasBody(item.blocks)}
           <div class="turn">
-            <div class="role">Claude</div>
             <div class="assistant">
               {#each item.blocks as b, j (j)}
                 {#if b.type === 'text' && b.text}
@@ -118,13 +128,12 @@
 
       {#if chat.thinking || chat.streaming || running}
         <div class="turn">
-          <div class="role">Claude</div>
           <div class="assistant">
             {#if chat.thinking}<div class="thinking mono">{chat.thinking}</div>{/if}
             {#if chat.streaming}
               <Markdown text={chat.streaming} />
             {:else if running}
-              <span class="caret solo"></span>
+              <span class="spark" aria-label="working">✳</span>
             {/if}
           </div>
         </div>
@@ -184,51 +193,64 @@
     height: 100%;
   }
   header {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: calc(var(--safe-top) + 14px) 20px 13px;
+    padding: calc(var(--safe-top) + 12px) 14px 12px;
     border-bottom: 1px solid var(--border);
   }
-  .back {
-    font-size: 26px;
-    line-height: 1;
-    color: var(--text-2);
-    padding: 0 4px 4px;
+  .hbtn {
     flex: none;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
-  .ident {
+  .hbtn:hover {
+    color: var(--text);
+    border-color: var(--border-2);
+  }
+  .menu {
+    font-size: 18px;
+    line-height: 1;
+    letter-spacing: 0.06em;
+  }
+  .htitle {
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    align-items: center;
+    gap: 2px;
   }
   .title {
-    font-size: 14.5px;
-    font-weight: 550;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    max-width: 100%;
+    font-size: 15px;
+    font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .path {
+  .subtitle {
+    max-width: 100%;
     font-size: 10.5px;
     color: var(--text-4);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     direction: rtl;
-    text-align: left;
-  }
-  .status {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    font-size: 12px;
-    color: var(--text-3);
   }
   .sdot {
+    flex: none;
     width: 6px;
     height: 6px;
     border-radius: 50%;
@@ -243,6 +265,38 @@
   .sdot[data-k='offline'] {
     background: var(--alert);
   }
+  .menu-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: none;
+  }
+  .menu-pop {
+    position: absolute;
+    z-index: 31;
+    top: calc(100% - 4px);
+    right: 12px;
+    min-width: 168px;
+    padding: 5px;
+    background: var(--panel-2);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r);
+    box-shadow: 0 16px 40px -14px rgba(0, 0, 0, 0.7);
+  }
+  .menu-pop button {
+    width: 100%;
+    text-align: left;
+    padding: 9px 11px;
+    border-radius: var(--r-sm);
+    font-size: 13.5px;
+    color: var(--text);
+  }
+  .menu-pop button:hover {
+    background: var(--panel-3);
+  }
+  .menu-pop .danger {
+    color: var(--alert);
+  }
 
   .scroll {
     flex: 1;
@@ -252,30 +306,40 @@
   .log {
     max-width: 720px;
     margin: 0 auto;
-    padding: 26px 20px 20px;
+    padding: 24px 20px 20px;
     display: flex;
     flex-direction: column;
-    gap: 26px;
+    gap: 24px;
   }
-  .role {
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--text-3);
-    margin-bottom: 8px;
+  .turn.user {
+    display: flex;
+    justify-content: flex-end;
   }
-  .user {
+  .ubbl {
+    max-width: 82%;
     color: var(--text);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    padding: 12px 14px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--r);
+    padding: 11px 15px;
+    background: var(--panel-3);
+    border-radius: 18px;
+    border-bottom-right-radius: 6px;
   }
   .assistant {
     display: flex;
     flex-direction: column;
     gap: 12px;
+  }
+  .spark {
+    display: inline-block;
+    color: var(--alert);
+    font-size: 15px;
+    animation: spin 1.5s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(180deg);
+    }
   }
   .prose {
     margin: 0;
@@ -325,8 +389,8 @@
     flex-direction: column;
     background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    padding: 8px 10px 8px 14px;
+    border-radius: 22px;
+    padding: 10px 12px 10px 16px;
     transition: border-color 0.12s;
   }
   .field:focus-within {
