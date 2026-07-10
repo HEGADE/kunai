@@ -1,0 +1,101 @@
+/* Kunai — an operator's console on a direct wire.
+   Not a chat app: a monospace-structured transcript over a live signal line.
+   Gunmetal surfaces, warm paper-ink text, one steel-cyan signal accent. Amber is
+   reserved for "the wire needs you" (permission); go/stop live only in the gate. */
+
+:root {
+  --bg: #0e0f12;
+  --bg-2: #15171c;
+  --bg-3: #1b1e25;
+  --line: #262a33;
+  --line-bright: #363b47;
+
+  --ink: #e8e5dd; /* warm off-white — ink on the console */
+  --ink-dim: #9b9d98;
+  --ink-faint: #63666e;
+
+  --wire: #56c7d6; /* steel-cyan signal — the live line, the brand */
+  --wire-bright: #86e2ee;
+  --wire-dim: rgba(86, 199, 214, 0.13);
+
+  --amber: #e4a838; /* needs-you */
+  --amber-dim: rgba(228, 168, 56, 0.13);
+  --go: #5cc389;
+  --go-dim: rgba(92, 195, 137, 0.14);
+  --stop: #e0685f;
+  --stop-dim: rgba(224, 104, 95, 0.14);
+
+  --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Menlo', monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
+
+  --r: 10px;
+  --r-sm: 6px;
+
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overscroll-behavior-y: none;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+button {
+  font-family: inherit;
+  color: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+input,
+textarea {
+  font-family: inherit;
+  color: inherit;
+}
+
+/* Structural micro-labels — the console's own voice. */
+.label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.mono {
+  font-family: var(--mono);
+}
+
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

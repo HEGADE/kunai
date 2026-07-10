@@ -1,0 +1,57 @@
+// Web Push enablement. On iOS this only works from a PWA installed to the home
+// screen, and permission must be requested from a user gesture — hence the
+// explicit enable button rather than an on-load prompt.
+
+function urlBase64ToUint8Array(base64: string): Uint8Array {
+  const padding = '='.repeat((4 - (base64.length % 4)) % 4)
+  const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/')
+  const raw = atob(b64)
+  const out = new Uint8Array(raw.length)
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i)
+  return out
+}
+
+export function pushSupported(): boolean {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window
+}
+
+export function isStandalone(): boolean {
+  return (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    // iOS Safari
+    (navigator as unknown as { standalone?: boolean }).standalone === true
+  )
+}
+
+export function pushState(): 'unsupported' | 'granted' | 'denied' | 'default' {
+  if (!pushSupported()) return 'unsupported'
+  return Notification.permission as 'granted' | 'denied' | 'default'
+}
+
+// enablePush requests permission, subscribes, and registers the subscription
+// with the server. Returns a human-readable error string on failure, or ''.
+export async function enablePush(): Promise<string> {
+  if (!pushSupported()) return 'This browser does not support notifications.'
+  if (!isStandalone() && /iphone|ipad|ipod/i.test(navigator.userAgent)) {
+    return 'On iOS, add Kunai to your home screen first, then enable notifications from there.'
+  }
+  const perm = await Notification.requestPermission()
+  if (perm !== 'granted') return 'Notifications were not allowed.'
+
+  const reg = await navigator.serviceWorker.ready
+  const res = await fetch('/api/push/pubkey')
+  if (!res.ok) return 'Push is not configured on the server.'
+  const { key } = (await res.json()) as { key: string }
+
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(key),
+  })
+  const post = await fetch('/api/push/subscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(sub),
+  })
+  if (!post.ok) return 'Could not register for notifications.'
+  return ''
+}

@@ -1,0 +1,17 @@
+# Node / frontend
+web/node_modules/
+web/dist/
+web/.vite/
+web/test-results/
+web/playwright-report/
+
+# Runtime data (VAPID keys, subscriptions, uploads)
+.kunai/
+
+# TLS material
+*.crt
+*.key
+
+# Logs / OS
+*.log
+.DS_Store
