@@ -314,8 +314,7 @@
     align-items: center;
     gap: 10px;
     padding: calc(var(--safe-top) + 12px) 14px 12px;
-    background: var(--bg);
-    border-bottom: 1px solid var(--border-2);
+    background: transparent;
   }
   .hbtn {
     flex: none;
