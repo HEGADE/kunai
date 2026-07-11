@@ -251,7 +251,8 @@
     align-items: center;
     gap: 10px;
     padding: calc(var(--safe-top) + 12px) 14px 12px;
-    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    border-bottom: 1px solid var(--border-2);
   }
   .hbtn {
     flex: none;
@@ -641,6 +642,10 @@
   @media (min-width: 861px) {
     .back {
       display: none;
+    }
+    /* Clear the floating sidebar toggle that App.svelte places top-left. */
+    header {
+      padding-left: 62px;
     }
   }
 </style>

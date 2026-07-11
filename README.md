@@ -84,66 +84,49 @@ web/                Svelte + Vite PWA source
 - A machine on your tailnet (Linux is the primary target; macOS works).
 - [Claude Code](https://claude.com/claude-code) installed and authenticated
   (`claude` on PATH).
-- Tailscale, with MagicDNS and HTTPS certificates enabled for the tailnet.
-- Go 1.22+ and Node 20+ (build only).
+- Tailscale, with MagicDNS and HTTPS certificates enabled for the tailnet
+  (admin console: DNS > HTTPS Certificates).
 
-## Build
+## Quick start
+
+On the machine that will host Claude Code, either download a release:
 
 ```sh
-# 1. Build the web app (outputs into internal/webui/dist, which is embedded)
-cd web && npm install && npm run build && cd ..
-
-# 2. Build the binary
-go build -o kunai ./cmd/kunai
-
-# Cross-compile for a Linux server from another machine:
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o kunai ./cmd/kunai
+gh release download -R HEGADE/kunai -p install.sh -p "kunai-linux-amd64" && chmod +x install.sh kunai-*
+./install.sh
 ```
 
-## Deploy
-
-A secure context (HTTPS) is required for PWA installation and Web Push, so
-terminate TLS with a real certificate from Tailscale:
+or clone and install (builds from source; needs Go 1.22+ and Node 20+):
 
 ```sh
-tailscale cert <machine>.<tailnet>.ts.net
+gh repo clone HEGADE/kunai && cd kunai
+./install.sh
 ```
 
-Run the server bound to the tailnet IP:
+The installer finds or builds the binary, detects your tailnet address, mints
+a TLS certificate with `tailscale cert`, installs a systemd user service that
+survives reboots, health-checks it, and prints the URL to open. Re-running it
+updates the binary in place. On iOS, open the URL in Safari and use
+Share > Add to Home Screen, then enable notifications from the installed app.
+
+Environment overrides: `KUNAI_PORT` (default 8443), `KUNAI_PUSH_EMAIL`
+(contact for Web Push).
+
+## Manual build and run
 
 ```sh
-./kunai \
-  -addr <tailnet-ip>:8443 \
+make build       # web app + local binary (or: cd web && npm run build, then go build ./cmd/kunai)
+make release     # cross-compiles linux/darwin amd64+arm64 into dist/
+make deploy HOST=user@machine   # push a linux build to a host running the service
+
+./kunai -addr <tailnet-ip>:8443 \
   -tls-cert <machine>.<tailnet>.ts.net.crt \
   -tls-key <machine>.<tailnet>.ts.net.key \
-  -data ~/.kunai \
-  -push-email you@example.com
+  -data ~/.kunai
 ```
 
-Example systemd user unit (`~/.config/systemd/user/kunai.service`), which
-survives reboots when lingering is enabled (`loginctl enable-linger $USER`):
-
-```ini
-[Unit]
-Description=Kunai
-After=network-online.target tailscaled.service
-
-[Service]
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/kunai -addr <tailnet-ip>:8443 \
-  -tls-cert %h/kunai-tls/<machine>.<tailnet>.ts.net.crt \
-  -tls-key %h/kunai-tls/<machine>.<tailnet>.ts.net.key \
-  -data %h/.kunai -push-email you@example.com
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=default.target
-```
-
-Then open `https://<machine>.<tailnet>.ts.net:8443` on any device in your
-tailnet. On iOS, use Share > Add to Home Screen for the standalone app, then
-enable notifications from the home screen app.
+Manage the installed service with `systemctl --user status|restart kunai` and
+`journalctl --user -u kunai -f`.
 
 ## Flags
 

@@ -152,6 +152,11 @@
     flex-direction: column;
     background: var(--bg);
   }
+  @media (min-width: 861px) {
+    .sb {
+      background: var(--bg-raised);
+    }
+  }
   header {
     display: flex;
     align-items: center;

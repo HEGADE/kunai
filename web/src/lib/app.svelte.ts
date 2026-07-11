@@ -13,6 +13,12 @@ class AppStore {
   activeId = $state<string | null>(null)
   showNew = $state(false)
   listError = $state('')
+  sidebarOpen = $state(localStorage.getItem('kunai-sidebar') !== '0')
+
+  toggleSidebar() {
+    this.sidebarOpen = !this.sidebarOpen
+    localStorage.setItem('kunai-sidebar', this.sidebarOpen ? '1' : '0')
+  }
 
   // Distinct project directories from past sessions, for one-tap starts.
   projects = $derived.by(() => {

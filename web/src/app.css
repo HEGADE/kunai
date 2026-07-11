@@ -5,6 +5,7 @@
 
 :root {
   --bg: #0b0b0c;
+  --bg-raised: #0e0e10; /* sidebar rail — one step above the canvas */
   --panel: #131315;
   --panel-2: #191a1c;
   --panel-3: #202124;
@@ -86,13 +87,21 @@ textarea {
   color: var(--text-3);
 }
 
+/* Quiet scrollbars: a hairline thumb that only asserts itself on hover. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 4px;
+  height: 4px;
 }
 ::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
   background: var(--border-2);
-  border-radius: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;

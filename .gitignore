@@ -15,3 +15,4 @@ web/playwright-report/
 # Logs / OS
 *.log
 .DS_Store
+dist/
