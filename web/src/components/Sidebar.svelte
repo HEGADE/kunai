@@ -16,24 +16,32 @@
   function machineLabel(id: string): string {
     return app.machines.find((m) => m.id === id)?.label || id
   }
+  // When focused on one machine, the per-card chip is redundant.
+  const showChip = $derived(multi && app.machineFilter === 'all')
+  const inFilter = (mid: string) => app.machineFilter === 'all' || app.machineFilter === mid
   const activeList = $derived(
     app.sessions.filter(
       (m) =>
-        !query ||
-        shortName(m).toLowerCase().includes(query) ||
-        m.cwd.toLowerCase().includes(query) ||
-        machineLabel(m.machineId).toLowerCase().includes(query),
+        inFilter(m.machineId) &&
+        (!query ||
+          shortName(m).toLowerCase().includes(query) ||
+          m.cwd.toLowerCase().includes(query) ||
+          machineLabel(m.machineId).toLowerCase().includes(query)),
     ),
   )
   const recentList = $derived(
     app.history.filter(
       (h) =>
-        !query ||
-        h.title.toLowerCase().includes(query) ||
-        h.cwd.toLowerCase().includes(query) ||
-        machineLabel(h.machineId).toLowerCase().includes(query),
+        inFilter(h.machineId) &&
+        (!query ||
+          h.title.toLowerCase().includes(query) ||
+          h.cwd.toLowerCase().includes(query) ||
+          machineLabel(h.machineId).toLowerCase().includes(query)),
     ),
   )
+  function activeCount(mid: string): number {
+    return app.sessions.filter((m) => m.machineId === mid).length
+  }
 
   async function toggleNotif() {
     if (notif === 'granted') return
@@ -99,6 +107,26 @@
     </div>
   </div>
 
+  {#if multi}
+    <div class="mtabs">
+      <button class="mtab" class:on={app.machineFilter === 'all'} onclick={() => (app.machineFilter = 'all')}>
+        All
+      </button>
+      {#each app.machines as m (m.id)}
+        <button
+          class="mtab"
+          class:on={app.machineFilter === m.id}
+          title={m.url}
+          onclick={() => (app.machineFilter = m.id)}
+        >
+          <span class="tdot" class:live={m.online}></span>
+          {m.label}
+          {#if activeCount(m.id)}<span class="tcount">{activeCount(m.id)}</span>{/if}
+        </button>
+      {/each}
+    </div>
+  {/if}
+
   <div class="list">
     <div class="homewrap"><Home compact /></div>
 
@@ -118,7 +146,7 @@
             <span class="meta">
               <span class="name">{shortName(m)}</span>
               <span class="sub mono">
-                {#if multi}<span class="mtag">{machineLabel(m.machineId)}</span>{/if}{m.cwd}
+                {#if showChip}<span class="mtag">{machineLabel(m.machineId)}</span>{/if}{m.cwd}
               </span>
             </span>
           </button>
@@ -140,7 +168,7 @@
             <span class="meta">
               <span class="name">{resuming === h.id ? 'Resuming…' : h.title}</span>
               <span class="sub mono">
-                {#if multi}<span class="mtag">{machineLabel(h.machineId)}</span>{/if}{h.cwd} · {ago(h.mtime)}
+                {#if showChip}<span class="mtag">{machineLabel(h.machineId)}</span>{/if}{h.cwd} · {ago(h.mtime)}
               </span>
             </span>
             <span class="chev">›</span>
@@ -253,6 +281,58 @@
   }
   .search input::-webkit-search-cancel-button {
     -webkit-appearance: none;
+  }
+  .mtabs {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 8px 14px 4px;
+    scrollbar-width: none;
+  }
+  .mtabs::-webkit-scrollbar {
+    display: none;
+  }
+  .mtab {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 100px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    font-size: 12.5px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .mtab:hover {
+    color: var(--text-2);
+    border-color: var(--border-2);
+  }
+  .mtab.on {
+    color: var(--text);
+    background: var(--panel-3);
+    border-color: var(--border-2);
+  }
+  .tdot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-4);
+  }
+  .tdot.live {
+    background: var(--live);
+  }
+  .tcount {
+    padding: 0 5px;
+    border-radius: 100px;
+    background: var(--panel-3);
+    color: var(--text-3);
+    font-size: 10.5px;
+  }
+  .mtab.on .tcount {
+    background: var(--bg);
   }
   .list {
     flex: 1;

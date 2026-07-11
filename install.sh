@@ -4,8 +4,8 @@
 #   ./install.sh
 #
 # It finds or builds the kunai binary, detects your Tailscale address, mints a
-# TLS certificate, installs a systemd user service (Linux), starts it, and
-# prints the URL to open on your phone or laptop.
+# TLS certificate, installs a service (systemd user unit on Linux, launchd
+# LaunchAgent on macOS), starts it, and prints the URL to open on your devices.
 #
 # Optional environment:
 #   KUNAI_PORT        listen port (default 8443)
@@ -140,8 +140,38 @@ EOF
     journalctl --user -u kunai -n 10 --no-pager >&2 || true
     fail "service failed to start (see log above)"
   }
+elif [ "$OS" = "darwin" ]; then
+  # macOS: a launchd LaunchAgent is the systemd-user equivalent (auto-start,
+  # keep-alive, survives reboot).
+  PLIST="$HOME/Library/LaunchAgents/com.kunai.agent.plist"
+  mkdir -p "$HOME/Library/LaunchAgents"
+  CLAUDE_DIR="$(dirname "$CLAUDE_BIN")"
+  ARGS=(-addr "$TS_IP:$PORT" -tls-cert "$CRT" -tls-key "$KEY" -data "$DATA_DIR" -public-url "$PUBLIC_URL")
+  [ -n "${KUNAI_HUB_URL:-}" ]    && ARGS+=(-hub-url "$KUNAI_HUB_URL")
+  [ -n "${KUNAI_PUSH_EMAIL:-}" ] && ARGS+=(-push-email "$KUNAI_PUSH_EMAIL")
+  {
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n'
+    printf '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+    printf '<plist version="1.0"><dict>\n'
+    printf '  <key>Label</key><string>com.kunai.agent</string>\n'
+    printf '  <key>ProgramArguments</key><array>\n'
+    printf '    <string>%s</string>\n' "$BIN_DIR/kunai"
+    for a in "${ARGS[@]}"; do printf '    <string>%s</string>\n' "$a"; done
+    printf '  </array>\n'
+    printf '  <key>EnvironmentVariables</key><dict><key>PATH</key><string>%s</string></dict>\n' "$CLAUDE_DIR:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+    printf '  <key>RunAtLoad</key><true/>\n'
+    printf '  <key>KeepAlive</key><true/>\n'
+    printf '  <key>StandardOutPath</key><string>%s</string>\n' "$DATA_DIR/kunai.log"
+    printf '  <key>StandardErrorPath</key><string>%s</string>\n' "$DATA_DIR/kunai.log"
+    printf '</dict></plist>\n'
+  } > "$PLIST"
+  launchctl unload "$PLIST" 2>/dev/null || true
+  launchctl load "$PLIST" || fail "launchctl load failed"
+  sleep 2
+  launchctl list | grep -q com.kunai.agent \
+    || fail "service failed to start (see $DATA_DIR/kunai.log)"
 else
-  say "no systemd found: starting is manual on this platform. Run:"
+  say "no service manager for this platform. Run manually:"
   say "  $BIN_DIR/kunai -addr $TS_IP:$PORT -tls-cert $CRT -tls-key $KEY -data $DATA_DIR $IDENT_ARGS $PUSH_ARG"
 fi
 
@@ -157,7 +187,12 @@ if command -v curl >/dev/null 2>&1; then
       say "  Open on any device in your tailnet:  $URL"
       say ""
       say "  iPhone: open it in Safari, then Share > Add to Home Screen."
-      say "  Manage: systemctl --user status|restart kunai; logs: journalctl --user -u kunai -f"
+      if [ "$OS" = "darwin" ]; then
+        say "  Manage: launchctl list | grep kunai; logs: $DATA_DIR/kunai.log"
+        say "  Stop:   launchctl unload ~/Library/LaunchAgents/com.kunai.agent.plist"
+      else
+        say "  Manage: systemctl --user status|restart kunai; logs: journalctl --user -u kunai -f"
+      fi
       exit 0
     fi
     sleep 1
