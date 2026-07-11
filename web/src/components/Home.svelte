@@ -67,7 +67,7 @@
           onclick={() => (picked = m.id)}
         >
           <span class="pdot" class:live={m.online}></span>
-          {m.label}
+          <span class="plabel">{m.label}</span>
         </button>
       {/each}
     </div>
@@ -200,6 +200,7 @@
     flex-wrap: wrap;
   }
   .mp {
+    max-width: 220px;
     display: inline-flex;
     align-items: center;
     gap: 7px;
@@ -210,6 +211,15 @@
     color: var(--text-3);
     font-size: 13px;
     font-weight: 500;
+  }
+  .mp .pdot {
+    flex: none;
+  }
+  .plabel {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .mp:hover {
     color: var(--text-2);

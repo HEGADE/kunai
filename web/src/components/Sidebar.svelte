@@ -120,7 +120,7 @@
           onclick={() => (app.machineFilter = m.id)}
         >
           <span class="tdot" class:live={m.online}></span>
-          {m.label}
+          <span class="tlabel">{m.label}</span>
           {#if activeCount(m.id)}<span class="tcount">{activeCount(m.id)}</span>{/if}
         </button>
       {/each}
@@ -294,6 +294,7 @@
   }
   .mtab {
     flex: none;
+    max-width: 160px;
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -305,6 +306,16 @@
     font-size: 12.5px;
     font-weight: 500;
     white-space: nowrap;
+  }
+  .tlabel {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mtab .tdot,
+  .mtab .tcount {
+    flex: none;
   }
   .mtab:hover {
     color: var(--text-2);
