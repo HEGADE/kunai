@@ -46,17 +46,24 @@
       {#if error}<p class="note mono">{error}</p>{/if}
       {#if listing}
         {#if listing.parent}
-          <button class="row up mono" onclick={() => go(listing!.parent)}>
-            <span class="ic">↑</span> ..
+          <button class="row up" onclick={() => go(listing!.parent)}>
+            <span class="ic">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+            </span>
+            <span class="nm">Up one level</span>
           </button>
         {/if}
         {#each listing.entries.filter((e) => e.dir) as entry (entry.path)}
-          <button class="row mono" onclick={() => go(entry.path)}>
-            <span class="ic">▸</span>{entry.name}
+          <button class="row" onclick={() => go(entry.path)}>
+            <span class="ic">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
+            </span>
+            <span class="nm">{entry.name}</span>
+            <span class="chev">›</span>
           </button>
         {/each}
-        {#each listing.entries.filter((e) => !e.dir).slice(0, 30) as entry (entry.path)}
-          <span class="row file mono"><span class="ic"></span>{entry.name}</span>
+        {#each listing.entries.filter((e) => !e.dir).slice(0, 8) as entry (entry.path)}
+          <span class="row file"><span class="ic"></span><span class="nm">{entry.name}</span></span>
         {/each}
       {:else if loading}
         <p class="note mono">scanning…</p>
@@ -129,16 +136,18 @@
   }
   .path {
     margin: 0 16px 8px;
-    padding: 8px 11px;
+    padding: 9px 12px;
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: var(--r-sm);
     font-size: 11.5px;
+    line-height: 1.5;
     color: var(--text-2);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     direction: rtl;
+    unicode-bidi: plaintext;
     text-align: left;
   }
   .list {
@@ -150,29 +159,44 @@
     width: 100%;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 11px;
     text-align: left;
-    padding: 10px 11px;
+    padding: 11px 11px;
     border-radius: var(--r-sm);
     color: var(--text);
-    font-size: 13px;
+  }
+  .nm {
+    flex: 1;
+    min-width: 0;
+    font-size: 14px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  button.row:hover {
+  .chev {
+    flex: none;
+    color: var(--text-4);
+    font-size: 15px;
+  }
+  button.row:hover,
+  button.row:active {
     background: var(--panel-2);
   }
   .file {
     color: var(--text-4);
   }
-  .up {
+  .file .nm {
+    font-size: 13px;
+  }
+  .up .nm {
     color: var(--text-2);
+    font-size: 13.5px;
   }
   .ic {
     color: var(--text-3);
-    width: 10px;
-    text-align: center;
+    width: 14px;
+    display: inline-flex;
+    justify-content: center;
     flex: none;
   }
   .note {

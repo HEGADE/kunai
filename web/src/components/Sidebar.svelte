@@ -51,9 +51,9 @@
 
 <div class="sb">
   <header>
-    <Wordmark size={15} />
-    <button class="add" onclick={() => app.newSession()} aria-label="New session" title="New session">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+    <Wordmark size={17} />
+    <button class="add" onclick={() => app.newSession()} aria-label="New session">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
     </button>
   </header>
 
@@ -64,37 +64,46 @@
 
     {#if app.sessions.length > 0}
       <div class="sec">Active</div>
-      {#each app.sessions as m (m.id)}
-        <div class="rowwrap" class:active={app.activeId === m.id}>
-          <button class="row" onclick={() => app.open(m.id)}>
-            <span class="meta">
-              <span class="name">{shortName(m)}</span>
-              <span class="path mono">{m.cwd}</span>
-            </span>
-            <span class="dot" data-state={m.state}></span>
-          </button>
-          <button class="x" onclick={(e) => remove(e, m)} aria-label="Close">✕</button>
-        </div>
-      {/each}
+      <div class="group">
+        {#each app.sessions as m (m.id)}
+          <div class="rowwrap" class:current={app.activeId === m.id}>
+            <button class="row" onclick={() => app.open(m.id)}>
+              <span class="dot" data-state={m.state}></span>
+              <span class="meta">
+                <span class="name">{shortName(m)}</span>
+                <span class="path mono">{m.cwd}</span>
+              </span>
+            </button>
+            <button class="x" onclick={(e) => remove(e, m)} aria-label="Close session">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
+          </div>
+        {/each}
+      </div>
     {/if}
 
     {#if app.history.length > 0}
       <div class="sec">Recent</div>
-      {#each app.history as h (h.id)}
-        <div class="rowwrap">
-          <button class="row" onclick={() => resume(h)} disabled={!!resuming}>
-            <span class="meta">
-              <span class="name">{resuming === h.id ? 'Resuming…' : h.title}</span>
-              <span class="path mono">{h.cwd}</span>
-            </span>
-            <span class="when">{ago(h.mtime)}</span>
-          </button>
-        </div>
-      {/each}
+      <div class="group">
+        {#each app.history as h (h.id)}
+          <div class="rowwrap">
+            <button class="row" onclick={() => resume(h)} disabled={!!resuming}>
+              <span class="meta">
+                <span class="name">{resuming === h.id ? 'Resuming…' : h.title}</span>
+                <span class="path mono">{h.cwd}</span>
+              </span>
+              <span class="when">{ago(h.mtime)}</span>
+            </button>
+          </div>
+        {/each}
+      </div>
     {/if}
 
     {#if app.sessions.length === 0 && app.history.length === 0 && !app.listError}
-      <p class="note">Nothing yet — start a session in any project directory.</p>
+      <div class="empty">
+        <p class="e1">No sessions yet</p>
+        <p class="e2">Start one in any project directory on your machine.</p>
+      </div>
     {/if}
   </div>
 
@@ -120,11 +129,11 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: calc(var(--safe-top) + 18px) 18px 14px;
+    padding: calc(var(--safe-top) + 18px) 20px 16px;
   }
   .add {
-    width: 32px;
-    height: 32px;
+    width: 34px;
+    height: 34px;
     border-radius: 50%;
     background: var(--panel);
     border: 1px solid var(--border);
@@ -140,67 +149,56 @@
   .list {
     flex: 1;
     overflow-y: auto;
-    padding: 0 10px 10px;
+    padding: 0 14px 14px;
   }
   .sec {
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.03em;
+    font-size: 11.5px;
+    font-weight: 550;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
     color: var(--text-4);
-    padding: 14px 8px 7px;
+    padding: 12px 6px 8px;
+  }
+  .group {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    overflow: hidden;
   }
   .note {
     color: var(--text-3);
-    font-size: 13px;
+    font-size: 12.5px;
     padding: 10px;
-    line-height: 1.5;
   }
   .rowwrap {
     position: relative;
-    border-radius: var(--r);
   }
-  .rowwrap.active {
-    background: var(--panel);
+  .rowwrap + .rowwrap::before {
+    content: '';
+    position: absolute;
+    left: 16px;
+    right: 0;
+    top: 0;
+    height: 1px;
+    background: var(--border);
+  }
+  .rowwrap.current {
+    background: var(--panel-2);
   }
   .row {
     width: 100%;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 11px;
     text-align: left;
-    padding: 10px 12px;
-    border-radius: var(--r);
+    padding: 13px 44px 13px 16px;
   }
   .row:disabled {
-    opacity: 0.6;
+    opacity: 0.55;
   }
-  .rowwrap:not(.active) .row:hover {
-    background: var(--panel);
-  }
-  .meta {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .name {
-    font-size: 13.5px;
-    font-weight: 500;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .path {
-    font-size: 10.5px;
-    color: var(--text-4);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    direction: rtl;
-    text-align: left;
+  .rowwrap:not(.current) .row:active,
+  .rowwrap:not(.current) .row:hover {
+    background: var(--panel-2);
   }
   .dot {
     flex: none;
@@ -224,30 +222,76 @@
       opacity: 0.4;
     }
   }
+  .meta {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .name {
+    font-size: 14.5px;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .path {
+    font-size: 10.5px;
+    color: var(--text-4);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    direction: rtl;
+    unicode-bidi: plaintext;
+    text-align: left;
+  }
   .when {
-    flex: none;
-    font-size: 11px;
+    position: absolute;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 11.5px;
     color: var(--text-4);
   }
   .x {
     position: absolute;
-    top: 8px;
-    right: 8px;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
     color: var(--text-4);
-    font-size: 10px;
-    padding: 5px;
-    opacity: 0;
-    transition: opacity 0.12s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
-  .rowwrap:hover .x,
-  .rowwrap.active .x {
-    opacity: 1;
-  }
-  .x:hover {
+  .x:hover,
+  .x:active {
     color: var(--text-2);
+    background: var(--panel-3);
+  }
+  .empty {
+    text-align: center;
+    margin-top: 26vh;
+    padding: 0 30px;
+  }
+  .e1 {
+    font-size: 15px;
+    font-weight: 550;
+    color: var(--text);
+    margin: 0 0 5px;
+  }
+  .e2 {
+    font-size: 13.5px;
+    color: var(--text-3);
+    margin: 0;
+    line-height: 1.55;
   }
   .foot {
-    padding: 10px 12px calc(var(--safe-bottom) + 12px);
+    padding: 8px 16px calc(var(--safe-bottom) + 12px);
   }
   .hint {
     margin: 0 2px 8px;
@@ -259,9 +303,9 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 10px;
-    color: var(--text-3);
-    font-size: 12.5px;
+    padding: 8px 8px;
+    color: var(--text-4);
+    font-size: 12px;
     border-radius: var(--r-sm);
   }
   .notif:hover {
@@ -275,11 +319,5 @@
   }
   .ndot.on {
     background: var(--live);
-  }
-
-  @media (max-width: 860px) {
-    .x {
-      opacity: 1;
-    }
   }
 </style>

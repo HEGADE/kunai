@@ -124,6 +124,13 @@
   </header>
 
   <div class="scroll" bind:this={scroller} onscroll={onScroll}>
+    {#if chat.items.length === 0 && !chat.streaming && !chat.thinking && !running}
+      <div class="blank">
+        <p class="b1">{chat.cwd.split('/').slice(-1)[0] || 'session'}</p>
+        <p class="b2 mono">{chat.cwd}</p>
+        <p class="b3">Send a message to start.</p>
+      </div>
+    {/if}
     <div class="log">
       {#each chat.items as item, i (i)}
         {#if item.role === 'user'}
@@ -184,6 +191,9 @@
         oninput={grow}
         onkeydown={onKey}
         rows="1"
+        enterkeyhint="send"
+        autocomplete="off"
+        autocapitalize="sentences"
         placeholder={chat.status === 'online' ? 'Message Claude…' : 'Reconnecting…'}
       ></textarea>
       <div class="bar">
@@ -289,6 +299,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     direction: rtl;
+    unicode-bidi: plaintext;
   }
   .sdot {
     flex: none;
@@ -343,6 +354,38 @@
     flex: 1;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
+    position: relative;
+  }
+  .blank {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0 34px;
+    pointer-events: none;
+  }
+  .b1 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0 0 4px;
+  }
+  .b2 {
+    font-size: 11px;
+    color: var(--text-4);
+    margin: 0 0 14px;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .b3 {
+    font-size: 13.5px;
+    color: var(--text-3);
+    margin: 0;
   }
   .log {
     max-width: 720px;
