@@ -16,8 +16,6 @@
   function machineLabel(id: string): string {
     return app.machines.find((m) => m.id === id)?.label || id
   }
-  // When focused on one machine, the per-card chip is redundant.
-  const showChip = $derived(multi && app.machineFilter === 'all')
   const inFilter = (mid: string) => app.machineFilter === 'all' || app.machineFilter === mid
   const activeList = $derived(
     app.sessions.filter(
@@ -63,13 +61,6 @@
   function shortName(m: TaggedMeta): string {
     return m.title || m.cwd.replace(/\/+$/, '').split('/').slice(-1)[0] || 'session'
   }
-  function ago(iso: string): string {
-    const s = (Date.now() - new Date(iso).getTime()) / 1000
-    if (s < 90) return 'now'
-    if (s < 3600) return `${Math.round(s / 60)}m ago`
-    if (s < 86400) return `${Math.round(s / 3600)}h ago`
-    return `${Math.round(s / 86400)}d ago`
-  }
   async function remove(e: MouseEvent, m: TaggedMeta) {
     e.stopPropagation()
     await closeSession(app.baseForMachine(m.machineId), m.id)
@@ -95,6 +86,10 @@
     }
   }
 </script>
+
+{#snippet bubble()}
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" /></svg>
+{/snippet}
 
 <div class="sb">
   <header>
@@ -160,14 +155,11 @@
       {#each activeList as m (m.machineId + ':' + m.id)}
         <div class="row" class:current={app.activeId === m.id && app.activeMachineId === m.machineId}>
           <button class="hit" onclick={() => app.open(m.machineId, m.id)}>
-            <span class="lead"><span class="dot" data-state={m.state}></span></span>
-            <span class="meta">
-              <span class="name">{shortName(m)}</span>
-              <span class="sub">
-                {#if showChip}<span class="mtag">{machineLabel(m.machineId)}</span>{/if}
-                <span class="path mono">{m.cwd}</span>
-              </span>
+            <span class="ic">
+              {@render bubble()}
+              <span class="live" data-state={m.state}></span>
             </span>
+            <span class="name">{shortName(m)}</span>
           </button>
           <button class="x" onclick={(e) => remove(e, m)} aria-label="Close session">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
@@ -181,15 +173,8 @@
       {#each recentList as h (h.machineId + ':' + h.id)}
         <div class="row">
           <button class="hit" onclick={() => resume(h)} disabled={!!resuming}>
-            <span class="lead"></span>
-            <span class="meta">
-              <span class="name">{resuming === h.id ? 'Resuming…' : h.title}</span>
-              <span class="sub">
-                {#if showChip}<span class="mtag">{machineLabel(h.machineId)}</span>{/if}
-                <span class="path mono">{h.cwd}</span>
-                <span class="time">{ago(h.mtime)}</span>
-              </span>
-            </span>
+            <span class="ic">{@render bubble()}</span>
+            <span class="name">{resuming === h.id ? 'Resuming…' : h.title}</span>
           </button>
         </div>
       {/each}
@@ -425,10 +410,11 @@
     font-size: 12.5px;
     padding: 10px;
   }
-  /* Sessions as quiet list rows — no card boxes, badges, or chevrons. */
+  /* Sessions as single-line rows: a chat-bubble icon + the title, nothing else.
+     Long titles fade at the right edge; the open one highlights. */
   .row {
     position: relative;
-    border-radius: var(--r-sm);
+    border-radius: var(--r);
   }
   .row:hover {
     background: var(--panel);
@@ -440,34 +426,49 @@
     width: 100%;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 11px;
     text-align: left;
-    padding: 8px 30px 8px 9px;
+    padding: 8px 10px;
   }
   .hit:disabled {
     opacity: 0.55;
   }
-  .lead {
+  .ic {
+    position: relative;
     flex: none;
-    width: 7px;
-    display: flex;
-    justify-content: center;
+    display: inline-flex;
+    color: var(--text-4);
   }
-  .dot {
-    width: 7px;
-    height: 7px;
+  .row:hover .ic,
+  .row.current .ic {
+    color: var(--text-3);
+  }
+  /* Small presence dot on the icon for live sessions. */
+  .live {
+    position: absolute;
+    right: -3px;
+    top: -3px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
+    border: 2px solid var(--bg);
     background: var(--text-4);
   }
-  .dot[data-state='idle'] {
+  .row:hover .live {
+    border-color: var(--panel);
+  }
+  .row.current .live {
+    border-color: var(--panel-2);
+  }
+  .live[data-state='idle'] {
     background: var(--live);
   }
-  .dot[data-state='starting'],
-  .dot[data-state='running'] {
+  .live[data-state='starting'],
+  .live[data-state='running'] {
     background: var(--busy);
     animation: soften 1.6s ease-in-out infinite;
   }
-  .dot[data-state='awaiting_permission'] {
+  .live[data-state='awaiting_permission'] {
     background: var(--busy);
   }
   @keyframes soften {
@@ -475,64 +476,33 @@
       opacity: 0.4;
     }
   }
-  .meta {
+  .name {
     flex: 1;
     min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-  }
-  .name {
-    font-size: 14px;
-    font-weight: 450;
-    color: var(--text);
+    font-size: 14.5px;
+    color: var(--text-2);
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+  }
+  .row:hover .name,
+  .row.current .name {
+    color: var(--text);
   }
   .row.current .name {
-    font-weight: 550;
-  }
-  .sub {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    min-width: 0;
-    font-size: 11px;
-    color: var(--text-4);
-  }
-  .mtag {
-    flex: none;
-    color: var(--text-3);
-    font-size: 10px;
-  }
-  .path {
-    flex: 0 1 auto;
-    min-width: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    direction: rtl;
-    unicode-bidi: plaintext;
-    text-align: left;
-  }
-  .time {
-    flex: none;
-  }
-  .time::before {
-    content: '·';
-    margin-right: 5px;
-    color: var(--text-4);
+    font-weight: 500;
   }
   .x {
     position: absolute;
-    right: 4px;
+    right: 6px;
     top: 50%;
     transform: translateY(-50%);
     width: 26px;
     height: 26px;
     border-radius: 50%;
     color: var(--text-4);
+    background: var(--panel-2);
     display: none;
     align-items: center;
     justify-content: center;
