@@ -1,13 +1,28 @@
+<div align="center">
+
+<img src="docs/logo.svg" alt="Kunai" width="92" />
+
 # Kunai
 
-A self-hosted, relay-free client for Claude Code. Run it on your own machines and
-drive Claude Code from your phone or laptop, straight over your Tailscale network,
-with no cloud relay in between.
+**Self-hosted, relay-free Claude Code, from your phone.**
 
-Kunai is a single Go binary. It wraps the `claude` CLI, serves an installable web
-app (a PWA), and talks to your devices directly over the tailnet. Your phone talks
-to your machine, and nothing but a content-free push notification ever leaves the
-network.
+Run Claude Code on your own machines and drive it from anywhere over your
+Tailscale network. No cloud relay sits between you and Claude, so every token
+takes the shortest path, and nothing but a generic push notification ever leaves
+the tailnet.
+
+<p>
+<img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-52525b?style=flat-square" />
+<img alt="Go 1.22+" src="https://img.shields.io/badge/Go-1.22%2B-52525b?style=flat-square&logo=go&logoColor=white" />
+<img alt="Svelte 5" src="https://img.shields.io/badge/Svelte-5-52525b?style=flat-square&logo=svelte&logoColor=white" />
+<img alt="Tailscale" src="https://img.shields.io/badge/network-Tailscale-52525b?style=flat-square&logo=tailscale&logoColor=white" />
+<img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-52525b?style=flat-square" />
+<img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-52525b?style=flat-square" />
+</p>
+
+<img src="docs/screenshot.png" alt="Kunai showing a tool call with its output and a syntax-highlighted code block" width="860" />
+
+</div>
 
 ## Why
 
@@ -16,60 +31,31 @@ through a relay server before it reaches your machine, which adds a round trip o
 top of Claude's own generation time. A Tailscale link between your devices is
 direct peer to peer almost all of the time, so a client that talks straight over
 that tunnel feels noticeably faster. Kunai's hard rule: the only thing that ever
-leaves the tailnet is a generic push wake-up.
+leaves the tailnet is a content-free push wake-up.
 
-## Features
+It is a single Go binary. It wraps the `claude` CLI, serves an installable web app
+(a PWA), and speaks to your devices directly over the tailnet.
 
-**Rich, readable chat**
+## Highlights
 
-- Token-by-token streaming, rendered as markdown with a serif reading face for
-  prose and monospace for code.
-- Syntax-highlighted code blocks with a copy button, in a restrained
-  near-monochrome theme.
-- Real red and green diffs for `Edit` and `MultiEdit`, drawn from the change the
-  model requested.
-- A card per tool (Bash, Read, Write, Edit, Grep, Glob, TodoWrite, and more) that
-  shows both the request and the output: command stdout, file contents, results,
-  and errors, correlated to their tool call.
-
-**Control and safety**
-
-- A live approve and deny gate for any tool that needs permission, including
+- **Rich chat.** Token streaming rendered as markdown, syntax-highlighted code
+  with copy, real red and green diffs for file edits, and a card per tool that
+  shows both the request and the output (command stdout, file contents, and
+  errors), correlated to the tool call.
+- **Approve and deny gate.** Every tool that needs permission is gated, with
   "always allow this session". The gate shows the actual diff or command you are
-  approving.
-- Permission modes switchable from the composer: Ask, Auto, Accept edits, Plan.
+  approving. Permission modes: Ask, Auto, Accept edits, Plan.
+- **Survives the phone.** Backgrounding kills the socket, not the session. On
+  reconnect the client replays exactly what it missed. Past sessions resume with
+  their full conversation and tool outputs restored.
+- **A fleet, not one box.** Run the same binary on many machines. One installed
+  app aggregates sessions from all of them and talks to each machine directly.
+  Peers running Kunai are auto-discovered.
+- **On your terms.** Bound to the tailnet only, no login system, no accounts. File
+  and image attachments, Web Push, and a home dashboard with live per-machine
+  stats.
 
-**Sessions that survive the phone**
-
-- Backgrounding the app kills the socket, not the session. On reconnect the client
-  replays exactly what it missed using per-session sequence numbers.
-- Full history: past sessions are listed and can be resumed with their
-  conversation and tool outputs restored, even after a server restart.
-- Instant opens: the API returns immediately while the CLI boots in the
-  background, and prompts typed in the meantime are queued.
-- Many concurrent sessions across any project directory, with a directory browser
-  and quick-start chips for recent projects.
-
-**A fleet, not one box**
-
-- Run the same binary on several machines. The machine you install the app from is
-  the hub; the others are peers. One client aggregates sessions from all of them
-  and talks to each machine directly over the tailnet.
-- Auto-discovery: the hub finds tailnet peers that run Kunai and lists them for
-  you.
-- A home dashboard with live per-machine stats (memory, CPU, disk, load, uptime,
-  sessions) that you switch between.
-
-**Everything else**
-
-- File and image attachments; images go to Claude as vision input.
-- Web Push notifications (VAPID) when a session needs you or finishes while the app
-  is backgrounded. The payload is a generic wake-up; content is fetched fresh over
-  the tailnet on reconnect.
-- Installable PWA (standalone, no address bar) on iOS and Android, with a
-  responsive two-pane layout on desktop.
-
-## Architecture
+## How it works
 
 ```
 Phone / laptop (Svelte PWA)
@@ -86,90 +72,64 @@ claude CLI (Claude Code)
 ```
 
 Kunai drives Claude Code over its stream-json control protocol on stdin and
-stdout, the same protocol the official Agent SDK uses. That covers the
-`can_use_tool` permission handshake, tool results, interrupts, model switching,
-and permission modes. All protocol types live in `internal/claude`.
+stdout, the same protocol the official Agent SDK uses. The tailnet is the entire
+auth perimeter: the server binds to the Tailscale interface only, and Tailscale
+ACLs decide who can reach it.
 
-The tailnet is the entire auth perimeter. The server binds to the Tailscale
-interface only, and Tailscale ACLs decide who can reach it. There is no separate
-login system.
+In a multi-machine setup, the machine you install the app from is the **hub** (it
+owns the machine registry, Web Push, and peer discovery). Every other machine is a
+**peer**. The client fetches the machine list from the hub, then connects directly
+to each machine's tailnet origin, so no traffic is proxied and the relay-free
+promise holds across the whole fleet.
 
-### Multi-machine
+## Get started
 
-The hub is whichever machine served the PWA. It owns the machine registry, Web
-Push, and peer discovery. Peers are identical binaries. The client fetches the
-machine list from the hub, then connects directly to each machine's tailnet origin
-for REST and WebSocket traffic. No request is proxied through the hub, so the
-relay-free promise holds across the whole fleet. Cross-origin access is enabled
-with a CORS allowance that is safe here because the tailnet is the perimeter and
-the API uses no cookies.
+### Prerequisites
 
-Web Push is the one shared piece: only the hub holds the phone's subscription, so a
-peer forwards a generic wake-up to the hub, which sends the notification.
-
-## Requirements
-
-- A machine on your Tailscale tailnet. Linux and macOS are both supported.
-- [Claude Code](https://claude.com/claude-code) installed and authenticated
-  (`claude` on your PATH).
+- A machine on your Tailscale tailnet (Linux or macOS).
+- [Claude Code](https://claude.com/claude-code) installed and authenticated, with
+  `claude` on your PATH.
 - Tailscale with MagicDNS and HTTPS certificates enabled (admin console: DNS, then
   HTTPS Certificates).
-- To build from source: Go 1.22 or newer and Node 20 or newer.
+- Go 1.22+ and Node 20+ (the installer builds from source).
 
-## Quick start
-
-On the machine that will host Claude Code, clone the repo and run the installer:
+### 1. Install on your main machine
 
 ```sh
 git clone https://github.com/HEGADE/kunai && cd kunai
 ./install.sh
 ```
 
-The installer builds the binary, detects your tailnet address, mints a TLS
-certificate with `tailscale cert`, installs a service (a systemd user unit on
-Linux or a launchd agent on macOS), health-checks it, and prints the URL to open.
-Re-running it updates in place.
+The installer does everything and prints the URL to open:
 
-On your phone, open that URL and install the app. On iOS use Safari, then Share,
-then Add to Home Screen, and enable notifications from the installed app.
+1. builds the binary (web app plus Go),
+2. detects your tailnet address and MagicDNS name,
+3. mints a TLS certificate with `tailscale cert`,
+4. installs a service (a systemd user unit on Linux, a launchd agent on macOS),
+5. health-checks it and prints `https://<your-machine>.<tailnet>.ts.net:8443`.
 
-To add another machine to the fleet, run the same command on it and point it at
-your hub so its notifications reach you:
+Re-running `./install.sh` later updates in place.
+
+### 2. Open it on your phone
+
+Open the printed URL. On iOS, use Safari, then Share, then Add to Home Screen, and
+enable notifications from the installed app. That machine is now your **hub**.
+
+### 3. Add more machines (optional)
+
+Run the same command on any other machine, pointing it at your hub so its
+notifications reach your phone:
 
 ```sh
 KUNAI_HUB_URL=https://<hub>.<tailnet>.ts.net:8443 ./install.sh
 ```
 
-Environment overrides: `KUNAI_PORT` (default 8443), `KUNAI_PUSH_EMAIL` (contact for
-Web Push), `KUNAI_HUB_URL` (hub origin for a peer).
+Open the hub's app and the new machine appears automatically. Pick which machine
+to start a session on from the sidebar and dashboard.
 
-## Build and run manually
+## Configuration
 
-```sh
-make build       # web app plus a local binary
-make release     # cross-compiles linux and darwin (amd64 and arm64) into dist/
-make deploy HOST=user@machine   # push a fresh linux build to a host and restart it
-
-./kunai -addr <tailnet-ip>:8443 \
-  -tls-cert <machine>.<tailnet>.ts.net.crt \
-  -tls-key <machine>.<tailnet>.ts.net.key \
-  -public-url https://<machine>.<tailnet>.ts.net:8443 \
-  -data ~/.kunai
-```
-
-The web app is embedded into the binary with `go:embed`, so any frontend change
-needs a web rebuild before the Go build:
-
-```sh
-cd web && npm run build && cd ..
-go build -o kunai ./cmd/kunai
-```
-
-Manage the installed service with `systemctl --user status|restart kunai` and
-`journalctl --user -u kunai -f` on Linux, or `launchctl` and `~/.kunai/kunai.log`
-on macOS.
-
-## Flags
+Set with a flag or an environment variable.
 
 | Flag          | Env                | Default          | Description                                        |
 | ------------- | ------------------ | ---------------- | -------------------------------------------------- |
@@ -182,17 +142,44 @@ on macOS.
 | `-model`      | `KUNAI_MODEL`      |                  | Default model for new sessions                     |
 | `-push-email` | `KUNAI_PUSH_EMAIL` |                  | VAPID contact for Web Push                         |
 
-## Security notes
+Installer overrides: `KUNAI_PORT` (default 8443), plus `KUNAI_HUB_URL` and
+`KUNAI_PUSH_EMAIL`.
+
+## Security
 
 - Bind to the tailnet IP, never `0.0.0.0`. Tailscale ACLs are the perimeter.
 - Anyone who can reach the server can run Claude Code in any directory the
   server's user can read. Treat access to the port as access to the machine.
-- The CORS allowance is safe only because the tailnet is the perimeter and the API
-  uses no cookies or sessions. Do not add cookie auth without tightening it.
+- Cross-origin access is allowed only because the tailnet is the perimeter and the
+  API uses no cookies or sessions. Do not add cookie auth without tightening it.
 - Web Push is the single hop outside the tailnet (Apple and Google push services).
   The payload is a generic wake-up string, never content.
 - TLS certificates from `tailscale cert` are not auto-renewed yet, so plan to
   re-mint them (roughly every 90 days).
+
+## Build from source and develop
+
+```sh
+make build       # web app plus a local binary
+make release     # cross-compiles linux and darwin (amd64 and arm64) into dist/
+make deploy HOST=user@machine   # push a fresh linux build to a host and restart it
+
+go test ./...            # backend tests
+cd web && npm run check  # svelte-check and tsc
+cd web && npm run dev    # frontend dev server
+```
+
+The web app is embedded into the binary with `go:embed`, so a frontend change
+needs a web rebuild before the Go build:
+
+```sh
+cd web && npm run build && cd ..
+go build -o kunai ./cmd/kunai
+```
+
+Manage the installed service with `systemctl --user status|restart kunai` and
+`journalctl --user -u kunai -f` on Linux, or `launchctl` and `~/.kunai/kunai.log`
+on macOS.
 
 ## Repository layout
 
@@ -200,19 +187,11 @@ on macOS.
 cmd/kunai/          entrypoint: flags, TLS, server wiring
 internal/claude/    stream-json driver for the claude CLI, including tool results
 internal/session/   session lifecycle, ring buffer, seq replay, permissions
-internal/server/    HTTP and WebSocket API, history, stats, uploads, machines, discovery, push relay
+internal/server/    HTTP and WebSocket API, history, stats, uploads, machines, discovery, push
 internal/push/      Web Push (VAPID) keys, subscriptions, wake-ups
 internal/fsbrowse/  directory listing for the project picker
 internal/webui/     embedded production build of the web app
 web/                Svelte 5 and Vite PWA source
-```
-
-## Development
-
-```sh
-go test ./...            # backend tests
-cd web && npm run check  # svelte-check and tsc
-cd web && npm run dev    # frontend dev server
 ```
 
 The `claude` stream-json protocol is undocumented. The closest reference is the
@@ -230,4 +209,4 @@ Issues and pull requests are welcome. A few house rules:
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[MIT](LICENSE).
