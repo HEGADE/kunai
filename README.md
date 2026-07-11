@@ -4,12 +4,14 @@
 
 # Kunai
 
-**Self-hosted, relay-free Claude Code, from your phone.**
+**One app for Claude Code across every machine you own. Self-hosted, relay-free,
+from your phone.**
 
-Run Claude Code on your own machines and drive it from anywhere over your
-Tailscale network. No cloud relay sits between you and Claude, so every token
-takes the shortest path, and nothing but a generic push notification ever leaves
-the tailnet.
+Install Kunai on each machine you work on, then drive them all from a single app
+over your Tailscale network. Your Linux boxes and your Mac show up side by side,
+and you choose which one a session runs on. No cloud relay sits between you and
+Claude, so every token takes the shortest path, and nothing but a generic push
+notification ever leaves the tailnet.
 
 <p>
 <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-52525b?style=flat-square" />
@@ -38,6 +40,13 @@ It is a single Go binary. It wraps the `claude` CLI, serves an installable web a
 
 ## Highlights
 
+- **A fleet, not one box.** This is the core idea. Run the same binary on every
+  machine you use. One installed app aggregates their sessions and talks to each
+  machine directly over the tailnet, with no traffic proxied through a middle
+  server. The machine you install from is the hub; the rest are peers that are
+  auto-discovered when they come online. You pick which machine a session runs on
+  from the sidebar and the dashboard, and the home screen shows live stats for
+  each one (memory, CPU, disk, uptime).
 - **Rich chat.** Token streaming rendered as markdown, syntax-highlighted code
   with copy, real red and green diffs for file edits, and a card per tool that
   shows both the request and the output (command stdout, file contents, and
@@ -48,12 +57,8 @@ It is a single Go binary. It wraps the `claude` CLI, serves an installable web a
 - **Survives the phone.** Backgrounding kills the socket, not the session. On
   reconnect the client replays exactly what it missed. Past sessions resume with
   their full conversation and tool outputs restored.
-- **A fleet, not one box.** Run the same binary on many machines. One installed
-  app aggregates sessions from all of them and talks to each machine directly.
-  Peers running Kunai are auto-discovered.
 - **On your terms.** Bound to the tailnet only, no login system, no accounts. File
-  and image attachments, Web Push, and a home dashboard with live per-machine
-  stats.
+  and image attachments, and Web Push that carries only a content-free wake-up.
 
 ## How it works
 
