@@ -18,18 +18,42 @@
   let menuOpen = $state(false)
   let modeOpen = $state(false)
 
-  // Follow the stream only while the user is already at the bottom — never yank
-  // the view away from something they scrolled up to read.
-  let pinned = true
-  function onScroll() {
-    if (!scroller) return
-    pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 90
+  // Scrolling: open at the latest message, follow the stream while pinned to the
+  // bottom, and surface a jump-to-bottom button once the user scrolls up.
+  let dockH = $state(0)
+  let atBottom = $state(true)
+  let prevChat: ChatConnection | undefined
+
+  function nearBottom(): boolean {
+    if (!scroller) return true
+    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 90
   }
+  function onScroll() {
+    atBottom = nearBottom()
+  }
+  function toBottom(smooth = false) {
+    if (!scroller) return
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
+    atBottom = true
+  }
+
+  // Jump to the latest whenever a new session opens (history streams in async,
+  // so the follow-effect below keeps us pinned as it fills).
+  $effect(() => {
+    if (chat !== prevChat) {
+      prevChat = chat
+      atBottom = true
+      requestAnimationFrame(() => requestAnimationFrame(() => toBottom(false)))
+    }
+  })
+
+  // Follow new content only while the user is at the bottom — never yank the
+  // view away from something they scrolled up to read.
   $effect(() => {
     chat.items.length
     chat.streaming
     chat.pending.length
-    if (scroller && pinned) queueMicrotask(() => scroller && (scroller.scrollTop = scroller.scrollHeight))
+    if (atBottom) requestAnimationFrame(() => toBottom(false))
   })
 
   async function onFiles(e: Event) {
@@ -179,9 +203,15 @@
     </div>
   </div>
 
+  {#if !atBottom}
+    <button class="jump" style="bottom: {dockH + 14}px" onclick={() => toBottom(true)} aria-label="Scroll to latest">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6" /></svg>
+    </button>
+  {/if}
+
   <PermissionGate {chat} />
 
-  <div class="dock">
+  <div class="dock" bind:clientHeight={dockH}>
     <div class="field">
       {#if attachments.length}
         <div class="chips">
@@ -247,9 +277,36 @@
 
 <style>
   .screen {
+    position: relative;
     display: flex;
     flex-direction: column;
     height: 100%;
+  }
+  .jump {
+    position: absolute;
+    right: 20px;
+    z-index: 6;
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-2);
+    background: var(--panel-2);
+    border: 1px solid var(--border-2);
+    box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.65);
+    animation: jumpin 0.14s ease-out;
+  }
+  .jump:hover {
+    color: var(--text);
+    background: var(--panel-3);
+  }
+  @keyframes jumpin {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
   }
   header {
     position: relative;
@@ -405,9 +462,11 @@
   .ubbl {
     max-width: 82%;
     color: var(--text);
+    font-size: 16px;
+    line-height: 1.5;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    padding: 11px 15px;
+    padding: 12px 16px;
     background: var(--panel-3);
     border-radius: 18px;
     border-bottom-right-radius: 6px;
@@ -418,7 +477,7 @@
     gap: 12px;
   }
   .working {
-    font-size: 13px;
+    font-size: 14px;
     color: var(--text-3);
     animation: soften 1.6s ease-in-out infinite;
   }
@@ -435,7 +494,7 @@
     overflow-wrap: anywhere;
   }
   .thinking {
-    font-size: 12.5px;
+    font-size: 13.5px;
     color: var(--text-4);
     padding-left: 12px;
     border-left: 1px solid var(--border-2);
@@ -514,7 +573,7 @@
     background: none;
     border: none;
     padding: 4px 0 2px;
-    font-size: 14.5px;
+    font-size: 16px;
     line-height: 1.5;
     max-height: 180px;
     outline: none;

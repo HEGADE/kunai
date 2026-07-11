@@ -65,7 +65,7 @@
   .md {
     color: var(--text);
     font-family: var(--serif);
-    font-size: 16.5px;
+    font-size: 18.5px;
     line-height: 1.62;
     overflow-wrap: anywhere;
   }
@@ -160,7 +160,7 @@
   }
   .md :global(pre code) {
     font-family: var(--mono);
-    font-size: 12.5px;
+    font-size: 13.5px;
     color: var(--text);
     background: none;
     border: none;
