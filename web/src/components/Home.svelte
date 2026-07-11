@@ -3,7 +3,19 @@
 
   let { compact = false }: { compact?: boolean } = $props()
 
-  const st = $derived(app.stats)
+  // Which machine's stats to show. '' = the hub/self. Lets you inspect any
+  // machine in the fleet by clicking its tab.
+  let picked = $state('')
+  const multi = $derived(app.machines.length > 1)
+  const sel = $derived(
+    app.machines.find((m) => m.id === picked) ??
+      app.machines.find((m) => m.self) ??
+      app.machines[0] ??
+      null,
+  )
+  const st = $derived(sel?.stats ?? null)
+  const selSessions = $derived(sel ? app.sessions.filter((s) => s.machineId === sel.id).length : 0)
+  const selResumable = $derived(sel ? app.history.filter((h) => h.machineId === sel.id).length : 0)
 
   const greeting = $derived.by(() => {
     const h = new Date().getHours()
@@ -32,18 +44,41 @@
   )
   // Load average relative to core count is a decent at-a-glance CPU pressure gauge.
   const cpuPct = $derived(st && st.cores ? Math.min(100, Math.round((st.load1 / st.cores) * 100)) : 0)
-  const resumable = $derived(app.history.length)
 </script>
 
 <div class="home" class:compact>
   <div class="hello">
     <h1>{greeting}.</h1>
     <p class="sub">
-      {#if st?.hostname}<span class="host mono">{st.hostname}</span>{/if}
+      {#if st?.hostname}<span class="host mono">{st.hostname}</span>{:else if sel}<span class="host mono">{sel.label}</span>{/if}
       <span class="mono dim">· direct over tailnet</span>
       {#if st?.claude_version}<span class="mono dim">· claude {st.claude_version}</span>{/if}
     </p>
   </div>
+
+  {#if multi}
+    <div class="mpick">
+      {#each app.machines as m (m.id)}
+        <button
+          class="mp"
+          class:on={sel?.id === m.id}
+          class:off={!m.online}
+          title={m.url}
+          onclick={() => (picked = m.id)}
+        >
+          <span class="pdot" class:live={m.online}></span>
+          {m.label}
+        </button>
+      {/each}
+    </div>
+  {/if}
+
+  {#if !st && sel}
+    <div class="offline">
+      <span class="odot"></span>
+      {sel.label} is offline — no stats to show.
+    </div>
+  {/if}
 
   {#if st}
     <div class="tiles">
@@ -91,7 +126,7 @@
       <div class="tile">
         <div class="t-top">
           <span class="t-label">Sessions</span>
-          <span class="t-val">{st.sessions}</span>
+          <span class="t-val">{selSessions}</span>
         </div>
         <span class="t-foot mono">kunai up {dur(st.kunai_uptime_sec)}</span>
       </div>
@@ -99,7 +134,7 @@
         <div class="tile">
           <div class="t-top">
             <span class="t-label">Resumable</span>
-            <span class="t-val">{resumable}</span>
+            <span class="t-val">{selResumable}</span>
           </div>
           <span class="t-foot mono">past sessions</span>
         </div>
@@ -158,6 +193,61 @@
   }
   .dim {
     color: var(--text-4);
+  }
+  .mpick {
+    display: flex;
+    gap: 7px;
+    flex-wrap: wrap;
+  }
+  .mp {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 13px;
+    border-radius: 100px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .mp:hover {
+    color: var(--text-2);
+    border-color: var(--border-2);
+  }
+  .mp.on {
+    color: var(--text);
+    background: var(--panel-3);
+    border-color: var(--border-2);
+  }
+  .mp.off {
+    opacity: 0.55;
+  }
+  .pdot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-4);
+  }
+  .pdot.live {
+    background: var(--live);
+  }
+  .offline {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 14px 16px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    color: var(--text-3);
+    font-size: 13px;
+  }
+  .odot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--alert);
   }
   .tiles {
     display: grid;

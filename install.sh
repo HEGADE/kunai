@@ -55,19 +55,27 @@ FQDN="$(tailscale status --json 2>/dev/null \
 # --- find or build the binary -----------------------------------------------
 
 BIN=""
-for c in "$HERE/dist/kunai-$PLAT" "$HERE/kunai-$PLAT" "$HERE/kunai"; do
-  if [ -f "$c" ]; then BIN="$c"; break; fi
-done
-
-if [ -z "$BIN" ] && [ -f "$HERE/go.mod" ] && command -v go >/dev/null 2>&1; then
+# In a source checkout, always build fresh — prebuilt dirs (dist/, ./kunai) may
+# be stale artifacts from an earlier `make release`, so they must NOT win here.
+if [ -f "$HERE/go.mod" ] && command -v go >/dev/null 2>&1; then
   if [ ! -f "$HERE/internal/webui/dist/index.html" ]; then
     command -v npm >/dev/null 2>&1 || fail "building from source needs npm for the web app (or use a prebuilt binary)"
     say "building web app..."
     (cd "$HERE/web" && npm install --no-fund --no-audit >/dev/null && npm run build >/dev/null)
   fi
   say "building kunai..."
-  (cd "$HERE" && CGO_ENABLED=0 go build -ldflags="-s -w" -o "$HERE/kunai" ./cmd/kunai)
+  VERSION="$(cd "$HERE" && git describe --tags --always 2>/dev/null || echo dev)"
+  (cd "$HERE" && CGO_ENABLED=0 go build \
+    -ldflags="-s -w -X 'github.com/hegade/kunai/internal/server.buildVersion=$VERSION'" \
+    -o "$HERE/kunai" ./cmd/kunai)
   BIN="$HERE/kunai"
+fi
+
+# Release tarball (no toolchain): use a bundled prebuilt binary.
+if [ -z "$BIN" ]; then
+  for c in "$HERE/dist/kunai-$PLAT" "$HERE/kunai-$PLAT" "$HERE/kunai"; do
+    if [ -f "$c" ]; then BIN="$c"; break; fi
+  done
 fi
 
 if [ -z "$BIN" ] && command -v gh >/dev/null 2>&1; then
@@ -158,7 +166,7 @@ elif [ "$OS" = "darwin" ]; then
     printf '    <string>%s</string>\n' "$BIN_DIR/kunai"
     for a in "${ARGS[@]}"; do printf '    <string>%s</string>\n' "$a"; done
     printf '  </array>\n'
-    printf '  <key>EnvironmentVariables</key><dict><key>PATH</key><string>%s</string></dict>\n' "$CLAUDE_DIR:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+    printf '  <key>EnvironmentVariables</key><dict><key>PATH</key><string>%s</string></dict>\n' "$CLAUDE_DIR:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin"
     printf '  <key>RunAtLoad</key><true/>\n'
     printf '  <key>KeepAlive</key><true/>\n'
     printf '  <key>StandardOutPath</key><string>%s</string>\n' "$DATA_DIR/kunai.log"
@@ -166,10 +174,9 @@ elif [ "$OS" = "darwin" ]; then
     printf '</dict></plist>\n'
   } > "$PLIST"
   launchctl unload "$PLIST" 2>/dev/null || true
-  launchctl load "$PLIST" || fail "launchctl load failed"
-  sleep 2
-  launchctl list | grep -q com.kunai.agent \
-    || fail "service failed to start (see $DATA_DIR/kunai.log)"
+  sleep 1 # let any previous instance release the port before rebinding
+  launchctl load "$PLIST" || fail "launchctl load failed (see $DATA_DIR/kunai.log)"
+  # Readiness is confirmed by the shared health check below.
 else
   say "no service manager for this platform. Run manually:"
   say "  $BIN_DIR/kunai -addr $TS_IP:$PORT -tls-cert $CRT -tls-key $KEY -data $DATA_DIR $IDENT_ARGS $PUSH_ARG"
@@ -179,7 +186,7 @@ fi
 
 URL="https://$FQDN:$PORT"
 if command -v curl >/dev/null 2>&1; then
-  for i in 1 2 3 4 5; do
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
     if curl -s -m 4 -o /dev/null "$URL/api/stats"; then
       say ""
       say "kunai is running."
@@ -197,6 +204,9 @@ if command -v curl >/dev/null 2>&1; then
     fi
     sleep 1
   done
+  if [ "$OS" = "darwin" ]; then
+    fail "server did not answer at $URL/api/stats. Check: tail $DATA_DIR/kunai.log"
+  fi
   fail "server did not answer at $URL/api/stats. Check: journalctl --user -u kunai -n 20"
 fi
 say "installed. Open $URL"
