@@ -23,9 +23,10 @@ const (
 	EventThinking   EventKind = "thinking"   // Text populated (streaming thinking token)
 	EventAssistant  EventKind = "assistant"  // full assistant turn; Assistant populated
 	EventPermission EventKind = "permission" // can_use_tool ask; Permission populated
-	EventResult     EventKind = "result"     // turn complete; Raw is the result frame
-	EventSystem     EventKind = "system"     // other system frames; Raw populated
-	EventError      EventKind = "error"      // driver/transport error; Err populated
+	EventResult     EventKind = "result"      // turn complete; Raw is the result frame
+	EventToolResult EventKind = "tool_result" // tool output; ToolResult populated
+	EventSystem     EventKind = "system"      // other system frames; Raw populated
+	EventError      EventKind = "error"       // driver/transport error; Err populated
 )
 
 // Event is a decoded message from the CLI, surfaced to the session layer.
@@ -45,6 +46,9 @@ type Event struct {
 
 	// EventPermission
 	Permission *PermissionAsk
+
+	// EventToolResult
+	ToolResult *ToolResult
 
 	// EventError
 	Err error
@@ -376,6 +380,10 @@ func (s *Session) route(env Envelope, raw json.RawMessage) {
 
 	case TypeResult:
 		s.emit(Event{Kind: EventResult, Raw: raw})
+
+	case TypeUser:
+		// The CLI feeds tool outputs back to the model as user frames; surface them.
+		s.emitToolResults(env.Message)
 
 	case TypeKeepAlive:
 		// ignore

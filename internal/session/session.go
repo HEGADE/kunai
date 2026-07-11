@@ -111,9 +111,11 @@ func (s *Session) Done() <-chan struct{} { return s.done }
 
 // SeedTurn is a prior conversation turn loaded from a transcript when resuming.
 type SeedTurn struct {
-	Role   string     // "user" | "assistant"
-	Text   string     // user text
-	Blocks []AppBlock // assistant content blocks
+	Role      string     // "user" | "assistant" | "tool_result"
+	Text      string     // user text, or tool_result output
+	Blocks    []AppBlock // assistant content blocks
+	ToolUseID string     // tool_result correlation
+	IsError   bool       // tool_result
 }
 
 // Seed pre-populates the replay buffer with transcript history so a resumed
@@ -123,9 +125,12 @@ func (s *Session) Seed(turns []SeedTurn) {
 	defer s.mu.Unlock()
 	for _, t := range turns {
 		var ev AppEvent
-		if t.Role == "user" {
+		switch t.Role {
+		case "user":
 			ev = AppEvent{T: EvUser, Text: t.Text}
-		} else {
+		case "tool_result":
+			ev = AppEvent{T: EvToolResult, ToolUseID: t.ToolUseID, Content: t.Text, IsError: t.IsError}
+		default:
 			ev = AppEvent{T: EvAssistant, Blocks: t.Blocks}
 		}
 		s.emitLocked(s.sequenceLocked(ev))
@@ -159,6 +164,16 @@ func (s *Session) pump() {
 
 		case claude.EventPermission:
 			s.onPermission(ev.Permission)
+
+		case claude.EventToolResult:
+			tr := ev.ToolResult
+			s.broadcast(AppEvent{
+				T:         EvToolResult,
+				ToolUseID: tr.ToolUseID,
+				Content:   tr.Content,
+				IsError:   tr.IsError,
+				Truncated: tr.Truncated,
+			})
 
 		case claude.EventResult:
 			s.setState(StateIdle)

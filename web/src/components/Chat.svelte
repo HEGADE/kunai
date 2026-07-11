@@ -176,7 +176,7 @@
                 {#if b.type === 'text' && b.text}
                   <Markdown text={b.text} />
                 {:else if b.type === 'tool_use'}
-                  <ToolCard name={b.name ?? 'tool'} input={b.input} />
+                  <ToolCard name={b.name ?? 'tool'} input={b.input} result={b.id ? chat.toolResults[b.id] : undefined} />
                 {:else if b.type === 'thinking' && b.text}
                   <div class="thinking mono">{b.text}</div>
                 {/if}

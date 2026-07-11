@@ -46,6 +46,7 @@ export interface AppEvent {
     | 'assistant'
     | 'permission'
     | 'permission_resolved'
+    | 'tool_result'
     | 'result'
     | 'state'
     | 'error'
@@ -75,6 +76,16 @@ export interface AppEvent {
   // result
   is_error?: boolean
   duration_ms?: number
+  // tool_result (tool_use_id + is_error reused)
+  content?: string
+  truncated?: boolean
+}
+
+// A tool's output, correlated to its tool_use block by id.
+export interface ToolResult {
+  content: string
+  isError: boolean
+  truncated: boolean
 }
 
 export interface Attachment {

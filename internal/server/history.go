@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hegade/kunai/internal/claude"
 	"github.com/hegade/kunai/internal/session"
 )
 
@@ -206,9 +207,19 @@ func loadTranscriptTurns(id string) []session.SeedTurn {
 			if v.IsMeta {
 				continue
 			}
+			// A user frame is either something the user typed or a carrier for
+			// tool results the CLI fed back — seed both so a resumed session
+			// shows tool outputs like a live one does.
+			for _, r := range claude.ParseToolResultBlocks(v.Message.Content) {
+				turns = append(turns, session.SeedTurn{
+					Role:      "tool_result",
+					ToolUseID: r.ToolUseID,
+					Text:      r.Content,
+					IsError:   r.IsError,
+				})
+			}
 			t := strings.TrimSpace(firstUserText(v.Message.Content))
-			// Skip tool results and harness wrappers — they aren't turns the
-			// user typed.
+			// Skip harness wrappers — they aren't turns the user typed.
 			if t != "" && !strings.HasPrefix(t, "<") {
 				turns = append(turns, session.SeedTurn{Role: "user", Text: t})
 			}

@@ -1,4 +1,12 @@
-import type { AppEvent, Attachment, Block, Command, PermissionMode, SessionState } from './types'
+import type {
+  AppEvent,
+  Attachment,
+  Block,
+  Command,
+  PermissionMode,
+  SessionState,
+  ToolResult,
+} from './types'
 
 export type Item =
   | { role: 'user'; text: string }
@@ -22,6 +30,8 @@ export class ChatConnection {
   streaming = $state('')
   thinking = $state('')
   pending = $state<PendingPermission[]>([])
+  // Tool outputs keyed by tool_use_id, looked up by each tool_use block.
+  toolResults = $state<Record<string, ToolResult>>({})
   status = $state<ConnStatus>('connecting')
   sessionState = $state<SessionState>('idle')
   mode = $state<PermissionMode>('default')
@@ -116,6 +126,18 @@ export class ChatConnection {
         break
       case 'permission_resolved':
         this.pending = this.pending.filter((p) => p.request_id !== ev.request_id)
+        break
+      case 'tool_result':
+        if (ev.tool_use_id) {
+          this.toolResults = {
+            ...this.toolResults,
+            [ev.tool_use_id]: {
+              content: ev.content ?? '',
+              isError: ev.is_error ?? false,
+              truncated: ev.truncated ?? false,
+            },
+          }
+        }
         break
       case 'result':
         this.streaming = ''

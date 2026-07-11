@@ -44,6 +44,10 @@ type AppEvent struct {
 	IsError    bool  `json:"is_error,omitempty"`
 	DurationMs int64 `json:"duration_ms,omitempty"`
 
+	// "tool_result" (ToolUseID + IsError reused from above)
+	Content   string `json:"content,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+
 	// "error" / generic message
 	Message string `json:"message,omitempty"`
 }
@@ -57,6 +61,7 @@ const (
 	EvAssistant          = "assistant"
 	EvPermission         = "permission"
 	EvPermissionResolved = "permission_resolved"
+	EvToolResult         = "tool_result"
 	EvResult             = "result"
 	EvState              = "state"
 	EvError              = "error"
