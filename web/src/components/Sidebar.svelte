@@ -158,16 +158,14 @@
     {#if activeList.length > 0}
       <div class="sec">Active</div>
       {#each activeList as m (m.machineId + ':' + m.id)}
-        <div class="card" class:current={app.activeId === m.id && app.activeMachineId === m.machineId}>
+        <div class="row" class:current={app.activeId === m.id && app.activeMachineId === m.machineId}>
           <button class="hit" onclick={() => app.open(m.machineId, m.id)}>
-            <span class="badge">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
-              <span class="bdot" data-state={m.state}></span>
-            </span>
+            <span class="lead"><span class="dot" data-state={m.state}></span></span>
             <span class="meta">
               <span class="name">{shortName(m)}</span>
-              <span class="sub mono">
-                {#if showChip}<span class="mtag">{machineLabel(m.machineId)}</span>{/if}{m.cwd}
+              <span class="sub">
+                {#if showChip}<span class="mtag">{machineLabel(m.machineId)}</span>{/if}
+                <span class="path mono">{m.cwd}</span>
               </span>
             </span>
           </button>
@@ -181,18 +179,17 @@
     {#if recentList.length > 0}
       <div class="sec">Recent</div>
       {#each recentList as h (h.machineId + ':' + h.id)}
-        <div class="card">
+        <div class="row">
           <button class="hit" onclick={() => resume(h)} disabled={!!resuming}>
-            <span class="badge dim">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 109-9 9.75 9.75 0 00-6.74 2.74L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l4 2" /></svg>
-            </span>
+            <span class="lead"></span>
             <span class="meta">
               <span class="name">{resuming === h.id ? 'Resuming…' : h.title}</span>
-              <span class="sub mono">
-                {#if showChip}<span class="mtag">{machineLabel(h.machineId)}</span>{/if}{h.cwd} · {ago(h.mtime)}
+              <span class="sub">
+                {#if showChip}<span class="mtag">{machineLabel(h.machineId)}</span>{/if}
+                <span class="path mono">{h.cwd}</span>
+                <span class="time">{ago(h.mtime)}</span>
               </span>
             </span>
-            <span class="chev">›</span>
           </button>
         </div>
       {/each}
@@ -428,66 +425,49 @@
     font-size: 12.5px;
     padding: 10px;
   }
-  .card {
+  /* Sessions as quiet list rows — no card boxes, badges, or chevrons. */
+  .row {
     position: relative;
+    border-radius: var(--r-sm);
+  }
+  .row:hover {
     background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    margin-bottom: 8px;
-    transition: border-color 0.12s;
   }
-  .card:hover {
-    border-color: var(--border-2);
-  }
-  .card.current {
-    border-color: var(--border-2);
+  .row.current {
     background: var(--panel-2);
   }
   .hit {
     width: 100%;
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     text-align: left;
-    padding: 12px 40px 12px 12px;
+    padding: 8px 30px 8px 9px;
   }
   .hit:disabled {
     opacity: 0.55;
   }
-  .badge {
-    position: relative;
+  .lead {
     flex: none;
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    background: var(--panel-3);
-    color: var(--text-2);
+    width: 7px;
     display: flex;
-    align-items: center;
     justify-content: center;
   }
-  .badge.dim {
-    color: var(--text-3);
-  }
-  .bdot {
-    position: absolute;
-    right: -1px;
-    bottom: -1px;
-    width: 9px;
-    height: 9px;
+  .dot {
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
-    border: 2px solid var(--panel);
     background: var(--text-4);
   }
-  .bdot[data-state='idle'] {
+  .dot[data-state='idle'] {
     background: var(--live);
   }
-  .bdot[data-state='starting'],
-  .bdot[data-state='running'] {
+  .dot[data-state='starting'],
+  .dot[data-state='running'] {
     background: var(--busy);
     animation: soften 1.6s ease-in-out infinite;
   }
-  .bdot[data-state='awaiting_permission'] {
+  .dot[data-state='awaiting_permission'] {
     background: var(--busy);
   }
   @keyframes soften {
@@ -500,19 +480,35 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 1px;
   }
   .name {
-    font-size: 14.5px;
-    font-weight: 500;
+    font-size: 14px;
+    font-weight: 450;
     color: var(--text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .row.current .name {
+    font-weight: 550;
+  }
   .sub {
-    font-size: 10.5px;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+    font-size: 11px;
     color: var(--text-4);
+  }
+  .mtag {
+    flex: none;
+    color: var(--text-3);
+    font-size: 10px;
+  }
+  .path {
+    flex: 0 1 auto;
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -520,36 +516,29 @@
     unicode-bidi: plaintext;
     text-align: left;
   }
-  .mtag {
-    display: inline-block;
-    margin-right: 6px;
-    padding: 0 5px;
-    border-radius: 4px;
-    background: var(--panel-3);
-    color: var(--text-3);
-    font-size: 9.5px;
-    letter-spacing: 0.02em;
+  .time {
+    flex: none;
   }
-  .chev {
-    position: absolute;
-    right: 16px;
-    top: 50%;
-    transform: translateY(-50%);
+  .time::before {
+    content: '·';
+    margin-right: 5px;
     color: var(--text-4);
-    font-size: 17px;
   }
   .x {
     position: absolute;
-    right: 8px;
+    right: 4px;
     top: 50%;
     transform: translateY(-50%);
-    width: 30px;
-    height: 30px;
+    width: 26px;
+    height: 26px;
     border-radius: 50%;
     color: var(--text-4);
-    display: flex;
+    display: none;
     align-items: center;
     justify-content: center;
+  }
+  .row:hover .x {
+    display: flex;
   }
   .x:hover,
   .x:active {

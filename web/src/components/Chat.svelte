@@ -137,11 +137,9 @@
     <button class="hbtn home deskonly" onclick={() => app.back()} aria-label="Home" title="Home">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5L12 3l9 7.5" /><path d="M5 9.5V20a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V9.5" /></svg>
     </button>
-    <div class="htitle">
-      <span class="pill" title={chat.cwd}>
-        <span class="sdot" data-k={status.k}></span>
-        <span class="pname">{chat.title || chat.cwd.split('/').slice(-1)[0] || 'session'}</span>
-      </span>
+    <div class="htitle" title={chat.cwd}>
+      <span class="sdot" data-k={status.k}></span>
+      <span class="tname">{chat.title || chat.cwd.split('/').slice(-1)[0] || 'session'}</span>
     </div>
     <button class="hbtn menu" onclick={() => (menuOpen = !menuOpen)} aria-label="Menu">⋯</button>
     {#if menuOpen}
@@ -337,25 +335,20 @@
     line-height: 1;
     letter-spacing: 0.06em;
   }
+  /* Plain left-aligned title — no pill box. */
   .htitle {
     flex: 1;
     min-width: 0;
     display: flex;
-    justify-content: center;
-  }
-  .pill {
-    display: inline-flex;
     align-items: center;
-    gap: 8px;
-    max-width: 100%;
-    padding: 8px 15px;
-    border-radius: 100px;
-    background: var(--panel);
-    border: 1px solid var(--border);
+    gap: 9px;
+    padding: 0 6px;
   }
-  .pname {
-    font-size: 13.5px;
-    font-weight: 550;
+  .tname {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
