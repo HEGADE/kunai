@@ -93,7 +93,7 @@ func newSession(id, cwd, title string, drv driver) *Session {
 		CreatedAt:       time.Now(),
 		drv:             drv,
 		title:           title,
-		state:           StateIdle,
+		state:           StateStarting,
 		mode:            "default",
 		buf:             newRing(ringCapacity),
 		subs:            make(map[*Subscriber]struct{}),
@@ -142,7 +142,11 @@ func (s *Session) pump() {
 			if ev.Model != "" {
 				s.model = ev.Model
 			}
+			booting := s.state == StateStarting
 			s.mu.Unlock()
+			if booting {
+				s.setState(StateIdle)
+			}
 
 		case claude.EventTextDelta:
 			s.broadcast(AppEvent{T: EvDelta, Text: ev.Text})
@@ -281,6 +285,13 @@ func (s *Session) SetPermissionMode(mode string) error {
 // Close terminates the session.
 func (s *Session) Close() {
 	s.drv.Close()
+}
+
+// FailStart surfaces an async boot failure to attached clients, then ends the
+// session.
+func (s *Session) FailStart(msg string) {
+	s.broadcast(AppEvent{T: EvError, Message: "claude failed to start: " + msg})
+	s.Close()
 }
 
 // --- attach / fan-out ---

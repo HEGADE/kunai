@@ -1,6 +1,6 @@
-import { history as fetchHistory, listSessions } from './api'
+import { history as fetchHistory, listSessions, stats as fetchStats } from './api'
 import { ChatConnection } from './chat.svelte'
-import type { HistoryEntry, Meta } from './types'
+import type { HistoryEntry, Meta, Stats } from './types'
 
 // Top-level app state. The UI is a two-pane shell (sessions + conversation) on
 // wide screens and a stacked flow on phones; both share this state. "New session"
@@ -8,10 +8,25 @@ import type { HistoryEntry, Meta } from './types'
 class AppStore {
   sessions = $state<Meta[]>([])
   history = $state<HistoryEntry[]>([])
+  stats = $state<Stats | null>(null)
   chat = $state<ChatConnection | null>(null)
   activeId = $state<string | null>(null)
   showNew = $state(false)
   listError = $state('')
+
+  // Distinct project directories from past sessions, for one-tap starts.
+  projects = $derived.by(() => {
+    const seen = new Set<string>()
+    const out: { cwd: string; name: string }[] = []
+    for (const m of this.sessions) seen.add(m.cwd)
+    for (const h of this.history) {
+      if (seen.has(h.cwd)) continue
+      seen.add(h.cwd)
+      out.push({ cwd: h.cwd, name: h.cwd.replace(/\/+$/, '').split('/').slice(-1)[0] || h.cwd })
+      if (out.length >= 6) break
+    }
+    return out
+  })
 
   private poll?: ReturnType<typeof setInterval>
 
@@ -23,11 +38,9 @@ class AppStore {
       this.listError = (e as Error).message
       return
     }
-    try {
-      this.history = await fetchHistory()
-    } catch {
-      /* history is best-effort */
-    }
+    // Secondary data is best-effort and parallel.
+    fetchHistory().then((h) => (this.history = h)).catch(() => {})
+    fetchStats().then((s) => (this.stats = s)).catch(() => {})
   }
 
   startPolling() {
@@ -67,6 +80,19 @@ class AppStore {
     const { closeSession } = await import('./api')
     await closeSession(id)
     this.back()
+  }
+
+  // quickStart opens a fresh session in a known project directory. Session
+  // creation is async server-side, so this is effectively instant.
+  async quickStart(cwd: string) {
+    const { createSession } = await import('./api')
+    try {
+      const meta = await createSession({ cwd })
+      this.open(meta.id)
+      this.refresh()
+    } catch (e) {
+      this.listError = (e as Error).message
+    }
   }
 }
 

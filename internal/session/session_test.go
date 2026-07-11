@@ -74,23 +74,25 @@ func TestSequencingAndReplay(t *testing.T) {
 	f.events <- claude.Event{Kind: claude.EventTextDelta, Text: "llo"}
 	f.events <- claude.Event{Kind: claude.EventResult, Raw: json.RawMessage(`{"subtype":"success","duration_ms":42}`)}
 
-	// EventResult also flips state idle→idle (no state event since already idle),
-	// so we expect exactly 3 app events: delta, delta, result.
-	got := drain(t, sub, 3)
-	if got[0].Seq != 1 || got[1].Seq != 2 || got[2].Seq != 3 {
-		t.Fatalf("seqs not monotonic: %d,%d,%d", got[0].Seq, got[1].Seq, got[2].Seq)
+	// Sessions begin in "starting", so the result also emits the flip to idle:
+	// delta, delta, state(idle), result.
+	got := drain(t, sub, 4)
+	for i, ev := range got {
+		if ev.Seq != uint64(i+1) {
+			t.Fatalf("seqs not monotonic: %+v", got)
+		}
 	}
-	if got[0].Text != "he" || got[2].T != EvResult {
+	if got[0].Text != "he" || got[2].T != EvState || got[2].State != StateIdle || got[3].T != EvResult {
 		t.Fatalf("unexpected events: %+v", got)
 	}
 
-	// A fresh reconnect from seq 1 must replay events 2 and 3 only.
-	hello, backlog, _ := s.Attach(1)
-	if hello.HighSeq != 3 {
-		t.Fatalf("hello.HighSeq want 3, got %d", hello.HighSeq)
+	// A fresh reconnect from seq 2 must replay events 3 and 4 only.
+	hello, backlog, _ := s.Attach(2)
+	if hello.HighSeq != 4 {
+		t.Fatalf("hello.HighSeq want 4, got %d", hello.HighSeq)
 	}
-	if len(backlog) != 2 || backlog[0].Seq != 2 || backlog[1].Seq != 3 {
-		t.Fatalf("replay from seq1 want [2,3], got %+v", backlog)
+	if len(backlog) != 2 || backlog[0].Seq != 3 || backlog[1].Seq != 4 {
+		t.Fatalf("replay from seq2 want [3,4], got %+v", backlog)
 	}
 }
 

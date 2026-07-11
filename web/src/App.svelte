@@ -3,7 +3,7 @@
   import { app } from './lib/app.svelte'
   import Sidebar from './components/Sidebar.svelte'
   import Chat from './components/Chat.svelte'
-  import EmptyState from './components/EmptyState.svelte'
+  import Home from './components/Home.svelte'
   import NewSession from './components/NewSession.svelte'
 
   onMount(() => {
@@ -22,7 +22,7 @@
     {#if app.chat}
       <Chat chat={app.chat} />
     {:else}
-      <EmptyState />
+      <div class="dash"><Home /></div>
     {/if}
   </main>
 </div>
@@ -46,6 +46,10 @@
     min-width: 0;
     overflow: hidden;
     background: var(--bg);
+  }
+  .dash {
+    height: 100%;
+    overflow-y: auto;
   }
 
   /* Phone: one column; show the sidebar until a session is open, then the chat. */

@@ -177,6 +177,15 @@ func (s *Session) Start(ctx context.Context) error {
 	s.cmd = cmd
 	s.stdin = stdin
 
+	// Send initialize directly, before the write loop starts draining queued
+	// frames — callers may enqueue user turns while the process is still
+	// booting, and initialize must reach the CLI first.
+	s.initID = randHex(8)
+	if err := json.NewEncoder(stdin).Encode(ControlRequest{Type: TypeControlRequest, RequestID: s.initID, Request: InitializeRequest{Subtype: SubInitialize}}); err != nil {
+		s.Close()
+		return fmt.Errorf("write initialize: %w", err)
+	}
+
 	go s.writeLoop(stdin)
 	go s.readLoop(stdout)
 	go func() {
@@ -184,10 +193,6 @@ func (s *Session) Start(ctx context.Context) error {
 		_ = cmd.Wait()
 		s.shutdown()
 	}()
-
-	// Handshake: send initialize; readiness = its response or system/init.
-	s.initID = randHex(8)
-	s.send(ControlRequest{Type: TypeControlRequest, RequestID: s.initID, Request: InitializeRequest{Subtype: SubInitialize}})
 
 	select {
 	case <-s.ready:

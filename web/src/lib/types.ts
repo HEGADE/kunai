@@ -1,6 +1,21 @@
 // Wire types mirroring the Go server's internal/session protocol.
 
-export type SessionState = 'idle' | 'running' | 'awaiting_permission'
+export type SessionState = 'starting' | 'idle' | 'running' | 'awaiting_permission'
+
+export interface Stats {
+  hostname: string
+  os: string
+  arch: string
+  sessions: number
+  uptime_sec: number
+  load1: number
+  mem_total: number
+  mem_available: number
+  disk_total: number
+  disk_free: number
+  claude_version: string
+  kunai_uptime_sec: number
+}
 
 export interface Meta {
   id: string

@@ -4,6 +4,7 @@
   import { enablePush, pushState } from '../lib/push'
   import type { HistoryEntry, Meta } from '../lib/types'
   import Wordmark from './Wordmark.svelte'
+  import Home from './Home.svelte'
 
   let notif = $state(pushState())
   let notifHint = $state('')
@@ -78,6 +79,8 @@
   </div>
 
   <div class="list">
+    <div class="homewrap"><Home compact /></div>
+
     {#if app.listError}
       <p class="note mono">{app.listError}</p>
     {/if}
@@ -208,6 +211,17 @@
     overflow-y: auto;
     padding: 4px 14px 14px;
   }
+  /* The dashboard lives in the main pane on desktop; on phones the sidebar IS
+     the home screen, so it renders here. */
+  .homewrap {
+    display: none;
+  }
+  @media (max-width: 860px) {
+    .homewrap {
+      display: block;
+      padding: 8px 2px 16px;
+    }
+  }
   .sec {
     font-size: 11.5px;
     font-weight: 550;
@@ -275,6 +289,7 @@
   .bdot[data-state='idle'] {
     background: var(--live);
   }
+  .bdot[data-state='starting'],
   .bdot[data-state='running'] {
     background: var(--busy);
     animation: soften 1.6s ease-in-out infinite;

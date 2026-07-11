@@ -86,11 +86,13 @@
   const status = $derived(
     chat.status !== 'online'
       ? { k: 'offline', t: 'offline' }
-      : chat.sessionState === 'running'
-        ? { k: 'busy', t: 'working' }
-        : chat.sessionState === 'awaiting_permission'
-          ? { k: 'busy', t: 'needs you' }
-          : { k: 'live', t: 'idle' },
+      : chat.sessionState === 'starting'
+        ? { k: 'busy', t: 'starting' }
+        : chat.sessionState === 'running'
+          ? { k: 'busy', t: 'working' }
+          : chat.sessionState === 'awaiting_permission'
+            ? { k: 'busy', t: 'needs you' }
+            : { k: 'live', t: 'idle' },
   )
 
   function hasBody(blocks: { type: string; text?: string }[]): boolean {
@@ -457,7 +459,7 @@
 
   .dock {
     border-top: 1px solid var(--border);
-    padding: 12px 18px calc(var(--safe-bottom) + 14px);
+    padding: 10px 16px calc(var(--safe-bottom) + 4px);
   }
   .field {
     max-width: 720px;

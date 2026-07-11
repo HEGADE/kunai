@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"sync"
 
@@ -34,11 +35,16 @@ type CreateOptions struct {
 	Seed []SeedTurn
 }
 
-// Create starts a new claude session and registers it. Our handle id doubles as
-// the CLI --session-id so --resume works with the same id after a restart.
+// Create registers a new claude session and returns immediately; the CLI boots
+// in the background so opening a session is instant. Boot failures surface to
+// attached clients as an error event. Our handle id doubles as the CLI
+// --session-id so --resume works with the same id after a restart.
 func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, error) {
 	if opts.Cwd == "" {
 		return nil, errors.New("cwd required")
+	}
+	if fi, err := os.Stat(opts.Cwd); err != nil || !fi.IsDir() {
+		return nil, fmt.Errorf("not a directory: %s", opts.Cwd)
 	}
 	id := opts.Resume
 	if id == "" {
@@ -59,9 +65,6 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 		drvOpts.SessionID = id
 	}
 	drv := claude.NewSession(drvOpts)
-	if err := drv.Start(ctx); err != nil {
-		return nil, err
-	}
 
 	s := newSession(id, opts.Cwd, opts.Title, drv)
 	s.model = opts.Model
@@ -77,6 +80,14 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	go func() {
 		<-s.Done()
 		m.remove(id)
+	}()
+
+	// Boot the CLI off the request path. Prompts sent meanwhile queue in the
+	// driver and flush once the process is up.
+	go func() {
+		if err := drv.Start(context.Background()); err != nil {
+			s.FailStart(err.Error())
+		}
 	}()
 	return s, nil
 }

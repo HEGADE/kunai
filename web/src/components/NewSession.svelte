@@ -40,6 +40,19 @@
       <h2>New session</h2>
       <button class="close" onclick={() => app.closeNew()} aria-label="Close">✕</button>
     </header>
+
+    {#if app.projects.length > 0}
+      <div class="quick">
+        {#each app.projects as p (p.cwd)}
+          <button class="qchip" title={p.cwd} onclick={() => app.quickStart(p.cwd)}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
+            {p.name}
+          </button>
+        {/each}
+      </div>
+      <div class="or"><span>or browse</span></div>
+    {/if}
+
     <div class="path mono">{listing?.path ?? '…'}</div>
 
     <div class="list">
@@ -133,6 +146,47 @@
   }
   .close:hover {
     color: var(--text);
+  }
+  .quick {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    padding: 2px 16px 6px;
+  }
+  .qchip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 13px;
+    border-radius: 100px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .qchip:hover {
+    color: var(--text);
+    border-color: var(--border-2);
+  }
+  .or {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 16px 8px;
+  }
+  .or::before,
+  .or::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+  .or span {
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-4);
   }
   .path {
     margin: 0 16px 8px;

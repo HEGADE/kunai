@@ -64,6 +64,7 @@ const (
 
 // Turn/session states.
 const (
+	StateStarting = "starting" // claude process is booting
 	StateIdle     = "idle"
 	StateRunning  = "running"
 	StateAwaiting = "awaiting_permission"
