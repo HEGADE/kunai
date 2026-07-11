@@ -110,6 +110,20 @@ func (m *Manager) Subscribe(sub *webpush.Subscription) {
 	m.mu.Unlock()
 }
 
+// Unsubscribe drops a browser push subscription by its endpoint, so a device
+// can turn notifications off from the app.
+func (m *Manager) Unsubscribe(endpoint string) {
+	if endpoint == "" {
+		return
+	}
+	m.mu.Lock()
+	if _, ok := m.subs[endpoint]; ok {
+		delete(m.subs, endpoint)
+		m.saveSubsLocked()
+	}
+	m.mu.Unlock()
+}
+
 // Enabled reports whether any device is subscribed.
 func (m *Manager) Enabled() bool {
 	m.mu.Lock()

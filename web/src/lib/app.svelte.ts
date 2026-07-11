@@ -12,6 +12,7 @@ class AppStore {
   chat = $state<ChatConnection | null>(null)
   activeId = $state<string | null>(null)
   showNew = $state(false)
+  showSettings = $state(false)
   listError = $state('')
   sidebarOpen = $state(localStorage.getItem('kunai-sidebar') !== '0')
 
@@ -35,6 +36,41 @@ class AppStore {
   })
 
   private poll?: ReturnType<typeof setInterval>
+  // True while we are reacting to the browser's own back/forward, so URL syncing
+  // doesn't push a duplicate history entry.
+  private navigating = false
+
+  // Reflect the open session in the URL: / for home, /<session-id> for a chat.
+  // Deep links and refreshes work because both the server and the service worker
+  // fall back to index.html for unknown paths.
+  private syncUrl() {
+    if (this.navigating) return
+    const want = this.activeId ? '/' + this.activeId : '/'
+    if (location.pathname !== want) history.pushState({ id: this.activeId }, '', want)
+  }
+
+  // currentPathId returns the first path segment (a session id) or ''.
+  private currentPathId(): string {
+    return location.pathname.replace(/^\/+/, '').split('/')[0]
+  }
+
+  // initRouting opens whatever the URL points at on load and keeps state in sync
+  // with browser back/forward.
+  initRouting() {
+    window.addEventListener('popstate', () => this.applyPath())
+    this.applyPath()
+  }
+
+  private applyPath() {
+    const id = this.currentPathId()
+    this.navigating = true
+    try {
+      if (id && this.activeId !== id) this.open(id)
+      else if (!id && this.activeId) this.back()
+    } finally {
+      this.navigating = false
+    }
+  }
 
   async refresh() {
     try {
@@ -58,26 +94,37 @@ class AppStore {
   open(id: string) {
     if (this.activeId === id) {
       this.showNew = false
+      this.syncUrl()
       return
     }
     this.chat?.destroy()
     this.chat = new ChatConnection(id)
     this.activeId = id
     this.showNew = false
+    this.syncUrl()
   }
 
   back() {
     this.chat?.destroy()
     this.chat = null
     this.activeId = null
+    this.syncUrl()
     this.refresh()
   }
 
   newSession() {
+    this.showSettings = false
     this.showNew = true
   }
   closeNew() {
     this.showNew = false
+  }
+  openSettings() {
+    this.showNew = false
+    this.showSettings = true
+  }
+  closeSettings() {
+    this.showSettings = false
   }
 
   async closeSessionActive() {

@@ -28,6 +28,19 @@ export function pushState(): 'unsupported' | 'granted' | 'denied' | 'default' {
   return Notification.permission as 'granted' | 'denied' | 'default'
 }
 
+// isSubscribed reports whether this device currently has a live push
+// subscription. Permission being "granted" is not enough — the user may have
+// turned notifications off, which unsubscribes without revoking permission.
+export async function isSubscribed(): Promise<boolean> {
+  if (!pushSupported()) return false
+  try {
+    const reg = await navigator.serviceWorker.ready
+    return !!(await reg.pushManager.getSubscription())
+  } catch {
+    return false
+  }
+}
+
 // enablePush requests permission, subscribes, and registers the subscription
 // with the server. Returns a human-readable error string on failure, or ''.
 export async function enablePush(): Promise<string> {
@@ -54,4 +67,26 @@ export async function enablePush(): Promise<string> {
   })
   if (!post.ok) return 'Could not register for notifications.'
   return ''
+}
+
+// disablePush unsubscribes this device and drops it from the server. The
+// browser permission itself can't be revoked programmatically, so a later
+// re-enable won't re-prompt — it just re-subscribes.
+export async function disablePush(): Promise<string> {
+  if (!pushSupported()) return ''
+  try {
+    const reg = await navigator.serviceWorker.ready
+    const sub = await reg.pushManager.getSubscription()
+    if (sub) {
+      await fetch('/api/push/unsubscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint: sub.endpoint }),
+      }).catch(() => {})
+      await sub.unsubscribe().catch(() => {})
+    }
+    return ''
+  } catch {
+    return 'Could not turn notifications off.'
+  }
 }

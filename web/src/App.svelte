@@ -5,9 +5,11 @@
   import Chat from './components/Chat.svelte'
   import Home from './components/Home.svelte'
   import NewSession from './components/NewSession.svelte'
+  import Settings from './components/Settings.svelte'
 
   onMount(() => {
     app.startPolling()
+    app.initRouting()
     const onVis = () => {
       if (document.visibilityState === 'visible') app.refresh()
     }
@@ -32,6 +34,9 @@
 
 {#if app.showNew}
   <NewSession />
+{/if}
+{#if app.showSettings}
+  <Settings />
 {/if}
 
 <style>

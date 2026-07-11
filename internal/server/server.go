@@ -71,6 +71,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/stats", s.handleStats)
 	mux.HandleFunc("GET /api/push/pubkey", s.handlePushKey)
 	mux.HandleFunc("POST /api/push/subscribe", s.handlePushSubscribe)
+	mux.HandleFunc("POST /api/push/unsubscribe", s.handlePushUnsubscribe)
 	mux.HandleFunc("POST /api/upload", s.handleUpload)
 	mux.HandleFunc("GET /ws/app/{id}", s.handleWS)
 	mux.Handle("GET /", s.spaHandler())
@@ -172,6 +173,22 @@ func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.push.Subscribe(&sub)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handlePushUnsubscribe(w http.ResponseWriter, r *http.Request) {
+	if s.push == nil {
+		writeErr(w, http.StatusNotFound, "push disabled")
+		return
+	}
+	var body struct {
+		Endpoint string `json:"endpoint"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Endpoint == "" {
+		writeErr(w, http.StatusBadRequest, "invalid endpoint")
+		return
+	}
+	s.push.Unsubscribe(body.Endpoint)
 	w.WriteHeader(http.StatusNoContent)
 }
 

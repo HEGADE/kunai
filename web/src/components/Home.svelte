@@ -30,6 +30,9 @@
   const memUsedPct = $derived(
     st && st.mem_total ? Math.round(((st.mem_total - st.mem_available) / st.mem_total) * 100) : 0,
   )
+  // Load average relative to core count is a decent at-a-glance CPU pressure gauge.
+  const cpuPct = $derived(st && st.cores ? Math.min(100, Math.round((st.load1 / st.cores) * 100)) : 0)
+  const resumable = $derived(app.history.length)
 </script>
 
 <div class="home" class:compact>
@@ -52,6 +55,16 @@
           </div>
           <div class="meter"><i style="width:{memUsedPct}%"></i></div>
           <span class="t-foot mono">{gb(st.mem_total - st.mem_available)} of {gb(st.mem_total)}</span>
+        </div>
+      {/if}
+      {#if !compact && st.cores}
+        <div class="tile">
+          <div class="t-top">
+            <span class="t-label">CPU</span>
+            <span class="t-val">{cpuPct}<small>%</small></span>
+          </div>
+          <div class="meter"><i style="width:{cpuPct}%"></i></div>
+          <span class="t-foot mono">{st.cores} cores · load {st.load1.toFixed(2)}</span>
         </div>
       {/if}
       <div class="tile">
@@ -82,6 +95,15 @@
         </div>
         <span class="t-foot mono">kunai up {dur(st.kunai_uptime_sec)}</span>
       </div>
+      {#if !compact}
+        <div class="tile">
+          <div class="t-top">
+            <span class="t-label">Resumable</span>
+            <span class="t-val">{resumable}</span>
+          </div>
+          <span class="t-foot mono">past sessions</span>
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -110,7 +132,7 @@
   }
   /* Full (desktop pane) variant centers a wider column */
   .home:not(.compact) {
-    max-width: 640px;
+    max-width: 720px;
     margin: 0 auto;
     padding: 9vh 32px 32px;
     width: 100%;
@@ -143,7 +165,7 @@
     gap: 8px;
   }
   .home:not(.compact) .tiles {
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
   }
   .tile {
     background: var(--panel);

@@ -13,7 +13,9 @@ export interface Stats {
   mem_available: number
   disk_total: number
   disk_free: number
+  cores: number
   claude_version: string
+  kunai_version: string
   kunai_uptime_sec: number
 }
 
