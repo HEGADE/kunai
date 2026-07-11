@@ -38,7 +38,7 @@
     uploading = true
     for (const f of Array.from(input.files)) {
       try {
-        attachments = [...attachments, await uploadFile(f)]
+        attachments = [...attachments, await uploadFile(chat.origin, f)]
       } catch {
         /* skip */
       }

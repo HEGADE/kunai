@@ -2,7 +2,7 @@
   import { app } from '../lib/app.svelte'
   import { closeSession, createSession } from '../lib/api'
   import { enablePush, pushState } from '../lib/push'
-  import type { HistoryEntry, Meta } from '../lib/types'
+  import type { TaggedHistoryEntry, TaggedMeta } from '../lib/types'
   import Wordmark from './Wordmark.svelte'
   import Home from './Home.svelte'
 
@@ -12,14 +12,26 @@
   let q = $state('')
 
   const query = $derived(q.trim().toLowerCase())
+  const multi = $derived(app.machines.length > 1)
+  function machineLabel(id: string): string {
+    return app.machines.find((m) => m.id === id)?.label || id
+  }
   const activeList = $derived(
     app.sessions.filter(
-      (m) => !query || shortName(m).toLowerCase().includes(query) || m.cwd.toLowerCase().includes(query),
+      (m) =>
+        !query ||
+        shortName(m).toLowerCase().includes(query) ||
+        m.cwd.toLowerCase().includes(query) ||
+        machineLabel(m.machineId).toLowerCase().includes(query),
     ),
   )
   const recentList = $derived(
     app.history.filter(
-      (h) => !query || h.title.toLowerCase().includes(query) || h.cwd.toLowerCase().includes(query),
+      (h) =>
+        !query ||
+        h.title.toLowerCase().includes(query) ||
+        h.cwd.toLowerCase().includes(query) ||
+        machineLabel(h.machineId).toLowerCase().includes(query),
     ),
   )
 
@@ -31,7 +43,7 @@
     setTimeout(() => (notifHint = ''), err ? 5000 : 100)
   }
 
-  function shortName(m: Meta): string {
+  function shortName(m: TaggedMeta): string {
     return m.title || m.cwd.replace(/\/+$/, '').split('/').slice(-1)[0] || 'session'
   }
   function ago(iso: string): string {
@@ -41,18 +53,22 @@
     if (s < 86400) return `${Math.round(s / 3600)}h ago`
     return `${Math.round(s / 86400)}d ago`
   }
-  async function remove(e: MouseEvent, m: Meta) {
+  async function remove(e: MouseEvent, m: TaggedMeta) {
     e.stopPropagation()
-    await closeSession(m.id)
-    if (app.activeId === m.id) app.back()
+    await closeSession(app.baseForMachine(m.machineId), m.id)
+    if (app.activeId === m.id && app.activeMachineId === m.machineId) app.back()
     else app.refresh()
   }
-  async function resume(h: HistoryEntry) {
+  async function resume(h: TaggedHistoryEntry) {
     if (resuming) return
     resuming = h.id
     try {
-      const meta = await createSession({ cwd: h.cwd, resume: h.id, title: h.title })
-      app.open(meta.id)
+      const meta = await createSession(app.baseForMachine(h.machineId), {
+        cwd: h.cwd,
+        resume: h.id,
+        title: h.title,
+      })
+      app.open(h.machineId, meta.id)
       app.refresh()
     } catch (e) {
       notifHint = (e as Error).message
@@ -92,16 +108,18 @@
 
     {#if activeList.length > 0}
       <div class="sec">Active</div>
-      {#each activeList as m (m.id)}
-        <div class="card" class:current={app.activeId === m.id}>
-          <button class="hit" onclick={() => app.open(m.id)}>
+      {#each activeList as m (m.machineId + ':' + m.id)}
+        <div class="card" class:current={app.activeId === m.id && app.activeMachineId === m.machineId}>
+          <button class="hit" onclick={() => app.open(m.machineId, m.id)}>
             <span class="badge">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
               <span class="bdot" data-state={m.state}></span>
             </span>
             <span class="meta">
               <span class="name">{shortName(m)}</span>
-              <span class="sub mono">{m.cwd}</span>
+              <span class="sub mono">
+                {#if multi}<span class="mtag">{machineLabel(m.machineId)}</span>{/if}{m.cwd}
+              </span>
             </span>
           </button>
           <button class="x" onclick={(e) => remove(e, m)} aria-label="Close session">
@@ -113,7 +131,7 @@
 
     {#if recentList.length > 0}
       <div class="sec">Recent</div>
-      {#each recentList as h (h.id)}
+      {#each recentList as h (h.machineId + ':' + h.id)}
         <div class="card">
           <button class="hit" onclick={() => resume(h)} disabled={!!resuming}>
             <span class="badge dim">
@@ -121,7 +139,9 @@
             </span>
             <span class="meta">
               <span class="name">{resuming === h.id ? 'Resuming…' : h.title}</span>
-              <span class="sub mono">{h.cwd} · {ago(h.mtime)}</span>
+              <span class="sub mono">
+                {#if multi}<span class="mtag">{machineLabel(h.machineId)}</span>{/if}{h.cwd} · {ago(h.mtime)}
+              </span>
             </span>
             <span class="chev">›</span>
           </button>
@@ -354,6 +374,16 @@
     direction: rtl;
     unicode-bidi: plaintext;
     text-align: left;
+  }
+  .mtag {
+    display: inline-block;
+    margin-right: 6px;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: var(--panel-3);
+    color: var(--text-3);
+    font-size: 9.5px;
+    letter-spacing: 0.02em;
   }
   .chev {
     position: absolute;

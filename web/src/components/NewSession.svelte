@@ -11,6 +11,14 @@
   let typed = $state('')
   let crumbEl = $state<HTMLElement | null>(null)
   let pathInput = $state<HTMLInputElement | null>(null)
+  // Which machine to start the session on; scopes the directory browser.
+  let machineId = $state(app.machines.find((m) => m.self)?.id ?? app.machines[0]?.id ?? '')
+  const multi = $derived(app.machines.length > 1)
+  function pickMachine(id: string) {
+    if (id === machineId) return
+    machineId = id
+    go('')
+  }
 
   // Breadcrumb segments with cumulative paths: / , home , ninja , …
   const crumbs = $derived.by(() => {
@@ -36,7 +44,7 @@
     loading = true
     error = ''
     try {
-      listing = await browse(path)
+      listing = await browse(app.baseForMachine(machineId), path)
       editing = false
     } catch (e) {
       error = (e as Error).message
@@ -58,8 +66,8 @@
     creating = true
     error = ''
     try {
-      const meta = await createSession({ cwd: listing.path })
-      app.open(meta.id)
+      const meta = await createSession(app.baseForMachine(machineId), { cwd: listing.path })
+      app.open(machineId, meta.id)
     } catch (e) {
       error = (e as Error).message
       creating = false
@@ -78,10 +86,27 @@
       </button>
     </header>
 
+    {#if multi}
+      <div class="machines">
+        {#each app.machines as m (m.id)}
+          <button
+            class="mchip"
+            class:on={m.id === machineId}
+            class:off={!m.online}
+            title={m.url}
+            onclick={() => pickMachine(m.id)}
+          >
+            <span class="mdot" class:live={m.online}></span>
+            {m.label}
+          </button>
+        {/each}
+      </div>
+    {/if}
+
     {#if app.projects.length > 0}
       <div class="quick">
-        {#each app.projects as p (p.cwd)}
-          <button class="qchip" title={p.cwd} onclick={() => app.quickStart(p.cwd)}>
+        {#each app.projects as p (p.machineId + ':' + p.cwd)}
+          <button class="qchip" title={p.cwd} onclick={() => app.quickStart(p.machineId, p.cwd)}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
             {p.name}
           </button>
@@ -245,6 +270,41 @@
   .qchip:hover {
     color: var(--text);
     border-color: var(--border-2);
+  }
+  .machines {
+    display: flex;
+    gap: 7px;
+    flex-wrap: wrap;
+    padding: 0 20px 12px;
+  }
+  .mchip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 12px;
+    border-radius: 100px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    font-size: 12.5px;
+    font-weight: 500;
+  }
+  .mchip.on {
+    color: var(--text);
+    border-color: var(--border-2);
+    background: var(--panel-3);
+  }
+  .mchip.off {
+    opacity: 0.6;
+  }
+  .mdot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-4);
+  }
+  .mdot.live {
+    background: var(--live);
   }
 
   /* Path bar: readable breadcrumbs that scroll, never clip or ellipsize. */

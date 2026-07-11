@@ -99,6 +99,28 @@ export interface HistoryEntry {
   mtime: string
 }
 
+// --- multi-machine ---
+
+// MachineInfo is the wire shape the hub serves at GET /api/machines. `url` is
+// the machine's tailnet origin; the client talks to it directly (REST + WS).
+export interface MachineInfo {
+  id: string // short stable slug (first FQDN label)
+  label: string
+  url: string // origin, no trailing slash; '' means "this machine" (hub)
+  self: boolean
+}
+
+// Machine is the client-side runtime view: registry info + liveness/probe state.
+export interface Machine extends MachineInfo {
+  online: boolean
+  stats: Stats | null
+}
+
+// Sessions and history are tagged client-side with the machine they came from.
+// The wire types stay pure; the tag is added at fetch time.
+export type TaggedMeta = Meta & { machineId: string }
+export type TaggedHistoryEntry = HistoryEntry & { machineId: string }
+
 export interface DirEntry {
   name: string
   dir: boolean

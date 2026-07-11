@@ -23,6 +23,8 @@ func main() {
 	flag.StringVar(&cfg.TLSCert, "tls-cert", os.Getenv("KUNAI_TLS_CERT"), "TLS certificate (tailscale cert); empty = plain HTTP (dev only)")
 	flag.StringVar(&cfg.TLSKey, "tls-key", os.Getenv("KUNAI_TLS_KEY"), "TLS key (tailscale cert)")
 	flag.StringVar(&cfg.DefaultModel, "model", os.Getenv("KUNAI_MODEL"), "default model for new sessions (optional)")
+	flag.StringVar(&cfg.PublicURL, "public-url", os.Getenv("KUNAI_PUBLIC_URL"), "this machine's own tailnet origin (e.g. https://host.tailnet.ts.net:8443)")
+	flag.StringVar(&cfg.HubURL, "hub-url", os.Getenv("KUNAI_HUB_URL"), "hub origin to forward Web Push wake-ups to (set on peer machines)")
 	dataDir := flag.String("data", envOr("KUNAI_DATA", defaultDataDir()), "directory for VAPID keys, subscriptions, uploads")
 	pushEmail := flag.String("push-email", os.Getenv("KUNAI_PUSH_EMAIL"), "VAPID contact (mailto) for Web Push")
 	flag.Parse()

@@ -36,14 +36,24 @@ export class ChatConnection {
   private closed = false
   private reconnectTimer?: ReturnType<typeof setTimeout>
 
-  constructor(private id: string) {
+  // base is the owning machine's origin ('' = this origin / hub).
+  constructor(
+    private base: string,
+    private id: string,
+  ) {
     this.connect()
+  }
+
+  // origin is the machine this session lives on, for scoping uploads etc.
+  get origin(): string {
+    return this.base || location.origin
   }
 
   private connect() {
     this.status = this.retries === 0 ? 'connecting' : 'offline'
-    const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
-    const url = `${scheme}://${location.host}/ws/app/${this.id}?since=${this.lastSeq}`
+    const u = new URL(this.base || location.origin)
+    const scheme = u.protocol === 'https:' ? 'wss' : 'ws'
+    const url = `${scheme}://${u.host}/ws/app/${this.id}?since=${this.lastSeq}`
     const ws = new WebSocket(url)
     this.ws = ws
 

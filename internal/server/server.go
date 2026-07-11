@@ -30,6 +30,8 @@ type Config struct {
 	TLSKey       string // path to tailscale key
 	DefaultModel string // optional default model for new sessions
 	DataDir      string // dir for uploads (and, via push, VAPID keys/subs)
+	PublicURL    string // this machine's own tailnet origin, e.g. https://host.tailnet.ts.net:8443
+	HubURL       string // if set, this is a peer that forwards push wake-ups to the hub at this URL
 }
 
 // Server wires the manager, config, and embedded PWA into an http.Handler.
@@ -39,6 +41,8 @@ type Server struct {
 	pwa        fs.FS
 	push       *push.Manager // optional; nil disables Web Push
 	uploadsDir string
+	machines   *machineStore
+	disco      discoveryCache
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -54,7 +58,9 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	uploads = filepath.Join(uploads, "uploads")
 	_ = os.MkdirAll(uploads, 0o700)
 
-	return &Server{cfg: cfg, mgr: mgr, pwa: webui.FS(), uploadsDir: uploads}
+	machines := newMachineStore(filepath.Join(cfg.DataDir, "machines.json"))
+
+	return &Server{cfg: cfg, mgr: mgr, pwa: webui.FS(), uploadsDir: uploads, machines: machines}
 }
 
 // SetPush enables Web Push wake-ups.
@@ -72,10 +78,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/push/pubkey", s.handlePushKey)
 	mux.HandleFunc("POST /api/push/subscribe", s.handlePushSubscribe)
 	mux.HandleFunc("POST /api/push/unsubscribe", s.handlePushUnsubscribe)
+	mux.HandleFunc("POST /api/push/relay", s.handlePushRelay)
 	mux.HandleFunc("POST /api/upload", s.handleUpload)
+	mux.HandleFunc("GET /api/machines", s.handleMachines)
+	mux.HandleFunc("POST /api/machines", s.handleAddMachine)
+	mux.HandleFunc("DELETE /api/machines/{id}", s.handleDeleteMachine)
+	mux.HandleFunc("GET /api/machines/discover", s.handleDiscover)
 	mux.HandleFunc("GET /ws/app/{id}", s.handleWS)
 	mux.Handle("GET /", s.spaHandler())
-	return logRequests(mux)
+	return cors(logRequests(mux))
 }
 
 // Run starts the HTTP(S) server and blocks until ctx is cancelled.
@@ -134,23 +145,38 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if s.push != nil {
+	// A wake-up can go out either locally (this machine owns push) or, on a peer,
+	// by forwarding to the hub — so arm the notifier when either is possible.
+	if s.push != nil || s.cfg.HubURL != "" {
 		sess.SetNotifier(s.pushNotifier())
 	}
 	writeJSON(w, http.StatusCreated, sess.Meta())
 }
 
 // pushNotifier returns a callback that sends a generic wake-up — never content.
+// On a peer (HubURL set) it forwards to the hub; on the hub (or a standalone
+// machine) it sends the push directly.
 func (s *Server) pushNotifier() func(kind, detail string) {
 	return func(kind, detail string) {
-		switch kind {
-		case "permission":
-			s.push.Notify("Kunai", "A session needs your approval")
-		case "done":
-			s.push.Notify("Kunai", "A task finished")
-		default:
-			s.push.Notify("Kunai", "A session needs your attention")
+		title, body := wakeupText(kind)
+		if s.cfg.HubURL != "" {
+			s.forwardWake(title, body)
+			return
 		}
+		if s.push != nil {
+			s.push.Notify(title, body)
+		}
+	}
+}
+
+func wakeupText(kind string) (title, body string) {
+	switch kind {
+	case "permission":
+		return "Kunai", "A session needs your approval"
+	case "done":
+		return "Kunai", "A task finished"
+	default:
+		return "Kunai", "A session needs your attention"
 	}
 }
 

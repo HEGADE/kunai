@@ -10,6 +10,8 @@
 # Optional environment:
 #   KUNAI_PORT        listen port (default 8443)
 #   KUNAI_PUSH_EMAIL  contact email for Web Push (VAPID)
+#   KUNAI_HUB_URL     on a peer machine, the hub origin to forward push wake-ups
+#                     to (e.g. https://hub.tailnet.ts.net:8443)
 set -euo pipefail
 
 say()  { printf '%s\n' "$*"; }
@@ -100,6 +102,14 @@ mv "$BIN_DIR/kunai.new" "$BIN_DIR/kunai"
 PUSH_ARG=""
 [ -n "${KUNAI_PUSH_EMAIL:-}" ] && PUSH_ARG="-push-email ${KUNAI_PUSH_EMAIL}"
 
+# This machine's own tailnet origin, so it can identify itself in the machine
+# registry the multi-machine client reads.
+PUBLIC_URL="https://$FQDN:$PORT"
+IDENT_ARGS="-public-url $PUBLIC_URL"
+# On a peer machine, point -hub-url at the machine you installed the PWA from so
+# its Web Push wake-ups reach your phone via that hub.
+[ -n "${KUNAI_HUB_URL:-}" ] && IDENT_ARGS="$IDENT_ARGS -hub-url ${KUNAI_HUB_URL}"
+
 # --- service ------------------------------------------------------------------
 
 if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
@@ -113,7 +123,7 @@ After=network-online.target tailscaled.service
 
 [Service]
 Environment=PATH=$CLAUDE_DIR:/usr/local/bin:/usr/bin:/bin
-ExecStart=$BIN_DIR/kunai -addr $TS_IP:$PORT -tls-cert $CRT -tls-key $KEY -data $DATA_DIR $PUSH_ARG
+ExecStart=$BIN_DIR/kunai -addr $TS_IP:$PORT -tls-cert $CRT -tls-key $KEY -data $DATA_DIR $IDENT_ARGS $PUSH_ARG
 Restart=always
 RestartSec=2
 
@@ -132,7 +142,7 @@ EOF
   }
 else
   say "no systemd found: starting is manual on this platform. Run:"
-  say "  $BIN_DIR/kunai -addr $TS_IP:$PORT -tls-cert $CRT -tls-key $KEY -data $DATA_DIR $PUSH_ARG"
+  say "  $BIN_DIR/kunai -addr $TS_IP:$PORT -tls-cert $CRT -tls-key $KEY -data $DATA_DIR $IDENT_ARGS $PUSH_ARG"
 fi
 
 # --- health check -------------------------------------------------------------

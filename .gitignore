@@ -15,4 +15,7 @@ web/playwright-report/
 # Logs / OS
 *.log
 .DS_Store
-dist/
+
+# Release binaries at the repo root (NOT internal/webui/dist, which is the
+# committed, go:embed'd web build).
+/dist/

@@ -9,6 +9,41 @@
   let busy = $state(false)
   let hint = $state('')
 
+  // Machines
+  let newLabel = $state('')
+  let newUrl = $state('')
+  let adding = $state(false)
+  let discovering = $state(false)
+  let machErr = $state('')
+
+  async function addMachine() {
+    const url = newUrl.trim()
+    if (!url || adding) return
+    adding = true
+    machErr = ''
+    try {
+      await app.addMachine(newLabel.trim(), url)
+      newLabel = ''
+      newUrl = ''
+    } catch (e) {
+      machErr = (e as Error).message
+    } finally {
+      adding = false
+    }
+  }
+  async function discover() {
+    if (discovering) return
+    discovering = true
+    machErr = ''
+    try {
+      await app.discover()
+    } catch (e) {
+      machErr = (e as Error).message
+    } finally {
+      discovering = false
+    }
+  }
+
   // Reflect the real subscription state, not just permission: a device can be
   // "granted" yet turned off.
   $effect(() => {
@@ -73,6 +108,43 @@
         {/if}
       </div>
       {#if hint}<p class="hint">{hint}</p>{/if}
+
+      <div class="sec">
+        Machines
+        <button class="discover" onclick={discover} disabled={discovering}>
+          {discovering ? 'Scanning…' : 'Discover'}
+        </button>
+      </div>
+      <div class="info">
+        {#each app.machines as m (m.id)}
+          <div class="irow mrow">
+            <span class="mdot" class:live={m.online}></span>
+            <span class="mmeta">
+              <span class="mlabel">{m.label}{#if m.self}<span class="mself">this</span>{/if}</span>
+              <span class="murl mono">{m.url}</span>
+            </span>
+            {#if !m.self}
+              <button class="mx" onclick={() => app.removeMachine(m.id)} aria-label="Remove machine">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </button>
+            {/if}
+          </div>
+        {/each}
+      </div>
+      <div class="addrow">
+        <input class="min" placeholder="Label" bind:value={newLabel} autocomplete="off" />
+        <input
+          class="min mono"
+          placeholder="https://host.tailnet.ts.net:8443"
+          bind:value={newUrl}
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          onkeydown={(e) => e.key === 'Enter' && addMachine()}
+        />
+        <button class="add" onclick={addMachine} disabled={adding || !newUrl.trim()}>Add</button>
+      </div>
+      {#if machErr}<p class="hint">{machErr}</p>{/if}
 
       <div class="sec">Server</div>
       <div class="info">
@@ -165,12 +237,126 @@
     padding: 4px 20px 20px;
   }
   .sec {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     font-size: 11.5px;
     font-weight: 550;
     letter-spacing: 0.05em;
     text-transform: uppercase;
     color: var(--text-4);
     padding: 16px 2px 10px;
+  }
+  .discover {
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-2);
+    padding: 4px 10px;
+    border-radius: 100px;
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+  }
+  .discover:hover {
+    color: var(--text);
+    border-color: var(--border-2);
+  }
+  .discover:disabled {
+    opacity: 0.55;
+  }
+  .mrow {
+    gap: 11px;
+  }
+  .mdot {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-4);
+  }
+  .mdot.live {
+    background: var(--live);
+  }
+  .mmeta {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .mlabel {
+    font-size: 13.5px;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .mself {
+    padding: 0 5px;
+    border-radius: 4px;
+    background: var(--panel-3);
+    color: var(--text-4);
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .murl {
+    font-size: 11px;
+    color: var(--text-4);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mx {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    color: var(--text-4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .mx:hover {
+    color: var(--text-2);
+    background: var(--panel-3);
+  }
+  .addrow {
+    display: flex;
+    gap: 7px;
+    margin-top: 8px;
+  }
+  .min {
+    min-width: 0;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 9px 11px;
+    font-size: 12.5px;
+    color: var(--text);
+    outline: none;
+  }
+  .min:first-child {
+    flex: 0 0 88px;
+  }
+  .min:nth-child(2) {
+    flex: 1;
+  }
+  .min:focus {
+    border-color: var(--border-2);
+  }
+  .add {
+    flex: none;
+    padding: 0 14px;
+    border-radius: var(--r-sm);
+    background: var(--white);
+    color: #0b0b0c;
+    font-size: 13px;
+    font-weight: 550;
+  }
+  .add:disabled {
+    opacity: 0.45;
   }
   .row {
     display: flex;
