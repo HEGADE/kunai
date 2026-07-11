@@ -523,9 +523,15 @@
     font-size: 12.5px;
   }
 
+  /* The composer floats on the chat canvas — no full-width divider or band
+     beneath it; the field's own edge defines it. */
   .dock {
-    border-top: 1px solid var(--border);
-    padding: 10px 16px calc(var(--safe-bottom) + 4px);
+    padding: 6px 16px calc(var(--safe-bottom) + 12px);
+  }
+  @media (min-width: 861px) {
+    .dock {
+      padding: 6px 24px 20px;
+    }
   }
   .field {
     max-width: 720px;
@@ -533,13 +539,13 @@
     display: flex;
     flex-direction: column;
     background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 22px;
-    padding: 10px 12px 10px 16px;
+    border: 1px solid var(--border-2);
+    border-radius: 20px;
+    padding: 9px 10px 9px 16px;
     transition: border-color 0.12s;
   }
   .field:focus-within {
-    border-color: var(--border-2);
+    border-color: var(--text-4);
   }
   .chips {
     display: flex;
@@ -676,17 +682,18 @@
   }
   .send,
   .stop {
-    width: 32px;
-    height: 32px;
-    border-radius: var(--r-sm);
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
+    transition: background 0.12s, color 0.12s;
   }
   .send {
-    background: var(--panel-2);
+    background: var(--panel-3);
     color: var(--text-4);
-    font-size: 15px;
+    font-size: 16px;
     font-weight: 600;
   }
   .send.ready {
@@ -694,8 +701,8 @@
     color: #0b0b0c;
   }
   .stop {
-    background: var(--panel-2);
-    color: var(--text-2);
+    background: var(--white);
+    color: #0b0b0c;
   }
   .sq {
     width: 9px;
