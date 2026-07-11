@@ -44,6 +44,22 @@
   )
   // Load average relative to core count is a decent at-a-glance CPU pressure gauge.
   const cpuPct = $derived(st && st.cores ? Math.min(100, Math.round((st.load1 / st.cores) * 100)) : 0)
+
+  // Quick-start dirs for the selected machine only — so chips don't each repeat
+  // the machine name (that's stated once in the section header).
+  const selProjects = $derived.by(() => {
+    if (!sel) return []
+    const active = new Set(app.sessions.filter((s) => s.machineId === sel.id).map((s) => s.cwd))
+    const seen = new Set<string>()
+    const out: { cwd: string; name: string }[] = []
+    for (const h of app.history) {
+      if (h.machineId !== sel.id || active.has(h.cwd) || seen.has(h.cwd)) continue
+      seen.add(h.cwd)
+      out.push({ cwd: h.cwd, name: h.cwd.replace(/\/+$/, '').split('/').slice(-1)[0] || h.cwd })
+      if (out.length >= 8) break
+    }
+    return out
+  })
 </script>
 
 <div class="home" class:compact>
@@ -143,12 +159,12 @@
   {/if}
 
   <div class="start">
-    <span class="s-label">Start in</span>
+    <span class="s-label">{multi && sel ? `Start on ${sel.label}` : 'Start in'}</span>
     <div class="chips">
-      {#each app.projects as p (p.machineId + ':' + p.cwd)}
-        <button class="chip" title={p.cwd} onclick={() => app.quickStart(p.machineId, p.cwd)}>
+      {#each selProjects as p (p.cwd)}
+        <button class="chip" title={p.cwd} onclick={() => sel && app.quickStart(sel.id, p.cwd)}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
-          {p.name}{#if app.machines.length > 1}<span class="cm">{app.machines.find((m) => m.id === p.machineId)?.label || p.machineId}</span>{/if}
+          {p.name}
         </button>
       {/each}
       <button class="chip browse" onclick={() => app.newSession()}>
@@ -359,13 +375,5 @@
   .chip.browse {
     color: var(--text-3);
     border-style: dashed;
-  }
-  .cm {
-    margin-left: 7px;
-    padding: 1px 5px;
-    border-radius: 4px;
-    background: var(--panel-3);
-    color: var(--text-4);
-    font-size: 10px;
   }
 </style>
