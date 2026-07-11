@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hegade/kunai/internal/session"
 )
 
 // HistoryEntry is a past Claude Code session found on disk that can be resumed
@@ -150,4 +152,101 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// maxSeedTurns bounds how much history is replayed into a resumed session.
+const maxSeedTurns = 400
+
+// loadTranscriptTurns parses a session transcript into displayable turns so a
+// resumed session opens with its conversation history.
+func loadTranscriptTurns(id string) []session.SeedTurn {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	root := filepath.Join(home, ".claude", "projects")
+	dirs, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var path string
+	for _, d := range dirs {
+		p := filepath.Join(root, d.Name(), id+".jsonl")
+		if _, err := os.Stat(p); err == nil {
+			path = p
+			break
+		}
+	}
+	if path == "" {
+		return nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var turns []session.SeedTurn
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
+	for sc.Scan() {
+		var v struct {
+			Type    string `json:"type"`
+			IsMeta  bool   `json:"isMeta"`
+			Message struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(sc.Bytes(), &v) != nil {
+			continue
+		}
+		switch v.Type {
+		case "user":
+			if v.IsMeta {
+				continue
+			}
+			t := strings.TrimSpace(firstUserText(v.Message.Content))
+			// Skip tool results and harness wrappers — they aren't turns the
+			// user typed.
+			if t != "" && !strings.HasPrefix(t, "<") {
+				turns = append(turns, session.SeedTurn{Role: "user", Text: t})
+			}
+		case "assistant":
+			if blocks := assistantSeedBlocks(v.Message.Content); len(blocks) > 0 {
+				turns = append(turns, session.SeedTurn{Role: "assistant", Blocks: blocks})
+			}
+		}
+	}
+	if len(turns) > maxSeedTurns {
+		turns = turns[len(turns)-maxSeedTurns:]
+	}
+	return turns
+}
+
+// assistantSeedBlocks converts transcript assistant content into app blocks
+// (text and tool_use; thinking is dropped from replays).
+func assistantSeedBlocks(content json.RawMessage) []session.AppBlock {
+	var raw []struct {
+		Type  string          `json:"type"`
+		Text  string          `json:"text"`
+		ID    string          `json:"id"`
+		Name  string          `json:"name"`
+		Input json.RawMessage `json:"input"`
+	}
+	if json.Unmarshal(content, &raw) != nil {
+		return nil
+	}
+	out := make([]session.AppBlock, 0, len(raw))
+	for _, b := range raw {
+		switch b.Type {
+		case "text":
+			if b.Text != "" {
+				out = append(out, session.AppBlock{Type: "text", Text: b.Text})
+			}
+		case "tool_use":
+			out = append(out, session.AppBlock{Type: "tool_use", ID: b.ID, Name: b.Name, Input: b.Input})
+		}
+	}
+	return out
 }

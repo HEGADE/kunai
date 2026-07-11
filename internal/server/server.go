@@ -121,9 +121,13 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// Session start blocks on the CLI init handshake; give it room.
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
-	sess, err := s.mgr.Create(ctx, session.CreateOptions{
-		Cwd: req.Cwd, Title: req.Title, Model: req.Model, Resume: req.Resume,
-	})
+	opts := session.CreateOptions{Cwd: req.Cwd, Title: req.Title, Model: req.Model, Resume: req.Resume}
+	if req.Resume != "" {
+		// Replay the prior conversation into the buffer so the client doesn't
+		// open onto an empty transcript.
+		opts.Seed = loadTranscriptTurns(req.Resume)
+	}
+	sess, err := s.mgr.Create(ctx, opts)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

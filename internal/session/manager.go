@@ -29,6 +29,9 @@ type CreateOptions struct {
 	// Resume, when set, reattaches to an existing CLI session id (loading its
 	// transcript) rather than starting a fresh conversation.
 	Resume string
+	// Seed pre-populates the replay buffer with past turns (used with Resume so
+	// the client sees the prior conversation).
+	Seed []SeedTurn
 }
 
 // Create starts a new claude session and registers it. Our handle id doubles as
@@ -62,6 +65,9 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 
 	s := newSession(id, opts.Cwd, opts.Title, drv)
 	s.model = opts.Model
+	if len(opts.Seed) > 0 {
+		s.Seed(opts.Seed)
+	}
 
 	m.mu.Lock()
 	m.sessions[id] = s

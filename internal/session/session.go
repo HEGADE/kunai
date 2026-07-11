@@ -109,6 +109,29 @@ func newSession(id, cwd, title string, drv driver) *Session {
 // no longer usable.
 func (s *Session) Done() <-chan struct{} { return s.done }
 
+// SeedTurn is a prior conversation turn loaded from a transcript when resuming.
+type SeedTurn struct {
+	Role   string     // "user" | "assistant"
+	Text   string     // user text
+	Blocks []AppBlock // assistant content blocks
+}
+
+// Seed pre-populates the replay buffer with transcript history so a resumed
+// session opens with its past conversation visible. Call before clients attach.
+func (s *Session) Seed(turns []SeedTurn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, t := range turns {
+		var ev AppEvent
+		if t.Role == "user" {
+			ev = AppEvent{T: EvUser, Text: t.Text}
+		} else {
+			ev = AppEvent{T: EvAssistant, Blocks: t.Blocks}
+		}
+		s.emitLocked(s.sequenceLocked(ev))
+	}
+}
+
 // pump translates driver events into app events until the driver closes.
 func (s *Session) pump() {
 	for ev := range s.drv.Events() {

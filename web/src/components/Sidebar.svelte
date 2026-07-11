@@ -8,6 +8,19 @@
   let notif = $state(pushState())
   let notifHint = $state('')
   let resuming = $state('')
+  let q = $state('')
+
+  const query = $derived(q.trim().toLowerCase())
+  const activeList = $derived(
+    app.sessions.filter(
+      (m) => !query || shortName(m).toLowerCase().includes(query) || m.cwd.toLowerCase().includes(query),
+    ),
+  )
+  const recentList = $derived(
+    app.history.filter(
+      (h) => !query || h.title.toLowerCase().includes(query) || h.cwd.toLowerCase().includes(query),
+    ),
+  )
 
   async function toggleNotif() {
     if (notif === 'granted') return
@@ -23,9 +36,9 @@
   function ago(iso: string): string {
     const s = (Date.now() - new Date(iso).getTime()) / 1000
     if (s < 90) return 'now'
-    if (s < 3600) return `${Math.round(s / 60)}m`
-    if (s < 86400) return `${Math.round(s / 3600)}h`
-    return `${Math.round(s / 86400)}d`
+    if (s < 3600) return `${Math.round(s / 60)}m ago`
+    if (s < 86400) return `${Math.round(s / 3600)}h ago`
+    return `${Math.round(s / 86400)}d ago`
   }
   async function remove(e: MouseEvent, m: Meta) {
     e.stopPropagation()
@@ -57,52 +70,63 @@
     </button>
   </header>
 
+  <div class="searchwrap">
+    <div class="search">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+      <input type="search" placeholder="Search sessions" bind:value={q} autocomplete="off" />
+    </div>
+  </div>
+
   <div class="list">
     {#if app.listError}
       <p class="note mono">{app.listError}</p>
     {/if}
 
-    {#if app.sessions.length > 0}
+    {#if activeList.length > 0}
       <div class="sec">Active</div>
-      <div class="group">
-        {#each app.sessions as m (m.id)}
-          <div class="rowwrap" class:current={app.activeId === m.id}>
-            <button class="row" onclick={() => app.open(m.id)}>
-              <span class="dot" data-state={m.state}></span>
-              <span class="meta">
-                <span class="name">{shortName(m)}</span>
-                <span class="path mono">{m.cwd}</span>
-              </span>
-            </button>
-            <button class="x" onclick={(e) => remove(e, m)} aria-label="Close session">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-            </button>
-          </div>
-        {/each}
-      </div>
+      {#each activeList as m (m.id)}
+        <div class="card" class:current={app.activeId === m.id}>
+          <button class="hit" onclick={() => app.open(m.id)}>
+            <span class="badge">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
+              <span class="bdot" data-state={m.state}></span>
+            </span>
+            <span class="meta">
+              <span class="name">{shortName(m)}</span>
+              <span class="sub mono">{m.cwd}</span>
+            </span>
+          </button>
+          <button class="x" onclick={(e) => remove(e, m)} aria-label="Close session">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </div>
+      {/each}
     {/if}
 
-    {#if app.history.length > 0}
+    {#if recentList.length > 0}
       <div class="sec">Recent</div>
-      <div class="group">
-        {#each app.history as h (h.id)}
-          <div class="rowwrap">
-            <button class="row" onclick={() => resume(h)} disabled={!!resuming}>
-              <span class="meta">
-                <span class="name">{resuming === h.id ? 'Resuming…' : h.title}</span>
-                <span class="path mono">{h.cwd}</span>
-              </span>
-              <span class="when">{ago(h.mtime)}</span>
-            </button>
-          </div>
-        {/each}
-      </div>
+      {#each recentList as h (h.id)}
+        <div class="card">
+          <button class="hit" onclick={() => resume(h)} disabled={!!resuming}>
+            <span class="badge dim">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 109-9 9.75 9.75 0 00-6.74 2.74L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l4 2" /></svg>
+            </span>
+            <span class="meta">
+              <span class="name">{resuming === h.id ? 'Resuming…' : h.title}</span>
+              <span class="sub mono">{h.cwd} · {ago(h.mtime)}</span>
+            </span>
+            <span class="chev">›</span>
+          </button>
+        </div>
+      {/each}
     {/if}
 
-    {#if app.sessions.length === 0 && app.history.length === 0 && !app.listError}
+    {#if activeList.length === 0 && recentList.length === 0 && !app.listError}
       <div class="empty">
-        <p class="e1">No sessions yet</p>
-        <p class="e2">Start one in any project directory on your machine.</p>
+        <p class="e1">{query ? 'No matches' : 'No sessions yet'}</p>
+        <p class="e2">
+          {query ? 'Try a different search.' : 'Start one in any project directory on your machine.'}
+        </p>
       </div>
     {/if}
   </div>
@@ -129,7 +153,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: calc(var(--safe-top) + 18px) 20px 16px;
+    padding: calc(var(--safe-top) + 18px) 20px 14px;
   }
   .add {
     width: 34px;
@@ -146,10 +170,43 @@
     color: var(--text);
     border-color: var(--border-2);
   }
+  .searchwrap {
+    padding: 0 14px 4px;
+  }
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 0 13px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    color: var(--text-4);
+  }
+  .search:focus-within {
+    border-color: var(--border-2);
+    color: var(--text-3);
+  }
+  .search input {
+    flex: 1;
+    min-width: 0;
+    background: none;
+    border: none;
+    outline: none;
+    padding: 10px 0;
+    font-size: 14px;
+    color: var(--text);
+  }
+  .search input::placeholder {
+    color: var(--text-4);
+  }
+  .search input::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+  }
   .list {
     flex: 1;
     overflow-y: auto;
-    padding: 0 14px 14px;
+    padding: 4px 14px 14px;
   }
   .sec {
     font-size: 11.5px;
@@ -159,62 +216,70 @@
     color: var(--text-4);
     padding: 12px 6px 8px;
   }
-  .group {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    overflow: hidden;
-  }
   .note {
     color: var(--text-3);
     font-size: 12.5px;
     padding: 10px;
   }
-  .rowwrap {
+  .card {
     position: relative;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    margin-bottom: 8px;
+    transition: border-color 0.12s;
   }
-  .rowwrap + .rowwrap::before {
-    content: '';
-    position: absolute;
-    left: 16px;
-    right: 0;
-    top: 0;
-    height: 1px;
-    background: var(--border);
+  .card:hover {
+    border-color: var(--border-2);
   }
-  .rowwrap.current {
+  .card.current {
+    border-color: var(--border-2);
     background: var(--panel-2);
   }
-  .row {
+  .hit {
     width: 100%;
     display: flex;
     align-items: center;
-    gap: 11px;
+    gap: 12px;
     text-align: left;
-    padding: 13px 44px 13px 16px;
+    padding: 12px 40px 12px 12px;
   }
-  .row:disabled {
+  .hit:disabled {
     opacity: 0.55;
   }
-  .rowwrap:not(.current) .row:active,
-  .rowwrap:not(.current) .row:hover {
-    background: var(--panel-2);
-  }
-  .dot {
+  .badge {
+    position: relative;
     flex: none;
-    width: 7px;
-    height: 7px;
+    width: 36px;
+    height: 36px;
     border-radius: 50%;
+    background: var(--panel-3);
+    color: var(--text-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .badge.dim {
+    color: var(--text-3);
+  }
+  .bdot {
+    position: absolute;
+    right: -1px;
+    bottom: -1px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 2px solid var(--panel);
     background: var(--text-4);
   }
-  .dot[data-state='idle'] {
+  .bdot[data-state='idle'] {
     background: var(--live);
   }
-  .dot[data-state='running'] {
+  .bdot[data-state='running'] {
     background: var(--busy);
     animation: soften 1.6s ease-in-out infinite;
   }
-  .dot[data-state='awaiting_permission'] {
+  .bdot[data-state='awaiting_permission'] {
     background: var(--busy);
   }
   @keyframes soften {
@@ -237,7 +302,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .path {
+  .sub {
     font-size: 10.5px;
     color: var(--text-4);
     white-space: nowrap;
@@ -247,21 +312,21 @@
     unicode-bidi: plaintext;
     text-align: left;
   }
-  .when {
+  .chev {
     position: absolute;
     right: 16px;
     top: 50%;
     transform: translateY(-50%);
-    font-size: 11.5px;
     color: var(--text-4);
+    font-size: 17px;
   }
   .x {
     position: absolute;
-    right: 10px;
+    right: 8px;
     top: 50%;
     transform: translateY(-50%);
-    width: 28px;
-    height: 28px;
+    width: 30px;
+    height: 30px;
     border-radius: 50%;
     color: var(--text-4);
     display: flex;
@@ -275,7 +340,7 @@
   }
   .empty {
     text-align: center;
-    margin-top: 26vh;
+    margin-top: 24vh;
     padding: 0 30px;
   }
   .e1 {

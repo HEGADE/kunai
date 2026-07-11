@@ -106,10 +106,10 @@
       <svg width="10" height="16" viewBox="0 0 10 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1L2 8l6 7" /></svg>
     </button>
     <div class="htitle">
-      <span class="title">
-        <span class="sdot" data-k={status.k}></span>{chat.title || chat.cwd.split('/').slice(-1)[0] || 'session'}
+      <span class="pill" title={chat.cwd}>
+        <span class="sdot" data-k={status.k}></span>
+        <span class="pname">{chat.title || chat.cwd.split('/').slice(-1)[0] || 'session'}</span>
       </span>
-      <span class="subtitle mono">{chat.cwd}</span>
     </div>
     <button class="hbtn menu" onclick={() => (menuOpen = !menuOpen)} aria-label="Menu">⋯</button>
     {#if menuOpen}
@@ -276,30 +276,24 @@
     flex: 1;
     min-width: 0;
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 2px;
+    justify-content: center;
   }
-  .title {
+  .pill {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
+    gap: 8px;
     max-width: 100%;
-    font-size: 15px;
-    font-weight: 600;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    padding: 8px 15px;
+    border-radius: 100px;
+    background: var(--panel);
+    border: 1px solid var(--border);
   }
-  .subtitle {
-    max-width: 100%;
-    font-size: 10.5px;
-    color: var(--text-4);
+  .pname {
+    font-size: 13.5px;
+    font-weight: 550;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    direction: rtl;
-    unicode-bidi: plaintext;
   }
   .sdot {
     flex: none;
