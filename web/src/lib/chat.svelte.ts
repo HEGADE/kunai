@@ -1,4 +1,4 @@
-import type { AppEvent, Attachment, Block, Command, SessionState } from './types'
+import type { AppEvent, Attachment, Block, Command, PermissionMode, SessionState } from './types'
 
 export type Item =
   | { role: 'user'; text: string }
@@ -24,6 +24,7 @@ export class ChatConnection {
   pending = $state<PendingPermission[]>([])
   status = $state<ConnStatus>('connecting')
   sessionState = $state<SessionState>('idle')
+  mode = $state<PermissionMode>('default')
   cwd = $state('')
   model = $state('')
   title = $state('')
@@ -83,6 +84,7 @@ export class ChatConnection {
         this.model = ev.model ?? this.model
         this.title = ev.title ?? this.title
         if (ev.state) this.sessionState = ev.state
+        if (ev.mode) this.mode = ev.mode as PermissionMode
         for (const p of ev.pending ?? []) this.addPending(p)
         break
       case 'user':
@@ -151,6 +153,11 @@ export class ChatConnection {
 
   interrupt() {
     this.send({ t: 'interrupt' })
+  }
+
+  setMode(mode: PermissionMode) {
+    this.mode = mode
+    this.send({ t: 'set_mode', mode })
   }
 
   destroy() {

@@ -239,6 +239,11 @@ func (s *Session) SetModel(model string) error {
 	return s.send(ControlRequest{Type: TypeControlRequest, RequestID: randHex(8), Request: SetModelRequest{Subtype: SubSetModel, Model: model}})
 }
 
+// SetPermissionMode switches the permission mode for the session.
+func (s *Session) SetPermissionMode(mode string) error {
+	return s.send(ControlRequest{Type: TypeControlRequest, RequestID: randHex(8), Request: SetPermissionModeRequest{Subtype: SubSetPermMode, Mode: mode}})
+}
+
 // Close terminates the session and its process.
 func (s *Session) Close() error {
 	if s.procCancel != nil {

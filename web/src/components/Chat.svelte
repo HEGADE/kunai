@@ -16,12 +16,20 @@
   let attachments = $state<Attachment[]>([])
   let uploading = $state(false)
   let menuOpen = $state(false)
+  let modeOpen = $state(false)
 
+  // Follow the stream only while the user is already at the bottom — never yank
+  // the view away from something they scrolled up to read.
+  let pinned = true
+  function onScroll() {
+    if (!scroller) return
+    pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 90
+  }
   $effect(() => {
     chat.items.length
     chat.streaming
     chat.pending.length
-    if (scroller) queueMicrotask(() => scroller && (scroller.scrollTop = scroller.scrollHeight))
+    if (scroller && pinned) queueMicrotask(() => scroller && (scroller.scrollTop = scroller.scrollHeight))
   })
 
   async function onFiles(e: Event) {
@@ -60,6 +68,19 @@
     textarea.style.height = 'auto'
     textarea.style.height = Math.min(textarea.scrollHeight, 160) + 'px'
   }
+
+  const modeLabels: Record<string, string> = {
+    default: 'Ask',
+    acceptEdits: 'Edits',
+    auto: 'Auto',
+    plan: 'Plan',
+  }
+  const modes = [
+    { id: 'default', label: 'Ask', hint: 'Approve each tool call' },
+    { id: 'auto', label: 'Auto', hint: 'Approve safe actions automatically' },
+    { id: 'acceptEdits', label: 'Accept edits', hint: 'Auto-approve file edits' },
+    { id: 'plan', label: 'Plan', hint: 'Read-only planning' },
+  ] as const
 
   const running = $derived(chat.sessionState === 'running')
   const status = $derived(
@@ -102,7 +123,7 @@
     {/if}
   </header>
 
-  <div class="scroll" bind:this={scroller}>
+  <div class="scroll" bind:this={scroller} onscroll={onScroll}>
     <div class="log">
       {#each chat.items as item, i (i)}
         {#if item.role === 'user'}
@@ -133,7 +154,7 @@
             {#if chat.streaming}
               <Markdown text={chat.streaming} />
             {:else if running}
-              <span class="spark" aria-label="working">✳</span>
+              <span class="working">Working…</span>
             {/if}
           </div>
         </div>
@@ -170,6 +191,26 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3 3 0 014.24 4.24l-9.2 9.19a1 1 0 01-1.41-1.41l8.49-8.49" /></svg>
         </button>
         <input type="file" multiple bind:this={fileInput} onchange={onFiles} hidden />
+        <div class="modewrap">
+          <button class="mode" class:on={chat.mode !== 'default'} onclick={() => (modeOpen = !modeOpen)}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4.5 13.5h5L11 22l8.5-11.5h-5z" /></svg>
+            {modeLabels[chat.mode] ?? chat.mode}
+          </button>
+          {#if modeOpen}
+            <button class="mode-scrim" onclick={() => (modeOpen = false)} aria-label="Close"></button>
+            <div class="mode-pop">
+              {#each modes as m (m.id)}
+                <button
+                  class:active={chat.mode === m.id}
+                  onclick={() => { chat.setMode(m.id); modeOpen = false }}
+                >
+                  <span class="ml">{m.label}</span>
+                  <span class="mh">{m.hint}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
         <span class="spacer"></span>
         {#if running}
           <button class="stop" onclick={() => chat.interrupt()} aria-label="Stop"><span class="sq"></span></button>
@@ -330,15 +371,14 @@
     flex-direction: column;
     gap: 12px;
   }
-  .spark {
-    display: inline-block;
-    color: var(--alert);
-    font-size: 15px;
-    animation: spin 1.5s linear infinite;
+  .working {
+    font-size: 13px;
+    color: var(--text-3);
+    animation: soften 1.6s ease-in-out infinite;
   }
-  @keyframes spin {
-    to {
-      transform: rotate(180deg);
+  @keyframes soften {
+    50% {
+      opacity: 0.45;
     }
   }
   .prose {
@@ -456,6 +496,78 @@
   .attach:hover {
     color: var(--text);
     background: var(--panel-2);
+  }
+  .modewrap {
+    position: relative;
+    margin-left: 2px;
+  }
+  .mode {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: 100px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    font-size: 12.5px;
+    font-weight: 500;
+  }
+  .mode:hover {
+    color: var(--text);
+    border-color: var(--border-2);
+  }
+  .mode.on {
+    color: var(--text);
+    border-color: var(--border-2);
+  }
+  .mode-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+  }
+  .mode-pop {
+    position: absolute;
+    z-index: 31;
+    bottom: calc(100% + 8px);
+    left: 0;
+    min-width: 230px;
+    padding: 5px;
+    background: var(--panel-2);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r);
+    box-shadow: 0 16px 40px -14px rgba(0, 0, 0, 0.7);
+  }
+  .mode-pop button {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    text-align: left;
+    padding: 8px 11px;
+    border-radius: var(--r-sm);
+  }
+  .mode-pop button:hover {
+    background: var(--panel-3);
+  }
+  .mode-pop button.active .ml {
+    color: var(--text);
+  }
+  .mode-pop button.active::after {
+    content: '';
+  }
+  .ml {
+    font-size: 13.5px;
+    font-weight: 550;
+    color: var(--text-2);
+  }
+  .mode-pop button.active {
+    background: var(--panel-3);
+  }
+  .mh {
+    font-size: 11.5px;
+    color: var(--text-4);
   }
   .send,
   .stop {

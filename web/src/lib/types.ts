@@ -38,6 +38,7 @@ export interface AppEvent {
   model?: string
   title?: string
   state?: SessionState
+  mode?: string
   high_seq?: number
   pending?: AppEvent[]
   // delta / thinking / user / error
@@ -65,11 +66,21 @@ export interface Attachment {
   media_type: string
 }
 
+export type PermissionMode = 'default' | 'acceptEdits' | 'auto' | 'plan'
+
 export type Command =
   | { t: 'prompt'; text: string; attachments?: Attachment[] }
   | { t: 'permission'; request_id: string; behavior: 'allow' | 'deny'; always?: boolean }
   | { t: 'interrupt' }
   | { t: 'set_model'; model: string }
+  | { t: 'set_mode'; mode: PermissionMode }
+
+export interface HistoryEntry {
+  id: string
+  cwd: string
+  title: string
+  mtime: string
+}
 
 export interface DirEntry {
   name: string

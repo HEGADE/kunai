@@ -1,12 +1,13 @@
-import { listSessions } from './api'
+import { history as fetchHistory, listSessions } from './api'
 import { ChatConnection } from './chat.svelte'
-import type { Meta } from './types'
+import type { HistoryEntry, Meta } from './types'
 
 // Top-level app state. The UI is a two-pane shell (sessions + conversation) on
 // wide screens and a stacked flow on phones; both share this state. "New session"
 // is a modal overlay in both layouts.
 class AppStore {
   sessions = $state<Meta[]>([])
+  history = $state<HistoryEntry[]>([])
   chat = $state<ChatConnection | null>(null)
   activeId = $state<string | null>(null)
   showNew = $state(false)
@@ -20,6 +21,12 @@ class AppStore {
       this.listError = ''
     } catch (e) {
       this.listError = (e as Error).message
+      return
+    }
+    try {
+      this.history = await fetchHistory()
+    } catch {
+      /* history is best-effort */
     }
   }
 

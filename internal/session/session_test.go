@@ -43,8 +43,9 @@ func (f *fakeDriver) Interrupt() error {
 	f.mu.Unlock()
 	return nil
 }
-func (f *fakeDriver) SetModel(model string) error { return nil }
-func (f *fakeDriver) Close() error                { close(f.events); return nil }
+func (f *fakeDriver) SetModel(model string) error         { return nil }
+func (f *fakeDriver) SetPermissionMode(mode string) error { return nil }
+func (f *fakeDriver) Close() error                        { close(f.events); return nil }
 
 // drain reads n events from a Subscriber (fails the test on timeout).
 func drain(t *testing.T, sub *Subscriber, n int) []AppEvent {

@@ -16,12 +16,14 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,png,svg,webmanifest}'],
       },
       manifest: {
+        id: '/',
         name: 'Kunai',
         short_name: 'Kunai',
         description: 'Self-hosted, relay-free mobile client for Claude Code',
         theme_color: '#0b0b0c',
         background_color: '#0b0b0c',
         display: 'standalone',
+        display_override: ['standalone'],
         start_url: '/',
         scope: '/',
         icons: [

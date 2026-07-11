@@ -95,6 +95,8 @@ func (s *Server) dispatch(sess *session.Session, cmd session.Command) {
 		err = sess.Interrupt()
 	case session.CmdSetModel:
 		err = sess.SetModel(cmd.Model)
+	case session.CmdSetMode:
+		err = sess.SetPermissionMode(cmd.Mode)
 	default:
 		err = errors.New("unknown command: " + cmd.T)
 	}

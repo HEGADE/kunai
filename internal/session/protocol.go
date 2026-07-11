@@ -20,6 +20,7 @@ type AppEvent struct {
 	Model   string     `json:"model,omitempty"`
 	Title   string     `json:"title,omitempty"`
 	State   string     `json:"state,omitempty"`
+	Mode    string     `json:"mode,omitempty"` // permission mode
 	HighSeq uint64     `json:"high_seq,omitempty"`
 	Pending []AppEvent `json:"pending,omitempty"` // unresolved permission asks
 
@@ -92,6 +93,9 @@ type Command struct {
 
 	// "set_model"
 	Model string `json:"model,omitempty"`
+
+	// "set_mode"
+	Mode string `json:"mode,omitempty"`
 }
 
 // Command type tags.
@@ -100,6 +104,7 @@ const (
 	CmdPermission = "permission"
 	CmdInterrupt  = "interrupt"
 	CmdSetModel   = "set_model"
+	CmdSetMode    = "set_mode"
 )
 
 // Attachment is an uploaded file/image referenced by a prompt (Phase 3). The

@@ -83,6 +83,13 @@ type SetModelRequest struct {
 	Model   string `json:"model,omitempty"`
 }
 
+// SetPermissionModeRequest switches the session's permission mode
+// ("default", "acceptEdits", "auto", "plan", …).
+type SetPermissionModeRequest struct {
+	Subtype string `json:"subtype"` // "set_permission_mode"
+	Mode    string `json:"mode"`
+}
+
 // ControlRequest is a control_request we originate (initialize, interrupt, …).
 type ControlRequest struct {
 	Type      string      `json:"type"` // "control_request"

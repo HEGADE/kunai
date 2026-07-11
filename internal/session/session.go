@@ -27,6 +27,7 @@ type driver interface {
 	Resolve(requestID string, r claude.PermissionResult) error
 	Interrupt() error
 	SetModel(model string) error
+	SetPermissionMode(mode string) error
 	Close() error
 }
 
@@ -43,6 +44,7 @@ type Session struct {
 	mu              sync.Mutex
 	seq             uint64
 	model           string
+	mode            string // permission mode
 	title           string
 	claudeSessionID string // CLI-assigned id, for --resume cold-start
 	state           string
@@ -92,6 +94,7 @@ func newSession(id, cwd, title string, drv driver) *Session {
 		drv:             drv,
 		title:           title,
 		state:           StateIdle,
+		mode:            "default",
 		buf:             newRing(ringCapacity),
 		subs:            make(map[*Subscriber]struct{}),
 		pending:         make(map[string]AppEvent),
@@ -243,6 +246,15 @@ func (s *Session) SetModel(model string) error {
 	return s.drv.SetModel(model)
 }
 
+// SetPermissionMode switches the permission mode ("default", "acceptEdits",
+// "auto", "plan", …).
+func (s *Session) SetPermissionMode(mode string) error {
+	s.mu.Lock()
+	s.mode = mode
+	s.mu.Unlock()
+	return s.drv.SetPermissionMode(mode)
+}
+
 // Close terminates the session.
 func (s *Session) Close() {
 	s.drv.Close()
@@ -267,6 +279,7 @@ func (s *Session) Attach(afterSeq uint64) (hello AppEvent, backlog []AppEvent, s
 		Model:   s.model,
 		Title:   s.title,
 		State:   s.state,
+		Mode:    s.mode,
 		HighSeq: s.seq,
 		Pending: pending,
 	}

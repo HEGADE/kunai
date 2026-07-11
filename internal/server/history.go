@@ -1,0 +1,153 @@
+package server
+
+import (
+	"bufio"
+	"encoding/json"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+)
+
+// HistoryEntry is a past Claude Code session found on disk that can be resumed
+// with --resume. Sessions survive server restarts this way.
+type HistoryEntry struct {
+	ID    string    `json:"id"`
+	Cwd   string    `json:"cwd"`
+	Title string    `json:"title"`
+	Mtime time.Time `json:"mtime"`
+}
+
+const historyLimit = 25
+
+// handleHistory lists resumable past sessions, newest first, excluding ones
+// that are currently live.
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	live := map[string]bool{}
+	for _, m := range s.mgr.List() {
+		live[m.ID] = true
+	}
+	writeJSON(w, http.StatusOK, scanHistory(live))
+}
+
+// scanHistory walks ~/.claude/projects/*/<sessionId>.jsonl transcripts.
+func scanHistory(live map[string]bool) []HistoryEntry {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return []HistoryEntry{}
+	}
+	root := filepath.Join(home, ".claude", "projects")
+	dirs, err := os.ReadDir(root)
+	if err != nil {
+		return []HistoryEntry{}
+	}
+
+	out := []HistoryEntry{}
+	for _, d := range dirs {
+		if !d.IsDir() {
+			continue
+		}
+		files, err := os.ReadDir(filepath.Join(root, d.Name()))
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			name := f.Name()
+			if !strings.HasSuffix(name, ".jsonl") {
+				continue
+			}
+			id := strings.TrimSuffix(name, ".jsonl")
+			if live[id] {
+				continue
+			}
+			info, err := f.Info()
+			if err != nil || info.Size() == 0 {
+				continue
+			}
+			cwd, title := probeTranscript(filepath.Join(root, d.Name(), name))
+			if cwd == "" {
+				continue
+			}
+			if title == "" {
+				title = filepath.Base(cwd)
+			}
+			out = append(out, HistoryEntry{ID: id, Cwd: cwd, Title: title, Mtime: info.ModTime()})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Mtime.After(out[j].Mtime) })
+	if len(out) > historyLimit {
+		out = out[:historyLimit]
+	}
+	return out
+}
+
+// probeTranscript extracts the session cwd and a human title (summary line or
+// first user prompt) from the head of a transcript.
+func probeTranscript(path string) (cwd, title string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", ""
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024) // transcript lines can be large
+	for lines := 0; sc.Scan() && lines < 60 && (cwd == "" || title == ""); lines++ {
+		var v struct {
+			Type    string `json:"type"`
+			Cwd     string `json:"cwd"`
+			Summary string `json:"summary"`
+			Message struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(sc.Bytes(), &v) != nil {
+			continue
+		}
+		if cwd == "" && v.Cwd != "" {
+			cwd = v.Cwd
+		}
+		if title == "" {
+			if v.Type == "summary" && v.Summary != "" {
+				title = v.Summary
+			} else if v.Message.Role == "user" && len(v.Message.Content) > 0 {
+				t := strings.TrimSpace(firstUserText(v.Message.Content))
+				// Skip harness/system wrappers (<system_instruction>, caveats, …)
+				// — they aren't what the user actually asked.
+				if t != "" && !strings.HasPrefix(t, "<") {
+					title = t
+				}
+			}
+		}
+	}
+	return cwd, truncate(strings.TrimSpace(title), 64)
+}
+
+func firstUserText(content json.RawMessage) string {
+	var s string
+	if json.Unmarshal(content, &s) == nil {
+		return s
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(content, &blocks) == nil {
+		for _, b := range blocks {
+			if b.Type == "text" && b.Text != "" {
+				return b.Text
+			}
+		}
+	}
+	return ""
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}

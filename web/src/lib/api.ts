@@ -1,4 +1,4 @@
-import type { Attachment, Listing, Meta } from './types'
+import type { Attachment, HistoryEntry, Listing, Meta } from './types'
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -44,4 +44,8 @@ export function uploadFile(file: File): Promise<Attachment> {
   const form = new FormData()
   form.append('file', file)
   return fetch('/api/upload', { method: 'POST', body: form }).then((r) => json<Attachment>(r))
+}
+
+export function history(): Promise<HistoryEntry[]> {
+  return fetch('/api/history').then((r) => json<HistoryEntry[]>(r))
 }
