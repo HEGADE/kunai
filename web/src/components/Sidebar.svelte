@@ -43,6 +43,15 @@
     return app.sessions.filter((m) => m.machineId === mid).length
   }
 
+  let filterOpen = $state(false)
+  const currentFilter = $derived(
+    app.machineFilter === 'all' ? null : app.machines.find((m) => m.id === app.machineFilter),
+  )
+  function pickFilter(id: string) {
+    app.machineFilter = id
+    filterOpen = false
+  }
+
   async function toggleNotif() {
     if (notif === 'granted') return
     const err = await enablePush()
@@ -108,22 +117,34 @@
   </div>
 
   {#if multi}
-    <div class="mtabs">
-      <button class="mtab" class:on={app.machineFilter === 'all'} onclick={() => (app.machineFilter = 'all')}>
-        All
+    <div class="mfilterwrap">
+      <button class="mfilter" onclick={() => (filterOpen = !filterOpen)}>
+        {#if currentFilter}
+          <span class="fdot" class:live={currentFilter.online}></span>
+          <span class="flabel">{currentFilter.label}</span>
+        {:else}
+          <svg class="fico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg>
+          <span class="flabel">All machines</span>
+        {/if}
+        <svg class="fchev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
       </button>
-      {#each app.machines as m (m.id)}
-        <button
-          class="mtab"
-          class:on={app.machineFilter === m.id}
-          title={m.url}
-          onclick={() => (app.machineFilter = m.id)}
-        >
-          <span class="tdot" class:live={m.online}></span>
-          <span class="tlabel">{m.label}</span>
-          {#if activeCount(m.id)}<span class="tcount">{activeCount(m.id)}</span>{/if}
-        </button>
-      {/each}
+      {#if filterOpen}
+        <button class="fscrim" onclick={() => (filterOpen = false)} aria-label="Close"></button>
+        <div class="fpop">
+          <button class="fopt" class:on={app.machineFilter === 'all'} onclick={() => pickFilter('all')}>
+            <svg class="fico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg>
+            <span class="flabel">All machines</span>
+            <span class="fcount">{app.sessions.length}</span>
+          </button>
+          {#each app.machines as m (m.id)}
+            <button class="fopt" class:on={app.machineFilter === m.id} onclick={() => pickFilter(m.id)} title={m.url}>
+              <span class="fdot" class:live={m.online}></span>
+              <span class="flabel">{m.label}</span>
+              {#if activeCount(m.id)}<span class="fcount">{activeCount(m.id)}</span>{/if}
+            </button>
+          {/each}
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -282,68 +303,101 @@
   .search input::-webkit-search-cancel-button {
     -webkit-appearance: none;
   }
-  .mtabs {
-    display: flex;
-    gap: 6px;
-    overflow-x: auto;
+  /* Machine filter: a dropdown so it stays one line no matter how many
+     machines join the fleet. */
+  .mfilterwrap {
+    position: relative;
     padding: 8px 14px 4px;
-    scrollbar-width: none;
   }
-  .mtabs::-webkit-scrollbar {
-    display: none;
-  }
-  .mtab {
-    flex: none;
-    max-width: 160px;
-    display: inline-flex;
+  .mfilter {
+    width: 100%;
+    display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
+    gap: 9px;
+    padding: 9px 12px;
     border-radius: 100px;
     background: var(--panel);
     border: 1px solid var(--border);
-    color: var(--text-3);
-    font-size: 12.5px;
+    color: var(--text-2);
+    font-size: 13px;
     font-weight: 500;
-    white-space: nowrap;
   }
-  .tlabel {
+  .mfilter:hover {
+    border-color: var(--border-2);
+    color: var(--text);
+  }
+  .fchev {
+    flex: none;
+    color: var(--text-4);
+  }
+  .flabel {
+    flex: 1;
     min-width: 0;
+    text-align: left;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .mtab .tdot,
-  .mtab .tcount {
+  .fico,
+  .fdot {
     flex: none;
   }
-  .mtab:hover {
-    color: var(--text-2);
-    border-color: var(--border-2);
-  }
-  .mtab.on {
-    color: var(--text);
-    background: var(--panel-3);
-    border-color: var(--border-2);
-  }
-  .tdot {
-    width: 6px;
-    height: 6px;
+  .fdot {
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
     background: var(--text-4);
   }
-  .tdot.live {
+  .fdot.live {
     background: var(--live);
   }
-  .tcount {
-    padding: 0 5px;
-    border-radius: 100px;
-    background: var(--panel-3);
-    color: var(--text-3);
-    font-size: 10.5px;
+  .fico {
+    color: var(--text-4);
   }
-  .mtab.on .tcount {
+  .fscrim {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+  }
+  .fpop {
+    position: absolute;
+    z-index: 31;
+    top: calc(100% - 2px);
+    left: 14px;
+    right: 14px;
+    padding: 5px;
+    background: var(--panel-2);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r);
+    box-shadow: 0 16px 40px -14px rgba(0, 0, 0, 0.7);
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  .fopt {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 10px;
+    border-radius: var(--r-sm);
+    color: var(--text-2);
+    font-size: 13px;
+  }
+  .fopt:hover {
+    background: var(--panel-3);
+    color: var(--text);
+  }
+  .fopt.on {
+    color: var(--text);
+    background: var(--panel-3);
+  }
+  .fcount {
+    flex: none;
+    padding: 1px 7px;
+    border-radius: 100px;
     background: var(--bg);
+    color: var(--text-3);
+    font-size: 11px;
   }
   .list {
     flex: 1;
