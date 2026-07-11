@@ -134,12 +134,15 @@
     {/if}
   </div>
 
-  {#if notif !== 'unsupported'}
+  <!-- Only surface the notification control while it still needs action. Once
+       granted it's the desired steady state, so the persistent bar just eats
+       session-list space and is dropped. -->
+  {#if notif !== 'unsupported' && notif !== 'granted'}
     <div class="foot">
       {#if notifHint}<p class="hint">{notifHint}</p>{/if}
       <button class="notif" onclick={toggleNotif}>
-        <span class="ndot" class:on={notif === 'granted'}></span>
-        {notif === 'granted' ? 'Notifications on' : 'Enable notifications'}
+        <span class="ndot"></span>
+        Enable notifications
       </button>
     </div>
   {/if}

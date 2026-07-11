@@ -107,6 +107,12 @@
     <button class="hbtn back" onclick={() => app.back()} aria-label="Back">
       <svg width="10" height="16" viewBox="0 0 10 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1L2 8l6 7" /></svg>
     </button>
+    <button class="hbtn rail deskonly" onclick={() => app.toggleSidebar()} aria-label="Toggle sidebar" title="Toggle sidebar">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M9.5 4v16" /></svg>
+    </button>
+    <button class="hbtn home deskonly" onclick={() => app.back()} aria-label="Home" title="Home">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5L12 3l9 7.5" /><path d="M5 9.5V20a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V9.5" /></svg>
+    </button>
     <div class="htitle">
       <span class="pill" title={chat.cwd}>
         <span class="sdot" data-k={status.k}></span>
@@ -639,13 +645,17 @@
     background: currentColor;
   }
 
+  /* Desktop-only header controls (sidebar toggle + home); hidden on phones,
+     where the single back button already returns to the session list. */
+  .deskonly {
+    display: none;
+  }
   @media (min-width: 861px) {
     .back {
       display: none;
     }
-    /* Clear the floating sidebar toggle that App.svelte places top-left. */
-    header {
-      padding-left: 62px;
+    .deskonly {
+      display: flex;
     }
   }
 </style>

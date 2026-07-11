@@ -19,12 +19,12 @@
 <div class="shell" data-has-chat={app.chat ? 'true' : undefined} class:collapsed={!app.sidebarOpen}>
   <aside class="sidebar"><Sidebar /></aside>
   <main class="main">
-    <button class="rail-toggle" onclick={() => app.toggleSidebar()} aria-label="Toggle sidebar" title="Toggle sidebar">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M9.5 4v16" /></svg>
-    </button>
     {#if app.chat}
       <Chat chat={app.chat} />
     {:else}
+      <button class="rail-toggle" onclick={() => app.toggleSidebar()} aria-label="Toggle sidebar" title="Toggle sidebar">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M9.5 4v16" /></svg>
+      </button>
       <div class="dash"><Home /></div>
     {/if}
   </main>
