@@ -1,6 +1,7 @@
 <script lang="ts" module>
-  import { marked } from 'marked'
+  import { marked, Marked } from 'marked'
   import DOMPurify from 'dompurify'
+  import { highlightToHtml, langLabel } from '../lib/highlight'
 
   marked.setOptions({ gfm: true, breaks: true })
 
@@ -12,17 +13,53 @@
     }
   })
 
-  export function render(src: string): string {
-    return DOMPurify.sanitize(marked.parse(src ?? '', { async: false }) as string)
+  const COPY_SVG =
+    '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 012-2h8"/></svg>'
+
+  // A dedicated instance so the streaming path (plain `marked`) never pays for
+  // highlighting; only committed blocks use this renderer.
+  const richMarked = new Marked({ gfm: true, breaks: true })
+  richMarked.use({
+    renderer: {
+      code(token: { text: string; lang?: string }) {
+        const lang = (token.lang ?? '').trim().split(/\s+/)[0]
+        const label = langLabel(lang)
+        const body = highlightToHtml(token.text, lang)
+        return (
+          `<div class="codewrap">` +
+          `<div class="cwbar">${label ? `<span class="cwlang">${label}</span>` : ''}` +
+          `<span class="cwsp"></span>` +
+          `<button class="cwcopy" data-copy aria-label="Copy code">${COPY_SVG}</button></div>` +
+          `<pre><code class="hljs">${body}</code></pre></div>`
+        )
+      },
+    },
+  })
+
+  export function render(src: string, opts: { highlight?: boolean } = {}): string {
+    const parser = opts.highlight === false ? marked : richMarked
+    return DOMPurify.sanitize(parser.parse(src ?? '', { async: false }) as string)
   }
 </script>
 
 <script lang="ts">
-  let { text }: { text: string } = $props()
-  const html = $derived(render(text))
+  let { text, live = false }: { text: string; live?: boolean } = $props()
+  const html = $derived(render(text, { highlight: !live }))
+
+  // Copy handler via delegation — safe because committed blocks have stable text
+  // (this component only re-derives html when `text` changes).
+  function onClick(e: MouseEvent) {
+    const btn = (e.target as HTMLElement).closest('[data-copy]') as HTMLElement | null
+    if (!btn) return
+    const code = btn.closest('.codewrap')?.querySelector('code')?.textContent ?? ''
+    navigator.clipboard?.writeText(code).then(() => {
+      btn.setAttribute('data-copied', '')
+      setTimeout(() => btn.removeAttribute('data-copied'), 1200)
+    })
+  }
 </script>
 
-<div class="md">{@html html}</div>
+<div class="md" onclick={onClick} role="presentation">{@html html}</div>
 
 <style>
   .md {
@@ -128,6 +165,56 @@
     background: none;
     border: none;
     padding: 0;
+  }
+  /* Committed blocks: a bar (language + copy) above the code; the wrapper owns
+     the box so the inner <pre> is unstyled. Streaming's bare <pre> keeps the
+     box rules above. */
+  .md :global(.codewrap) {
+    margin: 0 0 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    overflow: hidden;
+  }
+  .md :global(.codewrap pre) {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    background: none;
+  }
+  .md :global(.cwbar) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px 5px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .md :global(.cwlang) {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .md :global(.cwsp) {
+    flex: 1;
+  }
+  .md :global(.cwcopy) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 22px;
+    border-radius: 5px;
+    color: var(--text-4);
+    cursor: pointer;
+  }
+  .md :global(.cwcopy:hover) {
+    color: var(--text);
+    background: var(--panel-2);
+  }
+  .md :global(.cwcopy[data-copied]) {
+    color: var(--live);
   }
   .md :global(table) {
     width: 100%;

@@ -1,17 +1,10 @@
 <script lang="ts">
   import type { ChatConnection, PendingPermission } from '../lib/chat.svelte'
+  import ToolBody from './tools/ToolBody.svelte'
   let { chat }: { chat: ChatConnection } = $props()
 
   const current = $derived<PendingPermission | undefined>(chat.pending[0])
   const extra = $derived(chat.pending.length - 1)
-  const detail = $derived.by(() => {
-    const i = (current?.input ?? {}) as Record<string, unknown>
-    if (typeof i.command === 'string') return i.command
-    if (typeof i.file_path === 'string') return i.file_path
-    if (typeof i.path === 'string') return i.path
-    if (typeof i.url === 'string') return i.url
-    return JSON.stringify(i, null, 2)
-  })
 </script>
 
 {#if current}
@@ -23,7 +16,7 @@
         {#if extra > 0}<span class="more">+{extra} more</span>{/if}
       </div>
       <p class="ask">{current.perm_title || `Claude wants to run ${current.tool_name}`}</p>
-      <pre class="detail mono">{detail}</pre>
+      <div class="detail"><ToolBody name={current.tool_name} input={current.input} /></div>
       <div class="actions">
         <button class="deny" onclick={() => chat.resolve(current.request_id, 'deny')}>Deny</button>
         <button class="allow" onclick={() => chat.resolve(current.request_id, 'allow')}>Allow</button>
@@ -80,16 +73,7 @@
   }
   .detail {
     margin: 0 0 13px;
-    padding: 10px 12px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    font-size: 12px;
-    line-height: 1.5;
-    color: var(--text-2);
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 116px;
+    max-height: 40vh;
     overflow: auto;
   }
   .actions {

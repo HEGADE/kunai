@@ -167,7 +167,7 @@
           <div class="assistant">
             {#if chat.thinking}<div class="thinking mono">{chat.thinking}</div>{/if}
             {#if chat.streaming}
-              <Markdown text={chat.streaming} />
+              <Markdown text={chat.streaming} live />
             {:else if running}
               <span class="working">Working…</span>
             {/if}

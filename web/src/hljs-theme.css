@@ -1,0 +1,68 @@
+/* highlight.js theme for Kunai — deliberately near-monochrome. Differentiation
+   comes from the app's neutral brightness ramp (and weight), not hue, so code
+   stays quiet and on-theme. hljs spans render inside {@html}, so these rules
+   must be global (this file is imported once from main.ts). */
+
+.hljs {
+  color: var(--text);
+  background: none;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--text-4);
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-literal,
+.hljs-doctag {
+  color: var(--text-2);
+  font-weight: 550;
+}
+
+.hljs-string,
+.hljs-number,
+.hljs-regexp,
+.hljs-symbol,
+.hljs-meta,
+.hljs-template-variable {
+  color: var(--text-2);
+}
+
+.hljs-title,
+.hljs-title.function_,
+.hljs-title.class_,
+.hljs-section,
+.hljs-name,
+.hljs-attr,
+.hljs-attribute,
+.hljs-type,
+.hljs-variable,
+.hljs-property {
+  color: var(--text);
+}
+
+.hljs-punctuation,
+.hljs-operator,
+.hljs-params,
+.hljs-tag {
+  color: var(--text-3);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 650;
+}
+
+/* diff language (used when a fenced block is ```diff) picks up the accent tints */
+.hljs-addition {
+  color: var(--live);
+}
+.hljs-deletion {
+  color: var(--alert);
+}
