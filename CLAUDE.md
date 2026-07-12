@@ -49,7 +49,7 @@ launchd on macOS):
 
 ```sh
 ./install.sh                                          # standalone or hub
-KUNAI_HUB_URL=https://your-hub.tailnet.ts.net:8443 ./install.sh   # a peer
+KUNAI_HUB_URL=https://<hub>.<tailnet>.ts.net:8443 ./install.sh   # a peer
 ```
 
 `install.sh` **always builds fresh in a source checkout**. It must never reuse a
@@ -58,7 +58,7 @@ stale `dist/` or `./kunai` artifact (that was a real bug). `internal/webui/dist`
 `.gitignore` only ignores the repo-root `/dist/` release dir, never
 `internal/webui/dist`.
 
-Hub URL: `https://your-hub.tailnet.ts.net:8443`. Logs:
+Hub URL: `https://<hub>.<tailnet>.ts.net:8443`. Logs:
 `journalctl --user -u kunai -f` (Linux) or `~/.kunai/kunai.log` (macOS). TLS certs
 are minted with `tailscale cert` and are NOT auto-renewed yet (roughly 90-day
 expiry).

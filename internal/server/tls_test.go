@@ -8,7 +8,7 @@ func TestCertDomain(t *testing.T) {
 	}{
 		{"https://host.tailnet.ts.net:8443", "/x/host.tailnet.ts.net.crt", "host.tailnet.ts.net"},
 		{"", "/x/host.tailnet.ts.net.crt", "host.tailnet.ts.net"}, // fall back to filename
-		{"https://mac.tailnet.ts.net:8443", "/data/tls/mac.tailnet.ts.net.crt", "mac.tailnet.ts.net"},
+		{"https://mac.example.ts.net:8443", "/data/tls/mac.example.ts.net.crt", "mac.example.ts.net"},
 		{"not a url", "/x/fallback.crt", "fallback"},
 	}
 	for _, c := range cases {
