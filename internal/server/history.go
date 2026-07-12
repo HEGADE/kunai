@@ -155,8 +155,10 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// maxSeedTurns bounds how much history is replayed into a resumed session.
-const maxSeedTurns = 400
+// maxSeedTurns bounds how much history is replayed into a resumed session (one
+// turn = one user/assistant/tool_result message). Kept in line with the live
+// ring so a resumed conversation shows the same depth a warm one does.
+const maxSeedTurns = 2000
 
 // loadTranscriptTurns parses a session transcript into displayable turns so a
 // resumed session opens with its conversation history.

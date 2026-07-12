@@ -8,11 +8,12 @@ import (
 	"github.com/hegade/kunai/internal/claude"
 )
 
-// ringCapacity bounds per-session replay history. Generous so that any
-// within-server-lifetime reconnect replays cleanly; a long session that exceeds
-// it loses only its oldest events (a fresh --resume cold-start recovers full
-// history from the CLI transcript).
-const ringCapacity = 4000
+// ringCapacity bounds per-session replay history in durable events (streaming
+// deltas are never buffered, so this counts real turns: user/assistant/
+// tool_result/state/result). Generous so any within-server-lifetime reconnect
+// replays the whole conversation; a session that somehow exceeds it loses only
+// its oldest events (a fresh --resume cold-start recovers from the transcript).
+const ringCapacity = 8000
 
 // subChanBuf is the per-Subscriber outbound buffer. A phone that can't keep up
 // past this is dropped and must reconnect (which replays the gap).
@@ -356,6 +357,16 @@ func (s *Session) Detach(sub *Subscriber) {
 
 func (s *Session) broadcast(ev AppEvent) {
 	s.mu.Lock()
+	// Streaming tokens (delta/thinking) are transient: a single turn emits
+	// hundreds of them, and they are fully superseded by the committed assistant
+	// event. Fan them out live for the active client, but never put them in the
+	// replay ring — buffering them would evict real conversation history within a
+	// few turns (the bug where reopening a session showed only recent messages).
+	if ev.T == EvDelta || ev.T == EvThinking {
+		s.emitLocked(ev)
+		s.mu.Unlock()
+		return
+	}
 	sequenced := s.sequenceLocked(ev)
 	s.emitLocked(sequenced)
 	s.mu.Unlock()
