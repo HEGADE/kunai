@@ -26,7 +26,7 @@ fi
 
 # Preflight report rows. chk_bad records a hint and flags MISSING so we can show
 # the whole picture at once, then fail with everything the user needs to fix.
-MISSING=0; HINTS=""
+MISSING=0; HINTS=""; NEED_CLAUDE=0; NEED_TS=0
 chk_ok()  { printf '  %s✓%s %s%-12s%s %s%s%s\n' "$C_G" "$C_RST" "$C_B" "$1" "$C_RST" "$C_DIM" "$2" "$C_RST"; }
 chk_opt() { printf '  %s•%s %s%-12s%s %s%s%s\n' "$C_Y" "$C_RST" "$C_B" "$1" "$C_RST" "$C_DIM" "$2" "$C_RST"; }
 chk_bad() {
@@ -44,6 +44,18 @@ find_bin() {
   if [ -n "$p" ]; then printf '%s' "$p"; return 0; fi
   local c; for c in "$@"; do [ -x "$c" ] && { printf '%s' "$c"; return 0; }; done
   return 1
+}
+
+# ask prompts on the controlling terminal (works even under `curl | bash`, where
+# stdin is the piped script). Returns 0 only on an explicit yes; if there's no
+# terminal it declines, so non-interactive runs never auto-install.
+ask() {
+  # Open the controlling terminal on fd 3; if there isn't one, decline silently.
+  { exec 3<>/dev/tty; } 2>/dev/null || return 1
+  printf '%s%s%s [y/N] ' "$C_B" "$1" "$C_RST" >&3
+  local a; IFS= read -r a <&3 || { exec 3<&- 3>&-; return 1; }
+  exec 3<&- 3>&-
+  case "$a" in y | Y | yes | YES | Yes) return 0 ;; *) return 1 ;; esac
 }
 
 PORT="${KUNAI_PORT:-8443}"
@@ -108,10 +120,10 @@ say "${C_B}Kunai installer${C_RST} ${C_DIM}· $PLAT${C_RST}"
 say ""
 
 if [ -n "$CLAUDE_BIN" ]; then chk_ok "Claude Code" "$CLAUDE_BIN"
-else chk_bad "Claude Code" "not found" "install Claude Code and sign in: https://claude.com/claude-code"; fi
+else chk_bad "Claude Code" "not found" "install Claude Code and sign in: https://claude.com/claude-code"; NEED_CLAUDE=1; fi
 
 if [ -n "$TS_BIN" ]; then chk_ok "Tailscale" "$TS_BIN"
-else chk_bad "Tailscale" "CLI not found" "install Tailscale; on macOS the CLI is inside the app (/Applications/Tailscale.app/Contents/MacOS/Tailscale)"; fi
+else chk_bad "Tailscale" "CLI not found" "install Tailscale; on macOS the CLI is inside the app (/Applications/Tailscale.app/Contents/MacOS/Tailscale)"; NEED_TS=1; fi
 
 TS_IP=""; FQDN=""
 if [ -n "$TS_BIN" ]; then
@@ -140,7 +152,29 @@ say ""
 if [ "$MISSING" -ne 0 ]; then
   printf '%s✗ some prerequisites are missing:%s\n' "$C_R$C_B" "$C_RST"
   printf '%s\n\n' "$HINTS"
-  fail "fix the above, then re-run ./install.sh"
+
+  # On Linux we can offer to install the missing CLIs (official installers,
+  # behind an explicit y/N). macOS Tailscale is a GUI app and Claude sign-in is a
+  # browser flow, so there — and in any non-interactive run — we just guide and
+  # ask the user to re-run.
+  if [ "$OS" = "linux" ] && { [ "$NEED_TS" = 1 ] || [ "$NEED_CLAUDE" = 1 ]; }; then
+    did=0
+    if [ "$NEED_TS" = 1 ] && ask "Install Tailscale now?  (curl -fsSL https://tailscale.com/install.sh | sh)"; then
+      say "${C_DIM}installing Tailscale…${C_RST}"
+      dl_stdout https://tailscale.com/install.sh | sh && did=1 || say "${C_Y}Tailscale install did not complete${C_RST}"
+    fi
+    if [ "$NEED_CLAUDE" = 1 ] && ask "Install Claude Code now?  (curl -fsSL https://claude.ai/install.sh | bash)"; then
+      say "${C_DIM}installing Claude Code…${C_RST}"
+      dl_stdout https://claude.ai/install.sh | bash && did=1 || say "${C_Y}Claude Code install did not complete${C_RST}"
+    fi
+    say ""
+    if [ "$did" = 1 ]; then
+      say "${C_G}Installed.${C_RST} Now sign in — run ${C_B}tailscale up${C_RST} and ${C_B}claude${C_RST} once — then re-run ${C_B}./install.sh${C_RST}"
+      exit 0
+    fi
+  fi
+
+  fail "install the above, then re-run ./install.sh"
 fi
 
 # --- find or build the binary -----------------------------------------------
