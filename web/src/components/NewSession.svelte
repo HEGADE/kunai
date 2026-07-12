@@ -165,7 +165,7 @@
           </button>
         {/if}
         {#each listing.entries.filter((e) => e.dir) as entry (entry.path)}
-          <button class="row" onclick={() => go(entry.path)}>
+          <button class="row" class:dim={entry.name.startsWith('.')} onclick={() => go(entry.path)}>
             <span class="ic">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
             </span>
@@ -445,6 +445,14 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  /* Hidden dotfolders are listed but recede — real projects lead. */
+  .row.dim .nm,
+  .row.dim .ic {
+    color: var(--text-4);
+  }
+  .row.dim:hover .nm {
+    color: var(--text-2);
   }
   .up .nm {
     color: var(--text-2);

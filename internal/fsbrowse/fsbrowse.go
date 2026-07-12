@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // Entry is one item in a directory listing.
@@ -64,9 +65,17 @@ func List(dir string) (*Listing, error) {
 			Path: full,
 		})
 	}
+	// Order: directories first, then real (non-hidden) entries before dotfolders
+	// so the picker opens on actual projects instead of a wall of ~/.config-style
+	// hidden dirs. Hidden entries are still listed (some projects live in
+	// dotfolders), just after the rest.
+	hidden := func(name string) bool { return strings.HasPrefix(name, ".") }
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Dir != out[j].Dir {
 			return out[i].Dir // directories first
+		}
+		if hi, hj := hidden(out[i].Name), hidden(out[j].Name); hi != hj {
+			return !hi // non-hidden before hidden
 		}
 		return out[i].Name < out[j].Name
 	})
