@@ -23,6 +23,8 @@ export interface Turn {
   answer: Block[]
   files: FileChange[]
   durationMs?: number
+  tokens?: number
+  costUsd?: number
 }
 
 const isText = (b: Block): boolean => b.type === 'text' && !!b.text
@@ -53,6 +55,8 @@ export function groupTurns(items: Item[]): Turn[] {
       t.hasAssistant = true
       t.blocks.push(...it.blocks)
       if (it.durationMs != null) t.durationMs = it.durationMs
+      if (it.tokens != null) t.tokens = it.tokens
+      if (it.costUsd != null) t.costUsd = it.costUsd
     }
   }
   for (const t of turns) finalize(t)

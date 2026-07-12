@@ -36,6 +36,11 @@ export const EFFORTS: Option[] = [
   { id: 'max', label: 'Max', hint: 'Deepest reasoning' },
 ]
 
+// effortLabel maps an effort id to its display label ('' -> "Effort").
+export function effortLabel(id: string): string {
+  return EFFORTS.find((e) => e.id === id)?.label ?? (id || 'Effort')
+}
+
 // modelLabel maps a model string to a short "Family Version" label for the
 // composer button. It parses the real version out of the id the CLI reports
 // (e.g. "claude-opus-4-8" -> "Opus 4.8", "claude-haiku-4-5-20251001" -> "Haiku

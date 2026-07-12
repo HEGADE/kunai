@@ -46,6 +46,7 @@ type Session struct {
 	seq             uint64
 	model           string
 	mode            string // permission mode
+	effort          string // reasoning effort (spawn-time; changed by restart)
 	title           string
 	claudeSessionID string // CLI-assigned id, for --resume cold-start
 	state           string
@@ -330,6 +331,7 @@ func (s *Session) Attach(afterSeq uint64) (hello AppEvent, backlog []AppEvent, s
 		Title:   s.title,
 		State:   s.state,
 		Mode:    s.mode,
+		Effort:  s.effort,
 		HighSeq: s.seq,
 		Pending: pending,
 	}
@@ -410,6 +412,7 @@ type Meta struct {
 	ID        string    `json:"id"`
 	Cwd       string    `json:"cwd"`
 	Model     string    `json:"model"`
+	Effort    string    `json:"effort"`
 	Title     string    `json:"title"`
 	State     string    `json:"state"`
 	CreatedAt time.Time `json:"created_at"`
@@ -418,7 +421,15 @@ type Meta struct {
 func (s *Session) Meta() Meta {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return Meta{ID: s.ID, Cwd: s.Cwd, Model: s.model, Title: s.title, State: s.state, CreatedAt: s.CreatedAt}
+	return Meta{ID: s.ID, Cwd: s.Cwd, Model: s.model, Effort: s.effort, Title: s.title, State: s.state, CreatedAt: s.CreatedAt}
+}
+
+// ClaudeSessionID returns the CLI-assigned session id (available after init),
+// used to --resume the same conversation when restarting.
+func (s *Session) ClaudeSessionID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.claudeSessionID
 }
 
 func toAppBlocks(msg *claude.AssistantMessage) []AppBlock {
@@ -434,10 +445,25 @@ func toAppBlocks(msg *claude.AssistantMessage) []AppBlock {
 
 func parseResult(raw json.RawMessage) AppEvent {
 	var r struct {
-		Subtype    string `json:"subtype"`
-		IsError    bool   `json:"is_error"`
-		DurationMs int64  `json:"duration_ms"`
+		Subtype    string  `json:"subtype"`
+		IsError    bool    `json:"is_error"`
+		DurationMs int64   `json:"duration_ms"`
+		CostUSD    float64 `json:"total_cost_usd"`
+		Usage      struct {
+			Input       int64 `json:"input_tokens"`
+			Output      int64 `json:"output_tokens"`
+			CacheCreate int64 `json:"cache_creation_input_tokens"`
+			CacheRead   int64 `json:"cache_read_input_tokens"`
+		} `json:"usage"`
 	}
 	_ = json.Unmarshal(raw, &r)
-	return AppEvent{T: EvResult, Message: r.Subtype, IsError: r.IsError, DurationMs: r.DurationMs}
+	tokens := r.Usage.Input + r.Usage.Output + r.Usage.CacheCreate + r.Usage.CacheRead
+	return AppEvent{
+		T:          EvResult,
+		Message:    r.Subtype,
+		IsError:    r.IsError,
+		DurationMs: r.DurationMs,
+		Tokens:     tokens,
+		CostUSD:    r.CostUSD,
+	}
 }

@@ -4,7 +4,7 @@
   import type { ChatConnection } from '../lib/chat.svelte'
   import type { Attachment } from '../lib/types'
   import { groupTurns } from '../lib/turns'
-  import { MODELS, modelLabel } from '../lib/models'
+  import { MODELS, EFFORTS, modelLabel, effortLabel } from '../lib/models'
   import PermissionGate from './PermissionGate.svelte'
   import Markdown from './Markdown.svelte'
   import BlockView from './BlockView.svelte'
@@ -26,6 +26,7 @@
   let menuOpen = $state(false)
   let modeOpen = $state(false)
   let modelOpen = $state(false)
+  let effortOpen = $state(false)
 
   // Scrolling: open at the latest message, follow the stream while pinned to the
   // bottom, and surface a jump-to-bottom button once the user scrolls up.
@@ -192,9 +193,7 @@
                 {#each turn.answer as b, j (j)}
                   <BlockView block={b} {chat} />
                 {/each}
-                {#if turn.toolCalls > 0}
-                  <TurnFooter {turn} />
-                {/if}
+                <TurnFooter {turn} />
               {/if}
             </div>
           </div>
@@ -289,6 +288,27 @@
                 >
                   <span class="ml">{m.label}</span>
                   {#if m.hint}<span class="mh">{m.hint}</span>{/if}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+        <div class="modewrap">
+          <button class="mode" onclick={() => (effortOpen = !effortOpen)} title="Reasoning effort (restarts the session)">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="3" y="13" width="4" height="8" rx="1" /><rect x="10" y="8" width="4" height="13" rx="1" /><rect x="17" y="3" width="4" height="18" rx="1" /></svg>
+            {effortLabel(chat.effort)}
+          </button>
+          {#if effortOpen}
+            <button class="mode-scrim" onclick={() => (effortOpen = false)} aria-label="Close"></button>
+            <div class="mode-pop">
+              <div class="pop-note">Restarts the session (resumes the conversation).</div>
+              {#each EFFORTS as e (e.id)}
+                <button
+                  class:active={chat.effort === e.id}
+                  onclick={() => { if (chat.effort !== e.id) app.restartWithEffort(e.id); effortOpen = false }}
+                >
+                  <span class="ml">{e.label}</span>
+                  {#if e.hint}<span class="mh">{e.hint}</span>{/if}
                 </button>
               {/each}
             </div>
@@ -678,6 +698,13 @@
     border: 1px solid var(--border-2);
     border-radius: var(--r);
     box-shadow: 0 16px 40px -14px rgba(0, 0, 0, 0.7);
+  }
+  .pop-note {
+    padding: 6px 11px 8px;
+    margin-bottom: 4px;
+    font-size: 11px;
+    color: var(--text-4);
+    border-bottom: 1px solid var(--border);
   }
   .mode-pop button {
     width: 100%;

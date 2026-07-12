@@ -75,6 +75,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleCloseSession)
+	mux.HandleFunc("POST /api/sessions/{id}/effort", s.handleSetEffort)
 	mux.HandleFunc("GET /api/browse", s.handleBrowse)
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("GET /api/stats", s.handleStats)
@@ -235,6 +236,30 @@ func (s *Server) handlePushUnsubscribe(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
 	s.mgr.Close(r.PathValue("id"))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleSetEffort relaunches a live session at a new reasoning effort. Effort is
+// a spawn-time CLI flag, so the session is closed and re-created with --resume;
+// the conversation is replayed from the transcript. The id is unchanged.
+func (s *Server) handleSetEffort(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Effort string `json:"effort"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	sess, err := s.mgr.RestartWithEffort(ctx, r.PathValue("id"), req.Effort, loadTranscriptTurns)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if s.push != nil || s.cfg.HubURL != "" {
+		sess.SetNotifier(s.pushNotifier())
+	}
+	writeJSON(w, http.StatusOK, sess.Meta())
 }
 
 func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {

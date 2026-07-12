@@ -40,6 +40,16 @@ export function closeSession(base: string, id: string): Promise<void> {
   return fetch(at(base, `/api/sessions/${id}`), { method: 'DELETE' }).then(() => undefined)
 }
 
+// setEffort relaunches a session at a new reasoning effort (server closes and
+// resumes it; the id is unchanged). Returns the restarted session's Meta.
+export function setEffort(base: string, id: string, effort: string): Promise<Meta> {
+  return fetch(at(base, `/api/sessions/${id}/effort`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ effort }),
+  }).then((r) => json<Meta>(r))
+}
+
 export function browse(base: string, path: string): Promise<Listing> {
   const q = path ? `?path=${encodeURIComponent(path)}` : ''
   return fetch(at(base, `/api/browse${q}`)).then((r) => json<Listing>(r))

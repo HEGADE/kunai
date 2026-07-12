@@ -10,7 +10,7 @@ import type {
 
 export type Item =
   | { role: 'user'; text: string }
-  | { role: 'assistant'; blocks: Block[]; durationMs?: number }
+  | { role: 'assistant'; blocks: Block[]; durationMs?: number; tokens?: number; costUsd?: number }
 
 export interface PendingPermission {
   request_id: string
@@ -35,6 +35,7 @@ export class ChatConnection {
   status = $state<ConnStatus>('connecting')
   sessionState = $state<SessionState>('idle')
   mode = $state<PermissionMode>('default')
+  effort = $state('')
   cwd = $state('')
   model = $state('')
   title = $state('')
@@ -105,6 +106,7 @@ export class ChatConnection {
         this.title = ev.title ?? this.title
         if (ev.state) this.sessionState = ev.state
         if (ev.mode) this.mode = ev.mode as PermissionMode
+        if (ev.effort !== undefined) this.effort = ev.effort
         for (const p of ev.pending ?? []) this.addPending(p)
         break
       case 'user':
@@ -142,17 +144,18 @@ export class ChatConnection {
       case 'result':
         this.streaming = ''
         this.thinking = ''
-        // Stamp the turn's last assistant message with its duration so the
-        // per-turn footer can show it. Stop at the user message that opened the
-        // turn (a turn with no assistant reply has nothing to stamp).
-        if (ev.duration_ms != null) {
+        // Stamp the turn's last assistant message with its duration, tokens, and
+        // cost so the per-turn footer can show them. Stop at the user message
+        // that opened the turn (a turn with no assistant reply has nothing to
+        // stamp).
+        if (ev.duration_ms != null || ev.tokens != null || ev.cost_usd != null) {
           for (let k = this.items.length - 1; k >= 0; k--) {
             const it = this.items[k]
             if (it.role === 'user') break
             if (it.role === 'assistant') {
               this.items = [
                 ...this.items.slice(0, k),
-                { ...it, durationMs: ev.duration_ms },
+                { ...it, durationMs: ev.duration_ms, tokens: ev.tokens, costUsd: ev.cost_usd },
                 ...this.items.slice(k + 1),
               ]
               break

@@ -20,7 +20,8 @@ type AppEvent struct {
 	Model   string     `json:"model,omitempty"`
 	Title   string     `json:"title,omitempty"`
 	State   string     `json:"state,omitempty"`
-	Mode    string     `json:"mode,omitempty"` // permission mode
+	Mode    string     `json:"mode,omitempty"`   // permission mode
+	Effort  string     `json:"effort,omitempty"` // reasoning effort (hello)
 	HighSeq uint64     `json:"high_seq,omitempty"`
 	Pending []AppEvent `json:"pending,omitempty"` // unresolved permission asks
 
@@ -41,8 +42,10 @@ type AppEvent struct {
 	Behavior    string          `json:"behavior,omitempty"`
 
 	// "result"
-	IsError    bool  `json:"is_error,omitempty"`
-	DurationMs int64 `json:"duration_ms,omitempty"`
+	IsError    bool    `json:"is_error,omitempty"`
+	DurationMs int64   `json:"duration_ms,omitempty"`
+	Tokens     int64   `json:"tokens,omitempty"`   // total tokens (input+output+cache) for the turn
+	CostUSD    float64 `json:"cost_usd,omitempty"` // total_cost_usd for the turn
 
 	// "tool_result" (ToolUseID + IsError reused from above)
 	Content   string `json:"content,omitempty"`

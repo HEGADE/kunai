@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Turn } from '../lib/turns'
-  import { formatDuration } from '../lib/format'
+  import { formatDuration, formatTokens, formatCost } from '../lib/format'
   import FileChip from './tools/FileChip.svelte'
 
   let { turn }: { turn: Turn } = $props()
@@ -11,11 +11,14 @@
   const restAdded = $derived(rest.reduce((n, f) => n + f.added, 0))
   const restRemoved = $derived(rest.reduce((n, f) => n + f.removed, 0))
   const duration = $derived(turn.durationMs != null ? formatDuration(turn.durationMs) : '')
+  const tokens = $derived(turn.tokens ? formatTokens(turn.tokens) : '')
+  const cost = $derived(turn.costUsd ? formatCost(turn.costUsd) : '')
+  const meta = $derived([duration, tokens && `${tokens} tokens`, cost].filter(Boolean).join(' · '))
 </script>
 
-{#if duration || turn.files.length}
+{#if meta || turn.files.length}
   <div class="footer">
-    {#if duration}<span class="dur mono">{duration}</span>{/if}
+    {#if meta}<span class="dur mono">{meta}</span>{/if}
     {#each shown as f (f.path)}
       <FileChip path={f.path} name={f.name} added={f.added} removed={f.removed} />
     {/each}

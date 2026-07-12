@@ -23,6 +23,7 @@ export interface Meta {
   id: string
   cwd: string
   model: string
+  effort?: string
   title: string
   state: SessionState
   created_at: string
@@ -57,6 +58,7 @@ export interface AppEvent {
   title?: string
   state?: SessionState
   mode?: string
+  effort?: string
   high_seq?: number
   pending?: AppEvent[]
   // delta / thinking / user / error
@@ -76,6 +78,8 @@ export interface AppEvent {
   // result
   is_error?: boolean
   duration_ms?: number
+  tokens?: number
+  cost_usd?: number
   // tool_result (tool_use_id + is_error reused)
   content?: string
   truncated?: boolean

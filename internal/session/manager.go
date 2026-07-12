@@ -69,6 +69,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 
 	s := newSession(id, opts.Cwd, opts.Title, drv)
 	s.model = opts.Model
+	s.effort = opts.Effort
 	if len(opts.Seed) > 0 {
 		s.Seed(opts.Seed)
 	}
@@ -77,10 +78,11 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	m.sessions[id] = s
 	m.mu.Unlock()
 
-	// Reap from the registry when the session ends.
+	// Reap from the registry when the session ends. Instance-checked so a restart
+	// that re-creates the same id is not reaped by the old session's goroutine.
 	go func() {
 		<-s.Done()
-		m.remove(id)
+		m.removeIf(id, s)
 	}()
 
 	// Boot the CLI off the request path. Prompts sent meanwhile queue in the
@@ -136,6 +138,48 @@ func (m *Manager) remove(id string) {
 	m.mu.Lock()
 	delete(m.sessions, id)
 	m.mu.Unlock()
+}
+
+// removeIf deletes id only if it still maps to this exact session, so a stale
+// reap goroutine cannot evict a freshly re-created session with the same id.
+func (m *Manager) removeIf(id string, s *Session) {
+	m.mu.Lock()
+	if m.sessions[id] == s {
+		delete(m.sessions, id)
+	}
+	m.mu.Unlock()
+}
+
+// RestartWithEffort relaunches a live session at a new reasoning effort by
+// closing it and re-creating it with --resume (effort is a spawn-time CLI flag,
+// so it cannot change on the running process). The conversation is preserved via
+// the transcript: seedFn loads it back into the replay buffer. The new session
+// keeps the same id (resume forces id == claude session id).
+func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seedFn func(cid string) []SeedTurn) (*Session, error) {
+	m.mu.Lock()
+	old, ok := m.sessions[id]
+	m.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("session %s not live", id)
+	}
+	cid := old.ClaudeSessionID()
+	if cid == "" {
+		return nil, errors.New("session not ready to restart")
+	}
+	meta := old.Meta()
+
+	old.Close()
+	<-old.Done()
+	m.removeIf(id, old) // synchronous, so the recreate below won't collide
+
+	return m.Create(ctx, CreateOptions{
+		Cwd:    meta.Cwd,
+		Title:  meta.Title,
+		Model:  meta.Model,
+		Effort: effort,
+		Resume: cid,
+		Seed:   seedFn(cid),
+	})
 }
 
 // newUUID returns a random RFC 4122 v4 UUID (required by claude --session-id).
