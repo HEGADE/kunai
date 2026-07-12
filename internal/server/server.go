@@ -19,6 +19,7 @@ import (
 	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
+	"github.com/hegade/kunai/internal/awake"
 	"github.com/hegade/kunai/internal/fsbrowse"
 	"github.com/hegade/kunai/internal/push"
 	"github.com/hegade/kunai/internal/session"
@@ -55,6 +56,7 @@ type Server struct {
 	uploadsDir string
 	machines   *machineStore
 	disco      discoveryCache
+	awake      awake.Keeper // opt-in keep-awake while locked/idle
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -72,7 +74,9 @@ func New(cfg Config, mgr *session.Manager) *Server {
 
 	machines := newMachineStore(filepath.Join(cfg.DataDir, "machines.json"))
 
-	return &Server{cfg: cfg, mgr: mgr, pwa: webui.FS(), uploadsDir: uploads, machines: machines}
+	s := &Server{cfg: cfg, mgr: mgr, pwa: webui.FS(), uploadsDir: uploads, machines: machines, awake: awake.New()}
+	s.loadAwake() // re-apply a persisted keep-awake preference on boot
+	return s
 }
 
 // SetPush enables Web Push wake-ups.
@@ -98,6 +102,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/machines/{id}", s.handleDeleteMachine)
 	mux.HandleFunc("GET /api/machines/discover", s.handleDiscover)
 	mux.HandleFunc("POST /api/update", s.handleUpdate)
+	mux.HandleFunc("POST /api/awake", s.handleAwake)
 	mux.HandleFunc("GET /ws/app/{id}", s.handleWS)
 	mux.Handle("GET /", s.spaHandler())
 	return cors(logRequests(mux))
@@ -112,6 +117,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	go func() {
 		<-ctx.Done()
+		_ = s.awake.Set(false) // release the keep-awake hold on graceful shutdown
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutCtx)

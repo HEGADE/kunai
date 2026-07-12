@@ -1,6 +1,8 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
   import { enablePush, disablePush, isSubscribed, pushState } from '../lib/push'
+  import { setKeepAwake } from '../lib/api'
+  import type { Machine } from '../lib/types'
 
   const st = $derived(app.stats)
   const supported = pushState() !== 'unsupported'
@@ -41,6 +43,25 @@
       machErr = (e as Error).message
     } finally {
       discovering = false
+    }
+  }
+
+  // Per-machine keep-awake. Toggles that machine's own /api/awake, then refreshes
+  // the fan-out so the switch reflects the machine's resolved state.
+  let awBusy = $state<Record<string, boolean>>({})
+  async function toggleAwake(m: Machine) {
+    if (awBusy[m.id]) return
+    awBusy = { ...awBusy, [m.id]: true }
+    machErr = ''
+    try {
+      await setKeepAwake(m.url, !m.stats?.keep_awake)
+      await app.refresh()
+    } catch (e) {
+      machErr = (e as Error).message
+    } finally {
+      const b = { ...awBusy }
+      delete b[m.id]
+      awBusy = b
     }
   }
 
@@ -129,6 +150,25 @@
               </button>
             {/if}
           </div>
+          {#if m.online && m.stats?.keep_awake_supported}
+            <div class="irow awrow">
+              <span class="awk">
+                <span class="awname">Keep awake while locked</span>
+                <span class="awsub">Prevents idle sleep so sessions stay reachable. Keep the lid open and on power.</span>
+              </span>
+              <button
+                class="switch"
+                class:on={m.stats.keep_awake}
+                onclick={() => toggleAwake(m)}
+                disabled={awBusy[m.id]}
+                role="switch"
+                aria-checked={m.stats.keep_awake}
+                aria-label="Toggle keep awake"
+              >
+                <span class="knob"></span>
+              </button>
+            </div>
+          {/if}
         {/each}
       </div>
       <div class="addrow">
@@ -267,6 +307,26 @@
   }
   .mrow {
     gap: 11px;
+  }
+  .awrow {
+    gap: 14px;
+    padding-left: 34px;
+  }
+  .awk {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .awname {
+    font-size: 13px;
+    color: var(--text-2);
+  }
+  .awsub {
+    font-size: 11px;
+    color: var(--text-4);
+    line-height: 1.45;
   }
   .mdot {
     flex: none;

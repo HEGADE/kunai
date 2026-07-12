@@ -9,7 +9,6 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -30,6 +29,8 @@ type Stats struct {
 	ClaudeVersion string  `json:"claude_version"` //
 	KunaiVersion  string  `json:"kunai_version"`  // build revision
 	KunaiUptime   int64   `json:"kunai_uptime_sec"`
+	KeepAwake     bool    `json:"keep_awake"`           // idle-sleep hold currently held
+	KeepAwakeSupp bool    `json:"keep_awake_supported"` // platform can hold it
 }
 
 var (
@@ -42,12 +43,14 @@ var (
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	st := Stats{
-		OS:           runtime.GOOS,
-		Arch:         runtime.GOARCH,
-		Sessions:     len(s.mgr.List()),
-		Cores:        runtime.NumCPU(),
-		KunaiVersion: kunaiVersion(),
-		KunaiUptime:  int64(time.Since(serverStart).Seconds()),
+		OS:            runtime.GOOS,
+		Arch:          runtime.GOARCH,
+		Sessions:      len(s.mgr.List()),
+		Cores:         runtime.NumCPU(),
+		KunaiVersion:  kunaiVersion(),
+		KunaiUptime:   int64(time.Since(serverStart).Seconds()),
+		KeepAwake:     s.awake.Enabled(),
+		KeepAwakeSupp: s.awake.Supported(),
 	}
 	st.Hostname, _ = os.Hostname()
 	st.UptimeSec, st.Load1 = hostUptimeLoad()
@@ -101,17 +104,6 @@ func claudeVersion() string {
 	return claudeVerCached
 }
 
-// hostUptimeLoad and memInfo are platform-specific (stats_linux.go /
-// stats_darwin.go); they return zero for values the platform can't provide.
-
-func diskInfo(dir string) (total, free uint64) {
-	if dir == "" {
-		dir = "/"
-	}
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(dir, &st); err != nil {
-		return 0, 0
-	}
-	bs := uint64(st.Bsize)
-	return st.Blocks * bs, st.Bavail * bs
-}
+// hostUptimeLoad, memInfo, and diskInfo are platform-specific (stats_unix.go for
+// darwin/linux, stats_windows.go for Windows); they return zero for values the
+// platform can't provide.

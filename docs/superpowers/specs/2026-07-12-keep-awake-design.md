@@ -47,11 +47,13 @@ type Keeper interface {
 }
 ```
 
-- `awake_darwin.go` — holds a child `caffeinate -i` process (asserts
+- `awake_darwin.go` — holds a child `caffeinate -i -w <pid>` process (asserts
   `PreventUserIdleSystemSleep`, i.e. blocks idle system sleep on both AC and
   battery; lid close is intentionally still allowed to sleep). `Set(true)` starts
-  it if not running; `Set(false)` kills it. `caffeinate` is a built-in;
-  `Supported()` is true.
+  it if not running; `Set(false)` kills it. `-w <pid>` makes caffeinate exit when
+  kunai exits, so the hold self-releases even if kunai is killed without running
+  cleanup (a Unix child does NOT die with its parent by default). `caffeinate` is
+  a built-in; `Supported()` is true.
 - `awake_windows.go` — a dedicated goroutine, pinned with `runtime.LockOSThread`,
   calls `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` via
   `kernel32.dll` (through `syscall.NewLazyDLL`) and stays alive while enabled,
@@ -60,8 +62,17 @@ type Keeper interface {
   calls `SetThreadExecutionState(ES_CONTINUOUS)` to clear it. `Supported()` true.
 - `awake_linux.go` — best-effort: `Set(true)` starts a held `systemd-inhibit
   --what=sleep --why="kunai keep-awake" sleep infinity` child (killed on
-  `Set(false)`). `Supported()` is true only if `systemd-inhibit` is on PATH;
-  otherwise it is a no-op returning `Supported() == false`.
+  `Set(false)`, and `Pdeathsig=SIGKILL` so it dies with kunai on an uncaught
+  kill). `Supported()` is true only if `systemd-inhibit` is on PATH; otherwise it
+  is a no-op returning `Supported() == false`.
+
+Windows note: the server did not previously compile for Windows (`stats.go` used
+unix-only `syscall.Statfs`, and `hostUptimeLoad`/`memInfo` were darwin/linux
+only). To make keep-awake real on Windows, host stats were platform-split:
+`stats_unix.go` (darwin/linux `diskInfo`) and `stats_windows.go` (kernel32
+`GetDiskFreeSpaceExW` / `GlobalMemoryStatusEx` / `GetTickCount64`, pure syscall,
+no cgo). The binary now cross-compiles for windows/amd64 and windows/arm64. A
+Windows installer/service is out of scope here (run the binary manually for now).
 - `awake_other.go` (build tag fallback) — no-op, `Supported() == false`.
 
 The Keeper is created once in `cmd/kunai` wiring and injected into the server.

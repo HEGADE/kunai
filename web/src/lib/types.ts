@@ -17,6 +17,8 @@ export interface Stats {
   claude_version: string
   kunai_version: string
   kunai_uptime_sec: number
+  keep_awake: boolean
+  keep_awake_supported: boolean
 }
 
 export interface Meta {

@@ -72,6 +72,19 @@ export function stats(base: string): Promise<Stats> {
   return fetch(at(base, '/api/stats')).then((r) => json<Stats>(r))
 }
 
+// setKeepAwake toggles a machine's opt-in keep-awake (prevents idle sleep so a
+// locked/idle machine stays reachable). Returns the machine's resolved state.
+export function setKeepAwake(
+  base: string,
+  enabled: boolean,
+): Promise<{ enabled: boolean; supported: boolean }> {
+  return fetch(at(base, '/api/awake'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  }).then((r) => json<{ enabled: boolean; supported: boolean }>(r))
+}
+
 // updateMachine tells a machine to self-update: it downloads the latest release
 // binary, verifies it, swaps it in, and restarts. The server exits mid-response
 // as it restarts, so a dropped connection here is expected, not a failure.
