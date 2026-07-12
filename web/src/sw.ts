@@ -106,12 +106,20 @@ self.addEventListener('push', (event) => {
     if (event.data?.text()) body = event.data.text()
   }
   event.waitUntil(
-    self.registration.showNotification(title, {
-      body,
-      icon: '/icon-192.png',
-      badge: '/icon-192.png',
-      tag: 'kunai',
-    }),
+    (async () => {
+      // Suppress the notification only when a Kunai window is actually focused
+      // (you are already watching). The server always sends the wake-up because
+      // it can't see tab focus — it stays "attached" over WebSocket even when you
+      // switch to another browser tab, which is exactly when you DO want pinged.
+      const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+      if (wins.some((c) => c.focused && c.visibilityState === 'visible')) return
+      await self.registration.showNotification(title, {
+        body,
+        icon: '/icon-192.png',
+        badge: '/icon-192.png',
+        tag: 'kunai',
+      })
+    })(),
   )
 })
 

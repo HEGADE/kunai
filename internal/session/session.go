@@ -60,20 +60,26 @@ type Session struct {
 }
 
 // SetNotifier registers a callback invoked when the session needs attention
-// (a permission ask, or a turn finishing) AND no phone is currently attached —
-// i.e. exactly when a push wake-up is warranted.
+// (a permission ask, or a turn finishing). The client's service worker decides
+// whether to actually surface it (suppressed while a Kunai window is focused).
 func (s *Session) SetNotifier(fn func(kind, detail string)) {
 	s.mu.Lock()
 	s.notify = fn
 	s.mu.Unlock()
 }
 
-// maybeNotify fires the notifier only when no subscribers are attached.
-func (s *Session) maybeNotify(kind, detail string) {
+// notifyAttention fires the notifier whenever the session needs attention (a
+// permission ask or a finished turn). It always fires: whether a notification is
+// actually shown is decided client-side by the service worker, which suppresses
+// it when a Kunai window is focused (so you are not pinged for what you are
+// already watching). The server can only see WebSocket attachment, not tab
+// focus — and on desktop the socket stays open across tab switches — so gating
+// here wrongly swallowed the wake-up whenever you switched tabs.
+func (s *Session) notifyAttention(kind, detail string) {
 	s.mu.Lock()
-	fn, none := s.notify, len(s.subs) == 0
+	fn := s.notify
 	s.mu.Unlock()
-	if fn != nil && none {
+	if fn != nil {
 		go fn(kind, detail)
 	}
 }
@@ -180,7 +186,7 @@ func (s *Session) pump() {
 		case claude.EventResult:
 			s.setState(StateIdle)
 			s.broadcast(parseResult(ev.Raw))
-			s.maybeNotify("done", "")
+			s.notifyAttention("done", "")
 
 		case claude.EventError:
 			s.broadcast(AppEvent{T: EvError, Message: ev.Err.Error()})
@@ -222,7 +228,7 @@ func (s *Session) onPermission(ask *claude.PermissionAsk) {
 	s.emitLocked(sequenced)
 	s.mu.Unlock()
 
-	s.maybeNotify("permission", ask.ToolName)
+	s.notifyAttention("permission", ask.ToolName)
 }
 
 // --- commands (client → session) ---
