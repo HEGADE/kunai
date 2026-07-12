@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,20 +24,26 @@ type HistoryEntry struct {
 	Mtime time.Time `json:"mtime"`
 }
 
-const historyLimit = 25
+const historyLimit = 25      // default for the sidebar/dashboard poll
+const historyMaxLimit = 1000 // ceiling for the "all sessions" view
 
 // handleHistory lists resumable past sessions, newest first, excluding ones
-// that are currently live.
+// that are currently live. `?limit=N` overrides the default (0 or negative uses
+// the default; values above the ceiling are clamped).
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	live := map[string]bool{}
 	for _, m := range s.mgr.List() {
 		live[m.ID] = true
 	}
-	writeJSON(w, http.StatusOK, scanHistory(live))
+	limit := historyLimit
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
+		limit = min(v, historyMaxLimit)
+	}
+	writeJSON(w, http.StatusOK, scanHistory(live, limit))
 }
 
 // scanHistory walks ~/.claude/projects/*/<sessionId>.jsonl transcripts.
-func scanHistory(live map[string]bool) []HistoryEntry {
+func scanHistory(live map[string]bool, limit int) []HistoryEntry {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return []HistoryEntry{}
@@ -80,8 +87,8 @@ func scanHistory(live map[string]bool) []HistoryEntry {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Mtime.After(out[j].Mtime) })
-	if len(out) > historyLimit {
-		out = out[:historyLimit]
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
 	}
 	return out
 }

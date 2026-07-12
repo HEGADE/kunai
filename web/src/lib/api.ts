@@ -63,8 +63,9 @@ export function uploadFile(base: string, file: File): Promise<Attachment> {
   )
 }
 
-export function history(base: string): Promise<HistoryEntry[]> {
-  return fetch(at(base, '/api/history')).then((r) => json<HistoryEntry[]>(r))
+export function history(base: string, limit?: number): Promise<HistoryEntry[]> {
+  const q = limit ? `?limit=${limit}` : ''
+  return fetch(at(base, `/api/history${q}`)).then((r) => json<HistoryEntry[]>(r))
 }
 
 export function stats(base: string): Promise<Stats> {

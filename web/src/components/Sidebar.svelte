@@ -37,6 +37,10 @@
           machineLabel(h.machineId).toLowerCase().includes(query)),
     ),
   )
+  // Keep the sidebar tidy: show only the most recent few; the rest live behind
+  // "View all sessions" (a full, searchable, paginated view).
+  const RECENT_MAX = 8
+  const recentDisplay = $derived(recentList.slice(0, RECENT_MAX))
   function activeCount(mid: string): number {
     return app.sessions.filter((m) => m.machineId === mid).length
   }
@@ -170,7 +174,7 @@
 
     {#if recentList.length > 0}
       <div class="sec">Recent</div>
-      {#each recentList as h (h.machineId + ':' + h.id)}
+      {#each recentDisplay as h (h.machineId + ':' + h.id)}
         <div class="row">
           <button class="hit" onclick={() => resume(h)} disabled={!!resuming}>
             <span class="ic">{@render bubble()}</span>
@@ -178,6 +182,13 @@
           </button>
         </div>
       {/each}
+    {/if}
+
+    {#if app.history.length > 0}
+      <button class="viewall" onclick={() => app.openAllSessions()}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></svg>
+        View all sessions
+      </button>
     {/if}
 
     {#if activeList.length === 0 && recentList.length === 0 && !app.listError}
@@ -514,6 +525,29 @@
   .x:active {
     color: var(--text-2);
     background: var(--panel-3);
+  }
+  .viewall {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 9px 10px;
+    margin-top: 2px;
+    border-radius: var(--r);
+    color: var(--text-3);
+    font-size: 13.5px;
+    font-weight: 500;
+  }
+  .viewall svg {
+    flex: none;
+    color: var(--text-4);
+  }
+  .viewall:hover {
+    background: var(--panel);
+    color: var(--text);
+  }
+  .viewall:hover svg {
+    color: var(--text-3);
   }
   .empty {
     text-align: center;

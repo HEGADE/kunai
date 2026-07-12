@@ -6,6 +6,7 @@
   import Home from './components/Home.svelte'
   import NewSession from './components/NewSession.svelte'
   import Settings from './components/Settings.svelte'
+  import AllSessions from './components/AllSessions.svelte'
 
   onMount(() => {
     app.startPolling()
@@ -37,6 +38,9 @@
 {/if}
 {#if app.showSettings}
   <Settings />
+{/if}
+{#if app.showAllSessions}
+  <AllSessions />
 {/if}
 
 <style>
