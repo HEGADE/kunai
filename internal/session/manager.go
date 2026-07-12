@@ -178,13 +178,20 @@ func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seed
 	m.removeIf(id, old) // synchronous, so the recreate below won't collide
 
 	// Effort is a spawn-time flag, so the process must be respawned either way.
-	// With a CLI session id we resume (preserving the conversation via the
-	// transcript); before the first turn there is no id and nothing to preserve,
-	// so respawn fresh under the same handle id.
+	// Three cases, distinguished by whether the CLI has assigned a session id
+	// (only after the first turn) and whether a transcript exists on disk:
+	//   - prompted this run: resume by the live CLI session id.
+	//   - resumed from history but not yet prompted: no live id yet, but a
+	//     transcript exists under the handle id, so resume that (a fresh
+	//     --session-id would collide with the existing transcript and the CLI
+	//     refuses to start).
+	//   - brand-new session, no turns and no transcript: respawn fresh under the
+	//     same handle id.
 	opts := CreateOptions{Cwd: meta.Cwd, Title: meta.Title, Model: meta.Model, Effort: effort}
 	if cid != "" {
-		opts.Resume = cid
-		opts.Seed = seedFn(cid)
+		opts.Resume, opts.Seed = cid, seedFn(cid)
+	} else if seed := seedFn(id); len(seed) > 0 {
+		opts.Resume, opts.Seed = id, seed
 	} else {
 		opts.SessionID = id
 	}
