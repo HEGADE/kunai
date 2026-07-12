@@ -280,6 +280,10 @@
     overflow-x: auto;
     padding: 0 20px 12px;
     scrollbar-width: none;
+    /* Fade the right edge so an overflowing row reads as scrollable rather than
+       clipped mid-chip. Only bites when chips actually reach the edge. */
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
   }
   .quick::-webkit-scrollbar {
     display: none;
