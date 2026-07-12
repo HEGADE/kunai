@@ -48,22 +48,8 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	asset := fmt.Sprintf("kunai-%s-%s", runtime.GOOS, runtime.GOARCH)
-	newBin, err := downloadAndVerify(asset, filepath.Dir(self))
-	if err != nil {
+	if err := applyUpdate(asset, self); err != nil {
 		writeErr(w, http.StatusBadGateway, "update failed: "+err.Error())
-		return
-	}
-
-	if err := os.Chmod(newBin, 0o755); err != nil {
-		_ = os.Remove(newBin)
-		writeErr(w, http.StatusInternalServerError, "chmod: "+err.Error())
-		return
-	}
-	// Atomic on the same filesystem; replacing a running binary's file is allowed
-	// on Linux and macOS (the running process keeps the old inode until it exits).
-	if err := os.Rename(newBin, self); err != nil {
-		_ = os.Remove(newBin)
-		writeErr(w, http.StatusInternalServerError, "swap: "+err.Error())
 		return
 	}
 
@@ -75,6 +61,26 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		log.Printf("update: swapped %s, exiting for service-manager restart", self)
 		os.Exit(0)
 	}()
+}
+
+// applyUpdate downloads the asset, verifies its sha256, and atomically swaps it
+// over self. Everything but the process exit lives here so it is testable.
+func applyUpdate(asset, self string) error {
+	newBin, err := downloadAndVerify(asset, filepath.Dir(self))
+	if err != nil {
+		return err
+	}
+	if err := os.Chmod(newBin, 0o755); err != nil {
+		_ = os.Remove(newBin)
+		return fmt.Errorf("chmod: %w", err)
+	}
+	// Atomic on the same filesystem; replacing a running binary's file is allowed
+	// on Linux and macOS (the running process keeps the old inode until it exits).
+	if err := os.Rename(newBin, self); err != nil {
+		_ = os.Remove(newBin)
+		return fmt.Errorf("swap: %w", err)
+	}
+	return nil
 }
 
 // writableTarget reports whether we can atomically replace path — its directory

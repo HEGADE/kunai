@@ -2,7 +2,10 @@
 // screen, and permission must be requested from a user gesture — hence the
 // explicit enable button rather than an on-load prompt.
 
-function urlBase64ToUint8Array(base64: string): Uint8Array {
+// Returns an ArrayBuffer-backed view so it satisfies BufferSource for
+// applicationServerKey (lib.dom's Uint8Array is generic and defaults to the
+// wider ArrayBufferLike, which no longer assigns to BufferSource).
+function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   const padding = '='.repeat((4 - (base64.length % 4)) % 4)
   const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/')
   const raw = atob(b64)
