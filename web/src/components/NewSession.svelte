@@ -249,6 +249,7 @@
     display: none;
   }
   header {
+    flex: none;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -275,10 +276,11 @@
     color: var(--text);
   }
   .quick {
+    flex: none;
     display: flex;
     gap: 7px;
     overflow-x: auto;
-    padding: 0 20px 12px;
+    padding: 2px 20px 12px;
     scrollbar-width: none;
     /* Fade the right edge so an overflowing row reads as scrollable rather than
        clipped mid-chip. Only bites when chips actually reach the edge. */
@@ -306,6 +308,7 @@
     border-color: var(--border-2);
   }
   .machines {
+    flex: none;
     display: flex;
     gap: 7px;
     flex-wrap: wrap;
@@ -343,6 +346,7 @@
 
   /* Path bar: readable breadcrumbs that scroll, never clip or ellipsize. */
   .pathbar {
+    flex: none;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -484,6 +488,7 @@
     color: var(--alert);
   }
   .opts {
+    flex: none;
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -525,6 +530,7 @@
     background: var(--panel-3);
   }
   footer {
+    flex: none;
     display: flex;
     gap: 9px;
     padding: 12px 16px 16px;
