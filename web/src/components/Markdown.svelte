@@ -65,8 +65,9 @@
   .md {
     color: var(--text);
     font-family: var(--serif);
-    font-size: 18.5px;
-    line-height: 1.62;
+    font-size: 16.5px;
+    line-height: 1.72;
+    letter-spacing: -0.002em;
     overflow-wrap: anywhere;
   }
   .md :global(> :first-child) {
@@ -76,7 +77,7 @@
     margin-bottom: 0;
   }
   .md :global(p) {
-    margin: 0 0 12px;
+    margin: 0 0 14px;
   }
   .md :global(h1),
   .md :global(h2),
@@ -84,35 +85,54 @@
   .md :global(h4) {
     font-family: var(--serif);
     font-weight: 600;
-    line-height: 1.25;
-    margin: 24px 0 11px;
+    line-height: 1.3;
+    letter-spacing: -0.011em;
+    margin: 26px 0 9px;
   }
   .md :global(h1) {
-    font-size: 23px;
+    font-size: 21px;
   }
   .md :global(h2) {
-    font-size: 20px;
+    font-size: 18.5px;
   }
   .md :global(h3) {
-    font-size: 17px;
+    font-size: 16px;
   }
   .md :global(h4) {
-    font-size: 15.5px;
-    color: var(--text-2);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    font-family: var(--sans);
   }
   .md :global(ul),
   .md :global(ol) {
-    margin: 0 0 12px;
-    padding-left: 22px;
+    margin: 0 0 14px;
+    padding-left: 20px;
   }
   .md :global(li) {
-    margin: 4px 0;
+    margin: 3px 0;
+    padding-left: 3px;
   }
   .md :global(li::marker) {
-    color: var(--text-3);
+    color: var(--text-4);
+  }
+  /* Tight nested lists and single-paragraph items — no doubled spacing. */
+  .md :global(li > p) {
+    margin: 0 0 6px;
+  }
+  .md :global(li :last-child) {
+    margin-bottom: 0;
+  }
+  .md :global(ul ul),
+  .md :global(ul ol),
+  .md :global(ol ul),
+  .md :global(ol ol) {
+    margin: 3px 0 3px;
   }
   .md :global(strong) {
-    font-weight: 650;
+    font-weight: 640;
     color: var(--text);
   }
   .md :global(em) {
@@ -133,24 +153,29 @@
     margin: 18px 0;
   }
   .md :global(blockquote) {
-    margin: 0 0 12px;
-    padding: 2px 0 2px 14px;
+    margin: 0 0 14px;
+    padding: 2px 0 2px 15px;
     border-left: 2px solid var(--border-2);
     color: var(--text-2);
   }
-  /* inline code */
+  /* inline code — a soft, borderless chip so dense inline code reads as text,
+     not a row of hard boxes. Scales with the surrounding type. */
   .md :global(:not(pre) > code) {
     font-family: var(--mono);
-    font-size: 0.86em;
-    padding: 1.5px 5px;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: 5px;
+    font-size: 0.83em;
+    padding: 0.1em 0.38em;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 4px;
+    color: var(--text);
     white-space: break-spaces;
+  }
+  /* Links and headings that wrap inline code keep their own emphasis. */
+  .md :global(a > code) {
+    color: inherit;
   }
   /* code blocks */
   .md :global(pre) {
-    margin: 0 0 12px;
+    margin: 0 0 14px;
     padding: 12px 14px;
     background: var(--bg);
     border: 1px solid var(--border);
@@ -170,7 +195,7 @@
      the box so the inner <pre> is unstyled. Streaming's bare <pre> keeps the
      box rules above. */
   .md :global(.codewrap) {
-    margin: 0 0 12px;
+    margin: 0 0 14px;
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: var(--r-sm);
