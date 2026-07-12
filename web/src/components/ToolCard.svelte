@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { summaryOf } from '../lib/toolMeta'
+  import { describe } from '../lib/toolMeta'
   import type { ToolResult } from '../lib/types'
   import ToolIcon from './tools/ToolIcon.svelte'
   import ToolBody from './tools/ToolBody.svelte'
@@ -7,14 +7,17 @@
 
   let { name, input, result }: { name: string; input: unknown; result?: ToolResult } = $props()
   let open = $state(false)
-  const summary = $derived(summaryOf(name, input))
+  const label = $derived(describe(name, input))
 </script>
 
 <div class="tool" class:open>
   <button class="head" onclick={() => (open = !open)}>
     <span class="ic"><ToolIcon {name} size={13} /></span>
     <span class="name">{name}</span>
-    {#if summary}<span class="sum mono">{summary}</span>{/if}
+    {#if label.text}<span class="sum" class:mono={label.mono}>{label.text}</span>{/if}
+    <span class="sp"></span>
+    {#if label.added}<span class="stat add">+{label.added}</span>{/if}
+    {#if label.removed}<span class="stat del">−{label.removed}</span>{/if}
     {#if result?.isError}<span class="errdot" title="Tool reported an error"></span>{/if}
     <span class="car" aria-hidden="true">
       <svg width="9" height="9" viewBox="0 0 8 8" fill="currentColor"><path d="M2 0l4 4-4 4z" /></svg>
@@ -30,16 +33,18 @@
 
 <style>
   .tool {
+    border: 1px solid var(--border);
     border-radius: var(--r-sm);
+    background: var(--bg-raised);
+    overflow: hidden;
   }
   .head {
     width: 100%;
     display: flex;
     align-items: center;
-    gap: 9px;
-    padding: 7px 8px;
+    gap: 8px;
+    padding: 8px 10px;
     text-align: left;
-    border-radius: var(--r-sm);
     font-size: 13px;
     color: var(--text-2);
   }
@@ -56,14 +61,37 @@
     font-weight: 550;
     color: var(--text);
   }
+  /* Primary label (filename or command). Truncates only when it actually
+     overflows, and the spacer + gap keep it clear of the stats and caret. */
   .sum {
-    color: var(--text-4);
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex: 1;
-    min-width: 0;
+    color: var(--text-2);
+    font-size: 12.5px;
+  }
+  .sum.mono {
+    font-family: var(--mono);
     font-size: 12px;
+    letter-spacing: 0;
+  }
+  .sp {
+    flex: 1;
+    min-width: 6px;
+  }
+  .stat {
+    flex: none;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0;
+  }
+  .stat.add {
+    color: var(--live);
+  }
+  .stat.del {
+    color: var(--alert);
   }
   .car {
     flex: none;
@@ -83,8 +111,8 @@
     background: var(--alert);
   }
   .body {
-    margin: 2px 0 4px;
-    padding-left: 22px;
+    padding: 10px;
+    border-top: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     gap: 8px;

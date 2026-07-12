@@ -56,21 +56,32 @@ function baseName(path: string): string {
   return path.replace(/\/+$/, '').split('/').slice(-1)[0] || path
 }
 
-function editCounts(oldStr: string, newStr: string): string {
-  const { added, removed } = diffLines(oldStr, newStr)
-  const parts: string[] = []
-  if (added) parts.push(`+${added}`)
-  if (removed) parts.push(`−${removed}`)
-  return parts.join(' ')
+// ToolLabel is the structured, collapsed-row summary. `text` is the primary
+// label (a filename, command, or pattern); `mono` picks the font (sans for
+// filenames and prose, mono for code and paths); `added`/`removed` drive the
+// green/red diff stats. Keeping this structured lets the card colour the counts
+// rather than baking them into one flat string.
+export interface ToolLabel {
+  text: string
+  mono: boolean
+  added: number
+  removed: number
 }
 
-// summaryOf is the one-line label shown while a tool card is collapsed.
-export function summaryOf(name: string, input: unknown): string {
+const label = (text: string, mono = false, added = 0, removed = 0): ToolLabel => ({
+  text,
+  mono,
+  added,
+  removed,
+})
+
+// describe is the one-line label shown while a tool card is collapsed.
+export function describe(name: string, input: unknown): ToolLabel {
   const i = obj(input)
   switch (name) {
     case 'Edit': {
-      const stat = editCounts(str(i.old_string), str(i.new_string))
-      return [baseName(str(i.file_path)), stat].filter(Boolean).join('  ')
+      const d = diffLines(str(i.old_string), str(i.new_string))
+      return label(baseName(str(i.file_path)), false, d.added, d.removed)
     }
     case 'MultiEdit': {
       const edits = Array.isArray(i.edits) ? (i.edits as Obj[]) : []
@@ -81,39 +92,39 @@ export function summaryOf(name: string, input: unknown): string {
         a += d.added
         r += d.removed
       }
-      const stat = [a ? `+${a}` : '', r ? `−${r}` : ''].filter(Boolean).join(' ')
-      return [baseName(str(i.file_path)), stat].filter(Boolean).join('  ')
+      return label(baseName(str(i.file_path)), false, a, r)
     }
     case 'Write': {
       const lines = str(i.content) ? str(i.content).split('\n').length : 0
-      return [baseName(str(i.file_path)), lines ? `${lines} lines` : ''].filter(Boolean).join('  ')
+      return label(baseName(str(i.file_path)), false, lines, 0)
     }
     case 'Bash':
-      return str(i.command) || str(i.description)
+      return label(str(i.command) || str(i.description), true)
     case 'Read': {
       const off = num(i.offset)
       const lim = num(i.limit)
       const range = off != null ? `  ${off}–${lim != null ? off + lim : ''}` : ''
-      return baseName(str(i.file_path)) + range
+      return label(baseName(str(i.file_path)) + range, false)
     }
     case 'Grep':
-      return str(i.pattern) + (str(i.path) ? `  in ${baseName(str(i.path))}` : '')
+      return label(str(i.pattern) + (str(i.path) ? `  in ${baseName(str(i.path))}` : ''), true)
     case 'Glob':
-      return str(i.pattern)
+      return label(str(i.pattern), true)
     case 'TodoWrite': {
       const todos = Array.isArray(i.todos) ? (i.todos as Obj[]) : []
       const done = todos.filter((t) => str(t.status) === 'completed').length
-      return todos.length ? `${done}/${todos.length} done` : ''
+      return label(todos.length ? `${done}/${todos.length} done` : '', false)
     }
     case 'WebFetch':
-      return str(i.url)
+      return label(str(i.url), true)
     case 'WebSearch':
-      return str(i.query)
+      return label(str(i.query), false)
     case 'Task':
-      return str(i.subagent_type) || str(i.description)
+      return label(str(i.subagent_type) || str(i.description), false)
     default:
-      return (
-        str(i.command) || str(i.file_path) || str(i.path) || str(i.pattern) || str(i.url) || ''
+      return label(
+        str(i.command) || str(i.file_path) || str(i.path) || str(i.pattern) || str(i.url) || '',
+        true,
       )
   }
 }
