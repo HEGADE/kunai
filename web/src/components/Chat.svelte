@@ -4,6 +4,7 @@
   import type { ChatConnection } from '../lib/chat.svelte'
   import type { Attachment } from '../lib/types'
   import { groupTurns } from '../lib/turns'
+  import { MODELS, modelLabel } from '../lib/models'
   import PermissionGate from './PermissionGate.svelte'
   import Markdown from './Markdown.svelte'
   import BlockView from './BlockView.svelte'
@@ -24,6 +25,7 @@
   let uploading = $state(false)
   let menuOpen = $state(false)
   let modeOpen = $state(false)
+  let modelOpen = $state(false)
 
   // Scrolling: open at the latest message, follow the stream while pinned to the
   // bottom, and surface a jump-to-bottom button once the user scrolls up.
@@ -267,6 +269,26 @@
                 >
                   <span class="ml">{m.label}</span>
                   <span class="mh">{m.hint}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+        <div class="modewrap">
+          <button class="mode" onclick={() => (modelOpen = !modelOpen)} title="Model">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.8L20 9.7l-5.1 1.6L12 17l-2.9-5.7L4 9.7l6.1-1.9z" /></svg>
+            {modelLabel(chat.model)}
+          </button>
+          {#if modelOpen}
+            <button class="mode-scrim" onclick={() => (modelOpen = false)} aria-label="Close"></button>
+            <div class="mode-pop">
+              {#each MODELS as m (m.id)}
+                <button
+                  class:active={modelLabel(chat.model) === m.label}
+                  onclick={() => { chat.setModel(m.id); modelOpen = false }}
+                >
+                  <span class="ml">{m.label}</span>
+                  {#if m.hint}<span class="mh">{m.hint}</span>{/if}
                 </button>
               {/each}
             </div>

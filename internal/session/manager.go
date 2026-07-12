@@ -24,9 +24,10 @@ func NewManager() *Manager {
 
 // CreateOptions configure a new session.
 type CreateOptions struct {
-	Cwd   string
-	Title string
-	Model string
+	Cwd    string
+	Title  string
+	Model  string
+	Effort string // reasoning effort: low|medium|high|xhigh|max (spawn-time only)
 	// Resume, when set, reattaches to an existing CLI session id (loading its
 	// transcript) rather than starting a fresh conversation.
 	Resume string
@@ -58,7 +59,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	}
 	m.mu.Unlock()
 
-	drvOpts := claude.Options{Cwd: opts.Cwd, Model: opts.Model}
+	drvOpts := claude.Options{Cwd: opts.Cwd, Model: opts.Model, Effort: opts.Effort}
 	if opts.Resume != "" {
 		drvOpts.Resume = opts.Resume
 	} else {

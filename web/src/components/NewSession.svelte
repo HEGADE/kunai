@@ -1,7 +1,14 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
   import { browse, createSession } from '../lib/api'
+  import { MODELS, EFFORTS } from '../lib/models'
   import type { Listing } from '../lib/types'
+
+  // Model + reasoning effort are both spawn-time CLI flags, so they are chosen
+  // here (effort cannot change once a session is running). '' = the CLI default.
+  const modelOpts = [{ id: '', label: 'Default' }, ...MODELS]
+  let model = $state('')
+  let effort = $state('')
 
   let listing = $state<Listing | null>(null)
   let loading = $state(true)
@@ -66,7 +73,11 @@
     creating = true
     error = ''
     try {
-      const meta = await createSession(app.baseForMachine(machineId), { cwd: listing.path })
+      const meta = await createSession(app.baseForMachine(machineId), {
+        cwd: listing.path,
+        model: model || undefined,
+        effort: effort || undefined,
+      })
       app.open(machineId, meta.id)
     } catch (e) {
       error = (e as Error).message
@@ -168,6 +179,25 @@
       {:else if loading}
         <p class="note mono">scanning…</p>
       {/if}
+    </div>
+
+    <div class="opts">
+      <div class="orow">
+        <span class="olabel">Model</span>
+        <div class="oseg">
+          {#each modelOpts as m (m.id)}
+            <button class="oc" class:on={model === m.id} onclick={() => (model = m.id)} title={m.hint ?? ''}>{m.label}</button>
+          {/each}
+        </div>
+      </div>
+      <div class="orow">
+        <span class="olabel">Effort</span>
+        <div class="oseg">
+          {#each EFFORTS as e (e.id)}
+            <button class="oc" class:on={effort === e.id} onclick={() => (effort = e.id)} title={e.hint ?? ''}>{e.label}</button>
+          {/each}
+        </div>
+      </div>
     </div>
 
     <footer>
@@ -440,6 +470,47 @@
   }
   .note.err {
     color: var(--alert);
+  }
+  .opts {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border);
+  }
+  .orow {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .olabel {
+    flex: none;
+    width: 46px;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+  .oseg {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .oc {
+    padding: 5px 11px;
+    border-radius: 100px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .oc:hover {
+    color: var(--text);
+    border-color: var(--border-2);
+  }
+  .oc.on {
+    color: var(--text);
+    border-color: var(--border-2);
+    background: var(--panel-3);
   }
   footer {
     display: flex;

@@ -18,11 +18,11 @@ import (
 type EventKind string
 
 const (
-	EventInit       EventKind = "init"       // session/init: SessionID, Model, Cwd populated
-	EventTextDelta  EventKind = "text_delta" // Text populated (streaming token)
-	EventThinking   EventKind = "thinking"   // Text populated (streaming thinking token)
-	EventAssistant  EventKind = "assistant"  // full assistant turn; Assistant populated
-	EventPermission EventKind = "permission" // can_use_tool ask; Permission populated
+	EventInit       EventKind = "init"        // session/init: SessionID, Model, Cwd populated
+	EventTextDelta  EventKind = "text_delta"  // Text populated (streaming token)
+	EventThinking   EventKind = "thinking"    // Text populated (streaming thinking token)
+	EventAssistant  EventKind = "assistant"   // full assistant turn; Assistant populated
+	EventPermission EventKind = "permission"  // can_use_tool ask; Permission populated
 	EventResult     EventKind = "result"      // turn complete; Raw is the result frame
 	EventToolResult EventKind = "tool_result" // tool output; ToolResult populated
 	EventSystem     EventKind = "system"      // other system frames; Raw populated
@@ -73,6 +73,7 @@ type PermissionAsk struct {
 type Options struct {
 	Cwd            string
 	Model          string // optional model alias/name
+	Effort         string // optional reasoning effort: low|medium|high|xhigh|max (spawn-time only)
 	PermissionMode string // default "default"
 	Resume         string // session id to resume (loads prior transcript), optional
 	SessionID      string // explicit session id (must be a UUID), optional
@@ -144,6 +145,9 @@ func (s *Session) args() []string {
 	}
 	if s.opts.Model != "" {
 		a = append(a, "--model", s.opts.Model)
+	}
+	if s.opts.Effort != "" {
+		a = append(a, "--effort", s.opts.Effort)
 	}
 	if s.opts.SessionID != "" {
 		a = append(a, "--session-id", s.opts.SessionID)

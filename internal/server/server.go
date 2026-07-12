@@ -25,13 +25,14 @@ import (
 
 // Config holds server settings (populated from flags/env in cmd/kunai).
 type Config struct {
-	Addr         string // bind address, e.g. "100.x.y.z:8443" (tailnet IP)
-	TLSCert      string // path to tailscale cert (empty = plain HTTP, dev only)
-	TLSKey       string // path to tailscale key
-	DefaultModel string // optional default model for new sessions
-	DataDir      string // dir for uploads (and, via push, VAPID keys/subs)
-	PublicURL    string // this machine's own tailnet origin, e.g. https://host.tailnet.ts.net:8443
-	HubURL       string // if set, this is a peer that forwards push wake-ups to the hub at this URL
+	Addr          string // bind address, e.g. "100.x.y.z:8443" (tailnet IP)
+	TLSCert       string // path to tailscale cert (empty = plain HTTP, dev only)
+	TLSKey        string // path to tailscale key
+	DefaultModel  string // optional default model for new sessions
+	DefaultEffort string // optional default reasoning effort for new sessions
+	DataDir       string // dir for uploads (and, via push, VAPID keys/subs)
+	PublicURL     string // this machine's own tailnet origin, e.g. https://host.tailnet.ts.net:8443
+	HubURL        string // if set, this is a peer that forwards push wake-ups to the hub at this URL
 }
 
 // Server wires the manager, config, and embedded PWA into an http.Handler.
@@ -122,6 +123,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Cwd    string `json:"cwd"`
 		Title  string `json:"title"`
 		Model  string `json:"model"`
+		Effort string `json:"effort"`
 		Resume string `json:"resume"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -131,10 +133,13 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if req.Model == "" {
 		req.Model = s.cfg.DefaultModel
 	}
+	if req.Effort == "" {
+		req.Effort = s.cfg.DefaultEffort
+	}
 	// Session start blocks on the CLI init handshake; give it room.
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
-	opts := session.CreateOptions{Cwd: req.Cwd, Title: req.Title, Model: req.Model, Resume: req.Resume}
+	opts := session.CreateOptions{Cwd: req.Cwd, Title: req.Title, Model: req.Model, Effort: req.Effort, Resume: req.Resume}
 	if req.Resume != "" {
 		// Replay the prior conversation into the buffer so the client doesn't
 		// open onto an empty transcript.

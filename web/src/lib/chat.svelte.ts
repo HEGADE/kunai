@@ -209,6 +209,12 @@ export class ChatConnection {
     this.send({ t: 'set_mode', mode })
   }
 
+  // switch the model for subsequent turns (optimistic; the CLI applies it live).
+  setModel(model: string) {
+    this.model = model
+    this.send({ t: 'set_model', model })
+  }
+
   destroy() {
     this.closed = true
     clearTimeout(this.reconnectTimer)
