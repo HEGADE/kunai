@@ -9,14 +9,39 @@ declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: { url: string; revision: string | null }[]
 }
 
-const CACHE = 'kunai-shell-v2'
+const CACHE = 'kunai-shell-v3'
 const ASSETS = self.__WB_MANIFEST.map((e) => e.url)
+
+// Dedupe by RESOLVED url, not raw string: the manifest lists index.html and we
+// also want '/', but 'index.html' and '/index.html' resolve to the same request.
+// cache.addAll rejects duplicate request urls atomically, which previously
+// failed the whole install ("duplicate requests .../index.html") — leaving the
+// worker permanently non-activating, which broke offline AND push (the toggle
+// hung on serviceWorker.ready, which never resolves without an active worker).
+function precacheList(): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const u of [...ASSETS, '/', '/index.html']) {
+    const resolved = new URL(u, self.location.origin).href
+    if (!seen.has(resolved)) {
+      seen.add(resolved)
+      out.push(u)
+    }
+  }
+  return out
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     (async () => {
-      const cache = await caches.open(CACHE)
-      await cache.addAll([...new Set([...ASSETS, '/', '/index.html'])])
+      try {
+        const cache = await caches.open(CACHE)
+        await cache.addAll(precacheList())
+      } catch (err) {
+        // Precaching is best-effort. A failure here must NOT stop activation: a
+        // worker that never activates disables offline and push entirely.
+        console.error('[sw] precache failed', err)
+      }
       await self.skipWaiting()
     })(),
   )
