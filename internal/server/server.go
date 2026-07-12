@@ -6,7 +6,9 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"log"
 	"mime"
@@ -105,8 +107,15 @@ func (s *Server) Run(ctx context.Context) error {
 	}()
 
 	if s.cfg.TLSCert != "" && s.cfg.TLSKey != "" {
+		keeper := newCertKeeper(s.cfg.TLSCert, s.cfg.TLSKey, s.cfg.PublicURL)
+		if _, err := keeper.GetCertificate(nil); err != nil {
+			return fmt.Errorf("load TLS cert: %w", err)
+		}
+		srv.TLSConfig = &tls.Config{GetCertificate: keeper.GetCertificate}
+		go keeper.renewLoop(ctx) // auto-renew via `tailscale cert` before expiry
 		log.Printf("kunai listening on https://%s", s.cfg.Addr)
-		return srv.ListenAndServeTLS(s.cfg.TLSCert, s.cfg.TLSKey)
+		// Certs are served from TLSConfig.GetCertificate, so the file args are empty.
+		return srv.ListenAndServeTLS("", "")
 	}
 	log.Printf("kunai listening on http://%s (no TLS — dev only; PWA/push need HTTPS)", s.cfg.Addr)
 	return srv.ListenAndServe()

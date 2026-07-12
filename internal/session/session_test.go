@@ -74,25 +74,81 @@ func TestSequencingAndReplay(t *testing.T) {
 	f.events <- claude.Event{Kind: claude.EventTextDelta, Text: "llo"}
 	f.events <- claude.Event{Kind: claude.EventResult, Raw: json.RawMessage(`{"subtype":"success","duration_ms":42}`)}
 
-	// Sessions begin in "starting", so the result also emits the flip to idle:
-	// delta, delta, state(idle), result.
+	// Streaming deltas reach the live subscriber but are transient: they carry no
+	// Seq and are never buffered. Only the durable events are sequenced, so the
+	// result (which also flips starting->idle) yields state(seq 1), result(seq 2).
 	got := drain(t, sub, 4)
-	for i, ev := range got {
-		if ev.Seq != uint64(i+1) {
-			t.Fatalf("seqs not monotonic: %+v", got)
-		}
+	if got[0].T != EvDelta || got[0].Seq != 0 || got[0].Text != "he" {
+		t.Fatalf("delta 0 should be transient (seq 0): %+v", got[0])
 	}
-	if got[0].Text != "he" || got[2].T != EvState || got[2].State != StateIdle || got[3].T != EvResult {
-		t.Fatalf("unexpected events: %+v", got)
+	if got[1].T != EvDelta || got[1].Seq != 0 || got[1].Text != "llo" {
+		t.Fatalf("delta 1 should be transient (seq 0): %+v", got[1])
+	}
+	if got[2].T != EvState || got[2].State != StateIdle || got[2].Seq != 1 {
+		t.Fatalf("want state(idle) seq 1, got %+v", got[2])
+	}
+	if got[3].T != EvResult || got[3].Seq != 2 {
+		t.Fatalf("want result seq 2, got %+v", got[3])
 	}
 
-	// A fresh reconnect from seq 2 must replay events 3 and 4 only.
-	hello, backlog, _ := s.Attach(2)
-	if hello.HighSeq != 4 {
-		t.Fatalf("hello.HighSeq want 4, got %d", hello.HighSeq)
+	// A fresh reconnect from seq 0 replays only the durable events (no deltas).
+	hello, backlog, _ := s.Attach(0)
+	if hello.HighSeq != 2 {
+		t.Fatalf("hello.HighSeq want 2, got %d", hello.HighSeq)
 	}
-	if len(backlog) != 2 || backlog[0].Seq != 3 || backlog[1].Seq != 4 {
-		t.Fatalf("replay from seq2 want [3,4], got %+v", backlog)
+	if len(backlog) != 2 || backlog[0].T != EvState || backlog[1].T != EvResult {
+		t.Fatalf("replay from seq0 want [state, result], got %+v", backlog)
+	}
+}
+
+// TestStreamingDeltasDoNotEvictHistory guards the fix for the bug where the
+// replay ring buffered every streaming token delta: a single turn emits hundreds
+// of them, so the ring filled up within a few turns and evicted the actual
+// conversation, and reopening a session showed only the most recent messages.
+// Deltas must be fanned out live but never buffered.
+func TestStreamingDeltasDoNotEvictHistory(t *testing.T) {
+	f := newFakeDriver()
+	s := newSession("s1", "/tmp/p", "", f)
+	defer s.Close()
+
+	// A durable turn, then a flood of deltas far exceeding the ring capacity,
+	// then another durable turn. Under the old behavior the flood evicted the
+	// first turn from the ring.
+	f.events <- claude.Event{Kind: claude.EventResult, Raw: json.RawMessage(`{"subtype":"success"}`)}
+	for i := 0; i < ringCapacity+1000; i++ {
+		f.events <- claude.Event{Kind: claude.EventTextDelta, Text: "x"}
+	}
+	f.events <- claude.Event{Kind: claude.EventResult, Raw: json.RawMessage(`{"subtype":"success"}`)}
+
+	// Poll the ring snapshot until both durable results have been processed.
+	var backlog []AppEvent
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		_, backlog, _ = s.Attach(0)
+		results := 0
+		for _, ev := range backlog {
+			if ev.T == EvResult {
+				results++
+			}
+		}
+		if results >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	for _, ev := range backlog {
+		if ev.T == EvDelta {
+			t.Fatalf("delta events must never be buffered (ring has %d events)", len(backlog))
+		}
+	}
+	// The ring holds only the handful of durable events despite the flood; the
+	// first turn survived rather than being evicted.
+	if len(backlog) > 20 {
+		t.Fatalf("ring should hold only durable events, got %d", len(backlog))
+	}
+	if backlog[0].T != EvState || backlog[len(backlog)-1].T != EvResult {
+		t.Fatalf("first durable turn should survive the delta flood, got %+v", backlog)
 	}
 }
 
