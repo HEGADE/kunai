@@ -25,6 +25,15 @@ import (
 	"github.com/hegade/kunai/internal/webui"
 )
 
+// When neither the request nor the machine config names one, every session
+// falls back to these — so the composer always shows a real model and effort
+// (never a blank "Model"/"Effort"), and resumed sessions (which don't carry a
+// model/effort) default to Opus at high effort.
+const (
+	defaultModel  = "opus"
+	defaultEffort = "high"
+)
+
 // Config holds server settings (populated from flags/env in cmd/kunai).
 type Config struct {
 	Addr          string // bind address, e.g. "100.x.y.z:8443" (tailnet IP)
@@ -144,8 +153,14 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if req.Model == "" {
 		req.Model = s.cfg.DefaultModel
 	}
+	if req.Model == "" {
+		req.Model = defaultModel
+	}
 	if req.Effort == "" {
 		req.Effort = s.cfg.DefaultEffort
+	}
+	if req.Effort == "" {
+		req.Effort = defaultEffort
 	}
 	// Session start blocks on the CLI init handshake; give it room.
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)

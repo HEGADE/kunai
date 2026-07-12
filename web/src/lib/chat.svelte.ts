@@ -1,3 +1,4 @@
+import { DEFAULT_MODEL, DEFAULT_EFFORT } from './models'
 import type {
   AppEvent,
   Attachment,
@@ -35,9 +36,13 @@ export class ChatConnection {
   status = $state<ConnStatus>('connecting')
   sessionState = $state<SessionState>('idle')
   mode = $state<PermissionMode>('default')
-  effort = $state('')
+  // Seed model/effort to the app defaults so the composer shows a real label
+  // (Opus 4.8 / High) immediately, before the hello frame lands. The server now
+  // always sends a concrete model/effort, but keep the guard below so an empty
+  // field can never blank the label back to the generic "Model"/"Effort".
+  effort = $state(DEFAULT_EFFORT)
   cwd = $state('')
-  model = $state('')
+  model = $state(DEFAULT_MODEL)
   title = $state('')
   errorLine = $state('')
 
@@ -102,11 +107,11 @@ export class ChatConnection {
     switch (ev.t) {
       case 'hello':
         this.cwd = ev.cwd ?? this.cwd
-        this.model = ev.model ?? this.model
+        this.model = ev.model || this.model
         this.title = ev.title ?? this.title
         if (ev.state) this.sessionState = ev.state
         if (ev.mode) this.mode = ev.mode as PermissionMode
-        if (ev.effort !== undefined) this.effort = ev.effort
+        if (ev.effort) this.effort = ev.effort
         for (const p of ev.pending ?? []) this.addPending(p)
         break
       case 'user':
