@@ -15,7 +15,36 @@
 set -euo pipefail
 
 say()  { printf '%s\n' "$*"; }
-fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
+fail() { printf '%serror:%s %s\n' "${C_R:-}${C_B:-}" "${C_RST:-}" "$*" >&2; exit 1; }
+
+# Colors — only when writing to a terminal, and never if NO_COLOR is set.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_G=$'\033[32m'; C_R=$'\033[31m'; C_Y=$'\033[33m'; C_DIM=$'\033[2m'; C_B=$'\033[1m'; C_RST=$'\033[0m'
+else
+  C_G=; C_R=; C_Y=; C_DIM=; C_B=; C_RST=
+fi
+
+# Preflight report rows. chk_bad records a hint and flags MISSING so we can show
+# the whole picture at once, then fail with everything the user needs to fix.
+MISSING=0; HINTS=""
+chk_ok()  { printf '  %s✓%s %s%-12s%s %s%s%s\n' "$C_G" "$C_RST" "$C_B" "$1" "$C_RST" "$C_DIM" "$2" "$C_RST"; }
+chk_opt() { printf '  %s•%s %s%-12s%s %s%s%s\n' "$C_Y" "$C_RST" "$C_B" "$1" "$C_RST" "$C_DIM" "$2" "$C_RST"; }
+chk_bad() {
+  printf '  %s✗%s %s%-12s%s %s%s%s\n' "$C_R" "$C_RST" "$C_B" "$1" "$C_RST" "$C_R" "$2" "$C_RST"
+  MISSING=1
+  HINTS="${HINTS}
+    ${C_B}${1}${C_RST} — ${3}"
+}
+
+# find_bin locates a CLI on PATH, else at known fallback locations (e.g. the
+# Tailscale CLI lives inside the macOS app bundle and isn't on PATH by default).
+find_bin() {
+  local n="$1"; shift
+  local p; p="$(command -v "$n" 2>/dev/null || true)"
+  if [ -n "$p" ]; then printf '%s' "$p"; return 0; fi
+  local c; for c in "$@"; do [ -x "$c" ] && { printf '%s' "$c"; return 0; }; done
+  return 1
+}
 
 PORT="${KUNAI_PORT:-8443}"
 DATA_DIR="$HOME/.kunai"
@@ -67,26 +96,52 @@ ensure_go() {
   rm -f "$tmp"
 }
 
-# --- prerequisites ----------------------------------------------------------
+# --- prerequisites (preflight report) ---------------------------------------
 
-# Find claude even when this shell's PATH is minimal (e.g. over ssh).
-CLAUDE_BIN="$(command -v claude 2>/dev/null || true)"
-for c in "$HOME/.local/bin/claude" /usr/local/bin/claude /opt/homebrew/bin/claude; do
-  [ -n "$CLAUDE_BIN" ] && break
-  [ -x "$c" ] && CLAUDE_BIN="$c"
-done
-[ -n "$CLAUDE_BIN" ] \
-  || fail "the 'claude' CLI is required on this machine. Install Claude Code first: https://claude.com/claude-code"
+# Locate the CLIs even when PATH is minimal (ssh) or the CLI lives off PATH
+# (Tailscale on macOS ships its CLI inside the app bundle).
+CLAUDE_BIN="$(find_bin claude "$HOME/.local/bin/claude" /usr/local/bin/claude /opt/homebrew/bin/claude || true)"
+TS_BIN="$(find_bin tailscale /Applications/Tailscale.app/Contents/MacOS/Tailscale /usr/local/bin/tailscale /opt/homebrew/bin/tailscale /usr/bin/tailscale || true)"
 
-command -v tailscale >/dev/null 2>&1 \
-  || fail "tailscale is required. Install it and run 'tailscale up' first."
+say ""
+say "${C_B}Kunai installer${C_RST} ${C_DIM}· $PLAT${C_RST}"
+say ""
 
-TS_IP="$(tailscale ip -4 2>/dev/null | head -1 || true)"
-[ -n "$TS_IP" ] || fail "could not get a Tailscale IP. Is tailscale up?"
+if [ -n "$CLAUDE_BIN" ]; then chk_ok "Claude Code" "$CLAUDE_BIN"
+else chk_bad "Claude Code" "not found" "install Claude Code and sign in: https://claude.com/claude-code"; fi
 
-FQDN="$(tailscale status --json 2>/dev/null \
-  | /usr/bin/env sed -n 's/.*"DNSName": *"\([^"]*\)".*/\1/p' | head -1 | sed 's/\.$//')"
-[ -n "$FQDN" ] || fail "could not determine this machine's MagicDNS name. Enable MagicDNS for your tailnet."
+if [ -n "$TS_BIN" ]; then chk_ok "Tailscale" "$TS_BIN"
+else chk_bad "Tailscale" "CLI not found" "install Tailscale; on macOS the CLI is inside the app (/Applications/Tailscale.app/Contents/MacOS/Tailscale)"; fi
+
+TS_IP=""; FQDN=""
+if [ -n "$TS_BIN" ]; then
+  TS_IP="$("$TS_BIN" ip -4 2>/dev/null | head -1 || true)"
+  if [ -n "$TS_IP" ]; then chk_ok "Tailnet" "$TS_IP"
+  else chk_bad "Tailnet" "not connected" "run: tailscale up"; fi
+
+  FQDN="$("$TS_BIN" status --json 2>/dev/null \
+    | /usr/bin/env sed -n 's/.*"DNSName": *"\([^"]*\)".*/\1/p' | head -1 | sed 's/\.$//')"
+  if [ -n "$FQDN" ]; then chk_ok "MagicDNS" "$FQDN"
+  else chk_bad "MagicDNS" "no name" "enable MagicDNS in the Tailscale admin console (DNS tab)"; fi
+fi
+
+# Build toolchain is informational — the installer handles it automatically.
+if command -v go >/dev/null 2>&1; then chk_ok "Go" "$(command -v go)"
+elif [ -f "$HERE/go.mod" ]; then chk_opt "Go" "not installed — will fetch a local toolchain"
+else chk_opt "Go" "not needed — using a prebuilt binary"; fi
+
+# A downloader is required only when we'll need to fetch something.
+if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1 \
+   && { [ ! -f "$HERE/go.mod" ] || ! command -v go >/dev/null 2>&1; }; then
+  chk_bad "curl / wget" "not found" "install curl or wget (needed to download Go or a binary)"
+fi
+
+say ""
+if [ "$MISSING" -ne 0 ]; then
+  printf '%s✗ some prerequisites are missing:%s\n' "$C_R$C_B" "$C_RST"
+  printf '%s\n\n' "$HINTS"
+  fail "fix the above, then re-run ./install.sh"
+fi
 
 # --- find or build the binary -----------------------------------------------
 
@@ -135,11 +190,11 @@ mkdir -p "$TLS_DIR"
 CRT="$TLS_DIR/$FQDN.crt"
 KEY="$TLS_DIR/$FQDN.key"
 if [ ! -s "$CRT" ] || [ ! -s "$KEY" ]; then
-  say "minting TLS certificate for $FQDN..."
-  if ! tailscale cert --cert-file "$CRT" --key-file "$KEY" "$FQDN" 2>/dev/null; then
-    sudo tailscale cert --cert-file "$CRT" --key-file "$KEY" "$FQDN" \
+  say "${C_DIM}minting TLS certificate for $FQDN…${C_RST}"
+  if ! "$TS_BIN" cert --cert-file "$CRT" --key-file "$KEY" "$FQDN" 2>/dev/null; then
+    sudo "$TS_BIN" cert --cert-file "$CRT" --key-file "$KEY" "$FQDN" \
       && sudo chown "$USER" "$CRT" "$KEY" \
-      || fail "could not mint a certificate. Enable HTTPS certificates in the Tailscale admin console (DNS > HTTPS Certificates)."
+      || fail "could not mint a TLS certificate. Enable HTTPS Certificates in the Tailscale admin console (DNS tab > HTTPS Certificates), then re-run."
   fi
 fi
 
