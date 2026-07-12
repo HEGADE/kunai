@@ -103,6 +103,15 @@ promise holds across the whole fleet.
 
 ### 1. Install on your main machine
 
+One line, no toolchain — downloads a prebuilt binary and sets everything up:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/HEGADE/kunai/main/install.sh | bash
+```
+
+Or from a source checkout (builds from source, installing a local Go toolchain
+automatically if `go` is missing):
+
 ```sh
 git clone https://github.com/HEGADE/kunai && cd kunai
 ./install.sh
@@ -110,13 +119,14 @@ git clone https://github.com/HEGADE/kunai && cd kunai
 
 The installer does everything and prints the URL to open:
 
-1. builds the binary (web app plus Go),
+1. gets the binary (a prebuilt release, or a source build in a checkout),
 2. detects your tailnet address and MagicDNS name,
 3. mints a TLS certificate with `tailscale cert`,
 4. installs a service (a systemd user unit on Linux, a launchd agent on macOS),
 5. health-checks it and prints `https://<your-machine>.<tailnet>.ts.net:8443`.
 
-Re-running `./install.sh` later updates in place.
+**Updating** (Mac or Linux): just re-run the installer — the one-liner again, or
+`./install.sh` in a checkout. It swaps the binary and restarts the service.
 
 ### 2. Open it on your phone
 
@@ -125,11 +135,12 @@ enable notifications from the installed app. That machine is now your **hub**.
 
 ### 3. Add more machines (optional)
 
-Run the same command on any other machine, pointing it at your hub so its
+Run the installer on any other machine, pointing it at your hub so its
 notifications reach your phone:
 
 ```sh
-KUNAI_HUB_URL=https://<hub>.<tailnet>.ts.net:8443 ./install.sh
+curl -fsSL https://raw.githubusercontent.com/HEGADE/kunai/main/install.sh \
+  | KUNAI_HUB_URL=https://<hub>.<tailnet>.ts.net:8443 bash
 ```
 
 Open the hub's app and the new machine appears automatically. Pick which machine

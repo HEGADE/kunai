@@ -83,6 +83,12 @@ dl_file() {
   elif command -v wget >/dev/null 2>&1; then wget -q --timeout=600 -O "$2" "$1"
   else return 1; fi
 }
+# sha256_of prints the hex sha256 of a file (empty if no hasher is available).
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
+  else printf ''; fi
+}
 
 # ensure_go sets GO to a usable `go`. If none is on PATH it bootstraps the
 # official Go toolchain into $DATA_DIR/toolchain/go — a self-contained tarball,
@@ -202,17 +208,33 @@ if [ -n "$GO" ]; then
   BIN="$HERE/kunai"
 fi
 
-# Release tarball (no toolchain): use a bundled prebuilt binary.
+# Release tarball (no toolchain): use a bundled prebuilt binary if one is here.
 if [ -z "$BIN" ]; then
   for c in "$HERE/dist/kunai-$PLAT" "$HERE/kunai-$PLAT" "$HERE/kunai"; do
     if [ -f "$c" ]; then BIN="$c"; break; fi
   done
 fi
 
-if [ -z "$BIN" ] && command -v gh >/dev/null 2>&1; then
-  say "downloading prebuilt binary from the latest release..."
-  gh release download -R HEGADE/kunai --pattern "kunai-$PLAT" -O "$HERE/kunai-$PLAT" --clobber \
-    && chmod +x "$HERE/kunai-$PLAT" && BIN="$HERE/kunai-$PLAT"
+# Otherwise fetch the matching prebuilt from the latest GitHub release (curl or
+# wget only — no gh, git, or Go) and verify its sha256. This is what makes
+# `curl -fsSL …/install.sh | bash` work; re-running it later updates in place.
+if [ -z "$BIN" ]; then
+  REL="https://github.com/HEGADE/kunai/releases/latest/download"
+  out="$DATA_DIR/kunai-$PLAT"
+  mkdir -p "$DATA_DIR"
+  say "${C_DIM}downloading prebuilt kunai ($PLAT) from the latest release…${C_RST}"
+  if dl_file "$REL/kunai-$PLAT" "$out"; then
+    want="$(dl_stdout "$REL/checksums.txt" 2>/dev/null | awk -v f="kunai-$PLAT" '{n=$2; sub(/^\*/,"",n); if (n==f) print $1}' | head -1)"
+    got="$(sha256_of "$out")"
+    if [ -n "$want" ] && [ -n "$got" ] && [ "$want" != "$got" ]; then
+      rm -f "$out"; fail "checksum mismatch for kunai-$PLAT (expected $want, got $got)"
+    fi
+    chmod +x "$out"; BIN="$out"
+  elif command -v gh >/dev/null 2>&1; then
+    say "${C_DIM}trying gh…${C_RST}"
+    gh release download -R HEGADE/kunai --pattern "kunai-$PLAT" -O "$out" --clobber \
+      && chmod +x "$out" && BIN="$out"
+  fi
 fi
 
 [ -n "$BIN" ] || fail "no kunai binary and could not build one (Go bootstrap needs curl or wget and network access). Put a kunai-$PLAT binary next to this script, or install Go, or install gh."
@@ -320,16 +342,17 @@ if command -v curl >/dev/null 2>&1; then
   for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
     if curl -s -m 4 -o /dev/null "$URL/api/stats"; then
       say ""
-      say "kunai is running."
+      say "${C_G}${C_B}kunai is running.${C_RST}"
       say ""
-      say "  Open on any device in your tailnet:  $URL"
+      say "  Open on any device in your tailnet:  ${C_B}$URL${C_RST}"
       say ""
       say "  iPhone: open it in Safari, then Share > Add to Home Screen."
+      say "  ${C_DIM}Update later: re-run this installer (it swaps the binary and restarts the service).${C_RST}"
       if [ "$OS" = "darwin" ]; then
-        say "  Manage: launchctl list | grep kunai; logs: $DATA_DIR/kunai.log"
-        say "  Stop:   launchctl unload ~/Library/LaunchAgents/com.kunai.agent.plist"
+        say "  ${C_DIM}Manage: launchctl list | grep kunai; logs: $DATA_DIR/kunai.log${C_RST}"
+        say "  ${C_DIM}Stop:   launchctl unload ~/Library/LaunchAgents/com.kunai.agent.plist${C_RST}"
       else
-        say "  Manage: systemctl --user status|restart kunai; logs: journalctl --user -u kunai -f"
+        say "  ${C_DIM}Manage: systemctl --user status|restart kunai; logs: journalctl --user -u kunai -f${C_RST}"
       fi
       exit 0
     fi
