@@ -31,6 +31,11 @@ type CreateOptions struct {
 	// Resume, when set, reattaches to an existing CLI session id (loading its
 	// transcript) rather than starting a fresh conversation.
 	Resume string
+	// SessionID, when set (and Resume is empty), forces the new session's id
+	// instead of generating one. Used to respawn a session under the same id
+	// without a transcript (e.g. an effort change before the first turn, where
+	// there is nothing to resume).
+	SessionID string
 	// Seed pre-populates the replay buffer with past turns (used with Resume so
 	// the client sees the prior conversation).
 	Seed []SeedTurn
@@ -48,6 +53,9 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 		return nil, fmt.Errorf("not a directory: %s", opts.Cwd)
 	}
 	id := opts.Resume
+	if id == "" {
+		id = opts.SessionID
+	}
 	if id == "" {
 		id = newUUID()
 	}
@@ -163,23 +171,24 @@ func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seed
 		return nil, fmt.Errorf("session %s not live", id)
 	}
 	cid := old.ClaudeSessionID()
-	if cid == "" {
-		return nil, errors.New("session not ready to restart")
-	}
 	meta := old.Meta()
 
 	old.Close()
 	<-old.Done()
 	m.removeIf(id, old) // synchronous, so the recreate below won't collide
 
-	return m.Create(ctx, CreateOptions{
-		Cwd:    meta.Cwd,
-		Title:  meta.Title,
-		Model:  meta.Model,
-		Effort: effort,
-		Resume: cid,
-		Seed:   seedFn(cid),
-	})
+	// Effort is a spawn-time flag, so the process must be respawned either way.
+	// With a CLI session id we resume (preserving the conversation via the
+	// transcript); before the first turn there is no id and nothing to preserve,
+	// so respawn fresh under the same handle id.
+	opts := CreateOptions{Cwd: meta.Cwd, Title: meta.Title, Model: meta.Model, Effort: effort}
+	if cid != "" {
+		opts.Resume = cid
+		opts.Seed = seedFn(cid)
+	} else {
+		opts.SessionID = id
+	}
+	return m.Create(ctx, opts)
 }
 
 // newUUID returns a random RFC 4122 v4 UUID (required by claude --session-id).
