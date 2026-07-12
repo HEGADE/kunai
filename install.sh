@@ -31,6 +31,42 @@ case "$ARCH" in
 esac
 PLAT="$OS-$ARCH"
 
+# dl_stdout/dl_file fetch a URL (via curl or wget) to stdout / to a file.
+dl_stdout() {
+  if command -v curl >/dev/null 2>&1; then curl -fsSL -m 15 "$1"
+  elif command -v wget >/dev/null 2>&1; then wget -qO- --timeout=15 "$1"
+  else return 1; fi
+}
+dl_file() {
+  if command -v curl >/dev/null 2>&1; then curl -fsSL -m 600 -o "$2" "$1"
+  elif command -v wget >/dev/null 2>&1; then wget -q --timeout=600 -O "$2" "$1"
+  else return 1; fi
+}
+
+# ensure_go sets GO to a usable `go`. If none is on PATH it bootstraps the
+# official Go toolchain into $DATA_DIR/toolchain/go — a self-contained tarball,
+# so no package manager, no root, and no PATH pollution (used only to build).
+GO=""
+GO_FALLBACK_VERSION="go1.23.5"
+ensure_go() {
+  if command -v go >/dev/null 2>&1; then GO="$(command -v go)"; return; fi
+  local root="$DATA_DIR/toolchain/go" ver url tmp
+  if [ -x "$root/bin/go" ]; then GO="$root/bin/go"; return; fi
+  ver="$(dl_stdout 'https://go.dev/VERSION?m=text' 2>/dev/null | head -1 | tr -d '[:space:]')"
+  [ -n "$ver" ] || ver="$GO_FALLBACK_VERSION"
+  url="https://go.dev/dl/${ver}.${OS}-${ARCH}.tar.gz"
+  say "go not found — fetching ${ver} (${OS}-${ARCH}) into $root ..."
+  mkdir -p "$DATA_DIR/toolchain"
+  tmp="$(mktemp)"
+  if dl_file "$url" "$tmp" && tar -C "$DATA_DIR/toolchain" -xzf "$tmp" 2>/dev/null && [ -x "$root/bin/go" ]; then
+    GO="$root/bin/go"
+    say "installed Go toolchain ($ver)"
+  else
+    say "note: could not bootstrap Go (will look for a prebuilt binary instead)"
+  fi
+  rm -f "$tmp"
+}
+
 # --- prerequisites ----------------------------------------------------------
 
 # Find claude even when this shell's PATH is minimal (e.g. over ssh).
@@ -57,7 +93,13 @@ FQDN="$(tailscale status --json 2>/dev/null \
 BIN=""
 # In a source checkout, always build fresh — prebuilt dirs (dist/, ./kunai) may
 # be stale artifacts from an earlier `make release`, so they must NOT win here.
-if [ -f "$HERE/go.mod" ] && command -v go >/dev/null 2>&1; then
+# Go is bootstrapped automatically if it's not already installed.
+if [ -f "$HERE/go.mod" ]; then
+  ensure_go
+fi
+if [ -n "$GO" ]; then
+  # The web app (internal/webui/dist) is committed and embedded, so npm is only
+  # needed in the rare case that dist is missing.
   if [ ! -f "$HERE/internal/webui/dist/index.html" ]; then
     command -v npm >/dev/null 2>&1 || fail "building from source needs npm for the web app (or use a prebuilt binary)"
     say "building web app..."
@@ -65,7 +107,7 @@ if [ -f "$HERE/go.mod" ] && command -v go >/dev/null 2>&1; then
   fi
   say "building kunai..."
   VERSION="$(cd "$HERE" && git describe --tags --always 2>/dev/null || echo dev)"
-  (cd "$HERE" && CGO_ENABLED=0 go build \
+  (cd "$HERE" && CGO_ENABLED=0 "$GO" build \
     -ldflags="-s -w -X 'github.com/hegade/kunai/internal/server.buildVersion=$VERSION'" \
     -o "$HERE/kunai" ./cmd/kunai)
   BIN="$HERE/kunai"
@@ -84,7 +126,7 @@ if [ -z "$BIN" ] && command -v gh >/dev/null 2>&1; then
     && chmod +x "$HERE/kunai-$PLAT" && BIN="$HERE/kunai-$PLAT"
 fi
 
-[ -n "$BIN" ] || fail "no kunai binary found and cannot build one. Put kunai-$PLAT next to this script, or install go+npm, or install gh."
+[ -n "$BIN" ] || fail "no kunai binary and could not build one (Go bootstrap needs curl or wget and network access). Put a kunai-$PLAT binary next to this script, or install Go, or install gh."
 
 # --- TLS certificate over Tailscale -----------------------------------------
 

@@ -96,7 +96,10 @@ promise holds across the whole fleet.
   `claude` on your PATH.
 - Tailscale with MagicDNS and HTTPS certificates enabled (admin console: DNS, then
   HTTPS Certificates).
-- Go 1.22+ and Node 20+ (the installer builds from source).
+- No toolchain needed to start: `install.sh` builds from source and
+  auto-installs a local Go toolchain if `go` is missing (a self-contained
+  download under `~/.kunai`, no root). The web app is prebuilt and embedded, so
+  Node is not required.
 
 ### 1. Install on your main machine
 
