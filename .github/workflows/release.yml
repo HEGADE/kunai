@@ -1,0 +1,58 @@
+name: release
+
+# Publish prebuilt binaries for every platform. Kunai is pure Go with
+# CGO_ENABLED=0, so a single Linux runner cross-compiles all four targets
+# (including both macOS arches) — no macOS runner, no extra Actions minutes.
+#
+# Cut a release by pushing a tag (git tag v0.1.0 && git push origin v0.1.0)
+# or by running this workflow manually with a tag input.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build web and cross-compile all platforms
+        run: make release VERSION="$TAG"
+
+      - name: Checksums
+        run: cd dist && sha256sum kunai-* > checksums.txt && cat checksums.txt
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --generate-notes \
+            dist/kunai-linux-amd64 dist/kunai-linux-arm64 \
+            dist/kunai-darwin-amd64 dist/kunai-darwin-arm64 \
+            dist/checksums.txt dist/install.sh
