@@ -91,8 +91,14 @@
     attachments = []
     if (textarea) textarea.style.height = 'auto'
   }
+  // On a physical keyboard, Enter sends and Shift+Enter inserts a newline. On a
+  // touch device there is no Shift key, so Enter must insert a newline (the
+  // native textarea behavior) and sending is done with the arrow button — the
+  // standard mobile-chat convention.
+  const isTouch =
+    typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
   function onKey(e: KeyboardEvent) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !isTouch) {
       e.preventDefault()
       send()
     }
@@ -243,7 +249,7 @@
         oninput={grow}
         onkeydown={onKey}
         rows="1"
-        enterkeyhint="send"
+        enterkeyhint={isTouch ? 'enter' : 'send'}
         autocomplete="off"
         autocapitalize="sentences"
         placeholder={chat.status === 'online' ? 'Message Claude…' : 'Reconnecting…'}
