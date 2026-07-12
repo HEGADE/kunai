@@ -18,6 +18,27 @@ export function pushSupported(): boolean {
   return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window
 }
 
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), ms))])
+}
+
+// activeRegistration returns a ready service-worker registration, ensuring it is
+// registered first. It never hangs: if the worker doesn't become active within
+// the timeout it resolves null so the caller can show a message instead of the
+// toggle spinning forever (navigator.serviceWorker.ready otherwise waits
+// indefinitely when the worker never activates).
+async function activeRegistration(timeoutMs = 8000): Promise<ServiceWorkerRegistration | null> {
+  if (!('serviceWorker' in navigator)) return null
+  try {
+    if (!(await navigator.serviceWorker.getRegistration())) {
+      await navigator.serviceWorker.register('/sw.js')
+    }
+  } catch {
+    /* the ready race below still gives it a chance */
+  }
+  return withTimeout(navigator.serviceWorker.ready, timeoutMs)
+}
+
 export function isStandalone(): boolean {
   return (
     window.matchMedia('(display-mode: standalone)').matches ||
@@ -37,8 +58,8 @@ export function pushState(): 'unsupported' | 'granted' | 'denied' | 'default' {
 export async function isSubscribed(): Promise<boolean> {
   if (!pushSupported()) return false
   try {
-    const reg = await navigator.serviceWorker.ready
-    return !!(await reg.pushManager.getSubscription())
+    const reg = await withTimeout(navigator.serviceWorker.ready, 5000)
+    return !!reg && !!(await reg.pushManager.getSubscription())
   } catch {
     return false
   }
@@ -57,19 +78,21 @@ export async function enablePush(): Promise<string> {
   }
   if (perm !== 'granted') return 'Notifications were not allowed. Click the toggle again and choose Allow.'
 
-  // Subscribing can reject on desktop Linux (no notification daemon, or the
-  // browser push service is unreachable). Surface the real reason instead of
-  // letting it throw and leaving the toggle silently off.
+  // Each step is bounded so the toggle can never spin silently: a stalled
+  // service worker or push service becomes a message, not a hang.
   try {
-    const reg = await navigator.serviceWorker.ready
+    const reg = await activeRegistration()
+    if (!reg) {
+      return 'The notification service worker did not start. Hard-reload (Cmd+Shift+R), then try again; if it persists, close and reopen the tab.'
+    }
     const res = await fetch('/api/push/pubkey')
     if (!res.ok) return 'Push is not configured on the server.'
     const { key } = (await res.json()) as { key: string }
 
-    const sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(key),
-    })
+    const sub = await withTimeout(subscribeFresh(reg, key), 15000)
+    if (!sub) {
+      return 'The browser push service did not respond (often a network/VPN/firewall issue reaching Google/Mozilla push). Check the connection and try again.'
+    }
     const post = await fetch('/api/push/subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -78,7 +101,27 @@ export async function enablePush(): Promise<string> {
     if (!post.ok) return 'Could not register the subscription with the server.'
     return ''
   } catch (e) {
-    return `Could not subscribe: ${(e as Error).message}. On Linux, make sure your desktop has a notification service running and the browser is Chrome or Firefox.`
+    return `Could not subscribe: ${(e as Error).message}`
+  }
+}
+
+// subscribeFresh subscribes with the given VAPID key, recovering from a stale
+// subscription left by a previous/different key (which otherwise rejects with
+// "a subscription with a different applicationServerKey already exists").
+async function subscribeFresh(
+  reg: ServiceWorkerRegistration,
+  key: string,
+): Promise<PushSubscription> {
+  const opts = { userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(key) }
+  try {
+    return await reg.pushManager.subscribe(opts)
+  } catch (e) {
+    const existing = await reg.pushManager.getSubscription()
+    if (existing) {
+      await existing.unsubscribe().catch(() => {})
+      return reg.pushManager.subscribe(opts)
+    }
+    throw e
   }
 }
 
@@ -88,8 +131,8 @@ export async function enablePush(): Promise<string> {
 export async function disablePush(): Promise<string> {
   if (!pushSupported()) return ''
   try {
-    const reg = await navigator.serviceWorker.ready
-    const sub = await reg.pushManager.getSubscription()
+    const reg = await withTimeout(navigator.serviceWorker.ready, 5000)
+    const sub = reg ? await reg.pushManager.getSubscription() : null
     if (sub) {
       await fetch('/api/push/unsubscribe', {
         method: 'POST',
