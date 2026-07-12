@@ -52,24 +52,34 @@ export async function enablePush(): Promise<string> {
     return 'On iOS, add Kunai to your home screen first, then enable notifications from there.'
   }
   const perm = await Notification.requestPermission()
-  if (perm !== 'granted') return 'Notifications were not allowed.'
+  if (perm === 'denied') {
+    return 'Notifications are blocked for this site. Allow them in the browser site settings (the padlock in the address bar), then try again.'
+  }
+  if (perm !== 'granted') return 'Notifications were not allowed. Click the toggle again and choose Allow.'
 
-  const reg = await navigator.serviceWorker.ready
-  const res = await fetch('/api/push/pubkey')
-  if (!res.ok) return 'Push is not configured on the server.'
-  const { key } = (await res.json()) as { key: string }
+  // Subscribing can reject on desktop Linux (no notification daemon, or the
+  // browser push service is unreachable). Surface the real reason instead of
+  // letting it throw and leaving the toggle silently off.
+  try {
+    const reg = await navigator.serviceWorker.ready
+    const res = await fetch('/api/push/pubkey')
+    if (!res.ok) return 'Push is not configured on the server.'
+    const { key } = (await res.json()) as { key: string }
 
-  const sub = await reg.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(key),
-  })
-  const post = await fetch('/api/push/subscribe', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(sub),
-  })
-  if (!post.ok) return 'Could not register for notifications.'
-  return ''
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(key),
+    })
+    const post = await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sub),
+    })
+    if (!post.ok) return 'Could not register the subscription with the server.'
+    return ''
+  } catch (e) {
+    return `Could not subscribe: ${(e as Error).message}. On Linux, make sure your desktop has a notification service running and the browser is Chrome or Firefox.`
+  }
 }
 
 // disablePush unsubscribes this device and drops it from the server. The
