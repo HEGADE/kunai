@@ -9,7 +9,7 @@ declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: { url: string; revision: string | null }[]
 }
 
-const CACHE = 'kunai-shell-v1'
+const CACHE = 'kunai-shell-v2'
 const ASSETS = self.__WB_MANIFEST.map((e) => e.url)
 
 self.addEventListener('install', (event) => {
@@ -39,9 +39,20 @@ self.addEventListener('fetch', (event) => {
   // Never cache live data channels.
   if (url.pathname.startsWith('/api') || url.pathname.startsWith('/ws')) return
 
-  // App shell: serve index.html for navigations (SPA), cache-first for assets.
+  // App shell: navigations are network-FIRST so a normal refresh always picks up
+  // the latest deploy (cache-first here served a stale app until a hard refresh).
+  // Falls back to the cached shell when offline. Fingerprinted assets below stay
+  // cache-first since they're immutable.
   if (req.mode === 'navigate') {
-    event.respondWith(caches.match('/index.html').then((r) => r ?? fetch(req)))
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          const copy = res.clone()
+          caches.open(CACHE).then((c) => c.put('/index.html', copy))
+          return res
+        })
+        .catch(() => caches.match('/index.html').then((r) => r ?? fetch(req))),
+    )
     return
   }
   event.respondWith(
