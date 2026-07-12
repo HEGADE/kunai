@@ -64,10 +64,10 @@
 <style>
   .md {
     color: var(--text);
-    font-family: var(--serif);
-    font-size: 16.5px;
-    line-height: 1.72;
-    letter-spacing: -0.002em;
+    font-family: var(--sans);
+    font-size: 15.5px;
+    line-height: 1.68;
+    letter-spacing: -0.006em;
     overflow-wrap: anywhere;
   }
   .md :global(> :first-child) {
@@ -83,20 +83,20 @@
   .md :global(h2),
   .md :global(h3),
   .md :global(h4) {
-    font-family: var(--serif);
+    font-family: var(--sans);
     font-weight: 600;
-    line-height: 1.3;
-    letter-spacing: -0.011em;
-    margin: 26px 0 9px;
+    line-height: 1.32;
+    letter-spacing: -0.014em;
+    margin: 24px 0 9px;
   }
   .md :global(h1) {
-    font-size: 21px;
+    font-size: 19.5px;
   }
   .md :global(h2) {
-    font-size: 18.5px;
+    font-size: 17px;
   }
   .md :global(h3) {
-    font-size: 16px;
+    font-size: 15px;
   }
   .md :global(h4) {
     font-size: 13px;
