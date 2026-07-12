@@ -125,8 +125,12 @@ The installer does everything and prints the URL to open:
 4. installs a service (a systemd user unit on Linux, a launchd agent on macOS),
 5. health-checks it and prints `https://<your-machine>.<tailnet>.ts.net:8443`.
 
-**Updating** (Mac or Linux): just re-run the installer — the one-liner again, or
-`./install.sh` in a checkout. It swaps the binary and restarts the service.
+**Updating** (Mac or Linux): the home screen shows an **Update available** badge
+when a machine is behind the latest release. Tap **Update** and that machine pulls
+the new binary from GitHub, verifies its checksum, swaps it in, and restarts
+itself (a few seconds; active sessions resume from their transcript). Each machine
+updates itself, so you never have to SSH in. You can still re-run the installer by
+hand — the one-liner again, or `./install.sh` in a checkout — if you prefer.
 
 ### 2. Open it on your phone
 

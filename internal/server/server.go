@@ -88,6 +88,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/machines", s.handleAddMachine)
 	mux.HandleFunc("DELETE /api/machines/{id}", s.handleDeleteMachine)
 	mux.HandleFunc("GET /api/machines/discover", s.handleDiscover)
+	mux.HandleFunc("POST /api/update", s.handleUpdate)
 	mux.HandleFunc("GET /ws/app/{id}", s.handleWS)
 	mux.Handle("GET /", s.spaHandler())
 	return cors(logRequests(mux))

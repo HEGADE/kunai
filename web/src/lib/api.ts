@@ -72,6 +72,13 @@ export function stats(base: string): Promise<Stats> {
   return fetch(at(base, '/api/stats')).then((r) => json<Stats>(r))
 }
 
+// updateMachine tells a machine to self-update: it downloads the latest release
+// binary, verifies it, swaps it in, and restarts. The server exits mid-response
+// as it restarts, so a dropped connection here is expected, not a failure.
+export function updateMachine(base: string): Promise<void> {
+  return fetch(at(base, '/api/update'), { method: 'POST' }).then((r) => json<unknown>(r)).then(() => undefined)
+}
+
 // --- machine registry (always the hub, base '') ---
 
 export function listMachines(base: string): Promise<MachineInfo[]> {

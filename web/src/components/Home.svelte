@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
+  import { updateAvailable } from '../lib/update'
 
   let { compact = false }: { compact?: boolean } = $props()
 
@@ -14,6 +15,8 @@
       null,
   )
   const st = $derived(sel?.stats ?? null)
+  const outdated = $derived(updateAvailable(st?.kunai_version, app.latestVersion))
+  const updating = $derived(sel ? !!app.updating[sel.id] : false)
   const selSessions = $derived(sel ? app.sessions.filter((s) => s.machineId === sel.id).length : 0)
   const selResumable = $derived(sel ? app.history.filter((h) => h.machineId === sel.id).length : 0)
 
@@ -93,6 +96,19 @@
     <div class="offline">
       <span class="odot"></span>
       {sel.label} is offline — no stats to show.
+    </div>
+  {/if}
+
+  {#if outdated && sel}
+    <div class="update">
+      <span class="udot"></span>
+      <div class="utext">
+        <span class="uhead">Update available</span>
+        <span class="mono usub">{st?.kunai_version} → {app.latestVersion} · restarts {sel.label}, sessions resume</span>
+      </div>
+      <button class="ubtn" disabled={updating} onclick={() => sel && app.updateMachine(sel.id)}>
+        {updating ? 'Updating…' : 'Update'}
+      </button>
     </div>
   {/if}
 
@@ -274,6 +290,54 @@
     height: 7px;
     border-radius: 50%;
     background: var(--alert);
+  }
+  .update {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    background: var(--panel);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-lg);
+  }
+  .udot {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text);
+  }
+  .utext {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+  }
+  .uhead {
+    font-size: 13px;
+    font-weight: 550;
+    color: var(--text);
+  }
+  .usub {
+    font-size: 10.5px;
+    color: var(--text-4);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ubtn {
+    flex: none;
+    padding: 7px 16px;
+    border-radius: 100px;
+    background: var(--text);
+    color: var(--bg);
+    border: none;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .ubtn:disabled {
+    opacity: 0.6;
   }
   .tiles {
     display: grid;
