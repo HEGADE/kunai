@@ -1,14 +1,14 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
   import { browse, createSession } from '../lib/api'
-  import { MODELS, EFFORTS } from '../lib/models'
+  import { MODELS, EFFORTS, DEFAULT_MODEL, DEFAULT_EFFORT } from '../lib/models'
   import type { Listing } from '../lib/types'
 
   // Model + reasoning effort are both spawn-time CLI flags, so they are chosen
-  // here (effort cannot change once a session is running). '' = the CLI default.
-  const modelOpts = [{ id: '', label: 'Default' }, ...MODELS]
-  let model = $state('')
-  let effort = $state('')
+  // here (effort cannot change once a session is running).
+  const modelOpts = MODELS
+  let model = $state(DEFAULT_MODEL)
+  let effort = $state(DEFAULT_EFFORT)
 
   let listing = $state<Listing | null>(null)
   let loading = $state(true)
