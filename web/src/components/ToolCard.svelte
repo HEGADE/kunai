@@ -4,16 +4,18 @@
   import ToolIcon from './tools/ToolIcon.svelte'
   import ToolBody from './tools/ToolBody.svelte'
   import ResultView from './tools/ResultView.svelte'
+  import FileChip from './tools/FileChip.svelte'
 
   let { name, input, result }: { name: string; input: unknown; result?: ToolResult } = $props()
   let open = $state(false)
-  const label = $derived(describe(name, input))
+  const label = $derived(describe(name, input, result))
 </script>
 
 <div class="tool" class:open>
   <button class="head" onclick={() => (open = !open)}>
     <span class="ic"><ToolIcon {name} size={13} /></span>
-    <span class="name">{name}</span>
+    <span class="name">{label.action}</span>
+    {#if label.file}<FileChip path={label.path} name={label.file} />{/if}
     {#if label.text}<span class="sum" class:mono={label.mono}>{label.text}</span>{/if}
     <span class="sp"></span>
     {#if label.added}<span class="stat add">+{label.added}</span>{/if}
