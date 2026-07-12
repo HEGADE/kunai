@@ -10,7 +10,7 @@ import type {
 
 export type Item =
   | { role: 'user'; text: string }
-  | { role: 'assistant'; blocks: Block[] }
+  | { role: 'assistant'; blocks: Block[]; durationMs?: number }
 
 export interface PendingPermission {
   request_id: string
@@ -142,6 +142,23 @@ export class ChatConnection {
       case 'result':
         this.streaming = ''
         this.thinking = ''
+        // Stamp the turn's last assistant message with its duration so the
+        // per-turn footer can show it. Stop at the user message that opened the
+        // turn (a turn with no assistant reply has nothing to stamp).
+        if (ev.duration_ms != null) {
+          for (let k = this.items.length - 1; k >= 0; k--) {
+            const it = this.items[k]
+            if (it.role === 'user') break
+            if (it.role === 'assistant') {
+              this.items = [
+                ...this.items.slice(0, k),
+                { ...it, durationMs: ev.duration_ms },
+                ...this.items.slice(k + 1),
+              ]
+              break
+            }
+          }
+        }
         break
       case 'state':
         if (ev.state) this.sessionState = ev.state

@@ -3,11 +3,18 @@
   import { uploadFile } from '../lib/api'
   import type { ChatConnection } from '../lib/chat.svelte'
   import type { Attachment } from '../lib/types'
-  import ToolCard from './ToolCard.svelte'
+  import { groupTurns } from '../lib/turns'
   import PermissionGate from './PermissionGate.svelte'
   import Markdown from './Markdown.svelte'
+  import BlockView from './BlockView.svelte'
+  import ToolGroup from './ToolGroup.svelte'
+  import TurnFooter from './TurnFooter.svelte'
 
   let { chat }: { chat: ChatConnection } = $props()
+
+  // Group the flat item stream into turns so a turn's tool activity can collapse
+  // behind one summary and carry a files-changed footer.
+  const turns = $derived(groupTurns(chat.items))
 
   let draft = $state('')
   let scroller = $state<HTMLElement | null>(null)
@@ -162,23 +169,31 @@
       </div>
     {/if}
     <div class="log">
-      {#each chat.items as item, i (i)}
-        {#if item.role === 'user'}
+      {#each turns as turn, ti (ti)}
+        {@const live = ti === turns.length - 1 && (running || !!chat.streaming || !!chat.thinking)}
+        {#if turn.user !== undefined}
           <div class="turn user">
-            <div class="ubbl">{item.text}</div>
+            <div class="ubbl">{turn.user}</div>
           </div>
-        {:else if hasBody(item.blocks)}
+        {/if}
+        {#if turn.hasAssistant && hasBody(turn.blocks)}
           <div class="turn">
             <div class="assistant">
-              {#each item.blocks as b, j (j)}
-                {#if b.type === 'text' && b.text}
-                  <Markdown text={b.text} />
-                {:else if b.type === 'tool_use'}
-                  <ToolCard name={b.name ?? 'tool'} input={b.input} result={b.id ? chat.toolResults[b.id] : undefined} />
-                {:else if b.type === 'thinking' && b.text}
-                  <div class="thinking mono">{b.text}</div>
+              {#if live}
+                {#each turn.blocks as b, j (j)}
+                  <BlockView block={b} {chat} />
+                {/each}
+              {:else}
+                {#if turn.toolCalls > 0}
+                  <ToolGroup {turn} {chat} />
                 {/if}
-              {/each}
+                {#each turn.answer as b, j (j)}
+                  <BlockView block={b} {chat} />
+                {/each}
+                {#if turn.toolCalls > 0}
+                  <TurnFooter {turn} />
+                {/if}
+              {/if}
             </div>
           </div>
         {/if}

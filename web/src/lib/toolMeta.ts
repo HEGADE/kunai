@@ -3,6 +3,7 @@
 // everywhere. Everything reads only the tool `input` (the model's request).
 
 import { diffLines } from './diff'
+import type { Block } from './types'
 
 type Obj = Record<string, unknown>
 const obj = (v: unknown): Obj => (v && typeof v === 'object' ? (v as Obj) : {})
@@ -143,4 +144,53 @@ export function describe(name: string, input: unknown, result?: { content: strin
         mono: true,
       }
   }
+}
+
+// FileChange is one file a turn touched, with its net line delta. Used by the
+// per-turn footer chips.
+export interface FileChange {
+  path: string
+  name: string
+  added: number
+  removed: number
+}
+
+// fileChangesOf aggregates the Edit/MultiEdit/Write tool calls in a turn's blocks
+// into one entry per file (summed if the same file is touched more than once),
+// preserving first-seen order. Reads: Edit/MultiEdit diff their old->new strings;
+// Write counts its whole content as additions (there is no prior content on the
+// wire). Non-file tools contribute nothing.
+export function fileChangesOf(blocks: Block[]): FileChange[] {
+  const byPath = new Map<string, FileChange>()
+  const bump = (path: string, added: number, removed: number) => {
+    if (!path) return
+    const prev = byPath.get(path)
+    if (prev) {
+      prev.added += added
+      prev.removed += removed
+    } else {
+      byPath.set(path, { path, name: baseName(path), added, removed })
+    }
+  }
+  for (const b of blocks) {
+    if (b.type !== 'tool_use') continue
+    const i = obj(b.input)
+    if (b.name === 'Edit') {
+      const d = diffLines(str(i.old_string), str(i.new_string))
+      bump(str(i.file_path), d.added, d.removed)
+    } else if (b.name === 'MultiEdit') {
+      const edits = Array.isArray(i.edits) ? (i.edits as Obj[]) : []
+      let a = 0
+      let r = 0
+      for (const e of edits) {
+        const d = diffLines(str(e.old_string), str(e.new_string))
+        a += d.added
+        r += d.removed
+      }
+      bump(str(i.file_path), a, r)
+    } else if (b.name === 'Write') {
+      bump(str(i.file_path), lineCount(str(i.content)), 0)
+    }
+  }
+  return [...byPath.values()]
 }

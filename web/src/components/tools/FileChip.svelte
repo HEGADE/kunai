@@ -1,7 +1,12 @@
 <script lang="ts">
   import { iconForFile } from '../../lib/langIcons'
 
-  let { path, name }: { path?: string; name: string } = $props()
+  let {
+    path,
+    name,
+    added,
+    removed,
+  }: { path?: string; name: string; added?: number; removed?: number } = $props()
   const icon = $derived(iconForFile(path || name))
 </script>
 
@@ -17,6 +22,8 @@
     </svg>
   {/if}
   <span class="fn">{name}</span>
+  {#if added}<span class="stat add">+{added}</span>{/if}
+  {#if removed}<span class="stat del">−{removed}</span>{/if}
 </span>
 
 <style>
@@ -44,5 +51,18 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .stat {
+    flex: none;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0;
+  }
+  .stat.add {
+    color: var(--live);
+  }
+  .stat.del {
+    color: var(--alert);
   }
 </style>
