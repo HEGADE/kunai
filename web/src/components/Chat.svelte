@@ -66,11 +66,10 @@
     if (atBottom) requestAnimationFrame(() => toBottom(false))
   })
 
-  async function onFiles(e: Event) {
-    const input = e.target as HTMLInputElement
-    if (!input.files?.length) return
+  async function addFiles(files: File[]) {
+    if (!files.length) return
     uploading = true
-    for (const f of Array.from(input.files)) {
+    for (const f of files) {
       try {
         attachments = [...attachments, await uploadFile(chat.origin, f)]
       } catch {
@@ -78,8 +77,39 @@
       }
     }
     uploading = false
+  }
+  async function onFiles(e: Event) {
+    const input = e.target as HTMLInputElement
+    await addFiles(Array.from(input.files ?? []))
     input.value = ''
   }
+
+  // Paste screenshots/photos from the clipboard (desktop and mobile). Listens on
+  // the window so Cmd/Ctrl+V works whether or not the composer is focused; the
+  // composer is the only text field, so hijacking image pastes is safe. Text
+  // pastes fall through untouched (we only preventDefault when we took images).
+  function onPaste(e: ClipboardEvent) {
+    const items = e.clipboardData?.items
+    if (!items) return
+    const imgs: File[] = []
+    for (const it of items) {
+      if (it.kind === 'file' && it.type.startsWith('image/')) {
+        const f = it.getAsFile()
+        if (f) {
+          imgs.push(
+            f.name ? f : new File([f], `pasted-${Date.now()}.${f.type.split('/')[1] || 'png'}`, { type: f.type }),
+          )
+        }
+      }
+    }
+    if (!imgs.length) return
+    e.preventDefault()
+    addFiles(imgs)
+  }
+  $effect(() => {
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  })
   function removeAttachment(id: string) {
     attachments = attachments.filter((a) => a.id !== id)
   }
