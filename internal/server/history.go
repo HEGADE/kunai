@@ -2,7 +2,9 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -93,8 +95,11 @@ func scanHistory(live map[string]bool, limit int) []HistoryEntry {
 	return out
 }
 
-// probeTranscript extracts the session cwd and a human title (summary line or
-// first user prompt) from the head of a transcript.
+// probeTranscript extracts the session cwd (from the head) and the display
+// title, mirroring what Claude Code shows: a user's custom title if set, else
+// the generated ai-title, else the first real user prompt. Claude Code writes
+// the title entries near the END of the transcript, so they're read from the
+// tail; the head scan only gets the cwd and a first-prompt fallback.
 func probeTranscript(path string) (cwd, title string) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -102,13 +107,12 @@ func probeTranscript(path string) (cwd, title string) {
 	}
 	defer f.Close()
 
+	var firstPrompt string
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024) // transcript lines can be large
-	for lines := 0; sc.Scan() && lines < 60 && (cwd == "" || title == ""); lines++ {
+	for lines := 0; sc.Scan() && lines < 60 && (cwd == "" || firstPrompt == ""); lines++ {
 		var v struct {
-			Type    string `json:"type"`
 			Cwd     string `json:"cwd"`
-			Summary string `json:"summary"`
 			Message struct {
 				Role    string          `json:"role"`
 				Content json.RawMessage `json:"content"`
@@ -120,20 +124,71 @@ func probeTranscript(path string) (cwd, title string) {
 		if cwd == "" && v.Cwd != "" {
 			cwd = v.Cwd
 		}
-		if title == "" {
-			if v.Type == "summary" && v.Summary != "" {
-				title = v.Summary
-			} else if v.Message.Role == "user" && len(v.Message.Content) > 0 {
-				t := strings.TrimSpace(firstUserText(v.Message.Content))
-				// Skip harness/system wrappers (<system_instruction>, caveats, …)
-				// — they aren't what the user actually asked.
-				if t != "" && !strings.HasPrefix(t, "<") {
-					title = t
-				}
+		if firstPrompt == "" && v.Message.Role == "user" && len(v.Message.Content) > 0 {
+			t := strings.TrimSpace(firstUserText(v.Message.Content))
+			// Skip harness/system wrappers (<system_instruction>, caveats, …).
+			if t != "" && !strings.HasPrefix(t, "<") {
+				firstPrompt = t
 			}
 		}
 	}
+
+	title = claudeTitle(f)
+	if title == "" {
+		title = firstPrompt
+	}
 	return cwd, truncate(strings.TrimSpace(title), 64)
+}
+
+// claudeTitle reads the tail of a transcript and returns Claude Code's current
+// session name: the last custom-title (a user rename) if any, else the last
+// ai-title (generated). These entries are appended near the end of the file, so
+// a bounded tail read finds them without scanning the whole transcript.
+func claudeTitle(f *os.File) string {
+	fi, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	const window = 128 * 1024
+	start := int64(0)
+	if fi.Size() > window {
+		start = fi.Size() - window
+	}
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return ""
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return ""
+	}
+	var ai, custom string
+	for _, ln := range bytes.Split(data, []byte("\n")) {
+		if !bytes.Contains(ln, []byte("-title")) { // cheap prefilter
+			continue
+		}
+		var v struct {
+			Type        string `json:"type"`
+			AiTitle     string `json:"aiTitle"`
+			CustomTitle string `json:"customTitle"`
+		}
+		if json.Unmarshal(ln, &v) != nil {
+			continue
+		}
+		switch v.Type {
+		case "custom-title":
+			if v.CustomTitle != "" {
+				custom = v.CustomTitle
+			}
+		case "ai-title":
+			if v.AiTitle != "" {
+				ai = v.AiTitle
+			}
+		}
+	}
+	if custom != "" {
+		return custom
+	}
+	return ai
 }
 
 func firstUserText(content json.RawMessage) string {
