@@ -202,10 +202,15 @@ export class ChatConnection {
     this.send({ t: 'prompt', text: t, attachments: attachments.length ? attachments : undefined })
   }
 
-  resolve(request_id: string, behavior: 'allow' | 'deny', always = false) {
+  resolve(
+    request_id: string,
+    behavior: 'allow' | 'deny',
+    always = false,
+    answers?: Record<string, string>,
+  ) {
     // Optimistically clear; the server also emits permission_resolved.
     this.pending = this.pending.filter((p) => p.request_id !== request_id)
-    this.send({ t: 'permission', request_id, behavior, always })
+    this.send({ t: 'permission', request_id, behavior, always, answers })
   }
 
   interrupt() {

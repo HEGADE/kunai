@@ -248,7 +248,7 @@ func (s *Session) Prompt(text string, content any) error {
 // ResolvePermission answers a pending permission ask. When always is true and
 // the verdict is allow, the ask's own suggestions are persisted as session rules
 // so the same tool won't prompt again.
-func (s *Session) ResolvePermission(requestID, behavior string, always bool) error {
+func (s *Session) ResolvePermission(requestID, behavior string, always bool, answers map[string]string) error {
 	s.mu.Lock()
 	ask := s.pending[requestID]
 	suggestions := s.suggestionByReq[requestID]
@@ -260,8 +260,12 @@ func (s *Session) ResolvePermission(requestID, behavior string, always bool) err
 	result := claude.PermissionResult{Behavior: behavior, ToolUseID: ask.ToolUseID}
 	if behavior == "allow" {
 		// Echo the original tool input back — the CLI executes with updatedInput,
-		// so an allow that omits it runs the tool with nothing.
+		// so an allow that omits it runs the tool with nothing. For AskUserQuestion
+		// the user's selections ride along as an `answers` field the tool reads.
 		result.UpdatedInput = ask.Input
+		if len(answers) > 0 {
+			result.UpdatedInput = mergeAnswers(ask.Input, answers)
+		}
 		if always && len(suggestions) > 0 {
 			var ups []claude.PermissionUpdate
 			if err := json.Unmarshal(suggestions, &ups); err == nil {
@@ -279,6 +283,21 @@ func (s *Session) ResolvePermission(requestID, behavior string, always bool) err
 		s.setState(StateRunning)
 	}
 	return nil
+}
+
+// mergeAnswers returns the tool input with an `answers` field added (the
+// AskUserQuestion contract: question text -> chosen answer). If the input isn't
+// a JSON object it's returned unchanged.
+func mergeAnswers(input json.RawMessage, answers map[string]string) json.RawMessage {
+	var m map[string]any
+	if len(input) == 0 || json.Unmarshal(input, &m) != nil {
+		return input
+	}
+	m["answers"] = answers
+	if b, err := json.Marshal(m); err == nil {
+		return b
+	}
+	return input
 }
 
 // Interrupt aborts the current turn.

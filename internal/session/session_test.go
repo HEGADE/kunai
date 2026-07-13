@@ -187,7 +187,7 @@ func TestPermissionPendingAndResolve(t *testing.T) {
 	}
 
 	// Resolve allow+always → driver gets allow with persisted permissions.
-	if err := s.ResolvePermission("req-1", "allow", true); err != nil {
+	if err := s.ResolvePermission("req-1", "allow", true, nil); err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
 	f.mu.Lock()

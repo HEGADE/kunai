@@ -104,7 +104,13 @@ export type PermissionMode = 'default' | 'acceptEdits' | 'auto' | 'plan'
 
 export type Command =
   | { t: 'prompt'; text: string; attachments?: Attachment[] }
-  | { t: 'permission'; request_id: string; behavior: 'allow' | 'deny'; always?: boolean }
+  | {
+      t: 'permission'
+      request_id: string
+      behavior: 'allow' | 'deny'
+      always?: boolean
+      answers?: Record<string, string> // AskUserQuestion: question text -> answer
+    }
   | { t: 'interrupt' }
   | { t: 'set_model'; model: string }
   | { t: 'set_mode'; mode: PermissionMode }

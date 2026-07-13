@@ -90,7 +90,7 @@ func (s *Server) dispatch(sess *session.Session, cmd session.Command) {
 		}
 		err = sess.Prompt(cmd.Text, content)
 	case session.CmdPermission:
-		err = sess.ResolvePermission(cmd.RequestID, cmd.Behavior, cmd.Always)
+		err = sess.ResolvePermission(cmd.RequestID, cmd.Behavior, cmd.Always, cmd.Answers)
 	case session.CmdInterrupt:
 		err = sess.Interrupt()
 	case session.CmdSetModel:

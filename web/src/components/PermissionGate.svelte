@@ -1,29 +1,45 @@
 <script lang="ts">
   import type { ChatConnection, PendingPermission } from '../lib/chat.svelte'
   import ToolBody from './tools/ToolBody.svelte'
+  import QuestionForm from './QuestionForm.svelte'
   let { chat }: { chat: ChatConnection } = $props()
 
   const current = $derived<PendingPermission | undefined>(chat.pending[0])
   const extra = $derived(chat.pending.length - 1)
+  // AskUserQuestion isn't an allow/deny gate — the user's selection IS the
+  // answer, returned as `answers` on allow.
+  const isQuestion = $derived(current?.tool_name === 'AskUserQuestion')
 </script>
 
 {#if current}
   <div class="gate">
     <div class="inner">
-      <div class="head">
-        <span class="k">Authorize</span>
-        <span class="tool mono">{current.tool_name}</span>
-        {#if extra > 0}<span class="more">+{extra} more</span>{/if}
-      </div>
-      <p class="ask">{current.perm_title || `Claude wants to run ${current.tool_name}`}</p>
-      <div class="detail"><ToolBody name={current.tool_name} input={current.input} /></div>
-      <div class="actions">
-        <button class="deny" onclick={() => chat.resolve(current.request_id, 'deny')}>Deny</button>
-        <button class="allow" onclick={() => chat.resolve(current.request_id, 'allow')}>Allow</button>
-      </div>
-      <button class="always" onclick={() => chat.resolve(current.request_id, 'allow', true)}>
-        Always allow {current.tool_name} this session
-      </button>
+      {#if isQuestion}
+        <div class="head">
+          <span class="k">Claude is asking</span>
+          {#if extra > 0}<span class="more">+{extra} more</span>{/if}
+        </div>
+        <QuestionForm
+          input={current.input}
+          onSubmit={(answers) => chat.resolve(current.request_id, 'allow', false, answers)}
+          onSkip={() => chat.resolve(current.request_id, 'deny')}
+        />
+      {:else}
+        <div class="head">
+          <span class="k">Authorize</span>
+          <span class="tool mono">{current.tool_name}</span>
+          {#if extra > 0}<span class="more">+{extra} more</span>{/if}
+        </div>
+        <p class="ask">{current.perm_title || `Claude wants to run ${current.tool_name}`}</p>
+        <div class="detail"><ToolBody name={current.tool_name} input={current.input} /></div>
+        <div class="actions">
+          <button class="deny" onclick={() => chat.resolve(current.request_id, 'deny')}>Deny</button>
+          <button class="allow" onclick={() => chat.resolve(current.request_id, 'allow')}>Allow</button>
+        </div>
+        <button class="always" onclick={() => chat.resolve(current.request_id, 'allow', true)}>
+          Always allow {current.tool_name} this session
+        </button>
+      {/if}
     </div>
   </div>
 {/if}

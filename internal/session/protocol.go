@@ -99,6 +99,9 @@ type Command struct {
 	RequestID string `json:"request_id,omitempty"`
 	Behavior  string `json:"behavior,omitempty"` // "allow" | "deny"
 	Always    bool   `json:"always,omitempty"`   // persist as a session rule
+	// Answers is set only for the AskUserQuestion tool: question text -> chosen
+	// answer (multi-select comma-joined). Merged into updatedInput on allow.
+	Answers map[string]string `json:"answers,omitempty"`
 
 	// "set_model"
 	Model string `json:"model,omitempty"`
