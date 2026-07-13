@@ -13,18 +13,14 @@
 
 {#if current}
   <div class="gate">
-    <div class="inner">
-      {#if isQuestion}
-        <div class="head">
-          <span class="k">Claude is asking</span>
-          {#if extra > 0}<span class="more">+{extra} more</span>{/if}
-        </div>
-        <QuestionForm
-          input={current.input}
-          onSubmit={(answers) => chat.resolve(current.request_id, 'allow', false, answers)}
-          onSkip={() => chat.resolve(current.request_id, 'deny')}
-        />
-      {:else}
+    {#if isQuestion}
+      <QuestionForm
+        input={current.input}
+        onSubmit={(answers) => chat.resolve(current.request_id, 'allow', false, answers)}
+        onSkip={() => chat.resolve(current.request_id, 'deny')}
+      />
+    {:else}
+      <div class="inner">
         <div class="head">
           <span class="k">Authorize</span>
           <span class="tool mono">{current.tool_name}</span>
@@ -39,8 +35,8 @@
         <button class="always" onclick={() => chat.resolve(current.request_id, 'allow', true)}>
           Always allow {current.tool_name} this session
         </button>
-      {/if}
-    </div>
+      </div>
+    {/if}
   </div>
 {/if}
 
