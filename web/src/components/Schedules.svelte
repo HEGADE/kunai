@@ -49,18 +49,27 @@
 
   // A plain-language read-back of the schedule being built, so you can confirm
   // what will happen before committing.
-  const preview = $derived.by(() => {
-    const where =
+  // The form compiles to a small machine-readable schedule expression, shown live
+  // above the action so you read back exactly what you are arming. Mono, because
+  // this is data — the same voice the dashboard uses for paths and versions.
+  const MODE_SHORT: Record<string, string> = { acceptEdits: 'accept-edits', auto: 'auto', default: 'ask', plan: 'plan' }
+  const clip = (s: string, n = 22) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
+  const targetName = $derived(
+    clip(
       f.targetKind === 'new'
-        ? `in ${f.cwd.split('/').filter(Boolean).slice(-1)[0] || 'a new session'}`
-        : `resuming ${sessionsFor.find((h) => h.id === f.sessionId)?.title || 'a session'}`
-    const at = f.at
-      ? new Date(f.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-      : 'a set time'
-    const when =
-      f.triggerKind === 'at' ? `at ${at}` : `${f.offsetMin} min after the ${windowLabel} limit resets`
-    return `Runs ${where}, ${when}${f.rearm ? ', then repeats' : ''}.`
-  })
+        ? f.cwd.split('/').filter(Boolean).slice(-1)[0] || 'new session'
+        : sessionsFor.find((h) => h.id === f.sessionId)?.title || 'a session',
+    ),
+  )
+  const modelShort = $derived(f.model)
+  const modeShort = $derived(MODE_SHORT[f.mode] ?? f.mode)
+  const whenText = $derived(
+    f.triggerKind === 'at'
+      ? f.at
+        ? 'at ' + new Date(f.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : 'at a set time'
+      : `+${f.offsetMin}m after ${f.window === 'seven_day' ? 'weekly' : '5h'} reset`,
+  )
 
   function submit() {
     if (!valid) return
@@ -209,7 +218,21 @@
           </span>
         </button>
 
-        {#if valid}<p class="preview">{preview}</p>{/if}
+        <div class="spec mono">
+          <span class="stag">schedule</span>
+          <div class="expr">
+            <div class="erow">
+              <span class="k">{f.targetKind === 'new' ? 'new' : 'resume'}</span>
+              <span class="v name">{targetName}</span>
+              {#if f.targetKind === 'new'}<span class="d">·</span><span class="v">{modelShort}</span>{/if}
+              <span class="d">·</span><span class="v">{modeShort}</span>
+            </div>
+            <div class="erow">
+              <span class="v">{whenText}</span>
+              <span class="d">·</span><span class="v">{f.rearm ? 'repeats' : 'once'}</span>
+            </div>
+          </div>
+        </div>
         <button class="create" disabled={!valid} onclick={submit}>Create schedule</button>
       </div>
     </div>
@@ -322,7 +345,24 @@
   .repeat.on .rt { color: var(--text); }
   .repeat .rh { font-size: 11.5px; color: var(--text-4); }
 
-  .preview { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-3); }
+  /* Compiled read-back: the signature element. The form's inputs render as a
+     small mono schedule expression — data voice, like the dashboard's paths and
+     versions — so you confirm exactly what you are arming before the action. */
+  .spec {
+    display: flex; flex-direction: column; gap: 7px; padding: 11px 13px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-left: 2px solid var(--border-2); border-radius: var(--r-sm);
+  }
+  .stag {
+    font-size: 9.5px; letter-spacing: 0.11em; text-transform: uppercase; color: var(--text-4);
+  }
+  .expr { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .erow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; font-size: 12.5px; line-height: 1.45; }
+  .spec .k { color: var(--text-4); }
+  .spec .v { color: var(--text-2); }
+  .spec .name { color: var(--text); }
+  .spec .d { color: var(--text-4); }
+
   .create { height: 46px; border-radius: var(--r); background: var(--white); color: #0b0b0c; font-weight: 600; font-size: 14px; }
   .create:hover:not(:disabled) { background: #fff; }
   .create:disabled { opacity: 0.4; }
