@@ -151,9 +151,17 @@ func (s *Scheduler) tick() time.Duration {
 		}
 		nf := s.nextFireLocked(j)
 		j.NextFire = nf
-		if !nf.IsZero() && !nf.After(now) {
-			due = append(due, fireItem{*j, nf})
+		if nf.IsZero() || nf.After(now) {
+			continue
 		}
+		// Reserve this occurrence and persist it BEFORE firing: mark the job
+		// fired (a repeat advances, a one-shot disables) and save first, so a
+		// crash or restart mid-fire can never run the same occurrence twice.
+		due = append(due, fireItem{*j, nf})
+		s.reserveLocked(j, now)
+	}
+	if len(due) > 0 {
+		s.save()
 	}
 	s.mu.Unlock()
 
@@ -185,6 +193,31 @@ func (s *Scheduler) tick() time.Duration {
 	return 0
 }
 
+// reserveLocked marks a job as having fired for its current occurrence — a
+// repeat advances to its next time, a one-shot disables — so the following
+// save() records the firing before it actually happens. This is what makes
+// firing at-most-once: a crash or restart between here and s.fire() finds the
+// occurrence already spent and does not run it again.
+func (s *Scheduler) reserveLocked(j *Job, now time.Time) {
+	j.LastRun = now
+	if j.Trigger.Kind == "reset" {
+		j.LastFiredReset = s.resets[j.Trigger.Window]
+	}
+	if j.Rearm {
+		if j.Trigger.Kind == "at" {
+			for !j.Trigger.At.After(now) {
+				j.Trigger.At = j.Trigger.At.Add(24 * time.Hour) // daily
+			}
+		}
+		// reset jobs re-arm implicitly via LastFiredReset + nextFireLocked.
+	} else {
+		j.Enabled = false
+	}
+}
+
+// runOne fires a reserved occurrence and records the outcome. The reservation
+// (reserveLocked + save) has already happened, so this never affects whether the
+// job fires again — only its reported status.
 func (s *Scheduler) runOne(it fireItem, now time.Time) {
 	status := "ok"
 	if now.Sub(it.nf) > catchupLimit(it.job) {
@@ -194,26 +227,10 @@ func (s *Scheduler) runOne(it fireItem, now time.Time) {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	j := s.findLocked(it.job.ID)
-	if j == nil {
-		return
+	if j := s.findLocked(it.job.ID); j != nil {
+		j.LastStatus = status
 	}
-	j.LastRun = now
-	j.LastStatus = status
-	if j.Trigger.Kind == "reset" {
-		j.LastFiredReset = s.resets[j.Trigger.Window]
-	}
-	if j.Rearm {
-		if j.Trigger.Kind == "at" {
-			for !j.Trigger.At.After(s.clock.Now()) {
-				j.Trigger.At = j.Trigger.At.Add(24 * time.Hour) // daily
-			}
-		}
-		// reset jobs re-arm implicitly via LastFiredReset + nextFireLocked.
-	} else {
-		j.Enabled = false
-	}
+	s.mu.Unlock()
 }
 
 // NoteReset records a usage window's reset time (from a rate_limit_event) and

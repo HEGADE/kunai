@@ -112,6 +112,35 @@ func TestCatchupSkipsWhenTooOverdue(t *testing.T) {
 	}
 }
 
+func TestAtMostOnceAcrossRestartMidFire(t *testing.T) {
+	// The reported bug: a one-time job fired twice because the process restarted
+	// (RestartSec) between firing and persisting the disabled state, so a second
+	// process loaded it still enabled and fired it again. The occurrence must be
+	// reserved and saved BEFORE firing, so a mid-fire restart cannot repeat it.
+	p := filepath.Join(t.TempDir(), "schedule.json")
+	total := 0
+	var s *Scheduler
+	restarted := false
+	s = New(p, func(Job) error {
+		total++
+		if !restarted {
+			restarted = true
+			// Stand in for a crash/restart in the middle of the first fire: a
+			// fresh scheduler loads the persisted state and ticks at the same time.
+			s2 := New(p, func(Job) error { total++; return nil })
+			s2.clock = &fakeClock{t: time.Unix(1070, 0)}
+			s2.tick()
+		}
+		return nil
+	})
+	s.clock = &fakeClock{t: time.Unix(1070, 0)}
+	s.Create(Job{Trigger: Trigger{Kind: "at", At: time.Unix(1060, 0)}, Target: Target{Cwd: "/x"}, Prompt: "hi"})
+	s.tick()
+	if total != 1 {
+		t.Fatalf("occurrence fired %d times across a mid-fire restart, want 1", total)
+	}
+}
+
 func TestPersistRoundTrip(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "schedule.json")
 	s := New(p, func(Job) error { return nil })
