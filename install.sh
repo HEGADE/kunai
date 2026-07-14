@@ -166,11 +166,11 @@ if [ "$MISSING" -ne 0 ]; then
   if [ "$OS" = "linux" ] && { [ "$NEED_TS" = 1 ] || [ "$NEED_CLAUDE" = 1 ]; }; then
     did=0
     if [ "$NEED_TS" = 1 ] && ask "Install Tailscale now?  (curl -fsSL https://tailscale.com/install.sh | sh)"; then
-      say "${C_DIM}installing Tailscale…${C_RST}"
+      say "${C_DIM}installing Tailscale...${C_RST}"
       dl_stdout https://tailscale.com/install.sh | sh && did=1 || say "${C_Y}Tailscale install did not complete${C_RST}"
     fi
     if [ "$NEED_CLAUDE" = 1 ] && ask "Install Claude Code now?  (curl -fsSL https://claude.ai/install.sh | bash)"; then
-      say "${C_DIM}installing Claude Code…${C_RST}"
+      say "${C_DIM}installing Claude Code...${C_RST}"
       dl_stdout https://claude.ai/install.sh | bash && did=1 || say "${C_Y}Claude Code install did not complete${C_RST}"
     fi
     say ""
@@ -217,12 +217,12 @@ fi
 
 # Otherwise fetch the matching prebuilt from the latest GitHub release (curl or
 # wget only — no gh, git, or Go) and verify its sha256. This is what makes
-# `curl -fsSL …/install.sh | bash` work; re-running it later updates in place.
+# `curl -fsSL .../install.sh | bash` work; re-running it later updates in place.
 if [ -z "$BIN" ]; then
   REL="https://github.com/HEGADE/kunai/releases/latest/download"
   out="$DATA_DIR/kunai-$PLAT"
   mkdir -p "$DATA_DIR"
-  say "${C_DIM}downloading prebuilt kunai ($PLAT) from the latest release…${C_RST}"
+  say "${C_DIM}downloading prebuilt kunai ($PLAT) from the latest release...${C_RST}"
   if dl_file "$REL/kunai-$PLAT" "$out"; then
     want="$(dl_stdout "$REL/checksums.txt" 2>/dev/null | awk -v f="kunai-$PLAT" '{n=$2; sub(/^\*/,"",n); if (n==f) print $1}' | head -1)"
     got="$(sha256_of "$out")"
@@ -231,7 +231,7 @@ if [ -z "$BIN" ]; then
     fi
     chmod +x "$out"; BIN="$out"
   elif command -v gh >/dev/null 2>&1; then
-    say "${C_DIM}trying gh…${C_RST}"
+    say "${C_DIM}trying gh...${C_RST}"
     gh release download -R HEGADE/kunai --pattern "kunai-$PLAT" -O "$out" --clobber \
       && chmod +x "$out" && BIN="$out"
   fi
@@ -246,7 +246,7 @@ mkdir -p "$TLS_DIR"
 CRT="$TLS_DIR/$FQDN.crt"
 KEY="$TLS_DIR/$FQDN.key"
 if [ ! -s "$CRT" ] || [ ! -s "$KEY" ]; then
-  say "${C_DIM}minting TLS certificate for $FQDN…${C_RST}"
+  say "${C_DIM}minting TLS certificate for ${FQDN}...${C_RST}"
   if ! "$TS_BIN" cert --cert-file "$CRT" --key-file "$KEY" "$FQDN" 2>/dev/null; then
     sudo "$TS_BIN" cert --cert-file "$CRT" --key-file "$KEY" "$FQDN" \
       && sudo chown "$USER" "$CRT" "$KEY" \
