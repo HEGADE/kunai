@@ -39,12 +39,28 @@
 
   const projectsFor = $derived(app.projects.filter((p) => p.machineId === f.machineId))
   const sessionsFor = $derived(app.history.filter((h) => h.machineId === f.machineId))
+  const windowLabel = $derived(f.window === 'seven_day' ? 'weekly' : '5-hour')
 
   const valid = $derived(
     !!f.prompt.trim() &&
       (f.targetKind === 'new' ? !!f.cwd.trim() : !!f.sessionId) &&
       (f.triggerKind === 'at' ? !!f.at : f.offsetMin >= 0),
   )
+
+  // A plain-language read-back of the schedule being built, so you can confirm
+  // what will happen before committing.
+  const preview = $derived.by(() => {
+    const where =
+      f.targetKind === 'new'
+        ? `in ${f.cwd.split('/').filter(Boolean).slice(-1)[0] || 'a new session'}`
+        : `resuming ${sessionsFor.find((h) => h.id === f.sessionId)?.title || 'a session'}`
+    const at = f.at
+      ? new Date(f.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : 'a set time'
+    const when =
+      f.triggerKind === 'at' ? `at ${at}` : `${f.offsetMin} min after the ${windowLabel} limit resets`
+    return `Runs ${where}, ${when}${f.rearm ? ', then repeats' : ''}.`
+  })
 
   function submit() {
     if (!valid) return
@@ -89,6 +105,10 @@
     const parts = d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`
     return past ? `${parts} ago` : `in ${parts}`
   }
+  const nextReset = $derived.by(() => {
+    const at = machineOf(f.machineId)?.stats?.rate_resets?.[f.window]
+    return at ? rel(new Date(at * 1000).toISOString()) : ''
+  })
   function when(job: Job): string {
     const nf = rel(job.next_fire)
     if (job.trigger.kind === 'reset' && !nf) return 'waiting for quota reading'
@@ -116,59 +136,76 @@
 
   {#if show}
     <div class="form">
-      {#if app.machines.length > 1}
-        <label class="row"><span>Machine</span>
-          <select bind:value={f.machineId}>
-            {#each app.machines as m (m.id)}<option value={m.id}>{m.label}</option>{/each}
-          </select>
-        </label>
-      {/if}
+      <!-- What to run: the prompt is the point of the whole schedule, so it leads. -->
+      <section class="grp">
+        <span class="eyebrow">Prompt</span>
+        <textarea class="prompt" placeholder="What should Claude do?" bind:value={f.prompt} rows="3"></textarea>
+      </section>
 
-      <div class="seg">
-        <button class:on={f.targetKind === 'new'} onclick={() => (f.targetKind = 'new')}>New session</button>
-        <button class:on={f.targetKind === 'resume'} onclick={() => (f.targetKind = 'resume')}>Resume</button>
-      </div>
-
-      {#if f.targetKind === 'new'}
-        <label class="row"><span>Folder</span>
-          <input list="sched-dirs" placeholder="/path/to/project" bind:value={f.cwd} class="mono" />
-          <datalist id="sched-dirs">{#each projectsFor as p (p.cwd)}<option value={p.cwd}></option>{/each}</datalist>
-        </label>
-        <label class="row"><span>Model</span>
-          <select bind:value={f.model}>{#each MODELS as m (m.id)}<option value={m.id}>{m.label}</option>{/each}</select>
-        </label>
-      {:else}
-        <label class="row"><span>Session</span>
-          <select bind:value={f.sessionId}>
-            <option value="" disabled>pick a session…</option>
-            {#each sessionsFor as h (h.id)}<option value={h.id}>{h.title}</option>{/each}
-          </select>
-        </label>
-      {/if}
-
-      <label class="row"><span>Mode</span>
-        <select bind:value={f.mode}>{#each MODES as m (m.id)}<option value={m.id}>{m.label}</option>{/each}</select>
-      </label>
-
-      <textarea placeholder="Prompt to run…" bind:value={f.prompt} rows="2"></textarea>
-
-      <div class="seg">
-        <button class:on={f.triggerKind === 'reset'} onclick={() => (f.triggerKind = 'reset')}>After reset</button>
-        <button class:on={f.triggerKind === 'at'} onclick={() => (f.triggerKind = 'at')}>At a time</button>
-      </div>
-      {#if f.triggerKind === 'reset'}
-        <div class="row2">
-          <select bind:value={f.window}>{#each WINDOWS as w (w.id)}<option value={w.id}>{w.label}</option>{/each}</select>
-          <label class="off"><input type="number" min="0" bind:value={f.offsetMin} /> min after</label>
-        </div>
-        {#if machineOf(f.machineId)?.stats?.rate_resets?.[f.window]}
-          <span class="hint">next {f.window === 'seven_day' ? 'weekly' : '5-hour'} reset {rel(new Date((machineOf(f.machineId)!.stats!.rate_resets![f.window]) * 1000).toISOString())}</span>
+      <!-- Where it runs -->
+      <section class="grp">
+        <span class="eyebrow">Where it runs</span>
+        {#if app.machines.length > 1}
+          <label class="field"><span>Machine</span>
+            <select bind:value={f.machineId}>
+              {#each app.machines as m (m.id)}<option value={m.id}>{m.label}</option>{/each}
+            </select>
+          </label>
         {/if}
-      {:else}
-        <input type="datetime-local" bind:value={f.at} />
-      {/if}
+        <div class="seg">
+          <button class:on={f.targetKind === 'new'} onclick={() => (f.targetKind = 'new')}>New session</button>
+          <button class:on={f.targetKind === 'resume'} onclick={() => (f.targetKind = 'resume')}>Resume a session</button>
+        </div>
+        {#if f.targetKind === 'new'}
+          <label class="field"><span>Folder</span>
+            <input list="sched-dirs" placeholder="/path/to/project" bind:value={f.cwd} class="mono" />
+            <datalist id="sched-dirs">{#each projectsFor as p (p.cwd)}<option value={p.cwd}></option>{/each}</datalist>
+          </label>
+          <label class="field"><span>Model</span>
+            <select bind:value={f.model}>{#each MODELS as m (m.id)}<option value={m.id}>{m.label}</option>{/each}</select>
+          </label>
+        {:else}
+          <label class="field"><span>Session</span>
+            <select class:ph={!f.sessionId} bind:value={f.sessionId}>
+              <option value="" disabled>Pick a session…</option>
+              {#each sessionsFor as h (h.id)}<option value={h.id}>{h.title}</option>{/each}
+            </select>
+          </label>
+        {/if}
+        <label class="field"><span>Mode</span>
+          <select bind:value={f.mode}>{#each MODES as m (m.id)}<option value={m.id}>{m.label}</option>{/each}</select>
+        </label>
+      </section>
 
-      <label class="check"><input type="checkbox" bind:checked={f.rearm} /> Repeat (re-arm after each run)</label>
+      <!-- When -->
+      <section class="grp">
+        <span class="eyebrow">When</span>
+        <div class="seg">
+          <button class:on={f.triggerKind === 'reset'} onclick={() => (f.triggerKind = 'reset')}>After quota resets</button>
+          <button class:on={f.triggerKind === 'at'} onclick={() => (f.triggerKind = 'at')}>At a set time</button>
+        </div>
+        {#if f.triggerKind === 'reset'}
+          <p class="sentence">
+            <input class="num" type="number" min="0" bind:value={f.offsetMin} />
+            <span>min after the</span>
+            <select bind:value={f.window}>{#each WINDOWS as w (w.id)}<option value={w.id}>{w.label}</option>{/each}</select>
+            <span>resets</span>
+          </p>
+          {#if nextReset}<span class="hint">Next {windowLabel} reset {nextReset}</span>{/if}
+        {:else}
+          <input class="at" type="datetime-local" bind:value={f.at} />
+        {/if}
+      </section>
+
+      <button class="repeat" class:on={f.rearm} onclick={() => (f.rearm = !f.rearm)}>
+        <span class="tog" class:on={f.rearm}></span>
+        <span class="rl">
+          <span class="rt">Repeat after each run</span>
+          <span class="rh">{f.rearm ? 'Re-arms itself when it finishes' : 'Runs once, then removes itself'}</span>
+        </span>
+      </button>
+
+      {#if valid}<p class="preview">{preview}</p>{/if}
       <button class="create" disabled={!valid} onclick={submit}>Create schedule</button>
     </div>
   {/if}
@@ -201,6 +238,8 @@
     border: 1px solid var(--border); background: var(--panel-2);
   }
   .add:hover { color: var(--text); border-color: var(--border-2); }
+
+  /* --- job list --- */
   .job {
     display: flex; align-items: center; gap: 11px; padding: 11px 13px;
     background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg);
@@ -220,27 +259,60 @@
   .del:hover { color: var(--text-2); background: var(--panel-3); }
   .empty { margin: 0; padding: 4px 2px; font-size: 12px; color: var(--text-4); }
 
+  /* --- create form --- */
   .form {
-    display: flex; flex-direction: column; gap: 9px; padding: 13px;
+    display: flex; flex-direction: column; gap: 18px; padding: 16px;
     background: var(--panel); border: 1px solid var(--border-2); border-radius: var(--r-lg);
   }
-  .row { display: flex; align-items: center; gap: 10px; }
-  .row > span { flex: none; width: 62px; font-size: 12px; color: var(--text-3); }
-  .row2 { display: flex; gap: 8px; align-items: center; }
-  .off { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); }
-  .off input { width: 56px; }
+  /* Grouped sections, each led by a quiet eyebrow, separated by a hairline so the
+     three questions (what / where / when) read as distinct steps. */
+  .grp { display: flex; flex-direction: column; gap: 9px; }
+  .grp + .grp, .repeat { padding-top: 17px; border-top: 1px solid var(--border); }
+  .eyebrow {
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-4);
+  }
+
   .form input, .form select, .form textarea {
-    flex: 1; min-width: 0; background: var(--panel-2); border: 1px solid var(--border);
-    border-radius: var(--r-sm); padding: 8px 10px; font-size: 13px; color: var(--text); outline: none;
+    min-width: 0; background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: var(--r-sm); padding: 9px 11px; font-size: 13.5px; color: var(--text);
+    outline: none; color-scheme: dark;
   }
   .form input:focus, .form select:focus, .form textarea:focus { border-color: var(--border-2); }
-  .form textarea { resize: vertical; }
-  .seg { display: flex; gap: 6px; }
-  .seg button { flex: 1; padding: 8px; border-radius: var(--r-sm); background: var(--panel-2); border: 1px solid var(--border); color: var(--text-3); font-size: 12.5px; }
+  select.ph { color: var(--text-4); }
+
+  /* Prompt is the hero: full width, taller, a touch larger than the rest. */
+  .prompt { width: 100%; resize: vertical; min-height: 76px; line-height: 1.5; }
+
+  /* Compact labelled rows for the supporting selects. */
+  .field { display: flex; align-items: center; gap: 10px; }
+  .field > span { flex: none; width: 58px; font-size: 12.5px; color: var(--text-3); }
+  .field > input, .field > select { flex: 1; }
+
+  /* Segmented toggle. */
+  .seg { display: flex; gap: 4px; padding: 3px; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--r); }
+  .seg button {
+    flex: 1; padding: 8px; border-radius: var(--r-sm); background: transparent; border: 1px solid transparent;
+    color: var(--text-3); font-size: 12.5px; font-weight: 500; transition: color 0.12s, background 0.12s;
+  }
+  .seg button:hover { color: var(--text-2); }
   .seg button.on { color: var(--text); background: var(--panel-3); border-color: var(--border-2); }
+
+  /* Natural-language trigger: "[3] min after the [5-hour limit] resets". */
+  .sentence { margin: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13.5px; color: var(--text-3); }
+  .sentence .num { width: 52px; text-align: center; padding: 8px 6px; }
+  .sentence select { flex: none; width: auto; }
+  .at { width: 100%; }
   .hint { font-size: 11px; color: var(--text-4); }
-  .check { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-3); }
-  .check input { flex: none; width: auto; }
-  .create { padding: 11px; border-radius: var(--r); background: var(--white); color: #0b0b0c; font-weight: 600; font-size: 13.5px; }
-  .create:disabled { opacity: 0.45; }
+
+  /* Repeat: a monochrome switch (never a coloured checkbox — white is the only accent). */
+  .repeat { display: flex; align-items: center; gap: 11px; text-align: left; }
+  .repeat .rl { display: flex; flex-direction: column; gap: 1px; }
+  .repeat .rt { font-size: 13px; color: var(--text-2); }
+  .repeat.on .rt { color: var(--text); }
+  .repeat .rh { font-size: 11px; color: var(--text-4); }
+
+  .preview { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-3); }
+  .create { padding: 12px; border-radius: var(--r); background: var(--white); color: #0b0b0c; font-weight: 600; font-size: 13.5px; }
+  .create:hover:not(:disabled) { background: #fff; }
+  .create:disabled { opacity: 0.4; }
 </style>
