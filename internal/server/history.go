@@ -224,24 +224,28 @@ const maxSeedTurns = 2000
 
 // loadTranscriptTurns parses a session transcript into displayable turns so a
 // resumed session opens with its conversation history.
-func loadTranscriptTurns(id string) []session.SeedTurn {
+// transcriptPath locates a session's transcript file, or "" if none exists.
+func transcriptPath(id string) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil
+		return ""
 	}
 	root := filepath.Join(home, ".claude", "projects")
 	dirs, err := os.ReadDir(root)
 	if err != nil {
-		return nil
+		return ""
 	}
-	var path string
 	for _, d := range dirs {
 		p := filepath.Join(root, d.Name(), id+".jsonl")
 		if _, err := os.Stat(p); err == nil {
-			path = p
-			break
+			return p
 		}
 	}
+	return ""
+}
+
+func loadTranscriptTurns(id string) []session.SeedTurn {
+	path := transcriptPath(id)
 	if path == "" {
 		return nil
 	}
@@ -324,4 +328,50 @@ func assistantSeedBlocks(content json.RawMessage) []session.AppBlock {
 		}
 	}
 	return out
+}
+
+// transcriptUsage is the token accounting carried by result/assistant frames.
+type transcriptUsage struct {
+	Input       int64 `json:"input_tokens"`
+	CacheCreate int64 `json:"cache_creation_input_tokens"`
+	CacheRead   int64 `json:"cache_read_input_tokens"`
+}
+
+// loadTranscriptContextTokens returns the context-window occupancy (input plus
+// cache tokens) from a transcript's most recent usage, so a resumed session
+// shows its real context fill at once instead of the "send a message" prompt.
+// Returns 0 if the transcript records no usage yet.
+func loadTranscriptContextTokens(id string) int64 {
+	path := transcriptPath(id)
+	if path == "" {
+		return 0
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+
+	var last int64
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
+	for sc.Scan() {
+		var v struct {
+			Usage   *transcriptUsage `json:"usage"`
+			Message struct {
+				Usage *transcriptUsage `json:"usage"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(sc.Bytes(), &v) != nil {
+			continue
+		}
+		u := v.Usage
+		if u == nil {
+			u = v.Message.Usage
+		}
+		if u != nil {
+			last = u.Input + u.CacheCreate + u.CacheRead
+		}
+	}
+	return last
 }

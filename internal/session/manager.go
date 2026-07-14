@@ -39,6 +39,9 @@ type CreateOptions struct {
 	// Seed pre-populates the replay buffer with past turns (used with Resume so
 	// the client sees the prior conversation).
 	Seed []SeedTurn
+	// ContextTokens seeds the context-usage meter for a resumed session, so it
+	// shows the real fill immediately instead of waiting for the next turn.
+	ContextTokens int64
 }
 
 // Create registers a new claude session and returns immediately; the CLI boots
@@ -78,6 +81,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	s := newSession(id, opts.Cwd, opts.Title, drv)
 	s.model = opts.Model
 	s.effort = opts.Effort
+	s.contextTokens = opts.ContextTokens
 	if len(opts.Seed) > 0 {
 		s.Seed(opts.Seed)
 	}
@@ -172,6 +176,7 @@ func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seed
 	}
 	cid := old.ClaudeSessionID()
 	meta := old.Meta()
+	ctxTokens := old.ContextTokens() // preserve the context meter across the respawn
 
 	old.Close()
 	<-old.Done()
@@ -187,7 +192,7 @@ func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seed
 	//     refuses to start).
 	//   - brand-new session, no turns and no transcript: respawn fresh under the
 	//     same handle id.
-	opts := CreateOptions{Cwd: meta.Cwd, Title: meta.Title, Model: meta.Model, Effort: effort}
+	opts := CreateOptions{Cwd: meta.Cwd, Title: meta.Title, Model: meta.Model, Effort: effort, ContextTokens: ctxTokens}
 	if cid != "" {
 		opts.Resume, opts.Seed = cid, seedFn(cid)
 	} else if seed := seedFn(id); len(seed) > 0 {

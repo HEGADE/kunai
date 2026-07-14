@@ -50,6 +50,7 @@ type Session struct {
 	title           string
 	claudeSessionID string // CLI-assigned id, for --resume cold-start
 	state           string
+	contextTokens   int64 // context-window occupancy from the latest result (or seeded on resume)
 	buf             *ring
 	subs            map[*Subscriber]struct{}
 	pending         map[string]AppEvent // unresolved permission asks, keyed by request_id
@@ -195,7 +196,13 @@ func (s *Session) pump() {
 
 		case claude.EventResult:
 			s.setState(StateIdle)
-			s.broadcast(parseResult(ev.Raw))
+			re := parseResult(ev.Raw)
+			if re.ContextTokens > 0 {
+				s.mu.Lock()
+				s.contextTokens = re.ContextTokens // keep current so reconnect hellos reflect it
+				s.mu.Unlock()
+			}
+			s.broadcast(re)
 			s.notifyAttention("done", "")
 
 		case claude.EventRateLimit:
@@ -369,16 +376,17 @@ func (s *Session) Attach(afterSeq uint64) (hello AppEvent, backlog []AppEvent, s
 		pending = append(pending, p)
 	}
 	hello = AppEvent{
-		T:       EvHello,
-		ID:      s.ID,
-		Cwd:     s.Cwd,
-		Model:   s.model,
-		Title:   s.title,
-		State:   s.state,
-		Mode:    s.mode,
-		Effort:  s.effort,
-		HighSeq: s.seq,
-		Pending: pending,
+		T:             EvHello,
+		ID:            s.ID,
+		Cwd:           s.Cwd,
+		Model:         s.model,
+		Title:         s.title,
+		State:         s.state,
+		Mode:          s.mode,
+		Effort:        s.effort,
+		HighSeq:       s.seq,
+		ContextTokens: s.contextTokens,
+		Pending:       pending,
 	}
 	backlog = s.buf.since(afterSeq)
 
@@ -475,6 +483,14 @@ func (s *Session) ClaudeSessionID() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.claudeSessionID
+}
+
+// ContextTokens returns the latest known context-window occupancy, so a restart
+// (e.g. an effort change) can carry it into the respawned session.
+func (s *Session) ContextTokens() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.contextTokens
 }
 
 func toAppBlocks(msg *claude.AssistantMessage) []AppBlock {

@@ -193,8 +193,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	opts := session.CreateOptions{Cwd: req.Cwd, Title: req.Title, Model: req.Model, Effort: req.Effort, Resume: req.Resume}
 	if req.Resume != "" {
 		// Replay the prior conversation into the buffer so the client doesn't
-		// open onto an empty transcript.
+		// open onto an empty transcript, and seed the context meter from the
+		// transcript so it reflects the real fill before the next turn.
 		opts.Seed = loadTranscriptTurns(req.Resume)
+		opts.ContextTokens = loadTranscriptContextTokens(req.Resume)
 	}
 	sess, err := s.mgr.Create(ctx, opts)
 	if err != nil {

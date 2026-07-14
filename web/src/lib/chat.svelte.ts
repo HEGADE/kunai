@@ -125,6 +125,7 @@ export class ChatConnection {
         if (ev.state) this.sessionState = ev.state
         if (ev.mode) this.mode = ev.mode as PermissionMode
         if (ev.effort) this.effort = ev.effort
+        if (ev.context_tokens != null) this.contextTokens = ev.context_tokens
         for (const p of ev.pending ?? []) this.addPending(p)
         this.highSeq = ev.high_seq ?? 0
         if (this.highSeq === 0) this.ready = true // nothing to replay
