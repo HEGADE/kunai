@@ -9,7 +9,9 @@ declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: { url: string; revision: string | null }[]
 }
 
-const CACHE = 'kunai-shell-v3'
+// Bump when the precache strategy changes; activate() purges older caches, so a
+// new worker drops the previous build's stale shell instead of serving it.
+const CACHE = 'kunai-shell-v4'
 const ASSETS = self.__WB_MANIFEST.map((e) => e.url)
 
 // Dedupe by RESOLVED url, not raw string: the manifest lists index.html and we

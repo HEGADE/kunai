@@ -18,9 +18,16 @@ func (s *Server) spaHandler() http.Handler {
 		}
 		if f, err := s.pwa.Open(p); err == nil {
 			_ = f.Close()
-			// Long-cache fingerprinted assets; keep HTML fresh.
-			if !strings.HasSuffix(p, ".html") {
+			// Only Vite's content-hashed files (under assets/) are safe to cache
+			// forever. Everything else — the service worker, its registration shim,
+			// the web manifest, icons, and the HTML shell — must stay revalidated so
+			// a new deploy is picked up. Caching sw.js immutably strands clients on
+			// the old worker (and thus the old cached UI) no matter how often they
+			// reload.
+			if strings.HasPrefix(p, "assets/") {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			} else {
+				w.Header().Set("Cache-Control", "no-cache")
 			}
 			fileServer.ServeHTTP(w, r)
 			return
