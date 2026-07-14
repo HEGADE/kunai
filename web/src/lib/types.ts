@@ -84,6 +84,7 @@ export interface AppEvent {
     | 'result'
     | 'state'
     | 'error'
+    | 'rate_limit'
   // hello
   id?: string
   cwd?: string
@@ -116,6 +117,10 @@ export interface AppEvent {
   // tool_result (tool_use_id + is_error reused)
   content?: string
   truncated?: boolean
+  // rate_limit
+  window?: string
+  resets_at?: number
+  limit_status?: string
 }
 
 // A tool's output, correlated to its tool_use block by id.

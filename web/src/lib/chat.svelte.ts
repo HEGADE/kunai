@@ -45,6 +45,9 @@ export class ChatConnection {
   model = $state(DEFAULT_MODEL)
   title = $state('')
   errorLine = $state('')
+  // Latest usage-window status from the CLI; drives the in-chat "schedule after
+  // reset". limited is true when the last turn was rejected for quota.
+  rateLimit = $state<{ window: string; resetsAt: number; limited: boolean } | null>(null)
 
   private ws?: WebSocket
   private lastSeq = 0
@@ -171,8 +174,23 @@ export class ChatConnection {
       case 'state':
         if (ev.state) this.sessionState = ev.state
         break
+      case 'rate_limit':
+        if (ev.resets_at) {
+          this.rateLimit = {
+            window: ev.window ?? 'five_hour',
+            resetsAt: ev.resets_at,
+            // Anything other than "allowed" means the window is exhausted/limited.
+            limited: !!ev.limit_status && ev.limit_status !== 'allowed',
+          }
+        }
+        break
       case 'error':
         this.errorLine = ev.message ?? 'error'
+        // A rate-limit-flavored error also flips the banner on, in case the CLI
+        // signals the wall via an error rather than a rejected status.
+        if (/rate.?limit|usage limit|quota/i.test(ev.message ?? '') && this.rateLimit) {
+          this.rateLimit = { ...this.rateLimit, limited: true }
+        }
         break
     }
   }

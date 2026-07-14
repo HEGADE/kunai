@@ -205,6 +205,8 @@ func (s *Session) pump() {
 			if fn != nil && ev.ResetsAt > 0 {
 				go fn(ev.Window, ev.ResetsAt)
 			}
+			// Surface to the chat so it can offer "schedule after reset".
+			s.broadcast(AppEvent{T: EvRateLimit, Window: ev.Window, ResetsAt: ev.ResetsAt, LimitStatus: ev.LimitStatus})
 
 		case claude.EventError:
 			s.broadcast(AppEvent{T: EvError, Message: ev.Err.Error()})

@@ -53,6 +53,12 @@ type AppEvent struct {
 
 	// "error" / generic message
 	Message string `json:"message,omitempty"`
+
+	// "rate_limit": the current usage window, when it resets, and whether the
+	// last turn was allowed/limited — drives the in-chat "schedule after reset".
+	Window      string `json:"window,omitempty"`
+	ResetsAt    int64  `json:"resets_at,omitempty"`
+	LimitStatus string `json:"limit_status,omitempty"`
 }
 
 // App event type tags (the T field).
@@ -68,6 +74,7 @@ const (
 	EvResult             = "result"
 	EvState              = "state"
 	EvError              = "error"
+	EvRateLimit          = "rate_limit"
 )
 
 // Turn/session states.

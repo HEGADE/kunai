@@ -8,6 +8,7 @@
   import PermissionGate from './PermissionGate.svelte'
   import Markdown from './Markdown.svelte'
   import BlockView from './BlockView.svelte'
+  import ScheduleAfter from './ScheduleAfter.svelte'
   import ToolGroup from './ToolGroup.svelte'
   import TurnFooter from './TurnFooter.svelte'
 
@@ -24,6 +25,15 @@
   let attachments = $state<Attachment[]>([])
   let uploading = $state(false)
   let menuOpen = $state(false)
+  let schedOpen = $state(false)
+
+  function resetRel(unixSec: number): string {
+    let s = Math.round(unixSec - Date.now() / 1000)
+    if (s < 0) s = 0
+    const h = Math.floor(s / 3600)
+    const m = Math.floor((s % 3600) / 60)
+    return h ? `${h}h ${m}m` : `${m}m`
+  }
   let modeOpen = $state(false)
   let modelOpen = $state(false)
   let effortOpen = $state(false)
@@ -194,6 +204,7 @@
         {#if running}
           <button onclick={() => { chat.interrupt(); menuOpen = false }}>Interrupt</button>
         {/if}
+        <button onclick={() => { schedOpen = true; menuOpen = false }}>Schedule a prompt…</button>
         <button class="danger" onclick={() => { app.closeSessionActive(); menuOpen = false }}>Close session</button>
       </div>
     {/if}
@@ -260,6 +271,24 @@
   {/if}
 
   <PermissionGate {chat} />
+
+  {#if schedOpen}
+    <div class="floater">
+      <ScheduleAfter
+        machineId={app.activeMachineId ?? ''}
+        sessionId={app.activeId ?? ''}
+        cwd={chat.cwd}
+        window={chat.rateLimit?.window ?? 'five_hour'}
+        resetsAt={chat.rateLimit?.resetsAt ?? 0}
+        onClose={() => (schedOpen = false)}
+      />
+    </div>
+  {:else if chat.rateLimit?.limited}
+    <div class="ratebanner">
+      <span class="rl">Rate-limited · {chat.rateLimit.window === 'seven_day' ? 'weekly' : '5-hour'} quota resets in {resetRel(chat.rateLimit.resetsAt)}</span>
+      <button onclick={() => (schedOpen = true)}>Schedule after reset</button>
+    </div>
+  {/if}
 
   <div class="dock" bind:clientHeight={dockH}>
     <div class="field">
@@ -606,6 +635,39 @@
   .err {
     color: var(--alert);
     font-size: 12.5px;
+  }
+
+  .ratebanner {
+    max-width: 720px;
+    margin: 0 auto;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 20px;
+    font-size: 12.5px;
+    color: var(--text-2);
+  }
+  .ratebanner .rl {
+    flex: 1;
+    min-width: 0;
+  }
+  .ratebanner button {
+    flex: none;
+    padding: 7px 13px;
+    border-radius: 100px;
+    background: var(--panel-3);
+    border: 1px solid var(--border-2);
+    color: var(--text);
+    font-size: 12.5px;
+    font-weight: 550;
+  }
+  .ratebanner button:hover {
+    background: var(--panel-2);
+  }
+  .floater {
+    border-top: 1px solid var(--border-2);
+    background: var(--panel);
   }
 
   /* The composer floats on the chat canvas — no full-width divider or band
