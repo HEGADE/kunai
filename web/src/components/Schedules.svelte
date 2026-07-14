@@ -136,48 +136,49 @@
 
   {#if show}
     <div class="form">
-      <!-- What to run: the prompt is the point of the whole schedule, so it leads. -->
+      <!-- Every control is full-width and label-above, so the whole form shares
+           one left edge and one field height instead of a ragged label column. -->
       <section class="grp">
         <span class="eyebrow">Prompt</span>
         <textarea class="prompt" placeholder="What should Claude do?" bind:value={f.prompt} rows="3"></textarea>
       </section>
 
-      <!-- Where it runs -->
       <section class="grp">
         <span class="eyebrow">Where it runs</span>
-        {#if app.machines.length > 1}
-          <label class="field"><span>Machine</span>
-            <select bind:value={f.machineId}>
-              {#each app.machines as m (m.id)}<option value={m.id}>{m.label}</option>{/each}
-            </select>
-          </label>
-        {/if}
         <div class="seg">
           <button class:on={f.targetKind === 'new'} onclick={() => (f.targetKind = 'new')}>New session</button>
           <button class:on={f.targetKind === 'resume'} onclick={() => (f.targetKind = 'resume')}>Resume a session</button>
         </div>
         {#if f.targetKind === 'new'}
-          <label class="field"><span>Folder</span>
+          <label class="field"><span class="fl">Folder</span>
             <input list="sched-dirs" placeholder="/path/to/project" bind:value={f.cwd} class="mono" />
             <datalist id="sched-dirs">{#each projectsFor as p (p.cwd)}<option value={p.cwd}></option>{/each}</datalist>
           </label>
-          <label class="field"><span>Model</span>
-            <select bind:value={f.model}>{#each MODELS as m (m.id)}<option value={m.id}>{m.label}</option>{/each}</select>
-          </label>
         {:else}
-          <label class="field"><span>Session</span>
+          <label class="field"><span class="fl">Session</span>
             <select class:ph={!f.sessionId} bind:value={f.sessionId}>
               <option value="" disabled>Pick a session…</option>
               {#each sessionsFor as h (h.id)}<option value={h.id}>{h.title}</option>{/each}
             </select>
           </label>
         {/if}
-        <label class="field"><span>Mode</span>
-          <select bind:value={f.mode}>{#each MODES as m (m.id)}<option value={m.id}>{m.label}</option>{/each}</select>
-        </label>
+        <div class="two">
+          {#if f.targetKind === 'new'}
+            <label class="field"><span class="fl">Model</span>
+              <select bind:value={f.model}>{#each MODELS as m (m.id)}<option value={m.id}>{m.label}</option>{/each}</select>
+            </label>
+          {/if}
+          <label class="field"><span class="fl">Mode</span>
+            <select bind:value={f.mode}>{#each MODES as m (m.id)}<option value={m.id}>{m.label}</option>{/each}</select>
+          </label>
+          {#if app.machines.length > 1}
+            <label class="field"><span class="fl">Machine</span>
+              <select bind:value={f.machineId}>{#each app.machines as m (m.id)}<option value={m.id}>{m.label}</option>{/each}</select>
+            </label>
+          {/if}
+        </div>
       </section>
 
-      <!-- When -->
       <section class="grp">
         <span class="eyebrow">When</span>
         <div class="seg">
@@ -185,28 +186,32 @@
           <button class:on={f.triggerKind === 'at'} onclick={() => (f.triggerKind = 'at')}>At a set time</button>
         </div>
         {#if f.triggerKind === 'reset'}
-          <p class="sentence">
+          <div class="trig">
             <input class="num" type="number" min="0" bind:value={f.offsetMin} />
             <span>min after the</span>
             <select bind:value={f.window}>{#each WINDOWS as w (w.id)}<option value={w.id}>{w.label}</option>{/each}</select>
             <span>resets</span>
-          </p>
+          </div>
           {#if nextReset}<span class="hint">Next {windowLabel} reset {nextReset}</span>{/if}
         {:else}
-          <input class="at" type="datetime-local" bind:value={f.at} />
+          <label class="field"><span class="fl">Date and time</span>
+            <input class="at" type="datetime-local" bind:value={f.at} />
+          </label>
         {/if}
       </section>
 
-      <button class="repeat" class:on={f.rearm} onclick={() => (f.rearm = !f.rearm)}>
-        <span class="tog" class:on={f.rearm}></span>
-        <span class="rl">
-          <span class="rt">Repeat after each run</span>
-          <span class="rh">{f.rearm ? 'Re-arms itself when it finishes' : 'Runs once, then removes itself'}</span>
-        </span>
-      </button>
+      <div class="foot">
+        <button class="repeat" class:on={f.rearm} onclick={() => (f.rearm = !f.rearm)}>
+          <span class="tog" class:on={f.rearm}></span>
+          <span class="rl">
+            <span class="rt">Repeat after each run</span>
+            <span class="rh">{f.rearm ? 'Re-arms itself when it finishes' : 'Runs once, then removes itself'}</span>
+          </span>
+        </button>
 
-      {#if valid}<p class="preview">{preview}</p>{/if}
-      <button class="create" disabled={!valid} onclick={submit}>Create schedule</button>
+        {#if valid}<p class="preview">{preview}</p>{/if}
+        <button class="create" disabled={!valid} onclick={submit}>Create schedule</button>
+      </div>
     </div>
   {/if}
 
@@ -259,60 +264,66 @@
   .del:hover { color: var(--text-2); background: var(--panel-3); }
   .empty { margin: 0; padding: 4px 2px; font-size: 12px; color: var(--text-4); }
 
-  /* --- create form --- */
+  /* --- create form ---
+     One layout rule keeps this tidy: every control is full-width and label-above,
+     so the form has a single left edge and a single field height. Sections are led
+     by a quiet eyebrow and split by a hairline. */
   .form {
-    display: flex; flex-direction: column; gap: 18px; padding: 16px;
+    display: flex; flex-direction: column; gap: 20px; padding: 18px;
     background: var(--panel); border: 1px solid var(--border-2); border-radius: var(--r-lg);
   }
-  /* Grouped sections, each led by a quiet eyebrow, separated by a hairline so the
-     three questions (what / where / when) read as distinct steps. */
-  .grp { display: flex; flex-direction: column; gap: 9px; }
-  .grp + .grp, .repeat { padding-top: 17px; border-top: 1px solid var(--border); }
+  .grp { display: flex; flex-direction: column; gap: 12px; }
+  .grp + .grp, .foot { padding-top: 20px; border-top: 1px solid var(--border); }
   .eyebrow {
-    font-size: 10.5px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-4);
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-4);
   }
 
+  /* Shared field skin: uniform 40px height, one radius, one border. */
   .form input, .form select, .form textarea {
-    min-width: 0; background: var(--panel-2); border: 1px solid var(--border);
-    border-radius: var(--r-sm); padding: 9px 11px; font-size: 13.5px; color: var(--text);
+    width: 100%; min-width: 0; height: 40px; background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: var(--r-sm); padding: 0 12px; font-size: 13.5px; color: var(--text);
     outline: none; color-scheme: dark;
   }
   .form input:focus, .form select:focus, .form textarea:focus { border-color: var(--border-2); }
   select.ph { color: var(--text-4); }
+  .prompt { height: auto; min-height: 84px; padding: 11px 12px; resize: vertical; line-height: 1.5; }
 
-  /* Prompt is the hero: full width, taller, a touch larger than the rest. */
-  .prompt { width: 100%; resize: vertical; min-height: 76px; line-height: 1.5; }
+  /* Label above its field; every field aligns to the same left edge. */
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .fl { font-size: 11.5px; color: var(--text-3); }
+  /* Short selects share a row on wide screens, stack on narrow ones. */
+  .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 
-  /* Compact labelled rows for the supporting selects. */
-  .field { display: flex; align-items: center; gap: 10px; }
-  .field > span { flex: none; width: 58px; font-size: 12.5px; color: var(--text-3); }
-  .field > input, .field > select { flex: 1; }
-
-  /* Segmented toggle. */
+  /* Segmented control: full-width, two equal options. */
   .seg { display: flex; gap: 4px; padding: 3px; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--r); }
   .seg button {
-    flex: 1; padding: 8px; border-radius: var(--r-sm); background: transparent; border: 1px solid transparent;
+    flex: 1; height: 34px; border-radius: var(--r-sm); background: transparent; border: 1px solid transparent;
     color: var(--text-3); font-size: 12.5px; font-weight: 500; transition: color 0.12s, background 0.12s;
   }
   .seg button:hover { color: var(--text-2); }
   .seg button.on { color: var(--text); background: var(--panel-3); border-color: var(--border-2); }
 
-  /* Natural-language trigger: "[3] min after the [5-hour limit] resets". */
-  .sentence { margin: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13.5px; color: var(--text-3); }
-  .sentence .num { width: 52px; text-align: center; padding: 8px 6px; }
-  .sentence select { flex: none; width: auto; }
-  .at { width: 100%; }
+  /* Trigger reads as one sentence, held in a single bordered control so the parts
+     don't scatter: "[1] min after the [5-hour limit] resets". */
+  .trig {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 44px; padding: 6px 12px;
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--r-sm);
+    font-size: 13px; color: var(--text-3);
+  }
+  .trig .num { width: 48px; height: 30px; padding: 0; text-align: center; background: var(--panel-3); }
+  .trig select { width: auto; height: 30px; padding: 0 8px; background: var(--panel-3); }
   .hint { font-size: 11px; color: var(--text-4); }
 
   /* Repeat: a monochrome switch (never a coloured checkbox — white is the only accent). */
-  .repeat { display: flex; align-items: center; gap: 11px; text-align: left; }
+  .foot { display: flex; flex-direction: column; gap: 16px; }
+  .repeat { display: flex; align-items: center; gap: 12px; text-align: left; }
   .repeat .rl { display: flex; flex-direction: column; gap: 1px; }
-  .repeat .rt { font-size: 13px; color: var(--text-2); }
+  .repeat .rt { font-size: 13.5px; color: var(--text-2); }
   .repeat.on .rt { color: var(--text); }
-  .repeat .rh { font-size: 11px; color: var(--text-4); }
+  .repeat .rh { font-size: 11.5px; color: var(--text-4); }
 
   .preview { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-3); }
-  .create { padding: 12px; border-radius: var(--r); background: var(--white); color: #0b0b0c; font-weight: 600; font-size: 13.5px; }
+  .create { height: 46px; border-radius: var(--r); background: var(--white); color: #0b0b0c; font-weight: 600; font-size: 14px; }
   .create:hover:not(:disabled) { background: #fff; }
   .create:disabled { opacity: 0.4; }
 </style>
