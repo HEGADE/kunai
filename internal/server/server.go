@@ -22,6 +22,7 @@ import (
 	"github.com/hegade/kunai/internal/awake"
 	"github.com/hegade/kunai/internal/fsbrowse"
 	"github.com/hegade/kunai/internal/push"
+	"github.com/hegade/kunai/internal/schedule"
 	"github.com/hegade/kunai/internal/session"
 	"github.com/hegade/kunai/internal/webui"
 )
@@ -56,7 +57,8 @@ type Server struct {
 	uploadsDir string
 	machines   *machineStore
 	disco      discoveryCache
-	awake      awake.Keeper // opt-in keep-awake while locked/idle
+	awake      awake.Keeper        // opt-in keep-awake while locked/idle
+	sched      *schedule.Scheduler // runs prompts at a time / after quota reset
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -76,7 +78,19 @@ func New(cfg Config, mgr *session.Manager) *Server {
 
 	s := &Server{cfg: cfg, mgr: mgr, pwa: webui.FS(), uploadsDir: uploads, machines: machines, awake: awake.New()}
 	s.loadAwake() // re-apply a persisted keep-awake preference on boot
+	s.sched = schedule.New(filepath.Join(cfg.DataDir, "schedule.json"), s.fireJob)
 	return s
+}
+
+// armSession attaches the push notifier and the scheduler's rate-limit handler
+// to a freshly created session (both live and scheduler-started ones).
+func (s *Server) armSession(sess *session.Session) {
+	if s.push != nil || s.cfg.HubURL != "" {
+		sess.SetNotifier(s.pushNotifier())
+	}
+	if s.sched != nil {
+		sess.SetRateLimitHandler(s.sched.NoteReset)
+	}
 }
 
 // SetPush enables Web Push wake-ups.
@@ -103,6 +117,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/machines/discover", s.handleDiscover)
 	mux.HandleFunc("POST /api/update", s.handleUpdate)
 	mux.HandleFunc("POST /api/awake", s.handleAwake)
+	mux.HandleFunc("GET /api/schedule", s.handleScheduleList)
+	mux.HandleFunc("POST /api/schedule", s.handleScheduleCreate)
+	mux.HandleFunc("PUT /api/schedule/{id}", s.handleScheduleReplace)
+	mux.HandleFunc("DELETE /api/schedule/{id}", s.handleScheduleDelete)
 	mux.HandleFunc("GET /ws/app/{id}", s.handleWS)
 	mux.Handle("GET /", s.spaHandler())
 	return cors(logRequests(mux))
@@ -115,6 +133,7 @@ func (s *Server) Run(ctx context.Context) error {
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	go s.sched.Run(ctx) // fire scheduled jobs while the server is up
 	go func() {
 		<-ctx.Done()
 		_ = s.awake.Set(false) // release the keep-awake hold on graceful shutdown
@@ -182,11 +201,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// A wake-up can go out either locally (this machine owns push) or, on a peer,
-	// by forwarding to the hub — so arm the notifier when either is possible.
-	if s.push != nil || s.cfg.HubURL != "" {
-		sess.SetNotifier(s.pushNotifier())
-	}
+	s.armSession(sess)
 	writeJSON(w, http.StatusCreated, sess.Meta())
 }
 
@@ -278,9 +293,7 @@ func (s *Server) handleSetEffort(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if s.push != nil || s.cfg.HubURL != "" {
-		sess.SetNotifier(s.pushNotifier())
-	}
+	s.armSession(sess)
 	writeJSON(w, http.StatusOK, sess.Meta())
 }
 

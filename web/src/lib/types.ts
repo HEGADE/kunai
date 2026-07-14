@@ -19,7 +19,38 @@ export interface Stats {
   kunai_uptime_sec: number
   keep_awake: boolean
   keep_awake_supported: boolean
+  rate_resets?: Record<string, number> // window -> unix seconds it resets
 }
+
+// --- scheduler ---
+
+export interface Trigger {
+  kind: 'at' | 'reset'
+  at?: string // RFC3339 (kind === 'at')
+  window?: 'five_hour' | 'seven_day' // kind === 'reset'
+  offset_sec?: number
+}
+export interface Target {
+  kind: 'new' | 'resume'
+  cwd?: string
+  model?: string
+  effort?: string
+  mode?: string
+  session_id?: string
+}
+export interface Job {
+  id: string
+  name?: string
+  enabled: boolean
+  trigger: Trigger
+  rearm: boolean
+  target: Target
+  prompt: string
+  last_run?: string
+  last_status?: string
+  next_fire?: string
+}
+export type TaggedJob = Job & { machineId: string }
 
 export interface Meta {
   id: string

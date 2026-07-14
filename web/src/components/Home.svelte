@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
   import { updateAvailable } from '../lib/update'
+  import Schedules from './Schedules.svelte'
 
   let { compact = false }: { compact?: boolean } = $props()
 
@@ -189,6 +190,8 @@
       </button>
     </div>
   </div>
+
+  <Schedules />
 </div>
 
 <style>

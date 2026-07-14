@@ -26,6 +26,7 @@ const (
 	EventResult     EventKind = "result"      // turn complete; Raw is the result frame
 	EventToolResult EventKind = "tool_result" // tool output; ToolResult populated
 	EventSystem     EventKind = "system"      // other system frames; Raw populated
+	EventRateLimit  EventKind = "rate_limit"  // usage-window status; ResetsAt/Window set
 	EventError      EventKind = "error"       // driver/transport error; Err populated
 )
 
@@ -52,6 +53,11 @@ type Event struct {
 
 	// EventError
 	Err error
+
+	// EventRateLimit: when the current usage window resets and which window.
+	ResetsAt    int64
+	Window      string
+	LimitStatus string
 
 	// Raw is the original frame (always set for result/system; useful for debugging).
 	Raw json.RawMessage
@@ -388,6 +394,18 @@ func (s *Session) route(env Envelope, raw json.RawMessage) {
 	case TypeUser:
 		// The CLI feeds tool outputs back to the model as user frames; surface them.
 		s.emitToolResults(env.Message)
+
+	case TypeRateLimit:
+		var rl struct {
+			Info struct {
+				Status   string `json:"status"`
+				ResetsAt int64  `json:"resetsAt"`
+				Type     string `json:"rateLimitType"`
+			} `json:"rate_limit_info"`
+		}
+		if json.Unmarshal(raw, &rl) == nil && rl.Info.ResetsAt > 0 {
+			s.emit(Event{Kind: EventRateLimit, ResetsAt: rl.Info.ResetsAt, Window: rl.Info.Type, LimitStatus: rl.Info.Status, Raw: raw})
+		}
 
 	case TypeKeepAlive:
 		// ignore

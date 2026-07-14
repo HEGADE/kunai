@@ -57,6 +57,7 @@ type Session struct {
 	closed          bool
 	done            chan struct{} // closed when the driver has ended
 	notify          func(kind, detail string)
+	onRateLimit     func(window string, resetsAt int64)
 }
 
 // SetNotifier registers a callback invoked when the session needs attention
@@ -65,6 +66,15 @@ type Session struct {
 func (s *Session) SetNotifier(fn func(kind, detail string)) {
 	s.mu.Lock()
 	s.notify = fn
+	s.mu.Unlock()
+}
+
+// SetRateLimitHandler registers a callback fired when the CLI reports a usage
+// window's reset time (once per turn). Used by the scheduler to fire jobs
+// relative to the quota reset.
+func (s *Session) SetRateLimitHandler(fn func(window string, resetsAt int64)) {
+	s.mu.Lock()
+	s.onRateLimit = fn
 	s.mu.Unlock()
 }
 
@@ -187,6 +197,14 @@ func (s *Session) pump() {
 			s.setState(StateIdle)
 			s.broadcast(parseResult(ev.Raw))
 			s.notifyAttention("done", "")
+
+		case claude.EventRateLimit:
+			s.mu.Lock()
+			fn := s.onRateLimit
+			s.mu.Unlock()
+			if fn != nil && ev.ResetsAt > 0 {
+				go fn(ev.Window, ev.ResetsAt)
+			}
 
 		case claude.EventError:
 			s.broadcast(AppEvent{T: EvError, Message: ev.Err.Error()})

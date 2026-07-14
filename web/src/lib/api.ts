@@ -1,4 +1,4 @@
-import type { Attachment, HistoryEntry, Listing, MachineInfo, Meta, Stats } from './types'
+import type { Attachment, HistoryEntry, Job, Listing, MachineInfo, Meta, Stats } from './types'
 
 // Every call takes a `base` origin so the client can reach any machine directly
 // over the tailnet. base === '' means the current origin (the hub), so the hub's
@@ -90,6 +90,29 @@ export function setKeepAwake(
 // as it restarts, so a dropped connection here is expected, not a failure.
 export function updateMachine(base: string): Promise<void> {
   return fetch(at(base, '/api/update'), { method: 'POST' }).then((r) => json<unknown>(r)).then(() => undefined)
+}
+
+// --- scheduler (per-machine: jobs live on the machine that runs them) ---
+
+export function listSchedule(base: string): Promise<Job[]> {
+  return fetch(at(base, '/api/schedule')).then((r) => json<Job[]>(r))
+}
+export function createSchedule(base: string, job: Partial<Job>): Promise<Job> {
+  return fetch(at(base, '/api/schedule'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(job),
+  }).then((r) => json<Job>(r))
+}
+export function replaceSchedule(base: string, id: string, job: Job): Promise<void> {
+  return fetch(at(base, `/api/schedule/${id}`), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(job),
+  }).then(() => undefined)
+}
+export function deleteSchedule(base: string, id: string): Promise<void> {
+  return fetch(at(base, `/api/schedule/${id}`), { method: 'DELETE' }).then(() => undefined)
 }
 
 // --- machine registry (always the hub, base '') ---

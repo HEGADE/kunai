@@ -39,6 +39,7 @@ const (
 	TypeStreamEvent     = "stream_event"
 	TypeResult          = "result"
 	TypeKeepAlive       = "keep_alive"
+	TypeRateLimit       = "rate_limit_event"
 )
 
 // Control request subtypes.

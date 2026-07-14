@@ -31,6 +31,9 @@ type Stats struct {
 	KunaiUptime   int64   `json:"kunai_uptime_sec"`
 	KeepAwake     bool    `json:"keep_awake"`           // idle-sleep hold currently held
 	KeepAwakeSupp bool    `json:"keep_awake_supported"` // platform can hold it
+	// RateResets maps a usage window ("five_hour"/"seven_day") to the unix time
+	// it resets, as last reported by the CLI. Drives scheduler previews.
+	RateResets map[string]int64 `json:"rate_resets,omitempty"`
 }
 
 var (
@@ -51,6 +54,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		KunaiUptime:   int64(time.Since(serverStart).Seconds()),
 		KeepAwake:     s.awake.Enabled(),
 		KeepAwakeSupp: s.awake.Supported(),
+		RateResets:    s.sched.Resets(),
 	}
 	st.Hostname, _ = os.Hostname()
 	st.UptimeSec, st.Load1 = hostUptimeLoad()
