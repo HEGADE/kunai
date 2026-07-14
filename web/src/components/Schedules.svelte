@@ -123,6 +123,13 @@
     if (job.trigger.kind === 'reset' && !nf) return 'waiting for quota reading'
     return nf || '—'
   }
+  // A disabled job is either finished (a one-time run that already fired — the
+  // scheduler disables it) or paused by the user. Only the latter is "paused".
+  function statusText(job: Job): string {
+    if (job.enabled) return when(job)
+    if (!job.rearm && !!job.last_status) return 'done'
+    return 'paused'
+  }
   function summary(job: Job): string {
     const t = job.trigger
     const trig =
@@ -246,7 +253,7 @@
         <span class="jsub">{summary(job)}</span>
         {#if job.last_status}<span class="jstatus" class:err={job.last_status.startsWith('error')}>last: {job.last_status}</span>{/if}
       </div>
-      <span class="jwhen">{job.enabled ? when(job) : 'paused'}</span>
+      <span class="jwhen" class:done={!job.enabled && !job.rearm && !!job.last_status && !job.last_status.startsWith('error')}>{statusText(job)}</span>
       <button class="del" onclick={() => app.removeSchedule(job)} aria-label="Delete">✕</button>
     </div>
   {/each}
@@ -283,6 +290,7 @@
   .jstatus { font-size: 10px; color: var(--text-4); }
   .jstatus.err { color: var(--alert); }
   .jwhen { flex: none; font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+  .jwhen.done { color: var(--live); }
   .del { flex: none; width: 24px; height: 24px; border-radius: 50%; color: var(--text-4); font-size: 11px; }
   .del:hover { color: var(--text-2); background: var(--panel-3); }
   .empty { margin: 0; padding: 4px 2px; font-size: 12px; color: var(--text-4); }
