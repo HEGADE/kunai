@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte'
   import { app } from '../lib/app.svelte'
   import { uploadFile } from '../lib/api'
   import type { ChatConnection } from '../lib/chat.svelte'
@@ -16,7 +17,20 @@
 
   // Group the flat item stream into turns so a turn's tool activity can collapse
   // behind one summary and carry a files-changed footer.
-  const turns = $derived(groupTurns(chat.items))
+  const allTurns = $derived(groupTurns(chat.items))
+
+  // Windowed rendering: a long conversation arrives all at once over the socket,
+  // but mounting every turn (with syntax highlighting and diffs) is what makes
+  // opening a big session janky and stream-from-the-top. So we only mount a
+  // trailing window of turns — the session opens instantly at the bottom — and
+  // reveal older turns as the user scrolls up (see maybeReveal). firstVisible is
+  // the absolute index of the oldest mounted turn; keys stay absolute so
+  // revealing prepends without re-rendering what's already there.
+  const WINDOW = 20 // turns mounted initially / kept while pinned to the bottom
+  const STEP = 20 // turns revealed per scroll-up
+  const REVEAL_AT = 200 // px from the top that triggers a reveal
+  let firstVisible = $state(0)
+  const turns = $derived(allTurns.slice(firstVisible))
 
   let draft = $state('')
   let scroller = $state<HTMLElement | null>(null)
@@ -50,6 +64,7 @@
   }
   function onScroll() {
     atBottom = nearBottom()
+    maybeReveal()
   }
   function toBottom(smooth = false) {
     if (!scroller) return
@@ -57,12 +72,39 @@
     atBottom = true
   }
 
+  // Reveal older turns when the user reaches the top of the mounted window,
+  // keeping their reading position put: turns mounted above shift everything
+  // down, so we re-anchor scrollTop by the height that was added.
+  let revealing = false
+  async function maybeReveal() {
+    if (revealing || !scroller || firstVisible === 0 || scroller.scrollTop > REVEAL_AT) return
+    revealing = true
+    const prevH = scroller.scrollHeight
+    const prevTop = scroller.scrollTop
+    firstVisible = Math.max(0, firstVisible - STEP)
+    await tick()
+    scroller.scrollTop = prevTop + (scroller.scrollHeight - prevH)
+    revealing = false
+  }
+
+  // While pinned to the bottom, keep only a trailing window mounted so the DOM
+  // stays small as history streams in and new turns arrive. Scrolling up freezes
+  // the window (atBottom false) so revealed history isn't yanked away.
+  $effect(() => {
+    const n = allTurns.length
+    if (atBottom) {
+      const trail = Math.max(0, n - WINDOW)
+      if (trail > firstVisible) firstVisible = trail
+    }
+  })
+
   // Jump to the latest whenever a new session opens (history streams in async,
   // so the follow-effect below keeps us pinned as it fills).
   $effect(() => {
     if (chat !== prevChat) {
       prevChat = chat
       atBottom = true
+      firstVisible = 0 // reset the window; the trailing effect re-trims as it fills
       requestAnimationFrame(() => requestAnimationFrame(() => toBottom(false)))
     }
   })
@@ -219,8 +261,8 @@
       </div>
     {/if}
     <div class="log">
-      {#each turns as turn, ti (ti)}
-        {@const live = ti === turns.length - 1 && (running || !!chat.streaming || !!chat.thinking)}
+      {#each turns as turn, ti (firstVisible + ti)}
+        {@const live = firstVisible + ti === allTurns.length - 1 && (running || !!chat.streaming || !!chat.thinking)}
         {#if turn.user !== undefined}
           <div class="turn user">
             <div class="ubbl">{turn.user}</div>
