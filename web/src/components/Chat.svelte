@@ -56,7 +56,8 @@
   // bottom, and surface a jump-to-bottom button once the user scrolls up.
   let dockH = $state(0)
   let atBottom = $state(true)
-  let prevChat: ChatConnection | undefined
+  // The connection whose window we've already initialised (once its backlog landed).
+  let initedFor: ChatConnection | undefined
 
   function nearBottom(): boolean {
     if (!scroller) return true
@@ -72,45 +73,34 @@
     atBottom = true
   }
 
-  // Reveal older turns when the user reaches the top of the mounted window,
-  // keeping their reading position put: turns mounted above shift everything
-  // down, so we re-anchor scrollTop by the height that was added.
+  // Reveal older turns when the user scrolls near the top of the mounted window.
+  // Anchor by the distance from the bottom: the turns inserted above then slide
+  // in without moving whatever the user is currently reading.
   let revealing = false
   async function maybeReveal() {
     if (revealing || !scroller || firstVisible === 0 || scroller.scrollTop > REVEAL_AT) return
     revealing = true
-    const prevH = scroller.scrollHeight
-    const prevTop = scroller.scrollTop
+    const fromBottom = scroller.scrollHeight - scroller.scrollTop
     firstVisible = Math.max(0, firstVisible - STEP)
     await tick()
-    scroller.scrollTop = prevTop + (scroller.scrollHeight - prevH)
+    scroller.scrollTop = scroller.scrollHeight - fromBottom
     revealing = false
   }
 
-  // While pinned to the bottom, keep only a trailing window mounted so the DOM
-  // stays small as history streams in and new turns arrive. Scrolling up freezes
-  // the window (atBottom false) so revealed history isn't yanked away.
+  // Mount the window once a session's backlog has fully arrived (chat.ready):
+  // only the trailing WINDOW of turns, pinned to the bottom, in a single paint.
+  // Gating on ready is what removes the old stream-from-the-top jitter.
   $effect(() => {
-    const n = allTurns.length
-    if (atBottom) {
-      const trail = Math.max(0, n - WINDOW)
-      if (trail > firstVisible) firstVisible = trail
-    }
+    if (!chat.ready || chat === initedFor) return
+    initedFor = chat
+    firstVisible = Math.max(0, allTurns.length - WINDOW)
+    atBottom = true
+    requestAnimationFrame(() => requestAnimationFrame(() => toBottom(false)))
   })
 
-  // Jump to the latest whenever a new session opens (history streams in async,
-  // so the follow-effect below keeps us pinned as it fills).
-  $effect(() => {
-    if (chat !== prevChat) {
-      prevChat = chat
-      atBottom = true
-      firstVisible = 0 // reset the window; the trailing effect re-trims as it fills
-      requestAnimationFrame(() => requestAnimationFrame(() => toBottom(false)))
-    }
-  })
-
-  // Follow new content only while the user is at the bottom — never yank the
-  // view away from something they scrolled up to read.
+  // Follow live content only while pinned to the bottom. The window only ever
+  // grows (new turns append, reveals prepend) and is never trimmed, so what the
+  // user is reading never shifts underneath them.
   $effect(() => {
     chat.items.length
     chat.streaming
@@ -253,57 +243,61 @@
   </header>
 
   <div class="scroll" bind:this={scroller} onscroll={onScroll}>
-    {#if chat.items.length === 0 && !chat.streaming && !chat.thinking && !running}
-      <div class="blank">
-        <p class="b1">{chat.cwd.split('/').slice(-1)[0] || 'session'}</p>
-        <p class="b2 mono">{chat.cwd}</p>
-        <p class="b3">Send a message to start.</p>
-      </div>
-    {/if}
-    <div class="log">
-      {#each turns as turn, ti (firstVisible + ti)}
-        {@const live = firstVisible + ti === allTurns.length - 1 && (running || !!chat.streaming || !!chat.thinking)}
-        {#if turn.user !== undefined}
-          <div class="turn user">
-            <div class="ubbl">{turn.user}</div>
-          </div>
-        {/if}
-        {#if turn.hasAssistant && hasBody(turn.blocks)}
+    <!-- Wait for the backlog to fully arrive, then mount it in one paint (see the
+         init effect). This is what keeps opening a long session smooth. -->
+    {#if chat.ready}
+      {#if chat.items.length === 0 && !chat.streaming && !chat.thinking && !running}
+        <div class="blank">
+          <p class="b1">{chat.cwd.split('/').slice(-1)[0] || 'session'}</p>
+          <p class="b2 mono">{chat.cwd}</p>
+          <p class="b3">Send a message to start.</p>
+        </div>
+      {/if}
+      <div class="log">
+        {#each turns as turn, ti (firstVisible + ti)}
+          {@const live = firstVisible + ti === allTurns.length - 1 && (running || !!chat.streaming || !!chat.thinking)}
+          {#if turn.user !== undefined}
+            <div class="turn user">
+              <div class="ubbl">{turn.user}</div>
+            </div>
+          {/if}
+          {#if turn.hasAssistant && hasBody(turn.blocks)}
+            <div class="turn">
+              <div class="assistant">
+                {#if live}
+                  {#each turn.blocks as b, j (j)}
+                    <BlockView block={b} {chat} />
+                  {/each}
+                {:else}
+                  {#if turn.toolCalls > 0}
+                    <ToolGroup {turn} {chat} />
+                  {/if}
+                  {#each turn.answer as b, j (j)}
+                    <BlockView block={b} {chat} />
+                  {/each}
+                  <TurnFooter {turn} />
+                {/if}
+              </div>
+            </div>
+          {/if}
+        {/each}
+
+        {#if chat.thinking || chat.streaming || running}
           <div class="turn">
             <div class="assistant">
-              {#if live}
-                {#each turn.blocks as b, j (j)}
-                  <BlockView block={b} {chat} />
-                {/each}
-              {:else}
-                {#if turn.toolCalls > 0}
-                  <ToolGroup {turn} {chat} />
-                {/if}
-                {#each turn.answer as b, j (j)}
-                  <BlockView block={b} {chat} />
-                {/each}
-                <TurnFooter {turn} />
+              {#if chat.thinking}<div class="thinking mono">{chat.thinking}</div>{/if}
+              {#if chat.streaming}
+                <Markdown text={chat.streaming} live />
+              {:else if running}
+                <span class="working">Working…</span>
               {/if}
             </div>
           </div>
         {/if}
-      {/each}
 
-      {#if chat.thinking || chat.streaming || running}
-        <div class="turn">
-          <div class="assistant">
-            {#if chat.thinking}<div class="thinking mono">{chat.thinking}</div>{/if}
-            {#if chat.streaming}
-              <Markdown text={chat.streaming} live />
-            {:else if running}
-              <span class="working">Working…</span>
-            {/if}
-          </div>
-        </div>
-      {/if}
-
-      {#if chat.errorLine}<div class="err mono">{chat.errorLine}</div>{/if}
-    </div>
+        {#if chat.errorLine}<div class="err mono">{chat.errorLine}</div>{/if}
+      </div>
+    {/if}
   </div>
 
   {#if !atBottom}

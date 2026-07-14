@@ -34,6 +34,11 @@ export class ChatConnection {
   // Tool outputs keyed by tool_use_id, looked up by each tool_use block.
   toolResults = $state<Record<string, ToolResult>>({})
   status = $state<ConnStatus>('connecting')
+  // Flips true once the initial backlog has fully arrived (lastSeq caught up to
+  // the hello's high_seq). The view waits for this before mounting history, so a
+  // long conversation appears in one paint at the bottom instead of streaming in
+  // from the top. Stays true across reconnects (they only replay a small gap).
+  ready = $state(false)
   sessionState = $state<SessionState>('idle')
   mode = $state<PermissionMode>('default')
   // Seed model/effort to the app defaults so the composer shows a real label
@@ -51,6 +56,7 @@ export class ChatConnection {
 
   private ws?: WebSocket
   private lastSeq = 0
+  private highSeq = 0 // last seq the server had buffered when we attached
   private retries = 0
   private closed = false
   private reconnectTimer?: ReturnType<typeof setTimeout>
@@ -116,6 +122,8 @@ export class ChatConnection {
         if (ev.mode) this.mode = ev.mode as PermissionMode
         if (ev.effort) this.effort = ev.effort
         for (const p of ev.pending ?? []) this.addPending(p)
+        this.highSeq = ev.high_seq ?? 0
+        if (this.highSeq === 0) this.ready = true // nothing to replay
         break
       case 'user':
         this.items = [...this.items, { role: 'user', text: ev.text ?? '' }]
@@ -193,6 +201,10 @@ export class ChatConnection {
         }
         break
     }
+
+    // Backlog fully drained: the initial history is now all present, so the view
+    // can mount it in one pass and pin to the bottom.
+    if (!this.ready && this.highSeq > 0 && this.lastSeq >= this.highSeq) this.ready = true
   }
 
   private addPending(ev: AppEvent) {
