@@ -503,12 +503,17 @@ func parseResult(raw json.RawMessage) AppEvent {
 	}
 	_ = json.Unmarshal(raw, &r)
 	tokens := r.Usage.Input + r.Usage.Output + r.Usage.CacheCreate + r.Usage.CacheRead
+	// Context-window occupancy is the prompt side only (what was sent to the
+	// model): fresh input plus cache-created and cache-read tokens. Output is the
+	// reply, counted in `tokens` but not part of the window at request time.
+	contextTokens := r.Usage.Input + r.Usage.CacheCreate + r.Usage.CacheRead
 	return AppEvent{
-		T:          EvResult,
-		Message:    r.Subtype,
-		IsError:    r.IsError,
-		DurationMs: r.DurationMs,
-		Tokens:     tokens,
-		CostUSD:    r.CostUSD,
+		T:             EvResult,
+		Message:       r.Subtype,
+		IsError:       r.IsError,
+		DurationMs:    r.DurationMs,
+		Tokens:        tokens,
+		ContextTokens: contextTokens,
+		CostUSD:       r.CostUSD,
 	}
 }

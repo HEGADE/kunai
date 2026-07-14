@@ -7,6 +7,7 @@
   import { groupTurns } from '../lib/turns'
   import { MODELS, EFFORTS, modelLabel, effortLabel } from '../lib/models'
   import PermissionGate from './PermissionGate.svelte'
+  import Context from './Context.svelte'
   import Markdown from './Markdown.svelte'
   import BlockView from './BlockView.svelte'
   import ScheduleAfter from './ScheduleAfter.svelte'
@@ -416,6 +417,7 @@
           {/if}
         </div>
         <span class="spacer"></span>
+        <Context tokens={chat.contextTokens} model={chat.model} />
         {#if running}
           <button class="stop" onclick={() => chat.interrupt()} aria-label="Stop"><span class="sq"></span></button>
         {:else}

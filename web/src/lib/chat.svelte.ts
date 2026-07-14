@@ -49,6 +49,10 @@ export class ChatConnection {
   cwd = $state('')
   model = $state(DEFAULT_MODEL)
   title = $state('')
+  // Tokens occupying the context window, from the latest turn's result. 0 until
+  // the first turn completes (a fresh or resumed session has none reported yet).
+  // Drives the composer's context meter and updates live on every result.
+  contextTokens = $state(0)
   errorLine = $state('')
   // Latest usage-window status from the CLI; drives the in-chat "schedule after
   // reset". limited is true when the last turn was rejected for quota.
@@ -160,6 +164,7 @@ export class ChatConnection {
       case 'result':
         this.streaming = ''
         this.thinking = ''
+        if (ev.context_tokens != null) this.contextTokens = ev.context_tokens
         // Stamp the turn's last assistant message with its duration, tokens, and
         // cost so the per-turn footer can show them. Stop at the user message
         // that opened the turn (a turn with no assistant reply has nothing to

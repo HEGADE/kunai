@@ -42,10 +42,11 @@ type AppEvent struct {
 	Behavior    string          `json:"behavior,omitempty"`
 
 	// "result"
-	IsError    bool    `json:"is_error,omitempty"`
-	DurationMs int64   `json:"duration_ms,omitempty"`
-	Tokens     int64   `json:"tokens,omitempty"`   // total tokens (input+output+cache) for the turn
-	CostUSD    float64 `json:"cost_usd,omitempty"` // total_cost_usd for the turn
+	IsError       bool    `json:"is_error,omitempty"`
+	DurationMs    int64   `json:"duration_ms,omitempty"`
+	Tokens        int64   `json:"tokens,omitempty"`         // total tokens (input+output+cache) for the turn
+	ContextTokens int64   `json:"context_tokens,omitempty"` // tokens occupying the context window (input+cache), for the usage meter
+	CostUSD       float64 `json:"cost_usd,omitempty"`       // total_cost_usd for the turn
 
 	// "tool_result" (ToolUseID + IsError reused from above)
 	Content   string `json:"content,omitempty"`
