@@ -10,7 +10,12 @@ const LATEST_URL = 'https://api.github.com/repos/HEGADE/kunai/releases/latest'
 // GitHub is unreachable / rate-limited (unauthenticated is 60 req/hr, plenty).
 export async function fetchLatestVersion(): Promise<string | null> {
   try {
-    const res = await fetch(LATEST_URL, { headers: { Accept: 'application/vnd.github+json' } })
+    // no-store so a just-published release is seen immediately, not served from
+    // a cached GitHub response (which is why the banner used to need a refresh).
+    const res = await fetch(LATEST_URL, {
+      headers: { Accept: 'application/vnd.github+json' },
+      cache: 'no-store',
+    })
     if (!res.ok) return null
     const body = (await res.json()) as { tag_name?: string }
     return body.tag_name ?? null
