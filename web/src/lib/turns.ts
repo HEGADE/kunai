@@ -14,6 +14,9 @@ export interface Turn {
   userFiles?: Attachment[]
   // Set when this entry is a codebase joining the session rather than a message.
   project?: ProjectInfo
+  // Set when this entry is a compaction boundary rather than a message: the
+  // conversation above it was replaced by a summary the model now carries.
+  compact?: { preTokens: number; postTokens: number; trigger: string }
   // All assistant blocks in the turn, flattened in arrival order.
   blocks: Block[]
   hasAssistant: boolean
@@ -59,6 +62,16 @@ export function groupTurns(items: Item[]): Turn[] {
     if (it.role === 'project') {
       // A project joins between turns; what Claude says next is its own turn.
       start(undefined).project = it.project
+      cur = null
+      continue
+    }
+    if (it.role === 'compact') {
+      // A boundary, not a message: it stands between turns like a project does.
+      start(undefined).compact = {
+        preTokens: it.preTokens,
+        postTokens: it.postTokens,
+        trigger: it.trigger,
+      }
       cur = null
       continue
     }

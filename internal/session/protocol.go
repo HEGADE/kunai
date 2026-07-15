@@ -62,10 +62,19 @@ type AppEvent struct {
 	Suggestions json.RawMessage `json:"suggestions,omitempty"`
 	Behavior    string          `json:"behavior,omitempty"`
 
-	// "hello" / "assistant": tokens occupying the context window, from the newest
-	// model call's per-call usage. Drives the context meter. (Not on "result" —
-	// that frame's usage is cumulative over the turn, not the context size.)
+	// "hello" / "assistant" / "compact": tokens occupying the context window. On
+	// hello/assistant it is the newest model call's per-call usage; on compact it
+	// is the window after the summary replaced the conversation. Drives the
+	// context meter. (Not on "result" — that frame's usage is cumulative over the
+	// turn, not the context size.)
 	ContextTokens int64 `json:"context_tokens,omitempty"`
+
+	// "compact": the conversation was replaced by a summary. ContextTokens above
+	// carries the size afterwards; these say where it came from. The summary text
+	// itself is deliberately never sent — it is the model's context, not a
+	// message anyone wrote, and dumping it in the log buries the conversation.
+	PreTokens int64  `json:"pre_tokens,omitempty"`
+	Trigger   string `json:"trigger,omitempty"` // "manual" (/compact) | "auto"
 
 	// "result"
 	IsError    bool    `json:"is_error,omitempty"`
@@ -108,6 +117,7 @@ const (
 	EvPermission         = "permission"
 	EvPermissionResolved = "permission_resolved"
 	EvToolResult         = "tool_result"
+	EvCompact            = "compact"
 	EvResult             = "result"
 	EvState              = "state"
 	EvError              = "error"

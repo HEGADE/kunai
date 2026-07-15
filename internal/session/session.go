@@ -136,12 +136,17 @@ func (s *Session) Done() <-chan struct{} { return s.done }
 
 // SeedTurn is a prior conversation turn loaded from a transcript when resuming.
 type SeedTurn struct {
-	Role        string       // "user" | "assistant" | "tool_result"
+	Role        string       // "user" | "assistant" | "tool_result" | "compact"
 	Text        string       // user text, or tool_result output
 	Blocks      []AppBlock   // assistant content blocks
 	ToolUseID   string       // tool_result correlation
 	IsError     bool         // tool_result
 	Attachments []Attachment // user: files sent with the prompt
+
+	// compact: where the context window went when the conversation was summarised.
+	Trigger    string
+	PreTokens  int64
+	PostTokens int64
 }
 
 // Seed pre-populates the replay buffer with transcript history so a resumed
@@ -156,6 +161,8 @@ func (s *Session) Seed(turns []SeedTurn) {
 			ev = AppEvent{T: EvUser, Text: t.Text, Attachments: t.Attachments}
 		case "tool_result":
 			ev = AppEvent{T: EvToolResult, ToolUseID: t.ToolUseID, Content: t.Text, IsError: t.IsError}
+		case "compact":
+			ev = AppEvent{T: EvCompact, Trigger: t.Trigger, PreTokens: t.PreTokens, ContextTokens: t.PostTokens}
 		default:
 			ev = AppEvent{T: EvAssistant, Blocks: t.Blocks}
 		}
@@ -209,6 +216,23 @@ func (s *Session) pump() {
 				Content:   tr.Content,
 				IsError:   tr.IsError,
 				Truncated: tr.Truncated,
+			})
+
+		case claude.EventCompact:
+			// Compaction is the one time the context window shrinks, and it reports
+			// the new size itself: no assistant message follows it, so without this
+			// the meter would sit on the pre-compaction number until the next turn.
+			c := ev.Compact
+			if c.PostTokens > 0 {
+				s.mu.Lock()
+				s.contextTokens = c.PostTokens
+				s.mu.Unlock()
+			}
+			s.broadcast(AppEvent{
+				T:             EvCompact,
+				Trigger:       c.Trigger,
+				PreTokens:     c.PreTokens,
+				ContextTokens: c.PostTokens,
 			})
 
 		case claude.EventResult:

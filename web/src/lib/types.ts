@@ -81,6 +81,7 @@ export interface AppEvent {
     | 'permission'
     | 'permission_resolved'
     | 'tool_result'
+    | 'compact'
     | 'queued'
     | 'unqueued'
     | 'project'
@@ -121,8 +122,13 @@ export interface AppEvent {
   description?: string
   suggestions?: unknown
   behavior?: 'allow' | 'deny'
-  // hello / assistant: context-window occupancy from the newest model call
+  // hello / assistant: context-window occupancy from the newest model call.
+  // compact: the occupancy left after the summary replaced the conversation.
   context_tokens?: number
+  // compact: what the window held before, and what triggered the summary. The
+  // summary text is never sent — it is the model's context, not a message.
+  pre_tokens?: number
+  trigger?: string
   // result
   is_error?: boolean
   duration_ms?: number

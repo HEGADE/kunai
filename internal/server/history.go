@@ -284,7 +284,19 @@ func loadTranscriptTurns(id string) []session.SeedTurn {
 	for sc.Scan() {
 		var v struct {
 			Type    string `json:"type"`
+			Subtype string `json:"subtype"`
 			IsMeta  bool   `json:"isMeta"`
+			// A compaction writes its summary as a user record, flagged so a client
+			// knows it is the model's new context rather than anything anyone typed.
+			IsCompactSummary bool `json:"isCompactSummary"`
+			TranscriptOnly   bool `json:"isVisibleInTranscriptOnly"`
+			// The transcript file spells this camelCase; the live wire uses
+			// snake_case (see claude.CompactBoundary).
+			CompactMetadata *struct {
+				Trigger    string `json:"trigger"`
+				PreTokens  int64  `json:"preTokens"`
+				PostTokens int64  `json:"postTokens"`
+			} `json:"compactMetadata"`
 			Message struct {
 				Role    string          `json:"role"`
 				Content json.RawMessage `json:"content"`
@@ -294,8 +306,23 @@ func loadTranscriptTurns(id string) []session.SeedTurn {
 			continue
 		}
 		switch v.Type {
+		case "system":
+			// Mark where the conversation was summarised, so a resumed session shows
+			// the same boundary a live one does — and never the summary itself.
+			if v.Subtype == "compact_boundary" && v.CompactMetadata != nil {
+				turns = append(turns, session.SeedTurn{
+					Role:       "compact",
+					Trigger:    v.CompactMetadata.Trigger,
+					PreTokens:  v.CompactMetadata.PreTokens,
+					PostTokens: v.CompactMetadata.PostTokens,
+				})
+			}
 		case "user":
-			if v.IsMeta {
+			// The compaction summary is a user record only because that is how the
+			// CLI feeds it back to the model. It is not a turn anyone typed, and it
+			// runs to tens of thousands of characters, so seeding it buried the
+			// conversation under a wall of text on every resumed session.
+			if v.IsMeta || v.IsCompactSummary || v.TranscriptOnly {
 				continue
 			}
 			// A user frame is either something the user typed or a carrier for

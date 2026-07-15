@@ -44,13 +44,31 @@ const (
 
 // Control request subtypes.
 const (
-	SubInitialize  = "initialize"
-	SubCanUseTool  = "can_use_tool"
-	SubInterrupt   = "interrupt"
-	SubSetModel    = "set_model"
-	SubSetPermMode = "set_permission_mode"
-	SubInit        = "init" // system/init
+	SubInitialize      = "initialize"
+	SubCanUseTool      = "can_use_tool"
+	SubInterrupt       = "interrupt"
+	SubSetModel        = "set_model"
+	SubSetPermMode     = "set_permission_mode"
+	SubInit            = "init"             // system/init
+	SubCompactBoundary = "compact_boundary" // system/compact_boundary
 )
+
+// CompactBoundary is the system/compact_boundary frame: the CLI has replaced the
+// conversation with a summary, either from /compact or on its own near the
+// context limit. PostTokens is the only report of the new context size, because
+// a compaction emits no assistant message — miss this frame and the meter keeps
+// showing the pre-compaction number until the next turn happens to correct it.
+//
+// The wire spells the metadata snake_case. The transcript file on disk carries
+// the same data camelCase (compactMetadata/postTokens), so the transcript reader
+// in the server decodes its own copy rather than reusing this type.
+type CompactBoundary struct {
+	Metadata struct {
+		Trigger    string `json:"trigger"` // "manual" (/compact) | "auto"
+		PreTokens  int64  `json:"pre_tokens"`
+		PostTokens int64  `json:"post_tokens"`
+	} `json:"compact_metadata"`
+}
 
 // ControlRequestBody is the inner "request" of a control_request. Only the
 // discriminating subtype and the fields we act on are typed here.

@@ -13,6 +13,7 @@ import type {
 export type Item =
   | { role: 'user'; text: string; attachments?: Attachment[] }
   | { role: 'project'; project: ProjectInfo }
+  | { role: 'compact'; preTokens: number; postTokens: number; trigger: string }
   | {
       role: 'assistant'
       blocks: Block[]
@@ -206,6 +207,22 @@ export class ChatConnection {
             },
           }
         }
+        break
+      case 'compact':
+        // The conversation was summarised, so the context window shrank. This is
+        // the only frame that reports the new size — a compaction emits no
+        // assistant message, so without it the meter reads the pre-compaction
+        // number until the next turn happens to correct it.
+        if (ev.context_tokens != null) this.contextTokens = ev.context_tokens
+        this.items = [
+          ...this.items,
+          {
+            role: 'compact',
+            preTokens: ev.pre_tokens ?? 0,
+            postTokens: ev.context_tokens ?? 0,
+            trigger: ev.trigger ?? 'manual',
+          },
+        ]
         break
       case 'result':
         this.streaming = ''

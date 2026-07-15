@@ -174,8 +174,8 @@ Contracts that must stay in sync manually:
 - `internal/session/protocol.go` (AppEvent/Command) mirrors `web/src/lib/types.ts`.
   `AppEvent` is one flat struct shared by every event tag, so a new field means
   editing both files and saying which tag it belongs to: `tool_result`, the token
-  split on `result`, `context_tokens`, `attachments`, `queued`/`unqueued`, and
-  `project` all live there.
+  split on `result`, `context_tokens`, `attachments`, `queued`/`unqueued`,
+  `project`, and `compact` all live there.
 - Session state strings (`starting|idle|running|awaiting_permission`) appear in
   both, plus status maps in `Chat.svelte`/`Sidebar.svelte`.
 - `MachineInfo` (`machines.go`) mirrors `web/src/lib/types.ts`, and `/api/stats`
@@ -214,6 +214,17 @@ Behavioral invariants that were bugs before (do not regress):
 - Only fingerprinted `assets/*` may be cached immutably. `sw.js`, its registration
   shim, the manifest and the shell must revalidate: an immutably cached service
   worker strands clients on an old build no matter how often they reload.
+- A compaction (`/compact`, or automatic near the limit) is context, not
+  conversation. The CLI feeds the summary back as a plain-string `user` frame and
+  writes it to the transcript flagged `isCompactSummary`; both must be dropped.
+  Seeding it replayed tens of thousands of characters as a user message and buried
+  the conversation on every resumed session. Only the boundary is shown
+  (`CompactDivider.svelte`). Its `post_tokens` is the *only* report of the new
+  context size, because a compaction emits no assistant message: drop the frame
+  and the context meter sits on the pre-compaction number until the next turn
+  happens to correct it. The wire spells the metadata snake_case
+  (`compact_metadata`/`post_tokens`); the transcript file on disk spells the same
+  data camelCase (`compactMetadata`/`postTokens`), so each side decodes its own.
 - Sessions spawn in `session.DefaultPermissionMode` (auto), applied as the CLI flag
   at spawn so it holds from the first tool call. Sending it afterwards is too late.
   Scheduled jobs deliberately keep `acceptEdits`: auto can still stop for a risky

@@ -11,6 +11,7 @@
   import Queued from './Queued.svelte'
   import FileChips from './FileChips.svelte'
   import ProjectCard from './ProjectCard.svelte'
+  import CompactDivider from './CompactDivider.svelte'
   import AddProject from './AddProject.svelte'
   import Markdown from './Markdown.svelte'
   import BlockView from './BlockView.svelte'
@@ -260,6 +261,15 @@
           {@const live = firstVisible + ti === allTurns.length - 1 && (running || !!chat.streaming || !!chat.thinking)}
           {#if turn.project}
             <div class="turn"><ProjectCard project={turn.project} /></div>
+          {/if}
+          {#if turn.compact}
+            <div class="turn">
+              <CompactDivider
+                preTokens={turn.compact.preTokens}
+                postTokens={turn.compact.postTokens}
+                trigger={turn.compact.trigger}
+              />
+            </div>
           {/if}
           {#if turn.user !== undefined}
             <div class="turn user">

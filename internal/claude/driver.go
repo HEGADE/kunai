@@ -25,6 +25,7 @@ const (
 	EventPermission EventKind = "permission"  // can_use_tool ask; Permission populated
 	EventResult     EventKind = "result"      // turn complete; Raw is the result frame
 	EventToolResult EventKind = "tool_result" // tool output; ToolResult populated
+	EventCompact    EventKind = "compact"     // conversation compacted; Compact populated
 	EventSystem     EventKind = "system"      // other system frames; Raw populated
 	EventRateLimit  EventKind = "rate_limit"  // usage-window status; ResetsAt/Window set
 	EventError      EventKind = "error"       // driver/transport error; Err populated
@@ -51,6 +52,9 @@ type Event struct {
 	// EventToolResult
 	ToolResult *ToolResult
 
+	// EventCompact
+	Compact *Compact
+
 	// EventError
 	Err error
 
@@ -61,6 +65,14 @@ type Event struct {
 
 	// Raw is the original frame (always set for result/system; useful for debugging).
 	Raw json.RawMessage
+}
+
+// Compact reports a compaction boundary: the conversation was summarised and the
+// context window dropped from PreTokens to PostTokens.
+type Compact struct {
+	Trigger    string // "manual" (/compact) | "auto" (near the context limit)
+	PreTokens  int64
+	PostTokens int64
 }
 
 // PermissionAsk is a decoded can_use_tool request awaiting a verdict.
@@ -357,13 +369,24 @@ func (s *Session) route(env Envelope, raw json.RawMessage) {
 		}
 
 	case TypeSystem:
-		if env.Subtype == SubInit {
+		switch env.Subtype {
+		case SubInit:
+			// Also re-emitted mid-session after a compaction; harmless, the ids match.
 			s.mu.Lock()
 			s.sessionID = env.SessionID
 			s.mu.Unlock()
 			s.emit(Event{Kind: EventInit, SessionID: env.SessionID, Model: env.Model, Cwd: env.Cwd, Raw: raw})
 			s.markReady()
-		} else {
+		case SubCompactBoundary:
+			var cb CompactBoundary
+			if json.Unmarshal(raw, &cb) == nil {
+				s.emit(Event{Kind: EventCompact, Raw: raw, Compact: &Compact{
+					Trigger:    cb.Metadata.Trigger,
+					PreTokens:  cb.Metadata.PreTokens,
+					PostTokens: cb.Metadata.PostTokens,
+				}})
+			}
+		default:
 			s.emit(Event{Kind: EventSystem, Raw: raw})
 		}
 
