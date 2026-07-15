@@ -141,6 +141,9 @@ export class ChatConnection {
         break
       case 'assistant':
         this.items = [...this.items, { role: 'assistant', blocks: ev.blocks ?? [] }]
+        // Each assistant message reports the context sent for that model call, so
+        // the meter tracks the newest one (and stays live through a long turn).
+        if (ev.context_tokens != null) this.contextTokens = ev.context_tokens
         this.streaming = ''
         this.thinking = ''
         break
@@ -165,7 +168,6 @@ export class ChatConnection {
       case 'result':
         this.streaming = ''
         this.thinking = ''
-        if (ev.context_tokens != null) this.contextTokens = ev.context_tokens
         // Stamp the turn's last assistant message with its duration, tokens, and
         // cost so the per-turn footer can show them. Stop at the user message
         // that opened the turn (a turn with no assistant reply has nothing to

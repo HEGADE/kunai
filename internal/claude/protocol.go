@@ -174,6 +174,25 @@ type StreamEvent struct {
 	} `json:"delta"`
 }
 
+// MessageUsage is one model call's token accounting. Unlike the result frame's
+// usage (which is cumulative over every call in a turn), this is per-call, so
+// its input side is the context actually sent to the model for that call.
+type MessageUsage struct {
+	Input       int64 `json:"input_tokens"`
+	Output      int64 `json:"output_tokens"`
+	CacheCreate int64 `json:"cache_creation_input_tokens"`
+	CacheRead   int64 `json:"cache_read_input_tokens"`
+}
+
+// ContextTokens is the context-window occupancy for this call: everything sent
+// as prompt (fresh input plus cache-created and cache-read tokens).
+func (u *MessageUsage) ContextTokens() int64 {
+	if u == nil {
+		return 0
+	}
+	return u.Input + u.CacheCreate + u.CacheRead
+}
+
 // AssistantMessage is the full assistant turn (content blocks, incl. tool_use).
 type AssistantMessage struct {
 	ID         string                  `json:"id"`
@@ -181,6 +200,7 @@ type AssistantMessage struct {
 	Role       string                  `json:"role"`
 	Content    []AssistantContentBlock `json:"content"`
 	StopReason string                  `json:"stop_reason"`
+	Usage      *MessageUsage           `json:"usage,omitempty"`
 }
 
 type AssistantContentBlock struct {

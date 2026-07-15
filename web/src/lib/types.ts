@@ -109,11 +109,12 @@ export interface AppEvent {
   description?: string
   suggestions?: unknown
   behavior?: 'allow' | 'deny'
+  // hello / assistant: context-window occupancy from the newest model call
+  context_tokens?: number
   // result
   is_error?: boolean
   duration_ms?: number
   tokens?: number
-  context_tokens?: number
   cost_usd?: number
   // tool_result (tool_use_id + is_error reused)
   content?: string

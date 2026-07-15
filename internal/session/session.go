@@ -179,7 +179,17 @@ func (s *Session) pump() {
 			s.broadcast(AppEvent{T: EvThinking, Text: ev.Text})
 
 		case claude.EventAssistant:
-			s.broadcast(AppEvent{T: EvAssistant, Blocks: toAppBlocks(ev.Assistant)})
+			// Each assistant message is one model call, so its usage reports the
+			// context actually sent for that call. Track the newest as the current
+			// context-window occupancy (the result frame's usage is cumulative over
+			// the whole turn and would overcount a long tool loop).
+			ctx := ev.Assistant.Usage.ContextTokens()
+			if ctx > 0 {
+				s.mu.Lock()
+				s.contextTokens = ctx
+				s.mu.Unlock()
+			}
+			s.broadcast(AppEvent{T: EvAssistant, Blocks: toAppBlocks(ev.Assistant), ContextTokens: ctx})
 
 		case claude.EventPermission:
 			s.onPermission(ev.Permission)
@@ -196,13 +206,7 @@ func (s *Session) pump() {
 
 		case claude.EventResult:
 			s.setState(StateIdle)
-			re := parseResult(ev.Raw)
-			if re.ContextTokens > 0 {
-				s.mu.Lock()
-				s.contextTokens = re.ContextTokens // keep current so reconnect hellos reflect it
-				s.mu.Unlock()
-			}
-			s.broadcast(re)
+			s.broadcast(parseResult(ev.Raw))
 			s.notifyAttention("done", "")
 
 		case claude.EventRateLimit:
@@ -518,18 +522,16 @@ func parseResult(raw json.RawMessage) AppEvent {
 		} `json:"usage"`
 	}
 	_ = json.Unmarshal(raw, &r)
+	// This usage is cumulative over every model call in the turn, so it is the
+	// turn's total cost — not the context size (context comes from the per-call
+	// assistant usage instead; see pump).
 	tokens := r.Usage.Input + r.Usage.Output + r.Usage.CacheCreate + r.Usage.CacheRead
-	// Context-window occupancy is the prompt side only (what was sent to the
-	// model): fresh input plus cache-created and cache-read tokens. Output is the
-	// reply, counted in `tokens` but not part of the window at request time.
-	contextTokens := r.Usage.Input + r.Usage.CacheCreate + r.Usage.CacheRead
 	return AppEvent{
-		T:             EvResult,
-		Message:       r.Subtype,
-		IsError:       r.IsError,
-		DurationMs:    r.DurationMs,
-		Tokens:        tokens,
-		ContextTokens: contextTokens,
-		CostUSD:       r.CostUSD,
+		T:          EvResult,
+		Message:    r.Subtype,
+		IsError:    r.IsError,
+		DurationMs: r.DurationMs,
+		Tokens:     tokens,
+		CostUSD:    r.CostUSD,
 	}
 }
