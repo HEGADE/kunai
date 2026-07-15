@@ -76,6 +76,10 @@ export interface ToolLabel {
   removed: number
 }
 
+// A tool result made only of image blocks. The driver renders each one as this
+// placeholder rather than shipping the bytes back (claude/toolresult.go).
+const IMAGE_RESULT = /^(\s*\[image\]\s*)+$/
+
 // lineCount counts lines in captured tool output, ignoring a trailing newline.
 function lineCount(s: string): number {
   if (!s) return 0
@@ -111,7 +115,14 @@ export function describe(name: string, input: unknown, result?: { content: strin
       return { ...base, action: lines ? `Wrote ${lines} ${lines === 1 ? 'line' : 'lines'}` : 'Write', file: baseName(str(i.file_path)), path: str(i.file_path) }
     }
     case 'Read': {
-      const n = result ? lineCount(result.content) : 0
+      const content = result?.content ?? ''
+      // Reading an image comes back as image blocks, which the driver flattens to
+      // a placeholder (claude/toolresult.go). Counting its "lines" reported the
+      // nonsense "Read 1 line" for a picture, so name what actually happened.
+      if (content && IMAGE_RESULT.test(content)) {
+        return { ...base, action: 'Read image', file: baseName(str(i.file_path)), path: str(i.file_path) }
+      }
+      const n = result ? lineCount(content) : 0
       const off = num(i.offset)
       const action = n
         ? `Read ${n} ${n === 1 ? 'line' : 'lines'}`
