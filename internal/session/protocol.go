@@ -4,7 +4,11 @@
 // per Session; many phone connections may attach/detach without disturbing it.
 package session
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/hegade/kunai/internal/project"
+)
 
 // AppEvent is a server→client frame. Every event carries a monotonic Seq within
 // its session so a reconnecting client can request "everything after Seq N".
@@ -25,6 +29,13 @@ type AppEvent struct {
 	HighSeq uint64     `json:"high_seq,omitempty"`
 	Pending []AppEvent `json:"pending,omitempty"` // unresolved permission asks
 	Queued  []AppEvent `json:"queued,omitempty"`  // prompts waiting for the current turn
+
+	// "hello": every codebase this session has been given context for.
+	Projects []project.Info `json:"projects,omitempty"`
+
+	// "project": a codebase just added to the session. Metadata only — nothing in
+	// it has been read; the model reaches the files by path when it needs them.
+	Project *project.Info `json:"project,omitempty"`
 
 	// "queued" / "unqueued": a prompt parked until the current turn ends. It is
 	// unqueued when it starts running (a "user" event follows) or is cancelled.
@@ -89,6 +100,7 @@ const (
 	EvHello              = "hello"
 	EvUser               = "user"
 	EvQueued             = "queued"
+	EvProject            = "project"
 	EvUnqueued           = "unqueued"
 	EvDelta              = "delta"
 	EvThinking           = "thinking"
@@ -151,6 +163,9 @@ type Command struct {
 
 	// "cancel_queued"
 	QueueID string `json:"queue_id,omitempty"`
+
+	// "add_project"
+	Path string `json:"path,omitempty"`
 }
 
 // Command type tags.
@@ -161,6 +176,7 @@ const (
 	CmdSetModel     = "set_model"
 	CmdSetMode      = "set_mode"
 	CmdCancelQueued = "cancel_queued"
+	CmdAddProject   = "add_project"
 )
 
 // Attachment is an uploaded file/image referenced by a prompt (Phase 3). The

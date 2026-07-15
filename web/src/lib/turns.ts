@@ -5,13 +5,15 @@
 // aggregate the files it changed for the footer.
 
 import type { Item } from './chat.svelte'
-import type { Attachment, Block } from './types'
+import type { Attachment, Block, ProjectInfo } from './types'
 import { fileChangesOf, type FileChange } from './toolMeta'
 
 export interface Turn {
   user?: string
   // Files sent with the user message (metadata only).
   userFiles?: Attachment[]
+  // Set when this entry is a codebase joining the session rather than a message.
+  project?: ProjectInfo
   // All assistant blocks in the turn, flattened in arrival order.
   blocks: Block[]
   hasAssistant: boolean
@@ -54,6 +56,12 @@ export function groupTurns(items: Item[]): Turn[] {
     return cur
   }
   for (const it of items) {
+    if (it.role === 'project') {
+      // A project joins between turns; what Claude says next is its own turn.
+      start(undefined).project = it.project
+      cur = null
+      continue
+    }
     if (it.role === 'user') {
       start(it.text, it.attachments)
     } else {

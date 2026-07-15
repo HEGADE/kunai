@@ -10,6 +10,8 @@
   import Context from './Context.svelte'
   import Queued from './Queued.svelte'
   import FileChips from './FileChips.svelte'
+  import ProjectCard from './ProjectCard.svelte'
+  import AddProject from './AddProject.svelte'
   import Markdown from './Markdown.svelte'
   import BlockView from './BlockView.svelte'
   import ScheduleAfter from './ScheduleAfter.svelte'
@@ -43,6 +45,7 @@
   let uploading = $state(false)
   let menuOpen = $state(false)
   let schedOpen = $state(false)
+  let addProjOpen = $state(false)
 
   function resetRel(unixSec: number): string {
     let s = Math.round(unixSec - Date.now() / 1000)
@@ -221,6 +224,11 @@
          what the tab can't: where it is running. -->
     <div class="htitle" title={chat.cwd}>
       <span class="tpath mono">{chat.cwd}</span>
+      {#if chat.projects.length}
+        <button class="wspace" onclick={() => (addProjOpen = true)} title={chat.projects.map((p) => p.path).join('\n')}>
+          +{chat.projects.length} project{chat.projects.length > 1 ? 's' : ''}
+        </button>
+      {/if}
     </div>
     <button class="hbtn menu" onclick={() => (menuOpen = !menuOpen)} aria-label="Menu">⋯</button>
     {#if menuOpen}
@@ -229,6 +237,7 @@
         {#if running}
           <button onclick={() => { chat.interrupt(); menuOpen = false }}>Interrupt</button>
         {/if}
+        <button onclick={() => { addProjOpen = true; menuOpen = false }}>Add project…</button>
         <button onclick={() => { schedOpen = true; menuOpen = false }}>Schedule a prompt…</button>
         <button class="danger" onclick={() => { app.closeSessionActive(); menuOpen = false }}>Close session</button>
       </div>
@@ -249,6 +258,9 @@
       <div class="log">
         {#each turns as turn, ti (firstVisible + ti)}
           {@const live = firstVisible + ti === allTurns.length - 1 && (running || !!chat.streaming || !!chat.thinking)}
+          {#if turn.project}
+            <div class="turn"><ProjectCard project={turn.project} /></div>
+          {/if}
           {#if turn.user !== undefined}
             <div class="turn user">
               <div class="ubbl">
@@ -305,6 +317,12 @@
   {/if}
 
   <PermissionGate {chat} />
+
+  {#if addProjOpen}
+    <div class="floater">
+      <AddProject {chat} onClose={() => (addProjOpen = false)} />
+    </div>
+  {/if}
 
   {#if schedOpen}
     <div class="floater">

@@ -99,6 +99,8 @@ func (s *Server) dispatch(sess *session.Session, cmd session.Command) {
 		err = sess.SetPermissionMode(cmd.Mode)
 	case session.CmdCancelQueued:
 		sess.CancelQueued(cmd.QueueID)
+	case session.CmdAddProject:
+		err = s.addProject(sess, cmd.Path)
 	default:
 		err = errors.New("unknown command: " + cmd.T)
 	}

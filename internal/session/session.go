@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hegade/kunai/internal/claude"
+	"github.com/hegade/kunai/internal/project"
 )
 
 // ringCapacity bounds per-session replay history in durable events (streaming
@@ -57,6 +58,7 @@ type Session struct {
 	buf             *ring
 	subs            map[*Subscriber]struct{}
 	queue           []*queuedPrompt     // prompts waiting for the running turn to end
+	projects        []project.Info      // codebases this session has been given context for
 	pending         map[string]AppEvent // unresolved permission asks, keyed by request_id
 	suggestionByReq map[string]json.RawMessage
 	closed          bool
@@ -284,7 +286,9 @@ type queuedPrompt struct {
 	ID          string
 	Text        string
 	Attachments []Attachment
-	content     any // built content (attachments) for the CLI; not sent to clients
+	content     any    // built content (attachments) for the CLI; not sent to clients
+	label       string // what the queue shows, when the text itself is not for reading
+	silent      bool   // context handed to the model; another event already stands for it
 }
 
 // Prompt sends a user turn, or queues it if a turn is already running. The
@@ -293,24 +297,41 @@ type queuedPrompt struct {
 // it. content carries the attachments to the CLI; atts is the display copy, so
 // the message shows what was sent with it.
 func (s *Session) Prompt(text string, content any, atts []Attachment) error {
+	return s.prompt(&queuedPrompt{Text: text, Attachments: atts, content: content})
+}
+
+// prompt runs a turn, or queues it if one is already going. q carries how it
+// should appear: a silent prompt is context for the model that some other event
+// already represents, so it never shows as something the user typed.
+func (s *Session) prompt(q *queuedPrompt) error {
 	s.mu.Lock()
 	if s.state == StateRunning || s.state == StateAwaiting {
-		q := &queuedPrompt{ID: newQueueID(), Text: text, Attachments: atts, content: content}
+		q.ID = newQueueID()
 		s.queue = append(s.queue, q)
-		s.emitLocked(s.sequenceLocked(AppEvent{T: EvQueued, QueueID: q.ID, Text: q.Text, Attachments: q.Attachments}))
+		s.emitLocked(s.sequenceLocked(AppEvent{T: EvQueued, QueueID: q.ID, Text: q.display(), Attachments: q.Attachments}))
 		s.mu.Unlock()
 		return nil
 	}
 	// Claim the turn under the same lock that tested for it, so a second prompt
 	// arriving now queues instead of racing this one into the CLI mid-turn.
-	s.startTurnLocked(text, atts)
+	s.startTurnLocked(q)
 	s.mu.Unlock()
-	return s.deliver(text, content)
+	return s.deliver(q.Text, q.content)
+}
+
+// display is what a queued prompt shows in the queue.
+func (q *queuedPrompt) display() string {
+	if q.label != "" {
+		return q.label
+	}
+	return q.Text
 }
 
 // startTurnLocked records a prompt as the turn that is now running.
-func (s *Session) startTurnLocked(text string, atts []Attachment) {
-	s.emitLocked(s.sequenceLocked(AppEvent{T: EvUser, Text: text, Attachments: atts}))
+func (s *Session) startTurnLocked(q *queuedPrompt) {
+	if !q.silent {
+		s.emitLocked(s.sequenceLocked(AppEvent{T: EvUser, Text: q.Text, Attachments: q.Attachments}))
+	}
 	s.state = StateRunning
 	s.emitLocked(s.sequenceLocked(AppEvent{T: EvState, State: StateRunning}))
 }
@@ -320,6 +341,38 @@ func (s *Session) deliver(text string, content any) error {
 		return s.drv.SendUser(content)
 	}
 	return s.drv.SendUserText(text)
+}
+
+// AddProject gives the session another codebase to work with. Nothing is read:
+// the model is handed a description and the path, and reaches for files itself
+// when it needs them. The brief goes in as a silent turn — the project event is
+// what the conversation shows — and queues behind any turn already running.
+// Adding the same path twice is a no-op.
+func (s *Session) AddProject(info project.Info) error {
+	s.mu.Lock()
+	for _, p := range s.projects {
+		if p.Path == info.Path {
+			s.mu.Unlock()
+			return nil
+		}
+	}
+	s.projects = append(s.projects, info)
+	cp := info
+	s.emitLocked(s.sequenceLocked(AppEvent{T: EvProject, Project: &cp}))
+	s.mu.Unlock()
+
+	return s.prompt(&queuedPrompt{
+		Text:   info.Brief(),
+		label:  "Add project: " + info.Name,
+		silent: true,
+	})
+}
+
+// Projects lists the codebases this session has context for.
+func (s *Session) Projects() []project.Info {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]project.Info(nil), s.projects...)
 }
 
 // drainQueue starts the next queued prompt now that the turn has ended. Called
@@ -333,7 +386,7 @@ func (s *Session) drainQueue() {
 	q := s.queue[0]
 	s.queue = s.queue[1:]
 	s.emitLocked(s.sequenceLocked(AppEvent{T: EvUnqueued, QueueID: q.ID}))
-	s.startTurnLocked(q.Text, q.Attachments)
+	s.startTurnLocked(q)
 	s.mu.Unlock()
 
 	if err := s.deliver(q.Text, q.content); err != nil {
@@ -495,6 +548,7 @@ func (s *Session) Attach(afterSeq uint64) (hello AppEvent, backlog []AppEvent, s
 		ContextTokens: s.contextTokens,
 		Pending:       pending,
 		Queued:        queued,
+		Projects:      append([]project.Info(nil), s.projects...),
 	}
 	backlog = s.buf.since(afterSeq)
 

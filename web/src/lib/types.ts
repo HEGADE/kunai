@@ -83,6 +83,7 @@ export interface AppEvent {
     | 'tool_result'
     | 'queued'
     | 'unqueued'
+    | 'project'
     | 'result'
     | 'state'
     | 'error'
@@ -98,6 +99,10 @@ export interface AppEvent {
   high_seq?: number
   pending?: AppEvent[]
   queued?: AppEvent[]
+  // hello: every codebase this session has context for
+  projects?: ProjectInfo[]
+  // project: a codebase just added
+  project?: ProjectInfo
   // queued / unqueued: a prompt parked until the running turn ends
   queue_id?: string
   // delta / thinking / user / error
@@ -143,6 +148,24 @@ export interface ToolResult {
   truncated: boolean
 }
 
+// A codebase the session has context for. Metadata only: nothing in it has been
+// read, and the model reaches the files by path when it needs them.
+export interface Lang {
+  name: string
+  files: number
+}
+export interface ProjectInfo {
+  name: string
+  path: string
+  branch?: string
+  remote?: string
+  langs?: Lang[]
+  dirs?: string[]
+  docs?: string[]
+  build?: string[]
+  files?: number
+}
+
 export interface Attachment {
   id: string
   name: string
@@ -164,6 +187,7 @@ export type Command =
   | { t: 'set_model'; model: string }
   | { t: 'set_mode'; mode: PermissionMode }
   | { t: 'cancel_queued'; queue_id: string }
+  | { t: 'add_project'; path: string }
 
 export interface HistoryEntry {
   id: string

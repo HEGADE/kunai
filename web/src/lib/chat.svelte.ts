@@ -6,11 +6,13 @@ import type {
   Command,
   PermissionMode,
   SessionState,
+  ProjectInfo,
   ToolResult,
 } from './types'
 
 export type Item =
   | { role: 'user'; text: string; attachments?: Attachment[] }
+  | { role: 'project'; project: ProjectInfo }
   | {
       role: 'assistant'
       blocks: Block[]
@@ -49,6 +51,9 @@ export class ChatConnection {
   thinking = $state('')
   pending = $state<PendingPermission[]>([])
   queued = $state<QueuedPrompt[]>([])
+  // Every codebase this session has context for. More than one makes it a
+  // workspace; the header says so.
+  projects = $state<ProjectInfo[]>([])
   // Tool outputs keyed by tool_use_id, looked up by each tool_use block.
   toolResults = $state<Record<string, ToolResult>>({})
   status = $state<ConnStatus>('connecting')
@@ -148,6 +153,7 @@ export class ChatConnection {
         if (ev.context_tokens != null) this.contextTokens = ev.context_tokens
         for (const p of ev.pending ?? []) this.addPending(p)
         for (const q of ev.queued ?? []) this.addQueued(q)
+        if (ev.projects?.length) this.projects = ev.projects
         this.highSeq = ev.high_seq ?? 0
         if (this.highSeq === 0) this.ready = true // nothing to replay
         break
@@ -176,6 +182,14 @@ export class ChatConnection {
         break
       case 'queued':
         this.addQueued(ev)
+        break
+      case 'project':
+        if (ev.project) {
+          this.items = [...this.items, { role: 'project', project: ev.project }]
+          if (!this.projects.some((p) => p.path === ev.project!.path)) {
+            this.projects = [...this.projects, ev.project]
+          }
+        }
         break
       case 'unqueued':
         // It either started running (a 'user' event follows) or was cancelled.
@@ -259,6 +273,12 @@ export class ChatConnection {
       ...this.queued,
       { queue_id: ev.queue_id, text: ev.text ?? '', attachments: ev.attachments },
     ]
+  }
+
+  // addProject hands another codebase to this session. The server scans it and
+  // gives the model a description; the reply is a project card in the chat.
+  addProject(path: string) {
+    this.send({ t: 'add_project', path })
   }
 
   cancelQueued(queue_id: string) {
