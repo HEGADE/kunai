@@ -59,6 +59,10 @@ type Session struct {
 	subs            map[*Subscriber]struct{}
 	queue           []*queuedPrompt     // prompts waiting for the running turn to end
 	projects        []project.Info      // codebases this session has been given context for
+	loop            *loopRun            // self-prompting run, if one was ever started
+	lastText        string              // the newest assistant text this turn, for the loop's promise
+	rateLimited     bool                // the usage window is spent; a loop must not push on
+
 	pending         map[string]AppEvent // unresolved permission asks, keyed by request_id
 	suggestionByReq map[string]json.RawMessage
 	closed          bool
@@ -198,11 +202,16 @@ func (s *Session) pump() {
 			// context-window occupancy (the result frame's usage is cumulative over
 			// the whole turn and would overcount a long tool loop).
 			ctx := ev.Assistant.Usage.ContextTokens()
+			s.mu.Lock()
 			if ctx > 0 {
-				s.mu.Lock()
 				s.contextTokens = ctx
-				s.mu.Unlock()
 			}
+			// Remember the turn's newest words: a loop's completion promise has to
+			// be found in the last thing the model actually said.
+			if txt := assistantText(ev.Assistant); txt != "" {
+				s.lastText = txt
+			}
+			s.mu.Unlock()
 			s.broadcast(AppEvent{T: EvAssistant, Blocks: toAppBlocks(ev.Assistant), ContextTokens: ctx})
 
 		case claude.EventPermission:
@@ -237,20 +246,27 @@ func (s *Session) pump() {
 
 		case claude.EventResult:
 			s.setState(StateIdle)
-			s.broadcast(s.turnResult(ev.Raw))
+			res := s.turnResult(ev.Raw)
+			s.broadcast(res)
 			// Only tell you the work is done when nothing is queued behind it —
-			// otherwise the next prompt starts immediately and it isn't.
+			// otherwise the next prompt starts immediately and it isn't. A running
+			// loop is the same kind of "not really done", and it announces its own
+			// ending, so it must not buzz you once per iteration all night.
 			s.mu.Lock()
-			more := len(s.queue) > 0
+			more := len(s.queue) > 0 || (s.loop != nil && s.loop.state == LoopRunning)
 			s.mu.Unlock()
 			if !more {
 				s.notifyAttention("done", "")
 			}
 			s.drainQueue()
+			s.afterTurn(res.IsError)
 
 		case claude.EventRateLimit:
 			s.mu.Lock()
 			fn := s.onRateLimit
+			// Anything but "allowed" means the window is spent. A loop must not keep
+			// throwing turns at a wall, so this is latched for afterTurn to read.
+			s.rateLimited = ev.LimitStatus != "" && ev.LimitStatus != "allowed"
 			s.mu.Unlock()
 			if fn != nil && ev.ResetsAt > 0 {
 				go fn(ev.Window, ev.ResetsAt)
@@ -353,6 +369,7 @@ func (q *queuedPrompt) display() string {
 
 // startTurnLocked records a prompt as the turn that is now running.
 func (s *Session) startTurnLocked(q *queuedPrompt) {
+	s.lastText = "" // this turn has not said anything yet
 	if !q.silent {
 		s.emitLocked(s.sequenceLocked(AppEvent{T: EvUser, Text: q.Text, Attachments: q.Attachments}))
 	}
@@ -506,6 +523,9 @@ func mergeAnswers(input json.RawMessage, answers map[string]string) json.RawMess
 func (s *Session) Interrupt() error {
 	s.mu.Lock()
 	s.dropQueueLocked()
+	// Stop means stop. Without this the loop would simply start the next
+	// iteration a moment later and the button would look broken.
+	s.stopLoopLocked(LoopStopped, "you stopped it")
 	s.mu.Unlock()
 	err := s.drv.Interrupt()
 	s.setState(StateIdle)
@@ -570,6 +590,7 @@ func (s *Session) Attach(afterSeq uint64) (hello AppEvent, backlog []AppEvent, s
 		Effort:        s.effort,
 		HighSeq:       s.seq,
 		ContextTokens: s.contextTokens,
+		Loop:          s.loopStatusLocked(),
 		Pending:       pending,
 		Queued:        queued,
 		Projects:      append([]project.Info(nil), s.projects...),

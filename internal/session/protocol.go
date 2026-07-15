@@ -37,6 +37,11 @@ type AppEvent struct {
 	// it has been read; the model reaches the files by path when it needs them.
 	Project *project.Info `json:"project,omitempty"`
 
+	// "hello" / "loop": the session's self-prompting run, if it has one. Sent on
+	// every change (start, each iteration, and the ending) so a client that was
+	// away can render the whole thing without keeping its own tally.
+	Loop *LoopStatus `json:"loop,omitempty"`
+
 	// "queued" / "unqueued": a prompt parked until the current turn ends. It is
 	// unqueued when it starts running (a "user" event follows) or is cancelled.
 	QueueID string `json:"queue_id,omitempty"`
@@ -118,6 +123,7 @@ const (
 	EvPermissionResolved = "permission_resolved"
 	EvToolResult         = "tool_result"
 	EvCompact            = "compact"
+	EvLoop               = "loop"
 	EvResult             = "result"
 	EvState              = "state"
 	EvError              = "error"
@@ -176,6 +182,9 @@ type Command struct {
 
 	// "add_project"
 	Path string `json:"path,omitempty"`
+
+	// "start_loop"
+	Loop *LoopConfig `json:"loop,omitempty"`
 }
 
 // Command type tags.
@@ -187,6 +196,8 @@ const (
 	CmdSetMode      = "set_mode"
 	CmdCancelQueued = "cancel_queued"
 	CmdAddProject   = "add_project"
+	CmdStartLoop    = "start_loop"
+	CmdStopLoop     = "stop_loop"
 )
 
 // Attachment is an uploaded file/image referenced by a prompt (Phase 3). The

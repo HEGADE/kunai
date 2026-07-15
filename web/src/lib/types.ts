@@ -70,6 +70,29 @@ export interface Block {
   input?: unknown
 }
 
+// A self-prompting run. Mirrors session.LoopStatus: the server owns every number
+// here, so a client that was away renders the whole thing without its own tally.
+export type LoopState = 'running' | 'done' | 'stopped' | 'exhausted' | 'failed'
+
+export interface LoopStatus {
+  state: LoopState
+  prompt: string
+  promise?: string
+  iteration: number
+  max_iters: number
+  spent_usd: number
+  max_usd: number
+  reason?: string
+}
+
+// What starts a loop. The server clamps every limit, so these are requests.
+export interface LoopConfig {
+  prompt: string
+  promise?: string
+  max_iters: number
+  max_usd: number
+}
+
 export interface AppEvent {
   seq: number
   t:
@@ -82,6 +105,7 @@ export interface AppEvent {
     | 'permission_resolved'
     | 'tool_result'
     | 'compact'
+    | 'loop'
     | 'queued'
     | 'unqueued'
     | 'project'
@@ -104,6 +128,8 @@ export interface AppEvent {
   projects?: ProjectInfo[]
   // project: a codebase just added
   project?: ProjectInfo
+  // hello / loop: the session's self-prompting run, whole, on every change
+  loop?: LoopStatus
   // queued / unqueued: a prompt parked until the running turn ends
   queue_id?: string
   // delta / thinking / user / error
@@ -194,6 +220,8 @@ export type Command =
   | { t: 'set_mode'; mode: PermissionMode }
   | { t: 'cancel_queued'; queue_id: string }
   | { t: 'add_project'; path: string }
+  | { t: 'start_loop'; loop: LoopConfig }
+  | { t: 'stop_loop' }
 
 export interface HistoryEntry {
   id: string

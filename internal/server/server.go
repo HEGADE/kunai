@@ -229,6 +229,8 @@ func wakeupText(kind string) (title, body string) {
 		return "Kunai", "A session needs your approval"
 	case "done":
 		return "Kunai", "A task finished"
+	case "loop":
+		return "Kunai", "A loop finished"
 	default:
 		return "Kunai", "A session needs your attention"
 	}

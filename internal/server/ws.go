@@ -101,6 +101,14 @@ func (s *Server) dispatch(sess *session.Session, cmd session.Command) {
 		sess.CancelQueued(cmd.QueueID)
 	case session.CmdAddProject:
 		err = s.addProject(sess, cmd.Path)
+	case session.CmdStartLoop:
+		if cmd.Loop == nil {
+			err = errors.New("start_loop: no loop given")
+			break
+		}
+		err = sess.StartLoop(*cmd.Loop)
+	case session.CmdStopLoop:
+		sess.StopLoop("you stopped it")
 	default:
 		err = errors.New("unknown command: " + cmd.T)
 	}

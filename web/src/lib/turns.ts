@@ -5,7 +5,7 @@
 // aggregate the files it changed for the footer.
 
 import type { Item } from './chat.svelte'
-import type { Attachment, Block, ProjectInfo } from './types'
+import type { Attachment, Block, LoopStatus, ProjectInfo } from './types'
 import { fileChangesOf, type FileChange } from './toolMeta'
 
 export interface Turn {
@@ -17,6 +17,8 @@ export interface Turn {
   // Set when this entry is a compaction boundary rather than a message: the
   // conversation above it was replaced by a summary the model now carries.
   compact?: { preTokens: number; postTokens: number; trigger: string }
+  // Set when this entry is the loop starting, going round again, or ending.
+  loop?: LoopStatus
   // All assistant blocks in the turn, flattened in arrival order.
   blocks: Block[]
   hasAssistant: boolean
@@ -62,6 +64,13 @@ export function groupTurns(items: Item[]): Turn[] {
     if (it.role === 'project') {
       // A project joins between turns; what Claude says next is its own turn.
       start(undefined).project = it.project
+      cur = null
+      continue
+    }
+    if (it.role === 'loop') {
+      // The loop's own beats stand between turns: what Claude does next is its
+      // own turn, exactly as with a project joining.
+      start(undefined).loop = it.loop
       cur = null
       continue
     }

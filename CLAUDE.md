@@ -90,6 +90,9 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   effort, permission mode, `high_seq`, context tokens, pending permission asks,
   queued prompts, and the session's projects. Anything a late or reconnecting client
   needs belongs there, not only in the replayed events.
+- `internal/session/loop.go`: the self-prompting run (see the invariants below).
+  `Session.StartLoop` re-feeds one task each time a turn ends, until a limit it
+  cannot argue with stops it.
 - `internal/project`: reads a directory into the description a session hands a model
   (`Scan` -> `Info`, `Info.Brief()`): layout, language mix, git head from `.git`,
   the files that name it. It never opens the code, and the walk skips `.git`,
@@ -175,7 +178,7 @@ Contracts that must stay in sync manually:
   `AppEvent` is one flat struct shared by every event tag, so a new field means
   editing both files and saying which tag it belongs to: `tool_result`, the token
   split on `result`, `context_tokens`, `attachments`, `queued`/`unqueued`,
-  `project`, and `compact` all live there.
+  `project`, `compact`, and `loop` all live there.
 - Session state strings (`starting|idle|running|awaiting_permission`) appear in
   both, plus status maps in `Chat.svelte`/`Sidebar.svelte`.
 - `MachineInfo` (`machines.go`) mirrors `web/src/lib/types.ts`, and `/api/stats`
@@ -214,6 +217,22 @@ Behavioral invariants that were bugs before (do not regress):
 - Only fingerprinted `assets/*` may be cached immutably. `sw.js`, its registration
   shim, the manifest and the shell must revalidate: an immutably cached service
   worker strands clients on an old build no matter how often they reload.
+- A loop (`internal/session/loop.go`) is a self-prompting run: the same task fed
+  back every time a turn ends, which is Ralph's technique (ghuntley.com/ralph).
+  It lives in the session for the same reason the queue does, because the point is
+  that nobody is attached. The hard part is stopping, so every exit is a limit the
+  loop cannot argue with: iterations, spend, the completion promise, a spent usage
+  window, a failed turn, or Stop. Both user limits are hard and whichever comes
+  first wins; `max_iters` is the one that still works when the CLI reports no cost,
+  so it is never optional. Spend is measured as a delta against the session total
+  at start, or a loop begun in a long conversation would inherit its whole bill and
+  stop instantly. `Interrupt` must end the loop or Stop just looks broken. A loop
+  takes `acceptEdits` for its duration and hands the mode back afterwards: auto
+  still stops to ask about a risky action, which for an unattended run is a hang,
+  not caution (proven the hard way: a real loop sat at `awaiting_permission` on its
+  first file write and did nothing). This is the same trade the scheduler makes in
+  `fireJob`. A loop must also not fire the per-turn "done" notification on every
+  iteration; it announces its own ending instead.
 - A compaction (`/compact`, or automatic near the limit) is context, not
   conversation. The CLI feeds the summary back as a plain-string `user` frame and
   writes it to the transcript flagged `isCompactSummary`; both must be dropped.
@@ -266,6 +285,13 @@ jumping to the end.
   (`FileChips.svelte`) are metadata, and neither ships bytes back to the client.
 - Queued prompts sit above the composer, numbered, because the order is what they
   run in. While a turn runs, Send stays next to Stop and queues.
+- A loop shows one meter, not two. It ends at whichever limit arrives first, so
+  the only honest reading of how close it is to over is the nearer of the two, and
+  the line under it names which one and roughly when (`web/src/lib/loop.ts`). A
+  budget you only learn about afterwards is not a safeguard, so the limits are the
+  middle of the start form under the sentence that says what they do, not settings
+  at the bottom. Iterations are hairline seams like a compaction boundary, never a
+  card each: at fifty of them they would drown the work they exist to mark.
 - Code syntax highlighting is deliberately desaturated (a neutral brightness ramp);
   diffs use the muted green and red at low opacity.
 

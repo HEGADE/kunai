@@ -12,6 +12,9 @@
   import FileChips from './FileChips.svelte'
   import ProjectCard from './ProjectCard.svelte'
   import CompactDivider from './CompactDivider.svelte'
+  import LoopCard from './LoopCard.svelte'
+  import LoopBar from './LoopBar.svelte'
+  import LoopSheet from './LoopSheet.svelte'
   import AddProject from './AddProject.svelte'
   import Markdown from './Markdown.svelte'
   import BlockView from './BlockView.svelte'
@@ -47,6 +50,7 @@
   let menuOpen = $state(false)
   let schedOpen = $state(false)
   let addProjOpen = $state(false)
+  let loopOpen = $state(false)
 
   function resetRel(unixSec: number): string {
     let s = Math.round(unixSec - Date.now() / 1000)
@@ -239,6 +243,11 @@
           <button onclick={() => { chat.interrupt(); menuOpen = false }}>Interrupt</button>
         {/if}
         <button onclick={() => { addProjOpen = true; menuOpen = false }}>Add project…</button>
+        {#if chat.loop?.state === 'running'}
+          <button onclick={() => { chat.stopLoop(); menuOpen = false }}>Stop the loop</button>
+        {:else}
+          <button onclick={() => { loopOpen = true; menuOpen = false }}>Run in a loop…</button>
+        {/if}
         <button onclick={() => { schedOpen = true; menuOpen = false }}>Schedule a prompt…</button>
         <button class="danger" onclick={() => { app.closeSessionActive(); menuOpen = false }}>Close session</button>
       </div>
@@ -261,6 +270,9 @@
           {@const live = firstVisible + ti === allTurns.length - 1 && (running || !!chat.streaming || !!chat.thinking)}
           {#if turn.project}
             <div class="turn"><ProjectCard project={turn.project} /></div>
+          {/if}
+          {#if turn.loop}
+            <div class="turn"><LoopCard loop={turn.loop} /></div>
           {/if}
           {#if turn.compact}
             <div class="turn">
@@ -334,6 +346,12 @@
     </div>
   {/if}
 
+  {#if loopOpen}
+    <div class="floater">
+      <LoopSheet {chat} onClose={() => (loopOpen = false)} />
+    </div>
+  {/if}
+
   {#if schedOpen}
     <div class="floater">
       <ScheduleAfter
@@ -353,6 +371,7 @@
   {/if}
 
   <div class="dock" bind:clientHeight={dockH}>
+    <LoopBar {chat} />
     <Queued {chat} />
     <div class="field">
       {#if attachments.length}

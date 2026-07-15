@@ -4,6 +4,8 @@ import type {
   Attachment,
   Block,
   Command,
+  LoopConfig,
+  LoopStatus,
   PermissionMode,
   SessionState,
   ProjectInfo,
@@ -14,6 +16,9 @@ export type Item =
   | { role: 'user'; text: string; attachments?: Attachment[] }
   | { role: 'project'; project: ProjectInfo }
   | { role: 'compact'; preTokens: number; postTokens: number; trigger: string }
+  // A moment in the loop's life: it started, it went round again, or it ended.
+  // Each is a snapshot, so the log reads correctly however late you arrived.
+  | { role: 'loop'; loop: LoopStatus }
   | {
       role: 'assistant'
       blocks: Block[]
@@ -55,6 +60,9 @@ export class ChatConnection {
   // Every codebase this session has context for. More than one makes it a
   // workspace; the header says so.
   projects = $state<ProjectInfo[]>([])
+  // The session's self-prompting run. Null until one is ever started, and it
+  // keeps its final state afterwards so the log can say how it ended.
+  loop = $state<LoopStatus | null>(null)
   // Tool outputs keyed by tool_use_id, looked up by each tool_use block.
   toolResults = $state<Record<string, ToolResult>>({})
   status = $state<ConnStatus>('connecting')
@@ -155,6 +163,7 @@ export class ChatConnection {
         for (const p of ev.pending ?? []) this.addPending(p)
         for (const q of ev.queued ?? []) this.addQueued(q)
         if (ev.projects?.length) this.projects = ev.projects
+        if (ev.loop) this.loop = ev.loop
         this.highSeq = ev.high_seq ?? 0
         if (this.highSeq === 0) this.ready = true // nothing to replay
         break
@@ -206,6 +215,14 @@ export class ChatConnection {
               truncated: ev.truncated ?? false,
             },
           }
+        }
+        break
+      case 'loop':
+        // Every change to the loop arrives whole, so the bar reads from one
+        // object and the log keeps the snapshot as its own moment in the story.
+        if (ev.loop) {
+          this.loop = ev.loop
+          this.items = [...this.items, { role: 'loop', loop: ev.loop }]
         }
         break
       case 'compact':
@@ -296,6 +313,17 @@ export class ChatConnection {
   // gives the model a description; the reply is a project card in the chat.
   addProject(path: string) {
     this.send({ t: 'add_project', path })
+  }
+
+  // startLoop hands the task to the session, which re-feeds it every time a turn
+  // ends. The loop lives on the server, so closing this tab does not stop it and
+  // the limits keep applying whether anyone is watching or not.
+  startLoop(loop: LoopConfig) {
+    this.send({ t: 'start_loop', loop })
+  }
+
+  stopLoop() {
+    this.send({ t: 'stop_loop' })
   }
 
   cancelQueued(queue_id: string) {
