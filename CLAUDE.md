@@ -83,11 +83,17 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   `@anthropic-ai/claude-agent-sdk` npm package. The hidden `--sdk-url` websocket
   flag is NOT usable: current CLIs reject non-Anthropic hosts, so do not attempt it.
 - `internal/session`: app-facing layer. Each `Session` stamps every event with a
-  monotonic `Seq`, keeps a ring buffer (cap 4000), and fans out to any number of
-  subscribers. Client reconnects send `?since=<seq>` and get the gap replayed. This
-  is how mobile backgrounding works; the claude process is never tied to a client
-  socket. The `hello` frame carries state, permission mode, and still-pending
-  permission asks.
+  monotonic `Seq`, keeps a ring buffer (`ringCapacity`, 8000), and fans out to any
+  number of subscribers. Client reconnects send `?since=<seq>` and get the gap
+  replayed. This is how mobile backgrounding works; the claude process is never tied
+  to a client socket. The `hello` frame is the whole attachable state: cwd, model,
+  effort, permission mode, `high_seq`, context tokens, pending permission asks,
+  queued prompts, and the session's projects. Anything a late or reconnecting client
+  needs belongs there, not only in the replayed events.
+- `internal/project`: reads a directory into the description a session hands a model
+  (`Scan` -> `Info`, `Info.Brief()`): layout, language mix, git head from `.git`,
+  the files that name it. It never opens the code, and the walk skips `.git`,
+  `node_modules` and friends and is capped, because it runs while someone waits.
 - `internal/server`: REST, WS, and the embedded PWA. `history.go` scans
   `~/.claude/projects/*/<sessionId>.jsonl` transcripts for the Recent list and
   parses them into seed turns on resume (that is why resumed sessions show their old
@@ -117,6 +123,14 @@ The web client renders the conversation richly from data already on the client
   `ResultView.svelte` renders the tool's output beneath the request.
 - `web/src/lib/{highlight,diff,toolMeta}.ts` hold the shared, pure helpers.
   `highlight.js` is the only new runtime dependency.
+
+The log is windowed, and that is load-bearing rather than an optimisation. The
+whole backlog arrives at once on open, so `Chat.svelte` waits for `chat.ready` (the
+client's `lastSeq` reaching the hello's `high_seq`) and then mounts only a trailing
+window of turns, pinned to the bottom, in one paint. Scrolling up reveals more and
+re-anchors by distance from the bottom; the window only grows, so what you are
+reading never shifts. Mounting turns as they stream is what made opening a long
+session crawl from the top.
 
 Tool outputs flow end to end: `internal/claude/toolresult.go`
 (`ParseToolResultBlocks`) is shared by the live driver (`route()` handles the
@@ -157,8 +171,11 @@ also scopes "Start on <machine>".
 
 Contracts that must stay in sync manually:
 
-- `internal/session/protocol.go` (AppEvent/Command) mirrors `web/src/lib/types.ts`,
-  including the `tool_result` event fields.
+- `internal/session/protocol.go` (AppEvent/Command) mirrors `web/src/lib/types.ts`.
+  `AppEvent` is one flat struct shared by every event tag, so a new field means
+  editing both files and saying which tag it belongs to: `tool_result`, the token
+  split on `result`, `context_tokens`, `attachments`, `queued`/`unqueued`, and
+  `project` all live there.
 - Session state strings (`starting|idle|running|awaiting_permission`) appear in
   both, plus status maps in `Chat.svelte`/`Sidebar.svelte`.
 - `MachineInfo` (`machines.go`) mirrors `web/src/lib/types.ts`, and `/api/stats`
@@ -182,6 +199,25 @@ Behavioral invariants that were bugs before (do not regress):
 - Session ids are unique only per machine, so client-side `{#each}` keys must be
   composite (`machineId:id`) and the client always routes REST/WS to a session's
   owning machine (it never assumes the current origin).
+- A `result` frame's `usage` is **cumulative over every model call in the turn**, and
+  its `total_cost_usd` is a **running session total**. So context comes from the
+  newest assistant message's per-call usage (never the result), and the per-turn cost
+  is the difference against the last total (`turnResult`). Reading either verbatim
+  produced a meter past 100% and a footer claiming the whole session's spend on every
+  turn.
+- A prompt sent while a turn runs is **queued in the session**, not the client: the
+  phone may be gone. `Prompt` claims the turn under the same lock that tested for it,
+  or a second prompt races into the CLI mid-stream. Stop clears the queue.
+- The scheduler **reserves an occurrence and saves it before firing**. Marking a job
+  fired afterwards meant a restart mid-fire re-ran it, which duplicated a session.
+  At-most-once is the deliberate choice: a missed run beats two agents.
+- Only fingerprinted `assets/*` may be cached immutably. `sw.js`, its registration
+  shim, the manifest and the shell must revalidate: an immutably cached service
+  worker strands clients on an old build no matter how often they reload.
+- Sessions spawn in `session.DefaultPermissionMode` (auto), applied as the CLI flag
+  at spawn so it holds from the first tool call. Sending it afterwards is too late.
+  Scheduled jobs deliberately keep `acceptEdits`: auto can still stop for a risky
+  action, which for an unattended run means stalling forever.
 
 ## UI conventions
 
@@ -206,6 +242,19 @@ jumping to the end.
 - The tab owns a session's name and status, so the chat header carries what the
   tab cannot: the cwd, as a muted mono path (rtl-ellipsis). Do not repeat the
   title or the status dot there.
+- The tab strip is the top of the session view, so **it** owns `--safe-top`; the
+  header must not inset again. Whatever is topmost carries the safe area.
+- Mono is the data voice, and it is what makes the chrome legible at a glance: the
+  context meter (`Context.svelte`), the token split, the project card, and the
+  composer's paths all read as data, not prose. Prose explains; mono states.
+- A turn's tokens are shown split (new vs cached) with an info button, never as one
+  total: a long turn re-reads its context on every tool call, so the total runs to
+  millions and reads as nonsense next to the price.
+- Anything that is context rather than conversation gets a card, not a bubble: a
+  project joining the session (`ProjectCard.svelte`) and the files a message carried
+  (`FileChips.svelte`) are metadata, and neither ships bytes back to the client.
+- Queued prompts sit above the composer, numbered, because the order is what they
+  run in. While a turn runs, Send stays next to Stop and queues.
 - Code syntax highlighting is deliberately desaturated (a neutral brightness ramp);
   diffs use the muted green and red at low opacity.
 
