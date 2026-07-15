@@ -52,7 +52,8 @@ type Session struct {
 	title           string
 	claudeSessionID string // CLI-assigned id, for --resume cold-start
 	state           string
-	contextTokens   int64 // context-window occupancy from the latest result (or seeded on resume)
+	contextTokens   int64   // context-window occupancy from the latest result (or seeded on resume)
+	lastCostUSD     float64 // running session total from the CLI, to difference per turn
 	buf             *ring
 	subs            map[*Subscriber]struct{}
 	queue           []*queuedPrompt     // prompts waiting for the running turn to end
@@ -210,7 +211,7 @@ func (s *Session) pump() {
 
 		case claude.EventResult:
 			s.setState(StateIdle)
-			s.broadcast(parseResult(ev.Raw))
+			s.broadcast(s.turnResult(ev.Raw))
 			// Only tell you the work is done when nothing is queued behind it —
 			// otherwise the next prompt starts immediately and it isn't.
 			s.mu.Lock()
@@ -609,6 +610,28 @@ func toAppBlocks(msg *claude.AssistantMessage) []AppBlock {
 		out = append(out, AppBlock{Type: b.Type, Text: b.Text, ID: b.ID, Name: b.Name, Input: b.Input})
 	}
 	return out
+}
+
+// turnResult decodes a result frame into this turn's numbers. The CLI reports
+// total_cost_usd as the session's running total, so every turn was showing the
+// whole session's spend as if it were its own; difference it against the last
+// total to get what this turn actually cost. (A resumed session starts counting
+// from whatever it inherited, so its first turn can only be the total so far.)
+func (s *Session) turnResult(raw json.RawMessage) AppEvent {
+	ev := parseResult(raw)
+	if ev.CostUSD <= 0 {
+		return ev
+	}
+	s.mu.Lock()
+	total := ev.CostUSD
+	turn := total - s.lastCostUSD
+	if turn < 0 {
+		turn = total // the total went backwards; trust the frame
+	}
+	s.lastCostUSD = total
+	s.mu.Unlock()
+	ev.CostUSD = turn
+	return ev
 }
 
 func parseResult(raw json.RawMessage) AppEvent {

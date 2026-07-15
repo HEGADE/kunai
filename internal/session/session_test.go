@@ -154,6 +154,36 @@ func TestCancelQueuedAndInterruptClearsQueue(t *testing.T) {
 	}
 }
 
+// The CLI's total_cost_usd is the session's running total, so a per-turn footer
+// has to difference it. Measured from a real CLI: two turns costing ~6.5c then
+// ~2.4c report 0.064708 and then 0.088073, not 0.064708 and 0.023365.
+func TestResultCostIsPerTurnNotTheSessionTotal(t *testing.T) {
+	f := newFakeDriver()
+	s := newSession("s3", "/tmp/p", "", f)
+	defer s.Close()
+	_, _, sub := s.Attach(0)
+
+	f.events <- claude.Event{Kind: claude.EventResult, Raw: json.RawMessage(`{"subtype":"success","total_cost_usd":0.064708}`)}
+	f.events <- claude.Event{Kind: claude.EventResult, Raw: json.RawMessage(`{"subtype":"success","total_cost_usd":0.088073}`)}
+
+	var costs []float64
+	for _, ev := range drain(t, sub, 3) { // state(idle), result, result
+		if ev.T == EvResult {
+			costs = append(costs, ev.CostUSD)
+		}
+	}
+	if len(costs) != 2 {
+		t.Fatalf("want 2 results, got %v", costs)
+	}
+	if d := costs[0] - 0.064708; d > 1e-9 || d < -1e-9 {
+		t.Fatalf("first turn should cost the whole total so far, got %v", costs[0])
+	}
+	// The second turn cost the difference, not the running total.
+	if d := costs[1] - 0.023365; d > 1e-9 || d < -1e-9 {
+		t.Fatalf("second turn should be the delta (~0.023365), got %v", costs[1])
+	}
+}
+
 func TestSequencingAndReplay(t *testing.T) {
 	f := newFakeDriver()
 	s := newSession("s1", "/tmp/p", "", f)
