@@ -81,6 +81,8 @@ export interface AppEvent {
     | 'permission'
     | 'permission_resolved'
     | 'tool_result'
+    | 'queued'
+    | 'unqueued'
     | 'result'
     | 'state'
     | 'error'
@@ -95,6 +97,9 @@ export interface AppEvent {
   effort?: string
   high_seq?: number
   pending?: AppEvent[]
+  queued?: AppEvent[]
+  // queued / unqueued: a prompt parked until the running turn ends
+  queue_id?: string
   // delta / thinking / user / error
   text?: string
   message?: string
@@ -154,6 +159,7 @@ export type Command =
   | { t: 'interrupt' }
   | { t: 'set_model'; model: string }
   | { t: 'set_mode'; mode: PermissionMode }
+  | { t: 'cancel_queued'; queue_id: string }
 
 export interface HistoryEntry {
   id: string

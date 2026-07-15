@@ -62,6 +62,98 @@ func drain(t *testing.T, sub *Subscriber, n int) []AppEvent {
 	return out
 }
 
+// sentPrompts returns what the driver has actually been asked to run.
+func (f *fakeDriver) sentPrompts() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.prompts...)
+}
+
+// waitPrompts blocks until the driver has received want prompts (or fails).
+func waitPrompts(t *testing.T, f *fakeDriver, want int) []string {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if got := f.sentPrompts(); len(got) >= want {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("driver got %v, want %d prompts", f.sentPrompts(), want)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A prompt sent while a turn is running must wait for that turn rather than be
+// pushed into the CLI mid-stream, and must start on its own once the turn ends —
+// with no client attached, since the queue lives in the session.
+func TestPromptQueuesWhileRunningThenDrains(t *testing.T) {
+	f := newFakeDriver()
+	s := newSession("s1", "/tmp/p", "", f)
+	defer s.Close()
+	_, _, sub := s.Attach(0)
+
+	if err := s.Prompt("first", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Prompt("second", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.sentPrompts(); len(got) != 1 || got[0] != "first" {
+		t.Fatalf("second prompt must queue, driver got %v", got)
+	}
+
+	// user, state(running), queued
+	got := drain(t, sub, 3)
+	if got[2].T != EvQueued || got[2].Text != "second" || got[2].QueueID == "" {
+		t.Fatalf("want a queued event for the second prompt, got %+v", got[2])
+	}
+
+	// The turn ends: the queued prompt starts by itself.
+	f.events <- claude.Event{Kind: claude.EventResult, Raw: json.RawMessage(`{"subtype":"success"}`)}
+	if got := waitPrompts(t, f, 2); got[1] != "second" {
+		t.Fatalf("queued prompt should have run, driver got %v", got)
+	}
+	if s.Meta().State != StateRunning {
+		t.Fatalf("want running after the queue drained, got %q", s.Meta().State)
+	}
+	// A fresh attach no longer advertises it as queued: it is running now.
+	if hello, _, _ := s.Attach(0); len(hello.Queued) != 0 {
+		t.Fatalf("hello should have an empty queue, got %+v", hello.Queued)
+	}
+}
+
+func TestCancelQueuedAndInterruptClearsQueue(t *testing.T) {
+	f := newFakeDriver()
+	s := newSession("s2", "/tmp/p", "", f)
+	defer s.Close()
+
+	_ = s.Prompt("running", nil, nil)
+	_ = s.Prompt("cancel me", nil, nil)
+	_ = s.Prompt("drop me", nil, nil)
+
+	hello, _, _ := s.Attach(0)
+	if len(hello.Queued) != 2 {
+		t.Fatalf("want 2 queued on hello, got %d", len(hello.Queued))
+	}
+
+	s.CancelQueued(hello.Queued[0].QueueID)
+	if h, _, _ := s.Attach(0); len(h.Queued) != 1 || h.Queued[0].Text != "drop me" {
+		t.Fatalf("cancel should remove only that prompt, got %+v", h.Queued)
+	}
+
+	// Stop means stop: nothing queued behind the turn survives it.
+	_ = s.Interrupt()
+	if h, _, _ := s.Attach(0); len(h.Queued) != 0 {
+		t.Fatalf("interrupt should clear the queue, got %+v", h.Queued)
+	}
+	f.events <- claude.Event{Kind: claude.EventResult, Raw: json.RawMessage(`{"subtype":"success"}`)}
+	time.Sleep(50 * time.Millisecond)
+	if got := f.sentPrompts(); len(got) != 1 {
+		t.Fatalf("no queued prompt should run after an interrupt, driver got %v", got)
+	}
+}
+
 func TestSequencingAndReplay(t *testing.T) {
 	f := newFakeDriver()
 	s := newSession("s1", "/tmp/p", "", f)

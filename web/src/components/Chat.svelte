@@ -8,6 +8,7 @@
   import { MODELS, EFFORTS, modelLabel, effortLabel } from '../lib/models'
   import PermissionGate from './PermissionGate.svelte'
   import Context from './Context.svelte'
+  import Queued from './Queued.svelte'
   import FileChips from './FileChips.svelte'
   import Markdown from './Markdown.svelte'
   import BlockView from './BlockView.svelte'
@@ -324,6 +325,7 @@
   {/if}
 
   <div class="dock" bind:clientHeight={dockH}>
+    <Queued {chat} />
     <div class="field">
       {#if attachments.length}
         <div class="chips">
@@ -414,16 +416,18 @@
         </div>
         <span class="spacer"></span>
         <Context tokens={chat.contextTokens} model={chat.model} />
+        <!-- While a turn runs you can still send: it queues behind it. Stop stays
+             alongside, so stopping and stacking up work are separate choices. -->
         {#if running}
           <button class="stop" onclick={() => chat.interrupt()} aria-label="Stop"><span class="sq"></span></button>
-        {:else}
-          <button
-            class="send"
-            class:ready={draft.trim() || attachments.length}
-            onclick={send}
-            disabled={(!draft.trim() && attachments.length === 0) || chat.status !== 'online'}
-            aria-label="Send">↑</button>
         {/if}
+        <button
+          class="send"
+          class:ready={draft.trim() || attachments.length}
+          onclick={send}
+          disabled={(!draft.trim() && attachments.length === 0) || chat.status !== 'online'}
+          aria-label={running ? 'Queue message' : 'Send'}
+          title={running ? 'Queue this for when the current turn finishes' : 'Send'}>↑</button>
       </div>
     </div>
   </div>
@@ -861,6 +865,9 @@
   .mh {
     font-size: 11.5px;
     color: var(--text-4);
+  }
+  .stop {
+    margin-right: 6px;
   }
   .send,
   .stop {

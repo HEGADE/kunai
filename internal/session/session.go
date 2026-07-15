@@ -1,6 +1,8 @@
 package session
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"sync"
 	"time"
@@ -53,6 +55,7 @@ type Session struct {
 	contextTokens   int64 // context-window occupancy from the latest result (or seeded on resume)
 	buf             *ring
 	subs            map[*Subscriber]struct{}
+	queue           []*queuedPrompt     // prompts waiting for the running turn to end
 	pending         map[string]AppEvent // unresolved permission asks, keyed by request_id
 	suggestionByReq map[string]json.RawMessage
 	closed          bool
@@ -208,7 +211,15 @@ func (s *Session) pump() {
 		case claude.EventResult:
 			s.setState(StateIdle)
 			s.broadcast(parseResult(ev.Raw))
-			s.notifyAttention("done", "")
+			// Only tell you the work is done when nothing is queued behind it —
+			// otherwise the next prompt starts immediately and it isn't.
+			s.mu.Lock()
+			more := len(s.queue) > 0
+			s.mu.Unlock()
+			if !more {
+				s.notifyAttention("done", "")
+			}
+			s.drainQueue()
 
 		case claude.EventRateLimit:
 			s.mu.Lock()
@@ -265,17 +276,96 @@ func (s *Session) onPermission(ask *claude.PermissionAsk) {
 
 // --- commands (client → session) ---
 
-// Prompt sends a user turn. The user's text and any attachments are echoed into
-// the sequenced event stream so reconnects and reloads replay the full
-// conversation, not just Claude's side of it. content carries the attachments to
-// the CLI; atts is the display copy, so the message shows what was sent with it.
+// queuedPrompt is a prompt parked until the running turn ends. The queue lives
+// here rather than in the client because the client is not required to be
+// present: a phone can queue work and drop off, and the session still runs it.
+type queuedPrompt struct {
+	ID          string
+	Text        string
+	Attachments []Attachment
+	content     any // built content (attachments) for the CLI; not sent to clients
+}
+
+// Prompt sends a user turn, or queues it if a turn is already running. The
+// user's text and any attachments are echoed into the sequenced event stream so
+// reconnects and reloads replay the full conversation, not just Claude's side of
+// it. content carries the attachments to the CLI; atts is the display copy, so
+// the message shows what was sent with it.
 func (s *Session) Prompt(text string, content any, atts []Attachment) error {
-	s.broadcast(AppEvent{T: EvUser, Text: text, Attachments: atts})
-	s.setState(StateRunning)
+	s.mu.Lock()
+	if s.state == StateRunning || s.state == StateAwaiting {
+		q := &queuedPrompt{ID: newQueueID(), Text: text, Attachments: atts, content: content}
+		s.queue = append(s.queue, q)
+		s.emitLocked(s.sequenceLocked(AppEvent{T: EvQueued, QueueID: q.ID, Text: q.Text, Attachments: q.Attachments}))
+		s.mu.Unlock()
+		return nil
+	}
+	// Claim the turn under the same lock that tested for it, so a second prompt
+	// arriving now queues instead of racing this one into the CLI mid-turn.
+	s.startTurnLocked(text, atts)
+	s.mu.Unlock()
+	return s.deliver(text, content)
+}
+
+// startTurnLocked records a prompt as the turn that is now running.
+func (s *Session) startTurnLocked(text string, atts []Attachment) {
+	s.emitLocked(s.sequenceLocked(AppEvent{T: EvUser, Text: text, Attachments: atts}))
+	s.state = StateRunning
+	s.emitLocked(s.sequenceLocked(AppEvent{T: EvState, State: StateRunning}))
+}
+
+func (s *Session) deliver(text string, content any) error {
 	if content != nil {
 		return s.drv.SendUser(content)
 	}
 	return s.drv.SendUserText(text)
+}
+
+// drainQueue starts the next queued prompt now that the turn has ended. Called
+// after every result, so a queue runs itself down without a client attached.
+func (s *Session) drainQueue() {
+	s.mu.Lock()
+	if s.closed || s.state != StateIdle || len(s.queue) == 0 {
+		s.mu.Unlock()
+		return
+	}
+	q := s.queue[0]
+	s.queue = s.queue[1:]
+	s.emitLocked(s.sequenceLocked(AppEvent{T: EvUnqueued, QueueID: q.ID}))
+	s.startTurnLocked(q.Text, q.Attachments)
+	s.mu.Unlock()
+
+	if err := s.deliver(q.Text, q.content); err != nil {
+		s.broadcast(AppEvent{T: EvError, Message: "queued prompt failed: " + err.Error()})
+		s.setState(StateIdle)
+	}
+}
+
+// CancelQueued drops a prompt that has not started yet.
+func (s *Session) CancelQueued(id string) {
+	s.mu.Lock()
+	for i, q := range s.queue {
+		if q.ID == id {
+			s.queue = append(s.queue[:i:i], s.queue[i+1:]...)
+			s.emitLocked(s.sequenceLocked(AppEvent{T: EvUnqueued, QueueID: id}))
+			break
+		}
+	}
+	s.mu.Unlock()
+}
+
+// dropQueueLocked clears the queue, telling clients each prompt is gone.
+func (s *Session) dropQueueLocked() {
+	for _, q := range s.queue {
+		s.emitLocked(s.sequenceLocked(AppEvent{T: EvUnqueued, QueueID: q.ID}))
+	}
+	s.queue = nil
+}
+
+func newQueueID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 // ResolvePermission answers a pending permission ask. When always is true and
@@ -333,8 +423,12 @@ func mergeAnswers(input json.RawMessage, answers map[string]string) json.RawMess
 	return input
 }
 
-// Interrupt aborts the current turn.
+// Interrupt aborts the current turn and drops anything queued behind it: Stop
+// means stop, not "move on to the next one".
 func (s *Session) Interrupt() error {
+	s.mu.Lock()
+	s.dropQueueLocked()
+	s.mu.Unlock()
 	err := s.drv.Interrupt()
 	s.setState(StateIdle)
 	return err
@@ -381,6 +475,12 @@ func (s *Session) Attach(afterSeq uint64) (hello AppEvent, backlog []AppEvent, s
 	for _, p := range s.pending {
 		pending = append(pending, p)
 	}
+	// The queue rides along on hello (like pending asks) so a client that missed
+	// the events — or attached late — still sees what is waiting to run.
+	queued := make([]AppEvent, 0, len(s.queue))
+	for _, q := range s.queue {
+		queued = append(queued, AppEvent{T: EvQueued, QueueID: q.ID, Text: q.Text, Attachments: q.Attachments})
+	}
 	hello = AppEvent{
 		T:             EvHello,
 		ID:            s.ID,
@@ -393,6 +493,7 @@ func (s *Session) Attach(afterSeq uint64) (hello AppEvent, backlog []AppEvent, s
 		HighSeq:       s.seq,
 		ContextTokens: s.contextTokens,
 		Pending:       pending,
+		Queued:        queued,
 	}
 	backlog = s.buf.since(afterSeq)
 

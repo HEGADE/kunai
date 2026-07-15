@@ -13,6 +13,14 @@ export type Item =
   | { role: 'user'; text: string; attachments?: Attachment[] }
   | { role: 'assistant'; blocks: Block[]; durationMs?: number; tokens?: number; costUsd?: number }
 
+// A prompt waiting for the running turn to finish. The queue is the server's,
+// not ours: it survives a dropped socket and runs without a client attached.
+export interface QueuedPrompt {
+  queue_id: string
+  text: string
+  attachments?: Attachment[]
+}
+
 export interface PendingPermission {
   request_id: string
   tool_name: string
@@ -31,6 +39,7 @@ export class ChatConnection {
   streaming = $state('')
   thinking = $state('')
   pending = $state<PendingPermission[]>([])
+  queued = $state<QueuedPrompt[]>([])
   // Tool outputs keyed by tool_use_id, looked up by each tool_use block.
   toolResults = $state<Record<string, ToolResult>>({})
   status = $state<ConnStatus>('connecting')
@@ -129,6 +138,7 @@ export class ChatConnection {
         if (ev.effort) this.effort = ev.effort
         if (ev.context_tokens != null) this.contextTokens = ev.context_tokens
         for (const p of ev.pending ?? []) this.addPending(p)
+        for (const q of ev.queued ?? []) this.addQueued(q)
         this.highSeq = ev.high_seq ?? 0
         if (this.highSeq === 0) this.ready = true // nothing to replay
         break
@@ -154,6 +164,13 @@ export class ChatConnection {
         break
       case 'permission_resolved':
         this.pending = this.pending.filter((p) => p.request_id !== ev.request_id)
+        break
+      case 'queued':
+        this.addQueued(ev)
+        break
+      case 'unqueued':
+        // It either started running (a 'user' event follows) or was cancelled.
+        this.queued = this.queued.filter((q) => q.queue_id !== ev.queue_id)
         break
       case 'tool_result':
         if (ev.tool_use_id) {
@@ -215,6 +232,21 @@ export class ChatConnection {
     // Backlog fully drained: the initial history is now all present, so the view
     // can mount it in one pass and pin to the bottom.
     if (!this.ready && this.highSeq > 0 && this.lastSeq >= this.highSeq) this.ready = true
+  }
+
+  // Deduped by id: hello carries the queue and the replayed backlog repeats it.
+  private addQueued(ev: AppEvent) {
+    if (!ev.queue_id) return
+    if (this.queued.some((q) => q.queue_id === ev.queue_id)) return
+    this.queued = [
+      ...this.queued,
+      { queue_id: ev.queue_id, text: ev.text ?? '', attachments: ev.attachments },
+    ]
+  }
+
+  cancelQueued(queue_id: string) {
+    this.queued = this.queued.filter((q) => q.queue_id !== queue_id) // optimistic
+    this.send({ t: 'cancel_queued', queue_id })
   }
 
   private addPending(ev: AppEvent) {

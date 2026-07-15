@@ -24,6 +24,11 @@ type AppEvent struct {
 	Effort  string     `json:"effort,omitempty"` // reasoning effort (hello)
 	HighSeq uint64     `json:"high_seq,omitempty"`
 	Pending []AppEvent `json:"pending,omitempty"` // unresolved permission asks
+	Queued  []AppEvent `json:"queued,omitempty"`  // prompts waiting for the current turn
+
+	// "queued" / "unqueued": a prompt parked until the current turn ends. It is
+	// unqueued when it starts running (a "user" event follows) or is cancelled.
+	QueueID string `json:"queue_id,omitempty"`
 
 	// "delta" / "thinking" / "user"
 	Text string `json:"text,omitempty"`
@@ -75,6 +80,8 @@ type AppEvent struct {
 const (
 	EvHello              = "hello"
 	EvUser               = "user"
+	EvQueued             = "queued"
+	EvUnqueued           = "unqueued"
 	EvDelta              = "delta"
 	EvThinking           = "thinking"
 	EvAssistant          = "assistant"
@@ -133,15 +140,19 @@ type Command struct {
 
 	// "set_mode"
 	Mode string `json:"mode,omitempty"`
+
+	// "cancel_queued"
+	QueueID string `json:"queue_id,omitempty"`
 }
 
 // Command type tags.
 const (
-	CmdPrompt     = "prompt"
-	CmdPermission = "permission"
-	CmdInterrupt  = "interrupt"
-	CmdSetModel   = "set_model"
-	CmdSetMode    = "set_mode"
+	CmdPrompt       = "prompt"
+	CmdPermission   = "permission"
+	CmdInterrupt    = "interrupt"
+	CmdSetModel     = "set_model"
+	CmdSetMode      = "set_mode"
+	CmdCancelQueued = "cancel_queued"
 )
 
 // Attachment is an uploaded file/image referenced by a prompt (Phase 3). The
