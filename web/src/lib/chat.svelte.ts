@@ -10,7 +10,7 @@ import type {
 } from './types'
 
 export type Item =
-  | { role: 'user'; text: string }
+  | { role: 'user'; text: string; attachments?: Attachment[] }
   | { role: 'assistant'; blocks: Block[]; durationMs?: number; tokens?: number; costUsd?: number }
 
 export interface PendingPermission {
@@ -131,7 +131,7 @@ export class ChatConnection {
         if (this.highSeq === 0) this.ready = true // nothing to replay
         break
       case 'user':
-        this.items = [...this.items, { role: 'user', text: ev.text ?? '' }]
+        this.items = [...this.items, { role: 'user', text: ev.text ?? '', attachments: ev.attachments }]
         break
       case 'delta':
         this.streaming += ev.text ?? ''

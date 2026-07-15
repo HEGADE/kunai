@@ -191,6 +191,29 @@ func claudeTitle(f *os.File) string {
 	return ai
 }
 
+// transcriptAttachments recovers what a past user turn carried, so a resumed
+// session still shows it. A transcript records images as inline content blocks
+// with no filename, so only the type survives — enough for a placeholder, which
+// is all the message needs (the bytes are never served back).
+func transcriptAttachments(content json.RawMessage) []session.Attachment {
+	var blocks []struct {
+		Type   string `json:"type"`
+		Source struct {
+			MediaType string `json:"media_type"`
+		} `json:"source"`
+	}
+	if json.Unmarshal(content, &blocks) != nil {
+		return nil
+	}
+	var out []session.Attachment
+	for _, b := range blocks {
+		if b.Type == "image" {
+			out = append(out, session.Attachment{Name: "Image", MediaType: b.Source.MediaType})
+		}
+	}
+	return out
+}
+
 func firstUserText(content json.RawMessage) string {
 	var s string
 	if json.Unmarshal(content, &s) == nil {
@@ -287,9 +310,10 @@ func loadTranscriptTurns(id string) []session.SeedTurn {
 				})
 			}
 			t := strings.TrimSpace(firstUserText(v.Message.Content))
+			atts := transcriptAttachments(v.Message.Content)
 			// Skip harness wrappers — they aren't turns the user typed.
-			if t != "" && !strings.HasPrefix(t, "<") {
-				turns = append(turns, session.SeedTurn{Role: "user", Text: t})
+			if (t != "" && !strings.HasPrefix(t, "<")) || len(atts) > 0 {
+				turns = append(turns, session.SeedTurn{Role: "user", Text: t, Attachments: atts})
 			}
 		case "assistant":
 			if blocks := assistantSeedBlocks(v.Message.Content); len(blocks) > 0 {

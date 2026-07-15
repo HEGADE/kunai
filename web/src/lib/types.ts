@@ -98,6 +98,8 @@ export interface AppEvent {
   // delta / thinking / user / error
   text?: string
   message?: string
+  // user: what was attached to the prompt (metadata only)
+  attachments?: Attachment[]
   // assistant
   blocks?: Block[]
   // permission

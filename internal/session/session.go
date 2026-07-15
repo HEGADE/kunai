@@ -130,11 +130,12 @@ func (s *Session) Done() <-chan struct{} { return s.done }
 
 // SeedTurn is a prior conversation turn loaded from a transcript when resuming.
 type SeedTurn struct {
-	Role      string     // "user" | "assistant" | "tool_result"
-	Text      string     // user text, or tool_result output
-	Blocks    []AppBlock // assistant content blocks
-	ToolUseID string     // tool_result correlation
-	IsError   bool       // tool_result
+	Role        string       // "user" | "assistant" | "tool_result"
+	Text        string       // user text, or tool_result output
+	Blocks      []AppBlock   // assistant content blocks
+	ToolUseID   string       // tool_result correlation
+	IsError     bool         // tool_result
+	Attachments []Attachment // user: files sent with the prompt
 }
 
 // Seed pre-populates the replay buffer with transcript history so a resumed
@@ -146,7 +147,7 @@ func (s *Session) Seed(turns []SeedTurn) {
 		var ev AppEvent
 		switch t.Role {
 		case "user":
-			ev = AppEvent{T: EvUser, Text: t.Text}
+			ev = AppEvent{T: EvUser, Text: t.Text, Attachments: t.Attachments}
 		case "tool_result":
 			ev = AppEvent{T: EvToolResult, ToolUseID: t.ToolUseID, Content: t.Text, IsError: t.IsError}
 		default:
@@ -264,11 +265,12 @@ func (s *Session) onPermission(ask *claude.PermissionAsk) {
 
 // --- commands (client → session) ---
 
-// Prompt sends a user turn. The user's text is echoed into the sequenced event
-// stream so reconnects and reloads replay the full transcript, not just Claude's
-// side of it.
-func (s *Session) Prompt(text string, content any) error {
-	s.broadcast(AppEvent{T: EvUser, Text: text})
+// Prompt sends a user turn. The user's text and any attachments are echoed into
+// the sequenced event stream so reconnects and reloads replay the full
+// conversation, not just Claude's side of it. content carries the attachments to
+// the CLI; atts is the display copy, so the message shows what was sent with it.
+func (s *Session) Prompt(text string, content any, atts []Attachment) error {
+	s.broadcast(AppEvent{T: EvUser, Text: text, Attachments: atts})
 	s.setState(StateRunning)
 	if content != nil {
 		return s.drv.SendUser(content)

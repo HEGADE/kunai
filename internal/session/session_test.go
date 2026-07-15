@@ -213,7 +213,7 @@ func TestPromptSetsRunningState(t *testing.T) {
 	defer s.Close()
 
 	_, _, sub := s.Attach(0)
-	if err := s.Prompt("hi", nil); err != nil {
+	if err := s.Prompt("hi", nil, nil); err != nil {
 		t.Fatalf("prompt: %v", err)
 	}
 	// Prompt echoes the user turn, then transitions to running.

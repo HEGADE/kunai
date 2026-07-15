@@ -47,7 +47,7 @@ func (s *Server) fireJob(j schedule.Job) error {
 	if mode != "default" {
 		_ = sess.SetPermissionMode(mode)
 	}
-	return sess.Prompt(j.Prompt, nil)
+	return sess.Prompt(j.Prompt, nil, nil)
 }
 
 func (s *Server) handleScheduleList(w http.ResponseWriter, r *http.Request) {

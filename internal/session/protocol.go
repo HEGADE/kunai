@@ -25,8 +25,13 @@ type AppEvent struct {
 	HighSeq uint64     `json:"high_seq,omitempty"`
 	Pending []AppEvent `json:"pending,omitempty"` // unresolved permission asks
 
-	// "delta" / "thinking"
+	// "delta" / "thinking" / "user"
 	Text string `json:"text,omitempty"`
+
+	// "user": what was attached to the prompt. Metadata only (name + type) — the
+	// bytes already went to Claude and are never served back; this just lets the
+	// message show what rode along with it.
+	Attachments []Attachment `json:"attachments,omitempty"`
 
 	// "assistant"
 	Blocks []AppBlock `json:"blocks,omitempty"`

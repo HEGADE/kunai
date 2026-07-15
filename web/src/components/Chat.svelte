@@ -8,6 +8,7 @@
   import { MODELS, EFFORTS, modelLabel, effortLabel } from '../lib/models'
   import PermissionGate from './PermissionGate.svelte'
   import Context from './Context.svelte'
+  import FileChips from './FileChips.svelte'
   import Markdown from './Markdown.svelte'
   import BlockView from './BlockView.svelte'
   import ScheduleAfter from './ScheduleAfter.svelte'
@@ -249,7 +250,12 @@
           {@const live = firstVisible + ti === allTurns.length - 1 && (running || !!chat.streaming || !!chat.thinking)}
           {#if turn.user !== undefined}
             <div class="turn user">
-              <div class="ubbl">{turn.user}</div>
+              <div class="ubbl">
+                {#if turn.userFiles?.length}
+                  <FileChips files={turn.userFiles} />
+                {/if}
+                {#if turn.user}<span class="utext">{turn.user}</span>{/if}
+              </div>
             </div>
           {/if}
           {#if turn.hasAssistant && hasBody(turn.blocks)}
@@ -590,15 +596,22 @@
   }
   .ubbl {
     max-width: 82%;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
     color: var(--text);
     font-size: 16px;
     line-height: 1.5;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
     padding: 12px 16px;
     background: var(--panel-3);
     border-radius: 18px;
     border-bottom-right-radius: 6px;
+  }
+  /* The bubble is a column now so attached files can sit above the message; the
+     text keeps its own wrapping. */
+  .utext {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
   .assistant {
     display: flex;

@@ -5,11 +5,13 @@
 // aggregate the files it changed for the footer.
 
 import type { Item } from './chat.svelte'
-import type { Block } from './types'
+import type { Attachment, Block } from './types'
 import { fileChangesOf, type FileChange } from './toolMeta'
 
 export interface Turn {
   user?: string
+  // Files sent with the user message (metadata only).
+  userFiles?: Attachment[]
   // All assistant blocks in the turn, flattened in arrival order.
   blocks: Block[]
   hasAssistant: boolean
@@ -32,9 +34,10 @@ const isText = (b: Block): boolean => b.type === 'text' && !!b.text
 export function groupTurns(items: Item[]): Turn[] {
   const turns: Turn[] = []
   let cur: Turn | null = null
-  const start = (user?: string): Turn => {
+  const start = (user?: string, userFiles?: Attachment[]): Turn => {
     cur = {
       user,
+      userFiles,
       blocks: [],
       hasAssistant: false,
       toolCalls: 0,
@@ -49,7 +52,7 @@ export function groupTurns(items: Item[]): Turn[] {
   }
   for (const it of items) {
     if (it.role === 'user') {
-      start(it.text)
+      start(it.text, it.attachments)
     } else {
       const t = cur ?? start(undefined)
       t.hasAssistant = true

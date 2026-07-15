@@ -88,7 +88,7 @@ func (s *Server) dispatch(sess *session.Session, cmd session.Command) {
 		if len(cmd.Attachments) > 0 {
 			content = s.buildContent(sess.Cwd, cmd.Text, cmd.Attachments)
 		}
-		err = sess.Prompt(cmd.Text, content)
+		err = sess.Prompt(cmd.Text, content, cmd.Attachments)
 	case session.CmdPermission:
 		err = sess.ResolvePermission(cmd.RequestID, cmd.Behavior, cmd.Always, cmd.Answers)
 	case session.CmdInterrupt:
