@@ -47,7 +47,9 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 8px 10px 0;
+    /* The strip is the top of the session view, so it owns the safe area: on a
+       phone the tabs sat under the status bar and collided with the clock. */
+    padding: calc(var(--safe-top) + 8px) 10px 0;
     overflow-x: auto;
     scrollbar-width: none;
   }

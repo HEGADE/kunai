@@ -489,7 +489,9 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: calc(var(--safe-top) + 12px) 14px 12px;
+    /* The tab strip sits above and already clears the status bar, so the header
+       must not inset again or it double-spaces. */
+    padding: 12px 14px;
     background: transparent;
   }
   .hbtn {
