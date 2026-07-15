@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { app } from './lib/app.svelte'
   import Sidebar from './components/Sidebar.svelte'
+  import Tabs from './components/Tabs.svelte'
   import Chat from './components/Chat.svelte'
   import Home from './components/Home.svelte'
   import NewSession from './components/NewSession.svelte'
@@ -23,7 +24,8 @@
   <aside class="sidebar"><Sidebar /></aside>
   <main class="main">
     {#if app.chat}
-      <Chat chat={app.chat} />
+      <Tabs />
+      <div class="pane"><Chat chat={app.chat} /></div>
     {:else}
       <button class="rail-toggle" onclick={() => app.toggleSidebar()} aria-label="Toggle sidebar" title="Toggle sidebar">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M9.5 4v16" /></svg>
@@ -65,6 +67,13 @@
     min-width: 0;
     overflow: hidden;
     background: var(--bg);
+    display: flex;
+    flex-direction: column;
+  }
+  /* The tab strip sits above the session; the chat takes whatever is left. */
+  .pane {
+    flex: 1;
+    min-height: 0;
   }
   .rail-toggle {
     display: none;
@@ -91,7 +100,8 @@
     }
   }
   .dash {
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
   }
 

@@ -196,17 +196,6 @@
   ] as const
 
   const running = $derived(chat.sessionState === 'running')
-  const status = $derived(
-    chat.status !== 'online'
-      ? { k: 'offline', t: 'offline' }
-      : chat.sessionState === 'starting'
-        ? { k: 'busy', t: 'starting' }
-        : chat.sessionState === 'running'
-          ? { k: 'busy', t: 'working' }
-          : chat.sessionState === 'awaiting_permission'
-            ? { k: 'busy', t: 'needs you' }
-            : { k: 'live', t: 'idle' },
-  )
 
   function hasBody(blocks: { type: string; text?: string }[]): boolean {
     return blocks.some(
@@ -226,9 +215,10 @@
     <button class="hbtn home deskonly" onclick={() => app.back()} aria-label="Home" title="Home">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5L12 3l9 7.5" /><path d="M5 9.5V20a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V9.5" /></svg>
     </button>
+    <!-- The tab above owns this session's name and status, so the header carries
+         what the tab can't: where it is running. -->
     <div class="htitle" title={chat.cwd}>
-      <span class="sdot" data-k={status.k}></span>
-      <span class="tname">{chat.title || chat.cwd.split('/').slice(-1)[0] || 'session'}</span>
+      <span class="tpath mono">{chat.cwd}</span>
     </div>
     <button class="hbtn menu" onclick={() => (menuOpen = !menuOpen)} aria-label="Menu">⋯</button>
     {#if menuOpen}
@@ -504,30 +494,17 @@
     gap: 9px;
     padding: 0 6px;
   }
-  .tname {
-    font-size: 15px;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    color: var(--text);
+  /* Paths keep their tail visible (rtl trick); plaintext stops the leading
+     slash jumping to the end. */
+  .tpath {
+    font-size: 12px;
+    color: var(--text-4);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .sdot {
-    flex: none;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--text-4);
-  }
-  .sdot[data-k='live'] {
-    background: var(--live);
-  }
-  .sdot[data-k='busy'] {
-    background: var(--busy);
-  }
-  .sdot[data-k='offline'] {
-    background: var(--alert);
+    direction: rtl;
+    unicode-bidi: plaintext;
+    text-align: left;
   }
   .menu-scrim {
     position: fixed;

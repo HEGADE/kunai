@@ -197,7 +197,15 @@ jumping to the end.
 - Sessions in the sidebar are single-line rows: a chat-bubble icon and the title,
   with a right-edge fade instead of a hard ellipsis (no path, time, or machine
   chip). Active sessions get a small presence dot on the icon.
-- The chat header title is plain left-aligned text with a status dot, not a pill.
+- Open sessions live in a tab strip above the chat (`Tabs.svelte`), terminal-style.
+  Each tab keeps its own `ChatConnection` alive, not just the active one, so
+  switching is instant and every tab's dot reports that session's real state: a
+  tab is an agent that keeps working while you look at another one, so the strip
+  doubles as a status board (amber pulses when a session needs you). Closing a tab
+  only detaches the view; ending a session is a separate, explicit action.
+- The tab owns a session's name and status, so the chat header carries what the
+  tab cannot: the cwd, as a muted mono path (rtl-ellipsis). Do not repeat the
+  title or the status dot there.
 - Code syntax highlighting is deliberately desaturated (a neutral brightness ramp);
   diffs use the muted green and red at low opacity.
 

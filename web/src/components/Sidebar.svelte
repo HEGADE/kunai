@@ -68,8 +68,8 @@
   async function remove(e: MouseEvent, m: TaggedMeta) {
     e.stopPropagation()
     await closeSession(app.baseForMachine(m.machineId), m.id)
-    if (app.activeId === m.id && app.activeMachineId === m.machineId) app.back()
-    else app.refresh()
+    app.closeTabFor(m.machineId, m.id) // the session is gone, so its tab goes too
+    app.refresh()
   }
   async function resume(h: TaggedHistoryEntry) {
     if (resuming) return
