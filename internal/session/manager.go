@@ -42,6 +42,8 @@ type CreateOptions struct {
 	// ContextTokens seeds the context-usage meter for a resumed session, so it
 	// shows the real fill immediately instead of waiting for the next turn.
 	ContextTokens int64
+	// Mode is the permission mode to spawn in; empty means DefaultPermissionMode.
+	Mode string
 }
 
 // Create registers a new claude session and returns immediately; the CLI boots
@@ -70,7 +72,14 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	}
 	m.mu.Unlock()
 
-	drvOpts := claude.Options{Cwd: opts.Cwd, Model: opts.Model, Effort: opts.Effort}
+	// Resolve the permission mode here, once, so the spawned process and the mode
+	// we report to clients can never disagree.
+	mode := opts.Mode
+	if mode == "" {
+		mode = DefaultPermissionMode
+	}
+
+	drvOpts := claude.Options{Cwd: opts.Cwd, Model: opts.Model, Effort: opts.Effort, PermissionMode: mode}
 	if opts.Resume != "" {
 		drvOpts.Resume = opts.Resume
 	} else {
@@ -81,6 +90,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	s := newSession(id, opts.Cwd, opts.Title, drv)
 	s.model = opts.Model
 	s.effort = opts.Effort
+	s.mode = mode
 	s.contextTokens = opts.ContextTokens
 	if len(opts.Seed) > 0 {
 		s.Seed(opts.Seed)

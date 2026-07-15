@@ -87,6 +87,14 @@ const (
 	EvRateLimit          = "rate_limit"
 )
 
+// DefaultPermissionMode is the mode every session starts in — new, resumed, or
+// respawned. Auto lets Claude get on with safe work and stop only for what
+// genuinely needs a decision: these sessions are usually driven from a phone,
+// where a prompt per tool call is the difference between useful and unusable.
+// It is applied when the process is spawned, so it holds from the first tool
+// call; the composer can still switch any session to another mode.
+const DefaultPermissionMode = "auto"
+
 // Turn/session states.
 const (
 	StateStarting = "starting" // claude process is booting

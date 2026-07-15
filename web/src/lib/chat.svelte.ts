@@ -40,7 +40,9 @@ export class ChatConnection {
   // from the top. Stays true across reconnects (they only replay a small gap).
   ready = $state(false)
   sessionState = $state<SessionState>('idle')
-  mode = $state<PermissionMode>('default')
+  // Sessions start in auto (see session.DefaultPermissionMode); seed it so the
+  // composer doesn't flash "Ask" before the hello frame confirms it.
+  mode = $state<PermissionMode>('auto')
   // Seed model/effort to the app defaults so the composer shows a real label
   // (Opus 4.8 / High) immediately, before the hello frame lands. The server now
   // always sends a concrete model/effort, but keep the guard below so an empty

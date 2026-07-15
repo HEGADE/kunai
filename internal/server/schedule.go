@@ -14,11 +14,18 @@ import (
 // in an autonomous permission mode, and send the prompt. It returns promptly —
 // the session runs asynchronously, unbound to any request.
 func (s *Server) fireJob(j schedule.Job) error {
+	// An unattended run must not stall on an approval prompt, so a job with no
+	// mode of its own takes edits rather than the interactive default.
+	mode := j.Target.Mode
+	if mode == "" {
+		mode = "acceptEdits"
+	}
 	opts := session.CreateOptions{
 		Cwd:    j.Target.Cwd,
 		Title:  j.Name,
 		Model:  j.Target.Model,
 		Effort: j.Target.Effort,
+		Mode:   mode, // set at spawn, so it holds from the first tool call
 	}
 	if opts.Model == "" {
 		opts.Model = defaultModel
@@ -38,15 +45,6 @@ func (s *Server) fireJob(j schedule.Job) error {
 		return err
 	}
 	s.armSession(sess)
-
-	// Unattended runs must not stall on an approval prompt.
-	mode := j.Target.Mode
-	if mode == "" {
-		mode = "acceptEdits"
-	}
-	if mode != "default" {
-		_ = sess.SetPermissionMode(mode)
-	}
 	return sess.Prompt(j.Prompt, nil, nil)
 }
 

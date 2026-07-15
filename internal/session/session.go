@@ -113,7 +113,7 @@ func newSession(id, cwd, title string, drv driver) *Session {
 		drv:             drv,
 		title:           title,
 		state:           StateStarting,
-		mode:            "default",
+		mode:            DefaultPermissionMode, // Create overrides when asked for another
 		buf:             newRing(ringCapacity),
 		subs:            make(map[*Subscriber]struct{}),
 		pending:         make(map[string]AppEvent),
