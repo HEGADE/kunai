@@ -60,7 +60,15 @@ type AppEvent struct {
 	IsError    bool    `json:"is_error,omitempty"`
 	DurationMs int64   `json:"duration_ms,omitempty"`
 	Tokens     int64   `json:"tokens,omitempty"`   // total tokens (input+output+cache) for the turn
-	CostUSD    float64 `json:"cost_usd,omitempty"` // total_cost_usd for the turn
+	CostUSD    float64 `json:"cost_usd,omitempty"` // this turn's cost (see turnResult)
+
+	// "result": how the turn's tokens break down, summed over its model calls.
+	// New is what the model read fresh and cached is conversation it re-read on
+	// each tool call, which is why a long turn's total runs to millions while
+	// costing little — cached reads bill at a fraction of new input.
+	NewTokens    int64 `json:"new_tokens,omitempty"`
+	CachedTokens int64 `json:"cached_tokens,omitempty"`
+	OutputTokens int64 `json:"output_tokens,omitempty"`
 
 	// "tool_result" (ToolUseID + IsError reused from above)
 	Content   string `json:"content,omitempty"`

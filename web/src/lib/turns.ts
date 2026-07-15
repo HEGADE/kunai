@@ -26,6 +26,9 @@ export interface Turn {
   files: FileChange[]
   durationMs?: number
   tokens?: number
+  newTokens?: number
+  cachedTokens?: number
+  outputTokens?: number
   costUsd?: number
 }
 
@@ -59,6 +62,9 @@ export function groupTurns(items: Item[]): Turn[] {
       t.blocks.push(...it.blocks)
       if (it.durationMs != null) t.durationMs = it.durationMs
       if (it.tokens != null) t.tokens = it.tokens
+      if (it.newTokens != null) t.newTokens = it.newTokens
+      if (it.cachedTokens != null) t.cachedTokens = it.cachedTokens
+      if (it.outputTokens != null) t.outputTokens = it.outputTokens
       if (it.costUsd != null) t.costUsd = it.costUsd
     }
   }

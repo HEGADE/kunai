@@ -11,7 +11,16 @@ import type {
 
 export type Item =
   | { role: 'user'; text: string; attachments?: Attachment[] }
-  | { role: 'assistant'; blocks: Block[]; durationMs?: number; tokens?: number; costUsd?: number }
+  | {
+      role: 'assistant'
+      blocks: Block[]
+      durationMs?: number
+      tokens?: number
+      newTokens?: number
+      cachedTokens?: number
+      outputTokens?: number
+      costUsd?: number
+    }
 
 // A prompt waiting for the running turn to finish. The queue is the server's,
 // not ours: it survives a dropped socket and runs without a client attached.
@@ -198,7 +207,15 @@ export class ChatConnection {
             if (it.role === 'assistant') {
               this.items = [
                 ...this.items.slice(0, k),
-                { ...it, durationMs: ev.duration_ms, tokens: ev.tokens, costUsd: ev.cost_usd },
+                {
+                  ...it,
+                  durationMs: ev.duration_ms,
+                  tokens: ev.tokens,
+                  newTokens: ev.new_tokens,
+                  cachedTokens: ev.cached_tokens,
+                  outputTokens: ev.output_tokens,
+                  costUsd: ev.cost_usd,
+                },
                 ...this.items.slice(k + 1),
               ]
               break

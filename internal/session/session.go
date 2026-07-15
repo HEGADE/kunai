@@ -653,11 +653,14 @@ func parseResult(raw json.RawMessage) AppEvent {
 	// assistant usage instead; see pump).
 	tokens := r.Usage.Input + r.Usage.Output + r.Usage.CacheCreate + r.Usage.CacheRead
 	return AppEvent{
-		T:          EvResult,
-		Message:    r.Subtype,
-		IsError:    r.IsError,
-		DurationMs: r.DurationMs,
-		Tokens:     tokens,
-		CostUSD:    r.CostUSD,
+		T:            EvResult,
+		Message:      r.Subtype,
+		IsError:      r.IsError,
+		DurationMs:   r.DurationMs,
+		Tokens:       tokens,
+		NewTokens:    r.Usage.Input + r.Usage.CacheCreate, // read fresh, billed in full
+		CachedTokens: r.Usage.CacheRead,                   // context re-read, billed at a fraction
+		OutputTokens: r.Usage.Output,
+		CostUSD:      r.CostUSD,
 	}
 }

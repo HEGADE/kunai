@@ -122,6 +122,10 @@ export interface AppEvent {
   is_error?: boolean
   duration_ms?: number
   tokens?: number
+  // result: the turn's token split (new = read fresh, cached = context re-read)
+  new_tokens?: number
+  cached_tokens?: number
+  output_tokens?: number
   cost_usd?: number
   // tool_result (tool_use_id + is_error reused)
   content?: string
