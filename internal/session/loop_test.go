@@ -371,3 +371,37 @@ func TestLoopTakesTheAutonomousModeAndGivesItBack(t *testing.T) {
 		t.Fatalf("mode after the loop = %q, want the session's own mode back (auto)", got)
 	}
 }
+
+// A mode change has to reach attached clients, not just the CLI. The loop borrows
+// acceptEdits on its own, and without this the composer went on claiming "Auto"
+// while the session was actually accepting every edit.
+func TestModeChangeReachesClients(t *testing.T) {
+	fastLoop(t)
+	f := newFakeDriver()
+	s := newSession("l13", "/tmp/p", "", f)
+	defer s.Close()
+	s.SetPermissionMode("auto")
+
+	_, _, sub := s.Attach(0)
+	if err := s.StartLoop(LoopConfig{Prompt: "go", MaxIters: 1, MaxUSD: 100}); err != nil {
+		t.Fatal(err)
+	}
+	waitPrompts(t, f, 1)
+	endTurn(f, 0.01) // the only iteration ends, so the loop does, restoring the mode
+
+	var modes []string
+	deadline := time.After(2 * time.Second)
+	for len(modes) < 2 {
+		select {
+		case ev := <-sub.Events():
+			if ev.T == EvMode {
+				modes = append(modes, ev.Mode)
+			}
+		case <-deadline:
+			t.Fatalf("saw mode events %v, want the borrow and the hand-back", modes)
+		}
+	}
+	if modes[0] != LoopPermissionMode || modes[1] != "auto" {
+		t.Fatalf("mode events = %v, want [%s auto]", modes, LoopPermissionMode)
+	}
+}

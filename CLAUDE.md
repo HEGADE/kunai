@@ -178,7 +178,7 @@ Contracts that must stay in sync manually:
   `AppEvent` is one flat struct shared by every event tag, so a new field means
   editing both files and saying which tag it belongs to: `tool_result`, the token
   split on `result`, `context_tokens`, `attachments`, `queued`/`unqueued`,
-  `project`, `compact`, and `loop` all live there.
+  `project`, `compact`, `loop`, and `mode` all live there.
 - Session state strings (`starting|idle|running|awaiting_permission`) appear in
   both, plus status maps in `Chat.svelte`/`Sidebar.svelte`.
 - `MachineInfo` (`machines.go`) mirrors `web/src/lib/types.ts`, and `/api/stats`
@@ -233,6 +233,10 @@ Behavioral invariants that were bugs before (do not regress):
   first file write and did nothing). This is the same trade the scheduler makes in
   `fireJob`. A loop must also not fire the per-turn "done" notification on every
   iteration; it announces its own ending instead.
+- A permission mode change must be broadcast, not just sent to the CLI. It does
+  not always come from a click: a loop borrows `acceptEdits` and hands it back, so
+  a mode set server-side has to reach attached clients or the composer keeps
+  showing the mode you last picked while the session runs in another one.
 - A compaction (`/compact`, or automatic near the limit) is context, not
   conversation. The CLI feeds the summary back as a plain-string `user` frame and
   writes it to the transcript flagged `isCompactSummary`; both must be dropped.

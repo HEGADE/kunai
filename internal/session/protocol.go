@@ -124,6 +124,7 @@ const (
 	EvToolResult         = "tool_result"
 	EvCompact            = "compact"
 	EvLoop               = "loop"
+	EvMode               = "mode"
 	EvResult             = "result"
 	EvState              = "state"
 	EvError              = "error"

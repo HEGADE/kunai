@@ -274,6 +274,11 @@ export class ChatConnection {
       case 'state':
         if (ev.state) this.sessionState = ev.state
         break
+      case 'mode':
+        // The server changes this too, not just the picker: a loop borrows
+        // acceptEdits while it runs and gives the mode back when it ends.
+        if (ev.mode) this.mode = ev.mode as PermissionMode
+        break
       case 'rate_limit':
         if (ev.resets_at) {
           this.rateLimit = {

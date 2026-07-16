@@ -545,6 +545,10 @@ func (s *Session) SetModel(model string) error {
 func (s *Session) SetPermissionMode(mode string) error {
 	s.mu.Lock()
 	s.mode = mode
+	// A mode change does not always come from a click: a loop borrows acceptEdits
+	// for its duration and hands it back at the end. Say so, or the composer goes
+	// on showing the mode you last picked while the session runs in another one.
+	s.emitLocked(s.sequenceLocked(AppEvent{T: EvMode, Mode: mode}))
 	s.mu.Unlock()
 	return s.drv.SetPermissionMode(mode)
 }

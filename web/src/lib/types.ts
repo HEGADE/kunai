@@ -106,6 +106,7 @@ export interface AppEvent {
     | 'tool_result'
     | 'compact'
     | 'loop'
+    | 'mode'
     | 'queued'
     | 'unqueued'
     | 'project'
