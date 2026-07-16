@@ -165,8 +165,78 @@ Set with a flag or an environment variable.
 | `-model`      | `KUNAI_MODEL`      |                  | Default model for new sessions                     |
 | `-push-email` | `KUNAI_PUSH_EMAIL` |                  | VAPID contact for Web Push                         |
 
-Installer overrides: `KUNAI_PORT` (default 8443), plus `KUNAI_HUB_URL` and
-`KUNAI_PUSH_EMAIL`.
+Thermal guard (see [Unattended runs and thermal safety](#unattended-runs-and-thermal-safety));
+all off or inert by default:
+
+| Flag                 | Env                       | Default | Description                                             |
+| -------------------- | ------------------------- | ------- | ------------------------------------------------------- |
+| `-thermal-guard`     | `KUNAI_THERMAL_GUARD`     | `false` | Enable the thermal safety guard by default              |
+| `-thermal-soft-c`    | `KUNAI_THERMAL_SOFT_C`    | `90`    | Trip temperature in Celsius (Linux; `0` disables it)    |
+| `-thermal-max-hours` | `KUNAI_THERMAL_MAX_HOURS` | `0`     | Stop unattended work after this many hours awake (`0` off) |
+| `-thermal-hard-c`    | `KUNAI_THERMAL_HARD_C`    | `0`     | Power-off ceiling, with `-thermal-action=poweroff`      |
+| `-thermal-action`    | `KUNAI_THERMAL_ACTION`    | `sleep` | Hard-trip action: `sleep` or `poweroff`                 |
+
+Installer overrides: `KUNAI_PORT` (default 8443), `KUNAI_HUB_URL`,
+`KUNAI_PUSH_EMAIL`, and `KUNAI_THERMAL_PRIVILEGED` (see below).
+
+## Unattended runs and thermal safety
+
+Kunai can keep working while you are away. A **loop** re-feeds one task every time
+a turn ends (Ralph's technique), so an agent keeps going with nobody at the
+keyboard, and a session a phone left mid-turn keeps running on its own. Loops are
+bounded so they cannot run forever: one stops at whichever of its iteration or
+spend limits comes first, or when the model reports the task complete.
+
+Unattended work can pin the CPU for hours, and a closed laptop lid doing that
+cooks the machine. The **thermal guard** is the safety net that makes leaving it
+running safe. It is off by default and turned on per machine in Settings.
+
+### The guard (no privileges)
+
+When the host runs too hot, or has been held awake past a wall-clock cap, the
+guard stops every session and drops the keep-awake hold. On a closed-lid machine
+that lets it sleep, which drops the CPU to idle: sleep is the cooldown. Whichever
+limit comes first wins, the same shape as a loop's caps. It trips only on
+sustained heat, not a one-off spike.
+
+Temperature is read directly on Linux (`/sys/class/hwmon`). On macOS it needs the
+privileged grant below; without it the guard falls back to the wall-clock cap.
+
+### Lid-closed work and power-off (privileged, opt-in)
+
+Keeping a laptop working with the lid **shut**, reading macOS temperature, and
+powering the host off as a last resort each need a privilege the plain service
+does not have. They stay off until you install the grant, deliberately, once:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/HEGADE/kunai/main/install.sh | KUNAI_THERMAL_PRIVILEGED=1 bash
+```
+
+Put `KUNAI_THERMAL_PRIVILEGED=1` on the **`bash`** side of the pipe, as shown. A
+prefix before `curl` sets it for `curl` only and never reaches the script, so the
+grant is silently skipped.
+
+It prompts for your password once and grants exactly:
+
+- **macOS:** a sudoers NOPASSWD line for `pmset disablesleep` (hold the lid),
+  `powermetrics` (read temperature), and `shutdown -h now` (power off).
+- **Linux:** a polkit rule for `power-off` and the `handle-lid-switch` inhibitor.
+
+Nothing broader, and the installer prints what it granted. Enable the features in
+Settings afterward; they stay off until you do. To confirm the macOS grant landed:
+
+```sh
+ls -l /etc/sudoers.d/kunai-thermal
+sudo -n /usr/bin/pmset -a disablesleep 1 && sudo -n /usr/bin/pmset -a disablesleep 0 && echo "GRANT OK"
+```
+
+Power-off is the last resort: the guard's default action is to stop and cool, and
+a shutdown fires only if you turn it on **and** the host is still over a higher
+ceiling after everything of kunai's was already stopped, meaning the heat is not
+its load. A denied power-off is logged and survived, never forced. The macOS lid
+setting is sticky, so kunai clears it on a clean shutdown and again at the next
+start, undoing anything a crash left on. To clear it by hand:
+`sudo pmset -a disablesleep 0`.
 
 ## Security
 
