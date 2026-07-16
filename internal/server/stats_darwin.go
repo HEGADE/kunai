@@ -95,12 +95,25 @@ var (
 	tempWhen time.Time
 )
 
-const tempTTL = 10 * time.Second
+const (
+	tempTTL     = 10 * time.Second // refresh a real reading this often
+	tempFailTTL = 2 * time.Minute  // back off hard after a failed/empty read
+)
 
+// cpuTemp reads the cached temperature, refreshing at most every tempTTL. A
+// failed read (no sudoers grant, powermetrics missing, unparseable) backs off for
+// tempFailTTL instead: on a Mac that never opted into the privileged temperature
+// feature this is every stats poll and every guardian tick, and a failing sudo
+// every 10s forever would spam the auth log. The long backoff still notices the
+// grant being added within a couple of minutes, and a restart re-probes at once.
 func cpuTemp() float64 {
 	tempMu.Lock()
 	defer tempMu.Unlock()
-	if !tempWhen.IsZero() && time.Since(tempWhen) < tempTTL {
+	ttl := tempTTL
+	if tempVal <= 0 {
+		ttl = tempFailTTL
+	}
+	if !tempWhen.IsZero() && time.Since(tempWhen) < ttl {
 		return tempVal
 	}
 	tempVal = readPowermetricsTemp()
