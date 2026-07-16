@@ -68,6 +68,7 @@ type Server struct {
 	lid        lidKeeper           // opt-in, privileged: keep working with the lid shut
 	sched      *schedule.Scheduler // runs prompts at a time / after quota reset
 	guardian   *guardian           // whole-machine thermal safety net
+	clis       []CLIProfile        // named Claude CLIs (accounts) a session can run on
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -98,6 +99,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	// On a trip the guard also drops the lid hold, so a closed-lid Mac can sleep.
 	s.guardian.releaseLid = func() { _ = s.lid.Set(false) }
 	s.loadThermal() // a persisted policy overrides the flag defaults
+	s.clis = loadCLIs(cfg.DataDir)
 	s.sched = schedule.New(filepath.Join(cfg.DataDir, "schedule.json"), s.fireJob)
 	return s
 }
@@ -202,6 +204,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Model  string `json:"model"`
 		Effort string `json:"effort"`
 		Resume string `json:"resume"`
+		CLI    string `json:"cli"` // which Claude account; empty = the default
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -222,7 +225,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// Session start blocks on the CLI init handshake; give it room.
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
-	opts := session.CreateOptions{Cwd: req.Cwd, Title: req.Title, Model: req.Model, Effort: req.Effort, Resume: req.Resume}
+	cli := s.resolveCLI(req.CLI)
+	opts := session.CreateOptions{
+		Cwd: req.Cwd, Title: req.Title, Model: req.Model, Effort: req.Effort, Resume: req.Resume,
+		CLIName: cli.Name, Bin: cli.Bin, Env: cli.Env,
+	}
 	if req.Resume != "" {
 		// Replay the prior conversation into the buffer so the client doesn't
 		// open onto an empty transcript, and seed the context meter from the

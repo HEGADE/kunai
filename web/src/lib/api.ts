@@ -27,7 +27,7 @@ export function listSessions(base: string): Promise<Meta[]> {
 
 export function createSession(
   base: string,
-  body: { cwd: string; title?: string; model?: string; effort?: string; resume?: string },
+  body: { cwd: string; title?: string; model?: string; effort?: string; resume?: string; cli?: string },
 ): Promise<Meta> {
   return fetch(at(base, '/api/sessions'), {
     method: 'POST',

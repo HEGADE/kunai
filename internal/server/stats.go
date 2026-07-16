@@ -57,6 +57,9 @@ type Stats struct {
 	// RateResets maps a usage window ("five_hour"/"seven_day") to the unix time
 	// it resets, as last reported by the CLI. Drives scheduler previews.
 	RateResets map[string]int64 `json:"rate_resets,omitempty"`
+	// CLIs are the named Claude accounts a new session can pick on this machine,
+	// in config order (the first is the default). Drives the New Session picker.
+	CLIs []string `json:"clis,omitempty"`
 }
 
 var (
@@ -92,6 +95,9 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	st.ThermalHardC, st.ThermalAction = gc.HardC, gc.Action
 	st.KeepLid, st.KeepLidSupp = s.lid.Enabled(), s.lid.Supported()
 	st.ThermalPrivileged = thermalPrivileged()
+	if len(s.clis) > 1 {
+		st.CLIs = s.cliNames() // only worth sending when there is a real choice
+	}
 	writeJSON(w, http.StatusOK, st)
 }
 

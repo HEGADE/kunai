@@ -9,6 +9,10 @@
   const modelOpts = MODELS
   let model = $state(DEFAULT_MODEL)
   let effort = $state(DEFAULT_EFFORT)
+  // Which Claude account (CLI) to run on, offered only when the chosen machine
+  // has more than one configured. Empty means the machine's default (the first).
+  let cli = $state('')
+  const clis = $derived(app.machines.find((m) => m.id === machineId)?.stats?.clis ?? [])
 
   let listing = $state<Listing | null>(null)
   let loading = $state(true)
@@ -77,6 +81,9 @@
         cwd: listing.path,
         model: model || undefined,
         effort: effort || undefined,
+        // Only send a choice the machine actually offers; switching machines can
+        // strand a name that machine doesn't have, and empty just means default.
+        cli: clis.includes(cli) ? cli : undefined,
       })
       app.open(machineId, meta.id)
     } catch (e) {
@@ -182,6 +189,16 @@
     </div>
 
     <div class="opts">
+      {#if clis.length > 1}
+        <div class="orow">
+          <span class="olabel">Account</span>
+          <div class="oseg">
+            {#each clis as c, i (c)}
+              <button class="oc" class:on={(cli || clis[0]) === c} onclick={() => (cli = c)}>{c}</button>
+            {/each}
+          </div>
+        </div>
+      {/if}
       <div class="orow">
         <span class="olabel">Model</span>
         <div class="oseg">
