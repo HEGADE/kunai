@@ -1,9 +1,12 @@
 package server
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
+
+var errPoweroffDenied = errors.New("poweroff denied")
 
 // The guardian is a safety net that fires while nobody is watching, so every way
 // it trips and every way it must NOT trip has to be proven, not assumed.
@@ -92,6 +95,21 @@ func TestGuardianTripStopsAndReleasesHold(t *testing.T) {
 	}
 	if notified != "thermal:host too hot" {
 		t.Fatalf("notify = %q, want thermal:host too hot", notified)
+	}
+}
+
+// A trip also drops the lid-closed hold, so a Mac held awake with the lid shut is
+// free to sleep and cool.
+func TestGuardianTripReleasesLidHold(t *testing.T) {
+	g, _, _ := newTestGuardian(guardConfig{Enabled: true, SoftC: 90})
+	lidReleased := 0
+	g.releaseLid = func() { lidReleased++ }
+
+	for i := 0; i < guardTripN; i++ {
+		g.check(99)
+	}
+	if lidReleased != 1 {
+		t.Fatalf("lid released %d times, want 1", lidReleased)
 	}
 }
 
@@ -192,6 +210,68 @@ func TestGuardianTimeCapOnlyWhileHeld(t *testing.T) {
 	}
 	if !g.awakeFrom.IsZero() {
 		t.Fatal("awakeFrom not cleared when the hold is down")
+	}
+}
+
+// The hard ceiling powers off only when the host is STILL over the danger line
+// after the soft trip already stopped everything, and only when the owner armed
+// the poweroff action. This drives it through an injected runner so the real
+// command is asserted without a real shutdown.
+func TestGuardianHardTripPowersOff(t *testing.T) {
+	var ran [][]string
+	prev := execRun
+	execRun = func(name string, args ...string) error {
+		ran = append(ran, append([]string{name}, args...))
+		return nil
+	}
+	defer func() { execRun = prev }()
+
+	g, stop, _ := newTestGuardian(guardConfig{Enabled: true, SoftC: 90, HardC: 100, Action: actionPowerOff})
+	for i := 0; i < guardTripN; i++ {
+		g.check(103)
+	}
+	if len(ran) != 1 {
+		t.Fatalf("poweroff ran %d times, want 1: %v", len(ran), ran)
+	}
+	if stop.calls == 0 {
+		t.Fatal("hard trip did not stop the sessions before powering off")
+	}
+}
+
+// The default action never powers off, however hot it gets: nothing privileged
+// happens unless the owner deliberately turns it on.
+func TestGuardianDefaultActionNeverPowersOff(t *testing.T) {
+	var ran int
+	prev := execRun
+	execRun = func(name string, args ...string) error { ran++; return nil }
+	defer func() { execRun = prev }()
+
+	g, stop, _ := newTestGuardian(guardConfig{Enabled: true, SoftC: 90, HardC: 100, Action: actionSleep})
+	for i := 0; i < guardTripN*2; i++ {
+		g.check(110)
+	}
+	if ran != 0 {
+		t.Fatalf("sleep action ran a command %d times, want 0", ran)
+	}
+	// It still soft-trips (stops + sleeps); it just never escalates.
+	if stop.calls == 0 || !g.tripped() {
+		t.Fatal("the soft trip should still have fired")
+	}
+}
+
+// A poweroff that is denied (no install-time privilege) must not panic or wedge:
+// the soft stop already happened, so a failed escalation is logged and survived.
+func TestGuardianHardTripSurvivesDeniedPoweroff(t *testing.T) {
+	prev := execRun
+	execRun = func(name string, args ...string) error { return errPoweroffDenied }
+	defer func() { execRun = prev }()
+
+	g, stop, _ := newTestGuardian(guardConfig{Enabled: true, SoftC: 90, HardC: 100, Action: actionPowerOff})
+	for i := 0; i < guardTripN; i++ {
+		g.check(105)
+	}
+	if stop.calls == 0 {
+		t.Fatal("a denied poweroff should still have stopped the sessions")
 	}
 }
 

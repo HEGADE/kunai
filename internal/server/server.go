@@ -51,6 +51,8 @@ type Config struct {
 	ThermalGuard    bool    // enable the guardian by default
 	ThermalSoftC    float64 // trip temperature in Celsius (0 = no temp check)
 	ThermalMaxHours float64 // wall-clock cap on an unattended awake hold (0 = none)
+	ThermalHardC    float64 // Phase 2 poweroff ceiling (0 = never)
+	ThermalAction   string  // "sleep" (default) or "poweroff"
 }
 
 // Server wires the manager, config, and embedded PWA into an http.Handler.
@@ -63,6 +65,7 @@ type Server struct {
 	machines   *machineStore
 	disco      discoveryCache
 	awake      awake.Keeper        // opt-in keep-awake while locked/idle
+	lid        lidKeeper           // opt-in, privileged: keep working with the lid shut
 	sched      *schedule.Scheduler // runs prompts at a time / after quota reset
 	guardian   *guardian           // whole-machine thermal safety net
 }
@@ -82,13 +85,18 @@ func New(cfg Config, mgr *session.Manager) *Server {
 
 	machines := newMachineStore(filepath.Join(cfg.DataDir, "machines.json"))
 
-	s := &Server{cfg: cfg, mgr: mgr, pwa: webui.FS(), uploadsDir: uploads, machines: machines, awake: awake.New()}
+	s := &Server{cfg: cfg, mgr: mgr, pwa: webui.FS(), uploadsDir: uploads, machines: machines, awake: awake.New(), lid: newLidKeeper()}
 	s.loadAwake() // re-apply a persisted keep-awake preference on boot
-	s.guardian = newGuardian(mgr, s.awake, guardConfig{
+	s.loadLid()   // re-apply a persisted lid-closed preference (after boot-time unstick)
+	s.guardian = newGuardian(mgr, s.awake, clampGuardConfig(guardConfig{
 		Enabled:  cfg.ThermalGuard,
 		SoftC:    cfg.ThermalSoftC,
 		MaxHours: cfg.ThermalMaxHours,
-	})
+		HardC:    cfg.ThermalHardC,
+		Action:   cfg.ThermalAction,
+	}))
+	// On a trip the guard also drops the lid hold, so a closed-lid Mac can sleep.
+	s.guardian.releaseLid = func() { _ = s.lid.Set(false) }
 	s.loadThermal() // a persisted policy overrides the flag defaults
 	s.sched = schedule.New(filepath.Join(cfg.DataDir, "schedule.json"), s.fireJob)
 	return s
@@ -129,6 +137,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/machines/discover", s.handleDiscover)
 	mux.HandleFunc("POST /api/update", s.handleUpdate)
 	mux.HandleFunc("POST /api/awake", s.handleAwake)
+	mux.HandleFunc("POST /api/lid", s.handleLid)
 	mux.HandleFunc("GET /api/thermal", s.handleThermal)
 	mux.HandleFunc("POST /api/thermal", s.handleThermal)
 	mux.HandleFunc("GET /api/schedule", s.handleScheduleList)
@@ -157,6 +166,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 		_ = s.awake.Set(false) // release the keep-awake hold on graceful shutdown
+		_ = s.lid.Set(false)   // and drop the sticky lid hold, so nothing is stranded
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutCtx)

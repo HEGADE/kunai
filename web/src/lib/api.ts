@@ -95,6 +95,16 @@ export function setThermal(base: string, cfg: ThermalConfig): Promise<ThermalCon
   }).then((r) => json<ThermalConfig>(r))
 }
 
+// setLid toggles a machine's lid-closed hold (privileged; keeps working with the
+// lid shut). Returns the resolved state.
+export function setLid(base: string, enabled: boolean): Promise<{ enabled: boolean; supported: boolean }> {
+  return fetch(at(base, '/api/lid'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  }).then((r) => json<{ enabled: boolean; supported: boolean }>(r))
+}
+
 // updateMachine tells a machine to self-update: it downloads the latest release
 // binary, verifies it, swaps it in, and restarts. The server exits mid-response
 // as it restarts, so a dropped connection here is expected, not a failure.

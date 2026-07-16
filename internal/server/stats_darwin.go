@@ -3,9 +3,11 @@
 package server
 
 import (
+	"context"
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -74,8 +76,49 @@ func memInfo() (total, avail uint64) {
 	return total, pages * pagesize
 }
 
-// cpuTemp is a Phase 2 concern on macOS: reading die temperature needs sudo
-// (powermetrics) or a CGO IOKit/SMC dependency, so the CGO-free build reports 0
-// for now and the client hides the tile, exactly as it does for any unavailable
-// stat. The thermal guardian falls back to its wall-clock cap here.
-func cpuTemp() float64 { return 0 }
+// macOS has no /sys or sysctl key for die temperature; it lives in the SMC,
+// reachable only through the private IOKit interface (needs CGO, which this build
+// avoids) or `powermetrics` (needs root). The owner grants a NOPASSWD sudoers
+// entry for powermetrics at install time, which is the door this uses. Absolute
+// paths for launchd's minimal PATH, like the rest of this file.
+//
+// It is cached: cpuTemp is read by both the stats endpoint and the guardian loop,
+// each every ~15s, and a fresh sudo+powermetrics spawn per call would be wasteful
+// and noisy. One reading every tempTTL is plenty for a thermal guard.
+//
+// UNVERIFIED on real hardware from the Linux dev box. On Apple Silicon the SMC
+// sampler's coverage is patchy; if the parse finds nothing the guard degrades to
+// its wall-clock cap, which is the safe direction.
+var (
+	tempMu   sync.Mutex
+	tempVal  float64
+	tempWhen time.Time
+)
+
+const tempTTL = 10 * time.Second
+
+func cpuTemp() float64 {
+	tempMu.Lock()
+	defer tempMu.Unlock()
+	if !tempWhen.IsZero() && time.Since(tempWhen) < tempTTL {
+		return tempVal
+	}
+	tempVal = readPowermetricsTemp()
+	tempWhen = time.Now()
+	return tempVal
+}
+
+func readPowermetricsTemp() float64 {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	// -n 1: one sample then exit. -i 200: sample over 200ms. sudo -n: fail rather
+	// than prompt if the NOPASSWD entry is missing.
+	out, err := exec.CommandContext(ctx, "/usr/bin/sudo", "-n",
+		"/usr/bin/powermetrics", "--samplers", "smc", "-i", "200", "-n", "1").Output()
+	if err != nil {
+		return 0
+	}
+	// The parse lives in a platform-neutral file so it can be unit-tested on the
+	// Linux dev box against captured powermetrics output.
+	return parsePowermetricsTemp(string(out))
+}

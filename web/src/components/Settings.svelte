@@ -1,7 +1,7 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
   import { enablePush, disablePush, isSubscribed, pushState } from '../lib/push'
-  import { setKeepAwake, setThermal } from '../lib/api'
+  import { setKeepAwake, setThermal, setLid } from '../lib/api'
   import type { Machine } from '../lib/types'
 
   const st = $derived(app.stats)
@@ -69,7 +69,10 @@
   // the thresholds and commit on change. Each posts to that machine's own
   // /api/thermal and refreshes the fan-out.
   let thBusy = $state<Record<string, boolean>>({})
-  async function saveThermal(m: Machine, patch: Partial<{ enabled: boolean; soft_c: number; max_hours: number }>) {
+  async function saveThermal(
+    m: Machine,
+    patch: Partial<{ enabled: boolean; soft_c: number; max_hours: number; hard_c: number; action: 'sleep' | 'poweroff' }>,
+  ) {
     if (thBusy[m.id]) return
     thBusy = { ...thBusy, [m.id]: true }
     machErr = ''
@@ -78,6 +81,8 @@
         enabled: patch.enabled ?? m.stats?.thermal_guard ?? false,
         soft_c: patch.soft_c ?? m.stats?.thermal_soft_c ?? 90,
         max_hours: patch.max_hours ?? m.stats?.thermal_max_hours ?? 0,
+        hard_c: patch.hard_c ?? m.stats?.thermal_hard_c ?? 0,
+        action: patch.action ?? (m.stats?.thermal_action as 'sleep' | 'poweroff') ?? 'sleep',
       })
       await app.refresh()
     } catch (e) {
@@ -86,6 +91,24 @@
       const b = { ...thBusy }
       delete b[m.id]
       thBusy = b
+    }
+  }
+
+  // Per-machine lid-closed hold (privileged). Same shape as keep-awake.
+  let lidBusy = $state<Record<string, boolean>>({})
+  async function toggleLid(m: Machine) {
+    if (lidBusy[m.id]) return
+    lidBusy = { ...lidBusy, [m.id]: true }
+    machErr = ''
+    try {
+      await setLid(m.url, !m.stats?.keep_lid)
+      await app.refresh()
+    } catch (e) {
+      machErr = (e as Error).message
+    } finally {
+      const b = { ...lidBusy }
+      delete b[m.id]
+      lidBusy = b
     }
   }
 
@@ -193,6 +216,28 @@
               </button>
             </div>
           {/if}
+          {#if m.online && m.stats?.keep_lid_supported}
+            <div class="irow awrow">
+              <span class="awk">
+                <span class="awname">Keep working with the lid closed</span>
+                <span class="awsub warn">
+                  Needs the one-time admin setup from install. Overrides lid-close sleep, so watch the
+                  heat; the guard below is what makes this safe to leave.
+                </span>
+              </span>
+              <button
+                class="switch"
+                class:on={m.stats.keep_lid}
+                onclick={() => toggleLid(m)}
+                disabled={lidBusy[m.id]}
+                role="switch"
+                aria-checked={m.stats.keep_lid}
+                aria-label="Toggle lid-closed hold"
+              >
+                <span class="knob"></span>
+              </button>
+            </div>
+          {/if}
           {#if m.online && m.stats}
             <div class="irow awrow">
               <span class="awk">
@@ -248,6 +293,44 @@
                   <span class="thu">hours awake (0 = off)</span>
                 </label>
               </div>
+              {#if m.stats.cpu_temp_c > 0}
+                <div class="thpower">
+                  <label class="thcheck">
+                    <input
+                      type="checkbox"
+                      checked={m.stats.thermal_action === 'poweroff'}
+                      disabled={thBusy[m.id]}
+                      onchange={(e) =>
+                        saveThermal(m, {
+                          action: e.currentTarget.checked ? 'poweroff' : 'sleep',
+                          hard_c: e.currentTarget.checked ? m.stats?.thermal_hard_c || 100 : 0,
+                        })}
+                    />
+                    <span class="thck">
+                      <span class="thcname">Power off if it keeps climbing</span>
+                      <span class="thcsub">
+                        Last resort if it stays hot after everything stopped. Needs the admin setup;
+                        the machine shuts down.
+                      </span>
+                    </span>
+                  </label>
+                  {#if m.stats.thermal_action === 'poweroff'}
+                    <label class="thlim">
+                      <span class="thk">Power off at</span>
+                      <input
+                        class="thin mono"
+                        type="number"
+                        min="50"
+                        max="105"
+                        value={m.stats.thermal_hard_c}
+                        disabled={thBusy[m.id]}
+                        onchange={(e) => saveThermal(m, { hard_c: +e.currentTarget.value })}
+                      />
+                      <span class="thu">°C</span>
+                    </label>
+                  {/if}
+                </div>
+              {/if}
             {/if}
           {/if}
         {/each}
@@ -443,6 +526,42 @@
   }
   .thu {
     font-size: 11px;
+    color: var(--text-4);
+  }
+  /* A warning subline earns the one status colour reserved for "be careful". */
+  .awsub.warn {
+    color: color-mix(in srgb, var(--busy) 80%, var(--text-3));
+  }
+  .thpower {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    margin: 4px 8px 10px 34px;
+    padding-top: 9px;
+    border-top: 1px solid var(--border);
+  }
+  .thcheck {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    cursor: pointer;
+  }
+  .thcheck input {
+    margin-top: 2px;
+    accent-color: var(--alert);
+  }
+  .thck {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .thcname {
+    font-size: 12.5px;
+    color: var(--text-2);
+  }
+  .thcsub {
+    font-size: 11px;
+    line-height: 1.45;
     color: var(--text-4);
   }
   .mdot {

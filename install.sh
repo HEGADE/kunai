@@ -335,6 +335,57 @@ else
   say "  $BIN_DIR/kunai -addr $TS_IP:$PORT -tls-cert $CRT -tls-key $KEY -data $DATA_DIR $IDENT_ARGS $PUSH_ARG"
 fi
 
+# --- thermal safety privileges (opt-in) ---------------------------------------
+#
+# The thermal guard's default action (stop everything, let the machine sleep to
+# cool) needs no privileges. Its Phase 2 escalations do: reading Mac temperature
+# (powermetrics), holding a Mac lid shut (pmset disablesleep), and powering the
+# machine off. Those are granted ONLY when the installer is run with
+# KUNAI_THERMAL_PRIVILEGED=1, and this prints exactly what it granted. Best-effort:
+# a failure here never fails the install, it just leaves those features off.
+if [ "${KUNAI_THERMAL_PRIVILEGED:-}" = "1" ]; then
+  say ""
+  say "${C_B}Granting thermal-safety privileges (you asked with KUNAI_THERMAL_PRIVILEGED=1):${C_RST}"
+  if [ "$OS" = "darwin" ]; then
+    # One sudoers file, validated before install so a bad line can never lock you
+    # out of sudo. NOPASSWD for exactly three commands, nothing broader.
+    SUDO_TMP="$(mktemp)"
+    cat > "$SUDO_TMP" <<EOF
+# kunai thermal safety — added by install.sh (KUNAI_THERMAL_PRIVILEGED=1)
+$USER ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep *, /usr/bin/powermetrics *, /sbin/shutdown -h now
+EOF
+    if sudo visudo -cf "$SUDO_TMP" >/dev/null 2>&1; then
+      sudo install -m 0440 "$SUDO_TMP" /etc/sudoers.d/kunai-thermal \
+        && say "  ${C_G}granted${C_RST} sudo (no password) for: pmset disablesleep, powermetrics, shutdown -h now" \
+        || say "  ${C_DIM}could not install sudoers file; thermal escalations stay off${C_RST}"
+    else
+      say "  ${C_DIM}sudoers validation failed; nothing granted${C_RST}"
+    fi
+    rm -f "$SUDO_TMP"
+  elif [ "$OS" = "linux" ]; then
+    # A polkit rule granting this user two actions: powering off (for the hard
+    # trip), and holding a handle-lid-switch inhibitor (for lid-closed work).
+    # Both are denied to an ordinary user by default, so both are needed.
+    RULE=/etc/polkit-1/rules.d/49-kunai-thermal.rules
+    if sudo tee "$RULE" >/dev/null 2>&1 <<EOF
+// kunai thermal safety — added by install.sh (KUNAI_THERMAL_PRIVILEGED=1)
+polkit.addRule(function(action, subject) {
+  if (subject.user == "$USER" && (
+      action.id == "org.freedesktop.login1.power-off" ||
+      action.id == "org.freedesktop.login1.inhibit-handle-lid-switch")) {
+    return polkit.Result.YES;
+  }
+});
+EOF
+    then
+      say "  ${C_G}granted${C_RST} power-off and lid-switch inhibit (polkit) to $USER"
+    else
+      say "  ${C_DIM}could not write polkit rule; escalations stay off${C_RST}"
+    fi
+  fi
+  say "  ${C_DIM}Enable the features in Settings on each machine; they stay off until you do.${C_RST}"
+fi
+
 # --- health check -------------------------------------------------------------
 
 URL="https://$FQDN:$PORT"

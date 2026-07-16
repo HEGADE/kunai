@@ -32,6 +32,8 @@ func main() {
 	flag.BoolVar(&cfg.ThermalGuard, "thermal-guard", envBool("KUNAI_THERMAL_GUARD", false), "enable the thermal safety guard by default (stops all sessions when the host overheats)")
 	flag.Float64Var(&cfg.ThermalSoftC, "thermal-soft-c", envFloat("KUNAI_THERMAL_SOFT_C", 90), "trip temperature in Celsius (Linux; 0 disables the temperature check)")
 	flag.Float64Var(&cfg.ThermalMaxHours, "thermal-max-hours", envFloat("KUNAI_THERMAL_MAX_HOURS", 0), "stop unattended work after this many hours awake (0 = no cap)")
+	flag.Float64Var(&cfg.ThermalHardC, "thermal-hard-c", envFloat("KUNAI_THERMAL_HARD_C", 0), "power-off ceiling in Celsius, used only with -thermal-action=poweroff (0 = never)")
+	flag.StringVar(&cfg.ThermalAction, "thermal-action", envOr("KUNAI_THERMAL_ACTION", "sleep"), "what a hard trip does: sleep (stop and cool) or poweroff (needs the install-time privilege)")
 	flag.Parse()
 	cfg.DataDir = *dataDir
 

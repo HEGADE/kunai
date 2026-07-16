@@ -271,10 +271,27 @@ Behavioral invariants that were bugs before (do not regress):
   read without root or CGO (so `cpuTemp()` returns 0 there and only the time cap
   can fire). The guard depends on a `stopper` interface, not the concrete
   `*session.Manager`, so its safety logic is unit-testable without spawning claude.
-  Powering the host off, true lid-closed operation (`pmset disablesleep` /
-  `HandleLidSwitch`), and reading Mac temperature are a deliberately separate,
-  privileged, default-off Phase 2 that needs an admin-installed escalation the
-  user service does not otherwise have.
+- The guard's privileged escalations (Phase 2, default off) are the hard-ceiling
+  poweroff, the lid-closed hold, and reading Mac temperature. Each needs a grant
+  the plain service lacks, added by `install.sh` only under
+  `KUNAI_THERMAL_PRIVILEGED=1`: a macOS sudoers NOPASSWD line for
+  `pmset`/`powermetrics`/`shutdown`, or a Linux polkit rule for
+  `org.freedesktop.login1.power-off` and
+  `org.freedesktop.login1.inhibit-handle-lid-switch`. Every privileged action goes
+  through the injectable `execRun` var so a test asserts the exact command without
+  running it. The poweroff is the LAST resort: it fires only when the host is still
+  over the hard ceiling after the soft trip already stopped everything of ours (so
+  the heat is not our load), and a denied poweroff is logged and survived, never
+  fatal. The lid hold is privileged on BOTH platforms, not just macOS: a Linux
+  block inhibitor on `handle-lid-switch` is denied to an unprivileged user
+  ("Failed to inhibit: Access denied"), so `lidhold_linux.go` watches for the
+  child dying at once and reports the refusal instead of recording a phantom hold.
+  macOS `pmset disablesleep` is sticky global state, so `lidhold_darwin.go` clears
+  it at boot (undoing a crash that left it on) and the server clears it on graceful
+  shutdown. Mac temperature comes from `sudo powermetrics`; its text parse lives in
+  the platform-neutral `thermal_parse.go` so it is testable on Linux even though
+  the reader is not. The whole Mac-privileged path is UNVERIFIED from a Linux dev
+  box and must be tested on a real Mac.
 - A compaction (`/compact`, or automatic near the limit) is context, not
   conversation. The CLI feeds the summary back as a plain-string `user` frame and
   writes it to the transcript flagged `isCompactSummary`; both must be dropped.

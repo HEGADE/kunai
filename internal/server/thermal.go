@@ -74,6 +74,23 @@ func clampGuardConfig(cfg guardConfig) guardConfig {
 	if cfg.MaxHours > guardMaxHours {
 		cfg.MaxHours = guardMaxHours
 	}
+	if cfg.HardC != 0 {
+		if cfg.HardC < guardMinSoftC {
+			cfg.HardC = guardMinSoftC
+		}
+		if cfg.HardC > guardMaxSoftC {
+			cfg.HardC = guardMaxSoftC
+		}
+		// A hard ceiling below the soft line is nonsense: the soft trip stops
+		// everything first, so the hard trip can only sit above it. Lift it clear.
+		if cfg.SoftC > 0 && cfg.HardC < cfg.SoftC {
+			cfg.HardC = cfg.SoftC
+		}
+	}
+	// Only two actions exist; anything else is the safe one.
+	if cfg.Action != actionPowerOff {
+		cfg.Action = actionSleep
+	}
 	return cfg
 }
 

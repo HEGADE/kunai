@@ -146,7 +146,7 @@
             >
           </div>
           <div class="meter"><i class:hot={tempPct >= 80} style="width:{tempPct}%"></i></div>
-          <span class="t-foot mono">{st.thermal_trip ? 'guard tripped — stopped' : 'CPU'}</span>
+          <span class="t-foot mono">{st.thermal_trip ? 'guard tripped · stopped' : 'CPU'}</span>
         </div>
       {/if}
       <div class="tile">

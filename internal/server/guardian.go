@@ -42,6 +42,13 @@ const (
 	guardFirst    = 20 * time.Second // first read, a little after boot
 	guardTripN    = 3                // consecutive over-temp reads before tripping
 	guardRecoverC = 5.0              // must fall this far below soft to re-arm
+
+	// A hard trip's action. Sleep (the default) is Phase 1's proven stop-and-cool
+	// and needs no privilege; poweroff is the Phase 2 escalation for a host still
+	// climbing after everything of ours was already stopped, and needs the
+	// admin-installed privilege the plain service lacks.
+	actionSleep    = "sleep"
+	actionPowerOff = "poweroff"
 )
 
 // guardConfig is the user-tunable policy. It is persisted to thermal.json and
@@ -50,7 +57,16 @@ type guardConfig struct {
 	Enabled  bool    `json:"enabled"`
 	SoftC    float64 `json:"soft_c"`    // stop everything at/above this (0 = no temp check)
 	MaxHours float64 `json:"max_hours"` // cap on an unattended awake hold (0 = no cap)
+	// HardC and Action are the Phase 2 escalation: if the host is STILL over HardC
+	// after the soft trip already stopped our load, the heat is not ours, and with
+	// Action=="poweroff" the machine is shut down. Default action is "sleep", which
+	// means the hard ceiling does nothing beyond the soft trip, so nothing
+	// privileged happens unless the owner deliberately turns it on.
+	HardC  float64 `json:"hard_c"`
+	Action string  `json:"action"`
 }
+
+func (c guardConfig) powersOff() bool { return c.Action == actionPowerOff && c.HardC > 0 }
 
 type guardian struct {
 	mgr   stopper
@@ -59,9 +75,15 @@ type guardian struct {
 	// host detail (the relay-free promise). May be nil.
 	notify func(kind, detail string)
 
+	// releaseLid, if set, drops any lid-closed hold on a trip so the machine can
+	// actually sleep. Optional (nil until Phase 2 wires it), so the guardian never
+	// depends on a lid subsystem existing.
+	releaseLid func()
+
 	mu        sync.Mutex
 	cfg       guardConfig
 	over      int       // consecutive over-soft reads so far
+	overHard  int       // consecutive over-hard reads so far
 	trip      bool      // currently holding everything stopped
 	awakeFrom time.Time // when the keep-awake hold began (zero when not held)
 }
@@ -118,6 +140,7 @@ func (g *guardian) check(temp float64) {
 	cfg := g.cfg
 	if !cfg.Enabled {
 		g.over = 0
+		g.overHard = 0
 		g.mu.Unlock()
 		return
 	}
@@ -128,6 +151,22 @@ func (g *guardian) check(temp float64) {
 		g.awakeFrom = time.Now()
 	} else if !held {
 		g.awakeFrom = time.Time{}
+	}
+
+	// Hard ceiling first, and independent of the soft latch: the whole point is a
+	// host still climbing past the danger line after the soft trip already stopped
+	// everything of ours. That means the heat is not our load, so we pull the plug.
+	// Only ever fires when the owner has explicitly armed the poweroff action.
+	if cfg.powersOff() && temp >= cfg.HardC {
+		g.overHard++
+	} else {
+		g.overHard = 0
+	}
+	if g.overHard >= guardTripN {
+		g.overHard = 0
+		g.mu.Unlock()
+		g.hardTrip(temp)
+		return
 	}
 
 	// Already tripped: wait for the machine to cool well below the line before
@@ -163,14 +202,45 @@ func (g *guardian) check(temp float64) {
 	g.over = 0
 	g.mu.Unlock()
 
-	// Act with the lock released: stopping sessions and dropping the hold both do
+	// Act with the lock released: stopping sessions and dropping the holds both do
 	// real work and must not block a concurrent config change or stats read.
 	n := g.mgr.StopForThermal()
-	if g.awake != nil {
-		_ = g.awake.Set(false)
-	}
+	g.releaseHolds()
 	log.Printf("thermal guard tripped (%s): stopped %d session(s), released keep-awake", reason, n)
 	if g.notify != nil {
 		g.notify("thermal", reason)
+	}
+}
+
+// hardTrip is the escalation: the host is still over the danger line after the
+// soft trip stopped everything ours, so this powers the machine off. It stops the
+// sessions again first (belt and braces, in case the soft trip never ran) and
+// drops the holds so a poweroff that is denied still leaves the machine cooling.
+func (g *guardian) hardTrip(temp float64) {
+	g.mu.Lock()
+	g.trip = true
+	g.mu.Unlock()
+
+	n := g.mgr.StopForThermal()
+	g.releaseHolds()
+	log.Printf("thermal guard HARD trip at %.0fC: stopped %d session(s), powering off", temp, n)
+	if g.notify != nil {
+		g.notify("thermal", "powering off: host too hot")
+	}
+	if err := hostPowerOff(); err != nil {
+		// The soft stop already happened, so a denied poweroff is not a disaster:
+		// it means the escalation lacked privilege, not that nothing was done.
+		log.Printf("thermal guard: poweroff failed (needs the install-time privilege): %v", err)
+	}
+}
+
+// releaseHolds drops the keep-awake hold and any lid-closed hold, so a closed-lid
+// machine is free to sleep and cool.
+func (g *guardian) releaseHolds() {
+	if g.awake != nil {
+		_ = g.awake.Set(false)
+	}
+	if g.releaseLid != nil {
+		g.releaseLid()
 	}
 }

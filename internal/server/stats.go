@@ -41,6 +41,10 @@ type Stats struct {
 	ThermalGuard    bool    `json:"thermal_guard"`
 	ThermalSoftC    float64 `json:"thermal_soft_c"`
 	ThermalMaxHours float64 `json:"thermal_max_hours"`
+	ThermalHardC    float64 `json:"thermal_hard_c"`
+	ThermalAction   string  `json:"thermal_action"` // "sleep" | "poweroff"
+	KeepLid         bool    `json:"keep_lid"`       // lid-closed hold currently held
+	KeepLidSupp     bool    `json:"keep_lid_supported"`
 	// RateResets maps a usage window ("five_hour"/"seven_day") to the unix time
 	// it resets, as last reported by the CLI. Drives scheduler previews.
 	RateResets map[string]int64 `json:"rate_resets,omitempty"`
@@ -75,6 +79,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	st.ThermalTrip = s.guardian.tripped()
 	gc := s.guardian.config()
 	st.ThermalGuard, st.ThermalSoftC, st.ThermalMaxHours = gc.Enabled, gc.SoftC, gc.MaxHours
+	st.ThermalHardC, st.ThermalAction = gc.HardC, gc.Action
+	st.KeepLid, st.KeepLidSupp = s.lid.Enabled(), s.lid.Supported()
 	writeJSON(w, http.StatusOK, st)
 }
 

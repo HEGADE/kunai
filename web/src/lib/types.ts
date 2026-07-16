@@ -24,6 +24,10 @@ export interface Stats {
   thermal_guard: boolean // guard enabled on this machine
   thermal_soft_c: number // trip temperature
   thermal_max_hours: number // wall-clock cap on unattended work
+  thermal_hard_c: number // poweroff ceiling (0 = never)
+  thermal_action: string // 'sleep' | 'poweroff'
+  keep_lid: boolean // lid-closed hold currently held (privileged)
+  keep_lid_supported: boolean // platform can hold the lid (Phase 2)
   rate_resets?: Record<string, number> // window -> unix seconds it resets
 }
 
@@ -32,6 +36,8 @@ export interface ThermalConfig {
   enabled: boolean
   soft_c: number // trip temperature in Celsius (0 = no temperature check)
   max_hours: number // stop unattended work after this long awake (0 = no cap)
+  hard_c: number // poweroff ceiling (0 = never)
+  action: 'sleep' | 'poweroff' // what a hard trip does
 }
 
 // --- scheduler ---
