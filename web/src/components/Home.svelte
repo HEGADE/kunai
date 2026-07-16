@@ -29,9 +29,17 @@
     return 'Good evening'
   })
 
+  // Memory in binary GiB, the convention for RAM (a "16 GB" stick is 16 GiB).
   function gb(n: number): string {
     if (!n) return '—'
     const g = n / 1024 ** 3
+    return g >= 100 ? `${Math.round(g)} GB` : `${g.toFixed(1)} GB`
+  }
+  // Disk in decimal GB (÷10^9), which is what macOS and disk makers show, so the
+  // total matches the OS instead of reading ~7% smaller as binary GiB would.
+  function gbDisk(n: number): string {
+    if (!n) return '—'
+    const g = n / 1e9
     return g >= 100 ? `${Math.round(g)} GB` : `${g.toFixed(1)} GB`
   }
   function dur(sec: number): string {
@@ -169,14 +177,14 @@
       <div class="tile">
         <div class="t-top">
           <span class="t-label">Disk free</span>
-          <span class="t-val">{gb(st.disk_free).split(' ')[0]}<small> GB</small></span>
+          <span class="t-val">{gbDisk(st.disk_free).split(' ')[0]}<small> GB</small></span>
         </div>
         {#if st.disk_total}
           <div class="meter">
             <i style="width:{Math.round(((st.disk_total - st.disk_free) / st.disk_total) * 100)}%"></i>
           </div>
         {/if}
-        <span class="t-foot mono">of {gb(st.disk_total)}</span>
+        <span class="t-foot mono">of {gbDisk(st.disk_total)}</span>
       </div>
       {#if st.uptime_sec}
         <div class="tile">
