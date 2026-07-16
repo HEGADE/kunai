@@ -103,7 +103,7 @@ promise holds across the whole fleet.
 
 ### 1. Install on your main machine
 
-One line, no toolchain — downloads a prebuilt binary and sets everything up:
+One line, no toolchain. Downloads a prebuilt binary and sets everything up:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/HEGADE/kunai/main/install.sh | bash
@@ -130,7 +130,7 @@ when a machine is behind the latest release. Tap **Update** and that machine pul
 the new binary from GitHub, verifies its checksum, swaps it in, and restarts
 itself (a few seconds; active sessions resume from their transcript). Each machine
 updates itself, so you never have to SSH in. You can still re-run the installer by
-hand — the one-liner again, or `./install.sh` in a checkout — if you prefer.
+hand (the one-liner again, or `./install.sh` in a checkout) if you prefer.
 
 ### 2. Open it on your phone
 
