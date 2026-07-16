@@ -111,6 +111,7 @@ func (s *Server) armSession(sess *session.Session) {
 	if s.sched != nil {
 		sess.SetRateLimitHandler(s.sched.NoteReset)
 	}
+	sess.SetLoopPersister(s.loopPersister()) // save a running loop so it survives a restart
 }
 
 // SetPush enables Web Push wake-ups.
@@ -163,6 +164,7 @@ func (s *Server) Run(ctx context.Context) error {
 		s.guardian.notify = s.pushNotifier()
 	}
 	go s.guardian.run(ctx) // stop everything if the host overheats or runs too long
+	go s.resumeLoops(ctx)  // restart any loop that was running when we last died
 	go func() {
 		<-ctx.Done()
 		_ = s.awake.Set(false) // release the keep-awake hold on graceful shutdown

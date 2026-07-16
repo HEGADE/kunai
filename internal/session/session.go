@@ -69,6 +69,7 @@ type Session struct {
 	done            chan struct{} // closed when the driver has ended
 	notify          func(kind, detail string)
 	onRateLimit     func(window string, resetsAt int64)
+	loopPersist     func(LoopPersist) // save/clear a running loop so it survives a restart
 }
 
 // SetNotifier registers a callback invoked when the session needs attention

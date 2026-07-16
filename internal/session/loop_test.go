@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -433,5 +434,100 @@ func TestStopForThermalEndsLoopWithReason(t *testing.T) {
 	}
 	if got := len(f.sentPrompts()); got != 1 {
 		t.Fatalf("ran %d iterations after a thermal stop, want 1", got)
+	}
+}
+
+// A running loop is persisted so it can survive a restart; ending it clears the
+// record. These are the writes the server turns into a file on disk.
+func TestLoopPersistsWhileRunningAndClearsOnEnd(t *testing.T) {
+	fastLoop(t)
+	f := newFakeDriver()
+	s := newSession("lp1", "/tmp/p", "", f)
+	defer s.Close()
+
+	// The persister fires from the pump goroutine too, so guard the capture.
+	var mu sync.Mutex
+	var recs []LoopPersist
+	s.SetLoopPersister(func(r LoopPersist) { mu.Lock(); recs = append(recs, r); mu.Unlock() })
+	snapshot := func() []LoopPersist { mu.Lock(); defer mu.Unlock(); return append([]LoopPersist(nil), recs...) }
+
+	if err := s.StartLoop(LoopConfig{Prompt: "go", MaxIters: 1, MaxUSD: 100}); err != nil {
+		t.Fatal(err)
+	}
+	// First record is the start, and it is running (the server writes it).
+	first := snapshot()
+	if len(first) == 0 || first[0].State != LoopRunning {
+		t.Fatalf("first persist = %+v, want a running record", first)
+	}
+	if first[0].SessionID != "lp1" || first[0].Config.Prompt != "go" {
+		t.Fatalf("record missing resume data: %+v", first[0])
+	}
+
+	waitPrompts(t, f, 1)
+	endTurn(f, 0.01) // the single iteration ends, so the loop does
+	quiet()
+
+	// The final record is not running, which is how the server knows to delete it.
+	all := snapshot()
+	if last := all[len(all)-1]; last.State == LoopRunning {
+		t.Fatalf("final persist state = %q, want a terminal state so the file is removed", last.State)
+	}
+}
+
+// Resuming continues from the saved iteration and spend, and counts the resume so
+// a crash loop can be given up on.
+func TestResumeLoopContinuesFromSavedState(t *testing.T) {
+	fastLoop(t)
+	f := newFakeDriver()
+	s := newSession("lp2", "/tmp/p", "", f)
+	defer s.Close()
+
+	rec := LoopPersist{
+		SessionID: "lp2",
+		Config:    LoopConfig{Prompt: "go", MaxIters: 5, MaxUSD: 100},
+		Iteration: 4,
+		SpentUSD:  0.40,
+		Resumes:   1,
+	}
+	if err := s.ResumeLoop(rec); err != nil {
+		t.Fatal(err)
+	}
+	waitPrompts(t, f, 1)
+	endTurn(f, 0.05) // this fresh process's first turn cost 0.05
+	quiet()
+
+	st := loopStatus(s)
+	// Iteration picked up at 4 and advanced to 5, which is the cap, so it stopped.
+	if st.Iteration != 5 {
+		t.Fatalf("iteration = %d, want 5 (resumed at 4, ran one)", st.Iteration)
+	}
+	// Spend is prior 0.40 plus this process's 0.05. A resumed CLI starts its cost
+	// at zero, so the delta baseline of -0.40 makes the running total come out right.
+	if st.SpentUSD < 0.44 || st.SpentUSD > 0.46 {
+		t.Fatalf("spent = %v, want ~0.45 (0.40 carried + 0.05 new)", st.SpentUSD)
+	}
+}
+
+// The saved iteration cap still binds after a resume: a loop resumed near its
+// limit stops at the limit, not the limit plus the resumed count.
+func TestResumeLoopHonoursTheIterationCap(t *testing.T) {
+	fastLoop(t)
+	f := newFakeDriver()
+	s := newSession("lp3", "/tmp/p", "", f)
+	defer s.Close()
+
+	// Resumed at iteration 2 of a 3-iteration loop: only one more may run.
+	if err := s.ResumeLoop(LoopPersist{SessionID: "lp3", Config: LoopConfig{Prompt: "go", MaxIters: 3, MaxUSD: 100}, Iteration: 2}); err != nil {
+		t.Fatal(err)
+	}
+	waitPrompts(t, f, 1)
+	endTurn(f, 0.01)
+	quiet()
+
+	if got := len(f.sentPrompts()); got != 1 {
+		t.Fatalf("ran %d iterations after resume, want 1 (2 -> 3 is the cap)", got)
+	}
+	if st := loopStatus(s); st.State != LoopExhausted {
+		t.Fatalf("state = %q, want exhausted", st.State)
 	}
 }

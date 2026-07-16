@@ -96,6 +96,25 @@ type loopRun struct {
 	prevMode  string  // the session's mode before the loop borrowed it
 	state     string
 	reason    string
+	resumes   int // times this loop has been resumed after a restart (crash-loop guard)
+}
+
+// LoopPersist is a running loop written to disk so it survives a restart (an
+// auto-update, a crash, an OOM, the service manager bouncing us). It carries
+// everything needed to recreate the session with --resume and pick the loop up
+// where it left off. It exists on disk ONLY while the loop is running: any ending,
+// including a thermal trip, deletes it, so a machine that stopped a loop for a
+// reason never silently restarts it. See internal/server/looppersist.go.
+type LoopPersist struct {
+	SessionID string     `json:"session_id"` // the --resume handle (== Session.ID) and file key
+	Cwd       string     `json:"cwd"`
+	Model     string     `json:"model"`
+	Effort    string     `json:"effort"`
+	Config    LoopConfig `json:"config"`
+	Iteration int        `json:"iteration"`
+	SpentUSD  float64    `json:"spent_usd"`
+	Resumes   int        `json:"resumes"`
+	State     string     `json:"state"` // the server writes while "running", deletes otherwise
 }
 
 // StartLoop begins a self-prompting run. The config is clamped rather than
@@ -124,10 +143,58 @@ func (s *Session) StartLoop(cfg LoopConfig) error {
 	// that came before it.
 	s.loop = &loopRun{cfg: cfg, startCost: s.lastCostUSD, state: LoopRunning, prevMode: s.mode}
 	s.emitLocked(s.sequenceLocked(s.loopEventLocked()))
+	s.persistLoopLocked()
 	s.mu.Unlock()
 
 	// Borrow the autonomous mode for the duration, or the first file edit ends the
 	// run in all but name.
+	if err := s.SetPermissionMode(LoopPermissionMode); err != nil {
+		s.mu.Lock()
+		s.stopLoopLocked(LoopFailed, "the permission mode could not be set: "+err.Error())
+		s.mu.Unlock()
+		return err
+	}
+	s.advanceLoop()
+	return nil
+}
+
+// ResumeLoop picks a loop back up on a freshly recreated session after a restart.
+// It is StartLoop's twin: same borrowed mode, same pump, but it continues from the
+// saved iteration and spend instead of starting over.
+//
+// The budget baseline is the subtle part. A resumed CLI process starts its cost
+// count from zero (--resume loads context, not the prior bill, verified against a
+// real CLI), so setting startCost to the negative of what was already spent makes
+// the running spend pick up exactly where it left off: spend = lastCostUSD -
+// startCost = thisProcessCost + priorSpent. The iteration cap carries over exactly
+// because it is a plain integer, so even if the money math ever drifted the loop
+// still cannot outrun its hard bound.
+func (s *Session) ResumeLoop(rec LoopPersist) error {
+	cfg := rec.Config
+	cfg.MaxIters = clampIters(cfg.MaxIters)
+	cfg.MaxUSD = clampUSD(cfg.MaxUSD)
+
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return errors.New("loop: session is closed")
+	}
+	if s.loop != nil && s.loop.state == LoopRunning {
+		s.mu.Unlock()
+		return errors.New("loop: one is already running")
+	}
+	s.loop = &loopRun{
+		cfg:       cfg,
+		iteration: rec.Iteration,
+		startCost: -rec.SpentUSD,
+		state:     LoopRunning,
+		prevMode:  s.mode,
+		resumes:   rec.Resumes + 1,
+	}
+	s.emitLocked(s.sequenceLocked(s.loopEventLocked()))
+	s.persistLoopLocked() // rewrite with the bumped resume count
+	s.mu.Unlock()
+
 	if err := s.SetPermissionMode(LoopPermissionMode); err != nil {
 		s.mu.Lock()
 		s.stopLoopLocked(LoopFailed, "the permission mode could not be set: "+err.Error())
@@ -153,6 +220,10 @@ func (s *Session) stopLoopLocked(state, reason string) {
 	s.loop.state = state
 	s.loop.reason = reason
 	s.emitLocked(s.sequenceLocked(s.loopEventLocked()))
+	// The state is now terminal, so this deletes the durable record: a loop that
+	// ended for any reason, thermal included, must never be resumed on the next
+	// boot. This runs before the guardian's poweroff, so the delete wins the race.
+	s.persistLoopLocked()
 
 	// Hand the session's mode back, unless you changed it yourself while the loop
 	// ran, in which case your choice stands. The driver call needs the lock this
@@ -184,6 +255,36 @@ func (s *Session) loopEventLocked() AppEvent {
 	return AppEvent{T: EvLoop, Loop: s.loopStatusLocked()}
 }
 
+// persistLoopLocked hands the loop's durable state to the persister (set by the
+// server). The record carries its own state, so the server writes it while the
+// loop runs and deletes it once it ends. A no-op when no persister is registered
+// (every unit test, and any build without a data dir).
+func (s *Session) persistLoopLocked() {
+	if s.loopPersist == nil || s.loop == nil {
+		return
+	}
+	l := s.loop
+	s.loopPersist(LoopPersist{
+		SessionID: s.ID,
+		Cwd:       s.Cwd,
+		Model:     s.model,
+		Effort:    s.effort,
+		Config:    l.cfg,
+		Iteration: l.iteration,
+		SpentUSD:  s.lastCostUSD - l.startCost,
+		Resumes:   l.resumes,
+		State:     l.state,
+	})
+}
+
+// SetLoopPersister registers where a running loop is saved so it can survive a
+// restart. Called on every session by the server.
+func (s *Session) SetLoopPersister(fn func(LoopPersist)) {
+	s.mu.Lock()
+	s.loopPersist = fn
+	s.mu.Unlock()
+}
+
 // advanceLoop runs the next iteration, if the loop is still entitled to one.
 func (s *Session) advanceLoop() {
 	s.mu.Lock()
@@ -211,6 +312,7 @@ func (s *Session) advanceLoop() {
 		label:  fmt.Sprintf("Loop #%d", l.iteration),
 	}
 	s.emitLocked(s.sequenceLocked(s.loopEventLocked()))
+	s.persistLoopLocked() // save the new iteration so a crash resumes from here
 	s.startTurnLocked(q)
 	s.mu.Unlock()
 

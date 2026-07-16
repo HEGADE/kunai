@@ -244,6 +244,21 @@ Behavioral invariants that were bugs before (do not regress):
   running while it sits on a click you never saw is worse than one that stopped.
   A loop must also not fire the per-turn "done" notification on every iteration;
   it announces its own ending instead.
+- A running loop survives a restart (auto-update, crash, OOM, the service manager
+  bouncing us), because the whole point is that nobody is attached to notice it
+  died. `internal/server/looppersist.go` writes `loops/<sessionId>.json` while a
+  loop runs and deletes it the moment the loop ends; on boot `resumeLoops`
+  recreates each surviving session with `--resume` and calls `Session.ResumeLoop`
+  to continue from the saved iteration and spend. The safety rests on one rule:
+  the file exists ONLY while running, so a loop the thermal guard stopped (or that
+  finished, or that you stopped) has no file and is never restarted, and the
+  delete on a terminal state runs before the guardian's poweroff so it wins that
+  race. A resumed CLI process starts its cost count at zero (verified against a
+  real CLI), so `ResumeLoop` sets `startCost` to the negative of the prior spend
+  to make the running total continue correctly; the iteration cap carries over as
+  a plain integer, so it binds exactly even if the money math ever drifted.
+  `maxLoopResumes` bounds a crash loop: a loop that keeps dying without ever
+  ending cleanly is given up on rather than restarted forever.
 - Every iteration a loop sends is wrapped in `<loop-iteration n=".." of="..">`
   (`session.LoopPrompt`, read back by `session.ParseLoopIteration`). The CLI writes
   every turn we send into the transcript, and resuming reads that file back, so
