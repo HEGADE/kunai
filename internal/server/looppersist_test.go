@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/hegade/kunai/internal/session"
@@ -50,6 +51,9 @@ func TestLoopPersistRoundTrips(t *testing.T) {
 		Cwd:       "/home/me/proj",
 		Model:     "opus",
 		Effort:    "high",
+		CLIName:   "Claude Work",
+		Bin:       "claude-work",
+		Env:       map[string]string{"CLAUDE_CONFIG_DIR": "/home/me/.claude-work"},
 		Config:    session.LoopConfig{Prompt: "fix tests", Promise: "DONE", MaxIters: 20, MaxUSD: 3.5},
 		Iteration: 7,
 		SpentUSD:  1.25,
@@ -66,7 +70,7 @@ func TestLoopPersistRoundTrips(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("round-trip = %+v, want %+v", got, want)
 	}
 }

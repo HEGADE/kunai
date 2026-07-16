@@ -111,6 +111,8 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	s.effort = opts.Effort
 	s.mode = mode
 	s.cliName = opts.CLIName
+	s.cliBin = opts.Bin
+	s.cliEnv = opts.Env
 	s.contextTokens = opts.ContextTokens
 	if len(opts.Seed) > 0 {
 		s.Seed(opts.Seed)

@@ -106,15 +106,18 @@ type loopRun struct {
 // including a thermal trip, deletes it, so a machine that stopped a loop for a
 // reason never silently restarts it. See internal/server/looppersist.go.
 type LoopPersist struct {
-	SessionID string     `json:"session_id"` // the --resume handle (== Session.ID) and file key
-	Cwd       string     `json:"cwd"`
-	Model     string     `json:"model"`
-	Effort    string     `json:"effort"`
-	Config    LoopConfig `json:"config"`
-	Iteration int        `json:"iteration"`
-	SpentUSD  float64    `json:"spent_usd"`
-	Resumes   int        `json:"resumes"`
-	State     string     `json:"state"` // the server writes while "running", deletes otherwise
+	SessionID string            `json:"session_id"` // the --resume handle (== Session.ID) and file key
+	Cwd       string            `json:"cwd"`
+	Model     string            `json:"model"`
+	Effort    string            `json:"effort"`
+	CLIName   string            `json:"cli_name,omitempty"` // the Claude account, so a resume stays on it
+	Bin       string            `json:"bin,omitempty"`
+	Env       map[string]string `json:"env,omitempty"`
+	Config    LoopConfig        `json:"config"`
+	Iteration int               `json:"iteration"`
+	SpentUSD  float64           `json:"spent_usd"`
+	Resumes   int               `json:"resumes"`
+	State     string            `json:"state"` // the server writes while "running", deletes otherwise
 }
 
 // StartLoop begins a self-prompting run. The config is clamped rather than
@@ -269,6 +272,9 @@ func (s *Session) persistLoopLocked() {
 		Cwd:       s.Cwd,
 		Model:     s.model,
 		Effort:    s.effort,
+		CLIName:   s.cliName,
+		Bin:       s.cliBin,
+		Env:       s.cliEnv,
 		Config:    l.cfg,
 		Iteration: l.iteration,
 		SpentUSD:  s.lastCostUSD - l.startCost,

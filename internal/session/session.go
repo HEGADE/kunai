@@ -48,9 +48,11 @@ type Session struct {
 	mu              sync.Mutex
 	seq             uint64
 	model           string
-	mode            string // permission mode
-	effort          string // reasoning effort (spawn-time; changed by restart)
-	cliName         string // which Claude CLI/account this session runs on
+	mode            string            // permission mode
+	effort          string            // reasoning effort (spawn-time; changed by restart)
+	cliName         string            // which Claude CLI/account this session runs on
+	cliBin          string            // the binary that account runs (persisted so a resumed loop stays on it)
+	cliEnv          map[string]string // extra env that account needs
 	title           string
 	claudeSessionID string // CLI-assigned id, for --resume cold-start
 	state           string

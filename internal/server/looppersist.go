@@ -105,6 +105,11 @@ func (s *Server) resumeOneLoop(ctx context.Context, rec session.LoopPersist) {
 		Resume:        rec.SessionID,
 		Seed:          loadTranscriptTurns(rec.SessionID),
 		ContextTokens: loadTranscriptContextTokens(rec.SessionID),
+		// Carry the account across the restart, or the resumed loop would jump to
+		// the default Claude and spend the wrong budget.
+		CLIName: rec.CLIName,
+		Bin:     rec.Bin,
+		Env:     rec.Env,
 	})
 	if err != nil {
 		log.Printf("loop resume: could not recreate session %s: %v", rec.SessionID, err)

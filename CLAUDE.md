@@ -109,11 +109,12 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   `claude.Options{Bin,Env}`, where the driver execs that binary with the env
   appended. `/api/stats` sends the profile names (only when there is a real choice)
   for the New Session picker; `Meta.CLI` records which account a session runs on.
-  NOTE: account separation via a different `CLAUDE_CONFIG_DIR` puts that account's
-  transcripts in a different dir, so `history.go` (which scans `~/.claude/projects`)
-  will not list or seed those sessions yet, and a resumed loop
-  (`looppersist.go`, once that lands) must carry `CLIName/Bin/Env` or it reverts to
-  the default account. Both are known follow-ups.
+  A resumed loop carries the account: `LoopPersist` saves `CLIName/Bin/Env` and
+  `resumeOneLoop` passes them back through `CreateOptions`, so an overnight loop on
+  a work account stays on it across a restart instead of reverting to the default.
+  KNOWN FOLLOW-UP: account separation via a different `CLAUDE_CONFIG_DIR` puts that
+  account's transcripts in a different dir, so `history.go` (which scans
+  `~/.claude/projects`) will not list or seed those sessions from Recent yet.
 - `internal/project`: reads a directory into the description a session hands a model
   (`Scan` -> `Info`, `Info.Brief()`): layout, language mix, git head from `.git`,
   the files that name it. It never opens the code, and the walk skips `.git`,
