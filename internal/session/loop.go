@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +35,11 @@ const (
 	LoopStopped   = "stopped"   // you stopped it, or the usage window did
 	LoopExhausted = "exhausted" // a limit ran out
 	LoopFailed    = "failed"    // the turn itself broke
+
+	// LoopSeam marks an iteration recovered from a transcript rather than one
+	// happening now. It renders as the same seam in the log but must never light
+	// up the live bar: the loop it belonged to ended before the process restarted.
+	LoopSeam = "seam"
 )
 
 // Bounds. A loop that cannot exhaust itself is a bug, not a feature: it runs
@@ -200,7 +206,7 @@ func (s *Session) advanceLoop() {
 
 	l.iteration++
 	q := &queuedPrompt{
-		Text:   loopPrompt(l.cfg, l.iteration),
+		Text:   LoopPrompt(l.cfg, l.iteration),
 		silent: true, // the loop card is the conversation's record of this
 		label:  fmt.Sprintf("Loop #%d", l.iteration),
 	}
@@ -255,7 +261,7 @@ func (s *Session) afterTurn(turnFailed bool) {
 	time.AfterFunc(loopCooldown, s.advanceLoop)
 }
 
-// loopPrompt is what the model actually reads each time round.
+// LoopPrompt is what the model actually reads each time round.
 //
 // It says which iteration this is, because otherwise a model that sees the same
 // text twice concludes it failed and starts over. It points at the files rather
@@ -263,9 +269,16 @@ func (s *Session) afterTurn(turnFailed bool) {
 // survives. And it spells out that claiming completion falsely is the one way to
 // break the loop, because that is exactly the shortcut a model reaches for when
 // the task is hard.
-func loopPrompt(cfg LoopConfig, n int) string {
+//
+// The whole thing is wrapped in a tag because a loop iteration is a harness
+// wrapper, not something a person typed, and it has to be readable as one from
+// the other end: the CLI writes every turn we send into the transcript, and
+// resuming reads that file back. Without the wrapper, reopening a fifty-iteration
+// loop replayed fifty copies of these instructions as user messages and buried
+// the work they produced. ParseLoopIteration is the other half of this contract.
+func LoopPrompt(cfg LoopConfig, n int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Loop iteration %d of %d.\n\n", n, cfg.MaxIters)
+	fmt.Fprintf(&b, "<loop-iteration n=%q of=%q>\n", strconv.Itoa(n), strconv.Itoa(cfg.MaxIters))
 	b.WriteString(cfg.Prompt)
 	b.WriteString("\n\n---\n")
 	b.WriteString("You are running in a loop with nobody watching. You are reading this again because the last turn ended, not because anything went wrong. ")
@@ -273,7 +286,25 @@ func loopPrompt(cfg LoopConfig, n int) string {
 	if cfg.Promise != "" {
 		fmt.Fprintf(&b, " When the task is genuinely and verifiably finished, make <promise>%s</promise> the last thing in your reply. That ends the loop, so only say it when it is true: do not say it to get out early.", cfg.Promise)
 	}
+	b.WriteString("\n</loop-iteration>")
 	return b.String()
+}
+
+// loopIterRe reads back the opening tag LoopPrompt writes.
+var loopIterRe = regexp.MustCompile(`^<loop-iteration n="(\d+)" of="(\d+)"`)
+
+// ParseLoopIteration recognises a loop's own turn in a transcript and says which
+// iteration it was. This is how a resumed session shows the seams between
+// iterations instead of either replaying the instructions or, worse, showing the
+// work with nothing to explain why it happened.
+func ParseLoopIteration(text string) (n, of int, ok bool) {
+	m := loopIterRe.FindStringSubmatch(strings.TrimSpace(text))
+	if m == nil {
+		return 0, 0, false
+	}
+	n, _ = strconv.Atoi(m[1])
+	of, _ = strconv.Atoi(m[2])
+	return n, of, true
 }
 
 // assistantText joins a message's text blocks, ignoring tool calls and thinking.

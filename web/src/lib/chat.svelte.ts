@@ -221,8 +221,10 @@ export class ChatConnection {
         // Every change to the loop arrives whole, so the bar reads from one
         // object and the log keeps the snapshot as its own moment in the story.
         if (ev.loop) {
-          this.loop = ev.loop
           this.items = [...this.items, { role: 'loop', loop: ev.loop }]
+          // A seam is a lap recovered from a transcript on resume: the loop that
+          // ran it is long gone, so it marks the log but never drives the bar.
+          if (ev.loop.state !== 'seam') this.loop = ev.loop
         }
         break
       case 'compact':

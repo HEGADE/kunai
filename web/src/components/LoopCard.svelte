@@ -12,7 +12,9 @@
   let { loop }: { loop: LoopStatus } = $props()
 
   const started = $derived(loop.state === 'running' && loop.iteration === 0)
-  const lap = $derived(loop.state === 'running' && loop.iteration > 0)
+  // A seam replayed from a transcript is the same mark as a live lap: on resume
+  // the work is still there, and without it the log shows turns nobody asked for.
+  const lap = $derived(loop.state === 'seam' || (loop.state === 'running' && loop.iteration > 0))
 </script>
 
 {#if lap}

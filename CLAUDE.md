@@ -231,8 +231,21 @@ Behavioral invariants that were bugs before (do not regress):
   still stops to ask about a risky action, which for an unattended run is a hang,
   not caution (proven the hard way: a real loop sat at `awaiting_permission` on its
   first file write and did nothing). This is the same trade the scheduler makes in
-  `fireJob`. A loop must also not fire the per-turn "done" notification on every
-  iteration; it announces its own ending instead.
+  `fireJob`. An ask that still gets through parks the loop rather than killing it,
+  because your answer is worth more than the iterations it would throw away and
+  nothing is spent while it waits, but the bar has to say so: a loop you believe is
+  running while it sits on a click you never saw is worse than one that stopped.
+  A loop must also not fire the per-turn "done" notification on every iteration;
+  it announces its own ending instead.
+- Every iteration a loop sends is wrapped in `<loop-iteration n=".." of="..">`
+  (`session.LoopPrompt`, read back by `session.ParseLoopIteration`). The CLI writes
+  every turn we send into the transcript, and resuming reads that file back, so
+  without the wrapper reopening a fifty-iteration loop replayed fifty copies of the
+  same instructions as user messages: the compaction summary's bug wearing a
+  different hat. `history.go` turns those frames into `loop` seed turns, and they
+  seed as `LoopSeam`, never `LoopRunning`: the loop died with the process that
+  ran it, so a resumed session must show the seams without lighting up a live meter
+  for a loop that is over.
 - A permission mode change must be broadcast, not just sent to the CLI. It does
   not always come from a click: a loop borrows `acceptEdits` and hands it back, so
   a mode set server-side has to reach attached clients or the composer keeps

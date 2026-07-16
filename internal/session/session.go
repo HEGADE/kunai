@@ -57,11 +57,11 @@ type Session struct {
 	lastCostUSD     float64 // running session total from the CLI, to difference per turn
 	buf             *ring
 	subs            map[*Subscriber]struct{}
-	queue           []*queuedPrompt     // prompts waiting for the running turn to end
-	projects        []project.Info      // codebases this session has been given context for
-	loop            *loopRun            // self-prompting run, if one was ever started
-	lastText        string              // the newest assistant text this turn, for the loop's promise
-	rateLimited     bool                // the usage window is spent; a loop must not push on
+	queue           []*queuedPrompt // prompts waiting for the running turn to end
+	projects        []project.Info  // codebases this session has been given context for
+	loop            *loopRun        // self-prompting run, if one was ever started
+	lastText        string          // the newest assistant text this turn, for the loop's promise
+	rateLimited     bool            // the usage window is spent; a loop must not push on
 
 	pending         map[string]AppEvent // unresolved permission asks, keyed by request_id
 	suggestionByReq map[string]json.RawMessage
@@ -140,7 +140,7 @@ func (s *Session) Done() <-chan struct{} { return s.done }
 
 // SeedTurn is a prior conversation turn loaded from a transcript when resuming.
 type SeedTurn struct {
-	Role        string       // "user" | "assistant" | "tool_result" | "compact"
+	Role        string       // "user" | "assistant" | "tool_result" | "compact" | "loop"
 	Text        string       // user text, or tool_result output
 	Blocks      []AppBlock   // assistant content blocks
 	ToolUseID   string       // tool_result correlation
@@ -151,6 +151,10 @@ type SeedTurn struct {
 	Trigger    string
 	PreTokens  int64
 	PostTokens int64
+
+	// loop: which lap of a self-prompting run this seam marks.
+	Iteration int
+	MaxIters  int
 }
 
 // Seed pre-populates the replay buffer with transcript history so a resumed
@@ -167,6 +171,11 @@ func (s *Session) Seed(turns []SeedTurn) {
 			ev = AppEvent{T: EvToolResult, ToolUseID: t.ToolUseID, Content: t.Text, IsError: t.IsError}
 		case "compact":
 			ev = AppEvent{T: EvCompact, Trigger: t.Trigger, PreTokens: t.PreTokens, ContextTokens: t.PostTokens}
+		case "loop":
+			// LoopSeam, not LoopRunning: this lap is history recovered from a
+			// transcript. The loop it belonged to died with the process that ran it,
+			// and a resumed session must not show a live meter for it.
+			ev = AppEvent{T: EvLoop, Loop: &LoopStatus{State: LoopSeam, Iteration: t.Iteration, MaxIters: t.MaxIters}}
 		default:
 			ev = AppEvent{T: EvAssistant, Blocks: t.Blocks}
 		}

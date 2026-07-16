@@ -72,7 +72,8 @@ export interface Block {
 
 // A self-prompting run. Mirrors session.LoopStatus: the server owns every number
 // here, so a client that was away renders the whole thing without its own tally.
-export type LoopState = 'running' | 'done' | 'stopped' | 'exhausted' | 'failed'
+// 'seam' is a lap replayed from a transcript, not a loop that is running now.
+export type LoopState = 'running' | 'done' | 'stopped' | 'exhausted' | 'failed' | 'seam'
 
 export interface LoopStatus {
   state: LoopState

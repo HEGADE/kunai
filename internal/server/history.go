@@ -338,6 +338,13 @@ func loadTranscriptTurns(id string) []session.SeedTurn {
 			}
 			t := strings.TrimSpace(firstUserText(v.Message.Content))
 			atts := transcriptAttachments(v.Message.Content)
+			// A loop's iterations are user frames only because that is the sole way
+			// to send a turn. Replaying them would repeat the same instructions once
+			// per lap; show the seam the live session showed instead.
+			if n, of, ok := session.ParseLoopIteration(t); ok {
+				turns = append(turns, session.SeedTurn{Role: "loop", Iteration: n, MaxIters: of})
+				continue
+			}
 			// Skip harness wrappers — they aren't turns the user typed.
 			if (t != "" && !strings.HasPrefix(t, "<")) || len(atts) > 0 {
 				turns = append(turns, session.SeedTurn{Role: "user", Text: t, Attachments: atts})

@@ -13,12 +13,20 @@
   let { chat }: { chat: ChatConnection } = $props()
 
   const p = $derived(chat.loop ? loopProgress(chat.loop) : null)
+
+  // A loop takes acceptEdits, but that does not cover everything, so now and then
+  // one still stops to ask. It waits rather than dies: your answer is worth more
+  // than the iterations it would throw away, and nothing is being spent meanwhile.
+  // But it must say so. A bar reading "#3/10" with an amber dot looks like work in
+  // progress, and the one thing worse than a loop that stopped is a loop you think
+  // is running while it sits waiting for a click you never knew about.
+  const waiting = $derived(chat.sessionState === 'awaiting_permission')
 </script>
 
 {#if chat.loop && chat.loop.state === 'running' && p}
   <div class="bar">
     <div class="top">
-      <span class="dot" aria-hidden="true"></span>
+      <span class="dot" class:wants={waiting} aria-hidden="true"></span>
       <span class="lbl">Loop</span>
       <span class="nums mono">
         <span class="n" class:binds={p.binding === 'iterations'}>#{chat.loop.iteration}/{chat.loop.max_iters}</span>
@@ -28,7 +36,9 @@
       <button class="stop" onclick={() => chat.stopLoop()}>Stop</button>
     </div>
     <div class="track"><span class="fill" style="width:{Math.max(1.5, p.frac * 100)}%"></span></div>
-    {#if p.note}
+    {#if waiting}
+      <span class="note held">Paused until you answer the request above. It carries on once you do.</span>
+    {:else if p.note}
       <span class="note mono">{p.note}</span>
     {/if}
   </div>
@@ -60,6 +70,23 @@
     height: 6px;
     border-radius: 50%;
     background: var(--busy);
+  }
+  /* Pulsing is reserved for a session that actually wants you, which is exactly
+     what a loop held at a permission ask is. Same beat as the tab strip's. */
+  .dot.wants {
+    animation: wants 1.5s ease-in-out infinite;
+  }
+  @keyframes wants {
+    50% {
+      opacity: 0.25;
+      transform: scale(0.8);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .dot.wants {
+      animation: none;
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--busy) 25%, transparent);
+    }
   }
   .lbl {
     flex: none;
@@ -121,5 +148,10 @@
   .note {
     font-size: 10.5px;
     color: var(--text-4);
+  }
+  /* Prose, not mono: this one is asking you for something, not reporting data. */
+  .held {
+    font-size: 11px;
+    color: var(--text-3);
   }
 </style>
