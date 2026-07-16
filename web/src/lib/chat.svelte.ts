@@ -206,7 +206,11 @@ export class ChatConnection {
         this.items = [...this.items, { role: 'assistant', blocks: ev.blocks ?? [] }]
         // Each assistant message reports the context sent for that model call, so
         // the meter tracks the newest one (and stays live through a long turn).
-        if (ev.context_tokens != null) this.contextTokens = ev.context_tokens
+        // Only while live, never during replay: seeded history carries no usage on
+        // assistant turns, so letting a replayed compaction below drive the meter
+        // would strand it at that compaction's post_tokens. hello is the truth on
+        // attach; the backlog is for the log, not the meter.
+        if (this.ready && ev.context_tokens != null) this.contextTokens = ev.context_tokens
         this.streaming = ''
         this.thinking = ''
         break
@@ -254,11 +258,14 @@ export class ChatConnection {
         }
         break
       case 'compact':
-        // The conversation was summarised, so the context window shrank. This is
-        // the only frame that reports the new size — a compaction emits no
-        // assistant message, so without it the meter reads the pre-compaction
-        // number until the next turn happens to correct it.
-        if (ev.context_tokens != null) this.contextTokens = ev.context_tokens
+        // The conversation was summarised, so the context window shrank. A live
+        // compaction is the only frame that reports the new size (no assistant
+        // message follows it), so it must drive the meter. A *replayed* one is
+        // history: it is followed in the transcript by turns that regrew the
+        // window, but those seeded turns carry no usage, so honouring a replayed
+        // compaction would pin the meter at its post_tokens (the resumed-session
+        // bug). Guard on ready: hello already carries the true current size.
+        if (this.ready && ev.context_tokens != null) this.contextTokens = ev.context_tokens
         this.items = [
           ...this.items,
           {

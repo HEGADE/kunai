@@ -56,3 +56,46 @@ func TestCompactResetsContextTokens(t *testing.T) {
 		t.Errorf("hello context_tokens = %d, want 12537", hello.ContextTokens)
 	}
 }
+
+// After a compaction the meter must keep climbing as the conversation regrows:
+// every later assistant call reports the real (larger) context, and the meter
+// has to follow it, not latch on the small post-compaction number. This is the
+// exact shape of the reported bug (kunai stuck at post_tokens while Claude's own
+// /context showed the true, larger fill).
+func TestContextClimbsAfterCompaction(t *testing.T) {
+	f := newFakeDriver()
+	s := newSession("c2", "/tmp/p", "", f)
+	defer s.Close()
+	_, _, sub := s.Attach(0)
+
+	// Compact down to a small summary.
+	f.events <- claude.Event{Kind: claude.EventCompact, Compact: &claude.Compact{
+		Trigger: "manual", PreTokens: 836411, PostTokens: 12537,
+	}}
+	// The CLI emits a partial assistant frame with no real usage first (all zero),
+	// then the completed calls with climbing usage as the window refills.
+	f.events <- claude.Event{Kind: claude.EventAssistant, Assistant: &claude.AssistantMessage{
+		Usage: &claude.MessageUsage{}, // zero: must not blank the meter
+	}}
+	f.events <- claude.Event{Kind: claude.EventAssistant, Assistant: &claude.AssistantMessage{
+		Usage: &claude.MessageUsage{Input: 2, CacheCreate: 31977, CacheRead: 16630}, // 48609
+	}}
+	f.events <- claude.Event{Kind: claude.EventAssistant, Assistant: &claude.AssistantMessage{
+		Usage: &claude.MessageUsage{Input: 2, CacheRead: 103500}, // ~103.5k, the true fill
+	}}
+
+	var last int64
+	for _, ev := range drain(t, sub, 4) { // compact, assistant x3
+		if ev.T == EvAssistant && ev.ContextTokens > 0 {
+			last = ev.ContextTokens
+		}
+	}
+	if last != 103502 {
+		t.Errorf("last broadcast context_tokens = %d, want 103502 (the meter must follow the regrowing context, not stay at 12537)", last)
+	}
+	// And a late client sees the climbed value, not the compaction floor.
+	hello, _, _ := s.Attach(0)
+	if hello.ContextTokens != 103502 {
+		t.Errorf("hello context_tokens = %d, want 103502", hello.ContextTokens)
+	}
+}
