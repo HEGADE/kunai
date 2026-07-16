@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -87,25 +88,77 @@ func loadCLIs(dataDir string) []CLIProfile {
 	return out
 }
 
+// cliList returns a snapshot of the accounts under the read lock, so the Accounts
+// settings can edit the list live without racing a session start.
+func (s *Server) cliList() []CLIProfile {
+	s.clisMu.RLock()
+	defer s.clisMu.RUnlock()
+	return append([]CLIProfile(nil), s.clis...)
+}
+
 // resolveCLI returns the profile with the given name, or the default (first) when
 // the name is empty or unknown. A session must always get a runnable binary, so
 // this never fails.
 func (s *Server) resolveCLI(name string) CLIProfile {
-	for _, c := range s.clis {
+	list := s.cliList()
+	for _, c := range list {
 		if c.Name == name {
 			return c
 		}
 	}
-	return s.clis[0]
+	return list[0]
 }
 
 // cliNames lists the profile names for the client's picker, in config order.
 func (s *Server) cliNames() []string {
-	names := make([]string, 0, len(s.clis))
-	for _, c := range s.clis {
+	list := s.cliList()
+	names := make([]string, 0, len(list))
+	for _, c := range list {
 		names = append(names, c.Name)
 	}
 	return names
+}
+
+// saveCLIs replaces the account list live (no restart) and persists it. The list
+// is sanitized the same way loadCLIs treats the file: entries need a name and a
+// binary, and an empty result falls back to the single default.
+func (s *Server) saveCLIs(clis []CLIProfile) []CLIProfile {
+	clean := clis[:0]
+	seen := map[string]bool{}
+	for _, c := range clis {
+		if c.Name == "" || c.Bin == "" || seen[c.Name] {
+			continue
+		}
+		seen[c.Name] = true
+		clean = append(clean, c)
+	}
+	if len(clean) == 0 {
+		clean = defaultCLIs()
+	}
+	s.clisMu.Lock()
+	s.clis = clean
+	s.clisMu.Unlock()
+	if s.cfg.DataDir != "" {
+		if b, err := json.MarshalIndent(clean, "", "  "); err == nil {
+			_ = os.WriteFile(filepath.Join(s.cfg.DataDir, "clis.json"), b, 0o600)
+		}
+	}
+	return clean
+}
+
+// handleCLIs lists the accounts (GET) or replaces the whole list (POST). The list
+// is machine-local, so each machine's Settings edits its own.
+func (s *Server) handleCLIs(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		writeJSON(w, http.StatusOK, s.cliList())
+		return
+	}
+	var clis []CLIProfile
+	if err := json.NewDecoder(r.Body).Decode(&clis); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.saveCLIs(clis))
 }
 
 // accountRoot pairs an account name with the transcript folder to scan for it.
@@ -121,7 +174,7 @@ type accountRoot struct {
 func (s *Server) accountRoots() []accountRoot {
 	seen := map[string]bool{}
 	var roots []accountRoot
-	for _, c := range s.clis {
+	for _, c := range s.cliList() {
 		root := claudeRoot(c.configDir())
 		if seen[root] {
 			continue

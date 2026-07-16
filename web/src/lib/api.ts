@@ -1,4 +1,4 @@
-import type { Attachment, HistoryEntry, Job, Listing, MachineInfo, Meta, Stats, ThermalConfig } from './types'
+import type { Attachment, CLIProfile, HistoryEntry, Job, Listing, MachineInfo, Meta, Stats, ThermalConfig } from './types'
 
 // Every call takes a `base` origin so the client can reach any machine directly
 // over the tailnet. base === '' means the current origin (the hub), so the hub's
@@ -103,6 +103,19 @@ export function setLid(base: string, enabled: boolean): Promise<{ enabled: boole
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
   }).then((r) => json<{ enabled: boolean; supported: boolean }>(r))
+}
+
+// getCLIs / setCLIs read and replace a machine's Claude accounts (applied live,
+// no restart). The list is machine-local.
+export function getCLIs(base: string): Promise<CLIProfile[]> {
+  return fetch(at(base, '/api/clis')).then((r) => json<CLIProfile[]>(r))
+}
+export function setCLIs(base: string, clis: CLIProfile[]): Promise<CLIProfile[]> {
+  return fetch(at(base, '/api/clis'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(clis),
+  }).then((r) => json<CLIProfile[]>(r))
 }
 
 // updateMachine tells a machine to self-update: it downloads the latest release

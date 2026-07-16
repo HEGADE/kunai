@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
@@ -69,6 +70,7 @@ type Server struct {
 	sched      *schedule.Scheduler // runs prompts at a time / after quota reset
 	guardian   *guardian           // whole-machine thermal safety net
 	clis       []CLIProfile        // named Claude CLIs (accounts) a session can run on
+	clisMu     sync.RWMutex        // guards clis, which the Accounts settings edit live
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -143,6 +145,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/lid", s.handleLid)
 	mux.HandleFunc("GET /api/thermal", s.handleThermal)
 	mux.HandleFunc("POST /api/thermal", s.handleThermal)
+	mux.HandleFunc("GET /api/clis", s.handleCLIs)
+	mux.HandleFunc("POST /api/clis", s.handleCLIs)
 	mux.HandleFunc("GET /api/schedule", s.handleScheduleList)
 	mux.HandleFunc("POST /api/schedule", s.handleScheduleCreate)
 	mux.HandleFunc("PUT /api/schedule/{id}", s.handleScheduleReplace)

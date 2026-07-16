@@ -75,3 +75,31 @@ func TestEnvSlice(t *testing.T) {
 		t.Fatal("empty env should be nil")
 	}
 }
+
+// saveCLIs updates the live list and the file, dropping incomplete or duplicate
+// entries, and never leaves a machine with zero accounts.
+func TestSaveCLIs(t *testing.T) {
+	dir := t.TempDir()
+	s := &Server{cfg: Config{DataDir: dir}, clis: defaultCLIs()}
+
+	got := s.saveCLIs([]CLIProfile{
+		{Name: "Claude", Bin: "claude"},
+		{Name: "Work", Bin: "claude", Dir: "/w"},
+		{Name: "", Bin: "x"},          // no name: dropped
+		{Name: "Work", Bin: "claude"}, // dup name: dropped
+	})
+	if len(got) != 2 || got[1].Name != "Work" || got[1].Dir != "/w" {
+		t.Fatalf("saveCLIs = %+v, want Claude + Work", got)
+	}
+	// Live list updated, and it survives a reload from the file.
+	if len(s.cliList()) != 2 {
+		t.Fatalf("live list not updated: %+v", s.cliList())
+	}
+	if reloaded := loadCLIs(dir); len(reloaded) != 2 || reloaded[1].Name != "Work" {
+		t.Fatalf("not persisted: %+v", reloaded)
+	}
+	// An all-empty save falls back to the default, never zero.
+	if got := s.saveCLIs(nil); len(got) != 1 || got[0].Name != "Claude" {
+		t.Fatalf("empty save did not fall back to default: %+v", got)
+	}
+}

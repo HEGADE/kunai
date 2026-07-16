@@ -183,29 +183,26 @@ Installer overrides: `KUNAI_PORT` (default 8443), `KUNAI_HUB_URL`,
 
 One machine can drive more than one Claude account (say a personal one and a work
 one), pick which a session runs on, and see each account's past sessions labeled
-in Recent. An account is a named CLI plus its config folder. Create
-`~/.kunai/clis.json` (a starter file appears on first run):
+in Recent. A second account is two steps:
 
-```json
-[
-  { "name": "Claude", "bin": "claude" },
-  { "name": "Claude Work", "bin": "claude", "dir": "/Users/you/.claude-work" }
-]
-```
+1. **Log into it once** in a terminal, in its own config folder:
+   ```sh
+   CLAUDE_CONFIG_DIR=/Users/you/.claude-work claude
+   ```
+   Sign in as the second account, then quit. That folder now holds its login.
+   (The config folder is what actually separates two accounts.)
+2. **Add it in the app:** Settings, under a machine, "Claude accounts", enter a
+   name (e.g. Work) and that folder. It applies live, no restart.
 
-The first entry is the default. Give each account its own binary, or the same
-`claude` pointed at a different login with `dir` (its Claude config folder; log
-into that account once with `CLAUDE_CONFIG_DIR=/Users/you/.claude-work claude`).
-`dir` is what separates two accounts, and it is what lets kunai find that
-account's past sessions; `bin` alone is enough only when the accounts share a
-login. If you would rather, set `CLAUDE_CONFIG_DIR` in an `env` map instead of
-`dir` (they mean the same thing).
-
-With more than one configured, a new session shows an **Account** picker,
-defaulting to the first. The **Recent** list scans every account's folder and
+The first account is the default. With more than one, a new session shows an
+**Account** picker, and the **Recent** list scans every account's folder and
 labels each past session with its account, so a work session reopens on the work
 account. A session keeps its account for its lifetime, and a loop that survives a
 restart stays on its account too.
+
+Accounts persist to `~/.kunai/clis.json`, which you can also hand-edit if you
+prefer (a `bin` per account for separate binaries, or `env` for extra process
+environment); the Settings editor covers the common name-plus-folder case.
 
 ## Unattended runs and thermal safety
 

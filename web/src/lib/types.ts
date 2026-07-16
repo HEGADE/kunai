@@ -34,6 +34,13 @@ export interface Stats {
   clis?: string[] // Claude accounts a new session can pick (first is the default)
 }
 
+// A named Claude account (CLI) a machine can run sessions on.
+export interface CLIProfile {
+  name: string
+  bin: string
+  dir?: string // the account's Claude config folder (what separates two logins)
+}
+
 // The thermal safety guard's policy, mirroring the Go guardConfig.
 export interface ThermalConfig {
   enabled: boolean

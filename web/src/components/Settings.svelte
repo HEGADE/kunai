@@ -1,8 +1,8 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
   import { enablePush, disablePush, isSubscribed, pushState } from '../lib/push'
-  import { setKeepAwake, setThermal, setLid } from '../lib/api'
-  import type { Machine } from '../lib/types'
+  import { setKeepAwake, setThermal, setLid, getCLIs, setCLIs } from '../lib/api'
+  import type { Machine, CLIProfile } from '../lib/types'
 
   const st = $derived(app.stats)
   const supported = pushState() !== 'unsupported'
@@ -110,6 +110,49 @@
       delete b[m.id]
       lidBusy = b
     }
+  }
+
+  // Per-machine Claude accounts. Loaded lazily, edited live (no restart). The
+  // first account is the default and can't be removed.
+  let accounts = $state<Record<string, CLIProfile[]>>({})
+  let acctBusy = $state<Record<string, boolean>>({})
+  let newName = $state<Record<string, string>>({})
+  let newDir = $state<Record<string, string>>({})
+  $effect(() => {
+    for (const m of app.machines) if (m.online && !accounts[m.id]) loadAccounts(m)
+  })
+  async function loadAccounts(m: Machine) {
+    try {
+      accounts = { ...accounts, [m.id]: await getCLIs(m.url) }
+    } catch {
+      /* offline or old build without the endpoint: leave it unset */
+    }
+  }
+  async function commitAccounts(m: Machine, list: CLIProfile[]) {
+    if (acctBusy[m.id]) return
+    acctBusy = { ...acctBusy, [m.id]: true }
+    machErr = ''
+    try {
+      accounts = { ...accounts, [m.id]: await setCLIs(m.url, list) }
+      await app.refresh() // so the New Session picker updates immediately
+    } catch (e) {
+      machErr = (e as Error).message
+    } finally {
+      const b = { ...acctBusy }
+      delete b[m.id]
+      acctBusy = b
+    }
+  }
+  async function addAccount(m: Machine) {
+    const name = (newName[m.id] || '').trim()
+    const dir = (newDir[m.id] || '').trim()
+    if (!name || !dir) return
+    await commitAccounts(m, [...(accounts[m.id] ?? []), { name, bin: 'claude', dir }])
+    newName = { ...newName, [m.id]: '' }
+    newDir = { ...newDir, [m.id]: '' }
+  }
+  function removeAccount(m: Machine, name: string) {
+    commitAccounts(m, (accounts[m.id] ?? []).filter((c) => c.name !== name))
   }
 
   // Reflect the real subscription state, not just permission: a device can be
@@ -348,6 +391,31 @@
               {/if}
             {/if}
           {/if}
+          {#if m.online && accounts[m.id]}
+            <div class="acctblock">
+              <div class="acctlabel">Claude accounts</div>
+              {#each accounts[m.id] as c, i (c.name)}
+                <div class="acctrow">
+                  <span class="acctname">{c.name}{#if i === 0}<span class="acctdef">default</span>{/if}</span>
+                  <span class="acctdir mono">{c.dir || c.bin}</span>
+                  {#if i > 0}
+                    <button class="acctx" onclick={() => removeAccount(m, c.name)} disabled={acctBusy[m.id]} aria-label="Remove account">
+                      <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1 1l8 8M9 1l-8 8" /></svg>
+                    </button>
+                  {/if}
+                </div>
+              {/each}
+              <div class="acctadd">
+                <input class="min" placeholder="Name (e.g. Work)" bind:value={newName[m.id]} autocomplete="off" />
+                <input class="min mono" placeholder="Config folder, e.g. /Users/you/.claude-work" bind:value={newDir[m.id]} autocomplete="off" autocapitalize="off" spellcheck="false" />
+                <button class="add" onclick={() => addAccount(m)} disabled={acctBusy[m.id] || !(newName[m.id] || '').trim() || !(newDir[m.id] || '').trim()}>Add</button>
+              </div>
+              <p class="acctnote">
+                Log into the account once in a terminal first:
+                <span class="mono">CLAUDE_CONFIG_DIR=&lt;folder&gt; claude</span>
+              </p>
+            </div>
+          {/if}
         {/each}
       </div>
       <div class="addrow">
@@ -546,6 +614,83 @@
   /* A warning subline earns the one status colour reserved for "be careful". */
   .awsub.warn {
     color: color-mix(in srgb, var(--busy) 80%, var(--text-3));
+  }
+  .acctblock {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 4px 8px 10px 34px;
+    padding-top: 9px;
+    border-top: 1px solid var(--border);
+  }
+  .acctlabel {
+    font-size: 12.5px;
+    color: var(--text-2);
+  }
+  .acctrow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+  }
+  .acctname {
+    flex: none;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    color: var(--text-2);
+  }
+  .acctdef {
+    font-size: 9.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-4);
+  }
+  .acctdir {
+    flex: 1;
+    min-width: 0;
+    font-size: 11px;
+    color: var(--text-4);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    direction: rtl;
+    unicode-bidi: plaintext;
+    text-align: left;
+  }
+  .acctx {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    color: var(--text-4);
+  }
+  .acctx:hover {
+    color: var(--text);
+    background: var(--panel-3);
+  }
+  .acctadd {
+    display: flex;
+    gap: 6px;
+    margin-top: 2px;
+  }
+  .acctadd .min {
+    min-width: 0;
+  }
+  .acctadd .min:first-child {
+    flex: 0 0 34%;
+  }
+  .acctadd .min:nth-child(2) {
+    flex: 1;
+  }
+  .acctnote {
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-4);
   }
   .thpower {
     display: flex;
