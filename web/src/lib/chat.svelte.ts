@@ -83,9 +83,11 @@ export class ChatConnection {
   cwd = $state('')
   model = $state(DEFAULT_MODEL)
   title = $state('')
-  // Tokens occupying the context window, from the latest turn's result. 0 until
-  // the first turn completes (a fresh or resumed session has none reported yet).
-  // Drives the composer's context meter and updates live on every result.
+  // Tokens occupying the context window, from the newest model call's usage. 0
+  // until the first turn produces an assistant message (a fresh or resumed
+  // session may have none reported yet). Drives the composer's context meter and
+  // updates live on every assistant frame, on compaction, and from hello on
+  // (re)attach, so a foregrounded client shows the current fill, not a stale one.
   contextTokens = $state(0)
   errorLine = $state('')
   // Latest usage-window status from the CLI; drives the in-chat "schedule after
@@ -104,6 +106,30 @@ export class ChatConnection {
     private base: string,
     private id: string,
   ) {
+    this.connect()
+    // A backgrounded phone's socket dies silently; the meter and chat then sit on
+    // whatever value they last saw (a just-compacted session shows its ~12k
+    // post-compaction size) until the reconnect backoff happens to fire. Snap back
+    // the moment we return to the foreground or the network comes back, so hello
+    // re-seeds the real state (context, queue, state) at once instead of after a
+    // wait. Idempotent: since=lastSeq means a live socket replays an empty gap.
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this.revalidate)
+      window.addEventListener('online', this.revalidate)
+      window.addEventListener('focus', this.revalidate)
+    }
+  }
+
+  // Force an immediate reconnect if the socket is not healthy, bypassing the
+  // backoff. A CONNECTING socket is left alone; an OPEN one is assumed live (a
+  // dead one fires onclose on resume, which routes here via the CLOSED branch).
+  private revalidate = () => {
+    if (this.closed) return
+    if (document.visibilityState === 'hidden') return
+    const rs = this.ws?.readyState
+    if (rs === WebSocket.OPEN || rs === WebSocket.CONNECTING) return
+    clearTimeout(this.reconnectTimer)
+    this.retries = 0
     this.connect()
   }
 
@@ -392,6 +418,11 @@ export class ChatConnection {
   destroy() {
     this.closed = true
     clearTimeout(this.reconnectTimer)
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.revalidate)
+      window.removeEventListener('online', this.revalidate)
+      window.removeEventListener('focus', this.revalidate)
+    }
     this.ws?.close()
   }
 }
