@@ -35,7 +35,7 @@ func TestCompactSummaryIsNotSeededAsAUserTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	turns := loadTranscriptTurns(id)
+	turns := loadTranscriptTurns("", id)
 
 	var users []string
 	var compacts int

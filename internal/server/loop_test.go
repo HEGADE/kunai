@@ -39,7 +39,7 @@ func TestLoopPromptsAreNotSeededAsUserTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	turns := loadTranscriptTurns(id)
+	turns := loadTranscriptTurns("", id)
 
 	var users []string
 	for _, tr := range turns {
@@ -80,7 +80,7 @@ func TestLoopIterationsAreSeededAsSeams(t *testing.T) {
 	}
 
 	var iters []int
-	for _, tr := range loadTranscriptTurns(id) {
+	for _, tr := range loadTranscriptTurns("", id) {
 		if tr.Role == "loop" {
 			iters = append(iters, tr.Iteration)
 		}

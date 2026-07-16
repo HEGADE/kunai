@@ -103,8 +103,8 @@ func (s *Server) resumeOneLoop(ctx context.Context, rec session.LoopPersist) {
 		Model:         rec.Model,
 		Effort:        rec.Effort,
 		Resume:        rec.SessionID,
-		Seed:          loadTranscriptTurns(rec.SessionID),
-		ContextTokens: loadTranscriptContextTokens(rec.SessionID),
+		Seed:          loadTranscriptTurns(rec.Env["CLAUDE_CONFIG_DIR"], rec.SessionID),
+		ContextTokens: loadTranscriptContextTokens(rec.Env["CLAUDE_CONFIG_DIR"], rec.SessionID),
 		// Carry the account across the restart, or the resumed loop would jump to
 		// the default Claude and spend the wrong budget.
 		CLIName: rec.CLIName,

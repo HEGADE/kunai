@@ -218,7 +218,7 @@ func (m *Manager) removeIf(id string, s *Session) {
 // so it cannot change on the running process). The conversation is preserved via
 // the transcript: seedFn loads it back into the replay buffer. The new session
 // keeps the same id (resume forces id == claude session id).
-func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seedFn func(cid string) []SeedTurn) (*Session, error) {
+func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seedFn func(configDir, cid string) []SeedTurn) (*Session, error) {
 	m.mu.Lock()
 	old, ok := m.sessions[id]
 	m.mu.Unlock()
@@ -228,6 +228,11 @@ func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seed
 	cid := old.ClaudeSessionID()
 	meta := old.Meta()
 	ctxTokens := old.ContextTokens() // preserve the context meter across the respawn
+	// The account (bin/env) is set once at create and never mutated, so read it
+	// directly to carry it across the respawn; an effort change must not drop a
+	// work session back onto the default account. dir is where its transcript lives.
+	cliName, cliBin, cliEnv := old.cliName, old.cliBin, old.cliEnv
+	dir := cliEnv["CLAUDE_CONFIG_DIR"]
 
 	old.Close()
 	<-old.Done()
@@ -243,10 +248,13 @@ func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seed
 	//     refuses to start).
 	//   - brand-new session, no turns and no transcript: respawn fresh under the
 	//     same handle id.
-	opts := CreateOptions{Cwd: meta.Cwd, Title: meta.Title, Model: meta.Model, Effort: effort, ContextTokens: ctxTokens}
+	opts := CreateOptions{
+		Cwd: meta.Cwd, Title: meta.Title, Model: meta.Model, Effort: effort, ContextTokens: ctxTokens,
+		CLIName: cliName, Bin: cliBin, Env: cliEnv,
+	}
 	if cid != "" {
-		opts.Resume, opts.Seed = cid, seedFn(cid)
-	} else if seed := seedFn(id); len(seed) > 0 {
+		opts.Resume, opts.Seed = cid, seedFn(dir, cid)
+	} else if seed := seedFn(dir, id); len(seed) > 0 {
 		opts.Resume, opts.Seed = id, seed
 	} else {
 		opts.SessionID = id

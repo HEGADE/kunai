@@ -251,6 +251,7 @@ export interface HistoryEntry {
   id: string
   cwd: string
   title: string
+  cli?: string // the Claude account this session belongs to (reopen on it)
   mtime: string
 }
 

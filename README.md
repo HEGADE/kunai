@@ -182,30 +182,30 @@ Installer overrides: `KUNAI_PORT` (default 8443), `KUNAI_HUB_URL`,
 ## Multiple Claude accounts
 
 One machine can drive more than one Claude account (say a personal one and a work
-one) and let you pick which a session runs on. Kunai runs a named binary per
-account; the account separation itself is the CLI's concern. Create
+one), pick which a session runs on, and see each account's past sessions labeled
+in Recent. An account is a named CLI plus its config folder. Create
 `~/.kunai/clis.json` (a starter file appears on first run):
 
 ```json
 [
   { "name": "Claude", "bin": "claude" },
-  {
-    "name": "Claude Work",
-    "bin": "claude",
-    "env": { "CLAUDE_CONFIG_DIR": "/Users/you/.claude-work" }
-  }
+  { "name": "Claude Work", "bin": "claude", "dir": "/Users/you/.claude-work" }
 ]
 ```
 
 The first entry is the default. Give each account its own binary, or the same
-binary pointed at a different auth via `CLAUDE_CONFIG_DIR` in `env` (log into that
-account once with `CLAUDE_CONFIG_DIR=... claude`). With more than one configured, a
-new session shows an **Account** picker, defaulting to the first. A session
-remembers its account for its lifetime.
+`claude` pointed at a different login with `dir` (its Claude config folder; log
+into that account once with `CLAUDE_CONFIG_DIR=/Users/you/.claude-work claude`).
+`dir` is what separates two accounts, and it is what lets kunai find that
+account's past sessions; `bin` alone is enough only when the accounts share a
+login. If you would rather, set `CLAUDE_CONFIG_DIR` in an `env` map instead of
+`dir` (they mean the same thing).
 
-Not yet: a session on an account with its own `CLAUDE_CONFIG_DIR` keeps its
-transcripts in that dir, so it won't appear in the Recent list or resume from
-history until kunai scans per account.
+With more than one configured, a new session shows an **Account** picker,
+defaulting to the first. The **Recent** list scans every account's folder and
+labels each past session with its account, so a work session reopens on the work
+account. A session keeps its account for its lifetime, and a loop that survives a
+restart stays on its account too.
 
 ## Unattended runs and thermal safety
 

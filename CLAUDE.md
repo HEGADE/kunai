@@ -112,9 +112,13 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   A resumed loop carries the account: `LoopPersist` saves `CLIName/Bin/Env` and
   `resumeOneLoop` passes them back through `CreateOptions`, so an overnight loop on
   a work account stays on it across a restart instead of reverting to the default.
-  KNOWN FOLLOW-UP: account separation via a different `CLAUDE_CONFIG_DIR` puts that
-  account's transcripts in a different dir, so `history.go` (which scans
-  `~/.claude/projects`) will not list or seed those sessions from Recent yet.
+  Recent is per-account: an account's config dir (`CLIProfile.Dir` or its
+  `CLAUDE_CONFIG_DIR`, folded into the driver env by `effectiveEnv`) is where its
+  transcripts live, so `scanHistory` walks each account's `<configDir>/projects`
+  and tags every `HistoryEntry.CLI`; the client sends that `cli` back on reopen and
+  `handleCreateSession` seeds from that account's dir. `transcriptPath` and the
+  loaders take the config dir; `RestartWithEffort` preserves the account across the
+  respawn so an effort change never drops a work session to the default.
 - `internal/project`: reads a directory into the description a session hands a model
   (`Scan` -> `Info`, `Info.Brief()`): layout, language mix, git head from `.git`,
   the files that name it. It never opens the code, and the walk skips `.git`,

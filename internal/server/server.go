@@ -228,14 +228,17 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	cli := s.resolveCLI(req.CLI)
 	opts := session.CreateOptions{
 		Cwd: req.Cwd, Title: req.Title, Model: req.Model, Effort: req.Effort, Resume: req.Resume,
-		CLIName: cli.Name, Bin: cli.Bin, Env: cli.Env,
+		CLIName: cli.Name, Bin: cli.Bin, Env: cli.effectiveEnv(),
 	}
 	if req.Resume != "" {
 		// Replay the prior conversation into the buffer so the client doesn't
 		// open onto an empty transcript, and seed the context meter from the
-		// transcript so it reflects the real fill before the next turn.
-		opts.Seed = loadTranscriptTurns(req.Resume)
-		opts.ContextTokens = loadTranscriptContextTokens(req.Resume)
+		// transcript so it reflects the real fill before the next turn. Read from
+		// the chosen account's config dir, so a work session seeds from its own
+		// transcript, not the default account's.
+		dir := cli.configDir()
+		opts.Seed = loadTranscriptTurns(dir, req.Resume)
+		opts.ContextTokens = loadTranscriptContextTokens(dir, req.Resume)
 	}
 	sess, err := s.mgr.Create(ctx, opts)
 	if err != nil {

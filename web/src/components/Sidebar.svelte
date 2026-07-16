@@ -79,6 +79,7 @@
         cwd: h.cwd,
         resume: h.id,
         title: h.title,
+        cli: h.cli, // reopen on the account it belongs to
       })
       app.open(h.machineId, meta.id)
       app.refresh()

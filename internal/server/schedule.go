@@ -35,7 +35,7 @@ func (s *Server) fireJob(j schedule.Job) error {
 	}
 	if j.Target.Kind == "resume" && j.Target.SessionID != "" {
 		opts.Resume = j.Target.SessionID
-		opts.Seed = loadTranscriptTurns(j.Target.SessionID)
+		opts.Seed = loadTranscriptTurns("", j.Target.SessionID) // scheduled jobs use the default account
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)

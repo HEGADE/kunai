@@ -23,7 +23,22 @@ type HistoryEntry struct {
 	ID    string    `json:"id"`
 	Cwd   string    `json:"cwd"`
 	Title string    `json:"title"`
+	CLI   string    `json:"cli,omitempty"` // the account this session belongs to
 	Mtime time.Time `json:"mtime"`
+}
+
+// claudeRoot is the transcripts folder for a Claude config dir. An empty configDir
+// means the default account (~/.claude); a named account points CLAUDE_CONFIG_DIR
+// (or its profile Dir) somewhere else, and its transcripts live under that.
+func claudeRoot(configDir string) string {
+	if configDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		configDir = filepath.Join(home, ".claude")
+	}
+	return filepath.Join(configDir, "projects")
 }
 
 const historyLimit = 25      // default for the sidebar/dashboard poll
@@ -41,51 +56,52 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
 		limit = min(v, historyMaxLimit)
 	}
-	writeJSON(w, http.StatusOK, scanHistory(live, limit))
+	writeJSON(w, http.StatusOK, scanHistory(live, limit, s.accountRoots()))
 }
 
-// scanHistory walks ~/.claude/projects/*/<sessionId>.jsonl transcripts.
-func scanHistory(live map[string]bool, limit int) []HistoryEntry {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return []HistoryEntry{}
-	}
-	root := filepath.Join(home, ".claude", "projects")
-	dirs, err := os.ReadDir(root)
-	if err != nil {
-		return []HistoryEntry{}
-	}
-
+// scanHistory walks each account's <configDir>/projects/*/<sessionId>.jsonl
+// transcripts, newest first, tagging every entry with the account it belongs to
+// so the client can reopen it on the right one. A session id is unique, so the
+// same id is never listed twice across accounts.
+func scanHistory(live map[string]bool, limit int, roots []accountRoot) []HistoryEntry {
 	out := []HistoryEntry{}
-	for _, d := range dirs {
-		if !d.IsDir() {
-			continue
-		}
-		files, err := os.ReadDir(filepath.Join(root, d.Name()))
+	seen := map[string]bool{}
+	for _, ar := range roots {
+		dirs, err := os.ReadDir(ar.root)
 		if err != nil {
 			continue
 		}
-		for _, f := range files {
-			name := f.Name()
-			if !strings.HasSuffix(name, ".jsonl") {
+		for _, d := range dirs {
+			if !d.IsDir() {
 				continue
 			}
-			id := strings.TrimSuffix(name, ".jsonl")
-			if live[id] {
+			files, err := os.ReadDir(filepath.Join(ar.root, d.Name()))
+			if err != nil {
 				continue
 			}
-			info, err := f.Info()
-			if err != nil || info.Size() == 0 {
-				continue
+			for _, f := range files {
+				name := f.Name()
+				if !strings.HasSuffix(name, ".jsonl") {
+					continue
+				}
+				id := strings.TrimSuffix(name, ".jsonl")
+				if live[id] || seen[id] {
+					continue
+				}
+				info, err := f.Info()
+				if err != nil || info.Size() == 0 {
+					continue
+				}
+				cwd, title := probeTranscript(filepath.Join(ar.root, d.Name(), name))
+				if cwd == "" {
+					continue
+				}
+				if title == "" {
+					title = filepath.Base(cwd)
+				}
+				seen[id] = true
+				out = append(out, HistoryEntry{ID: id, Cwd: cwd, Title: title, CLI: ar.name, Mtime: info.ModTime()})
 			}
-			cwd, title := probeTranscript(filepath.Join(root, d.Name(), name))
-			if cwd == "" {
-				continue
-			}
-			if title == "" {
-				title = filepath.Base(cwd)
-			}
-			out = append(out, HistoryEntry{ID: id, Cwd: cwd, Title: title, Mtime: info.ModTime()})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Mtime.After(out[j].Mtime) })
@@ -247,13 +263,10 @@ const maxSeedTurns = 2000
 
 // loadTranscriptTurns parses a session transcript into displayable turns so a
 // resumed session opens with its conversation history.
-// transcriptPath locates a session's transcript file, or "" if none exists.
-func transcriptPath(id string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	root := filepath.Join(home, ".claude", "projects")
+// transcriptPath locates a session's transcript file under the given account's
+// config dir (empty = the default ~/.claude), or "" if none exists.
+func transcriptPath(configDir, id string) string {
+	root := claudeRoot(configDir)
 	dirs, err := os.ReadDir(root)
 	if err != nil {
 		return ""
@@ -267,8 +280,8 @@ func transcriptPath(id string) string {
 	return ""
 }
 
-func loadTranscriptTurns(id string) []session.SeedTurn {
-	path := transcriptPath(id)
+func loadTranscriptTurns(configDir, id string) []session.SeedTurn {
+	path := transcriptPath(configDir, id)
 	if path == "" {
 		return nil
 	}
@@ -399,8 +412,8 @@ type transcriptUsage struct {
 // cache tokens) from a transcript's most recent usage, so a resumed session
 // shows its real context fill at once instead of the "send a message" prompt.
 // Returns 0 if the transcript records no usage yet.
-func loadTranscriptContextTokens(id string) int64 {
-	path := transcriptPath(id)
+func loadTranscriptContextTokens(configDir, id string) int64 {
+	path := transcriptPath(configDir, id)
 	if path == "" {
 		return 0
 	}

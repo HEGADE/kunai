@@ -74,6 +74,7 @@
         cwd: h.cwd,
         resume: h.id,
         title: h.title,
+        cli: h.cli, // reopen on the account it belongs to
       })
       app.open(h.machineId, meta.id)
       app.closeAllSessions()
@@ -124,6 +125,7 @@
             <span class="sub mono">
               {baseName(h.cwd)}
               {#if multi}· {machineLabel(h.machineId)}{/if}
+              {#if h.cli}· {h.cli}{/if}
               · {ago(h.mtime)}
             </span>
           </span>

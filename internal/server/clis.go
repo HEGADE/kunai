@@ -16,6 +16,35 @@ type CLIProfile struct {
 	Name string            `json:"name"`
 	Bin  string            `json:"bin"`
 	Env  map[string]string `json:"env,omitempty"`
+	// Dir is the account's Claude config dir, where it keeps its auth and its
+	// session transcripts. It is what actually separates two accounts. Optional
+	// shorthand for setting CLAUDE_CONFIG_DIR in Env; either one lets the Recent
+	// list find this account's past sessions. Empty means the default (~/.claude).
+	Dir string `json:"dir,omitempty"`
+}
+
+// configDir is where this account keeps its transcripts and auth: the explicit
+// Dir, else a CLAUDE_CONFIG_DIR in Env, else "" for the default (~/.claude).
+func (p CLIProfile) configDir() string {
+	if p.Dir != "" {
+		return p.Dir
+	}
+	return p.Env["CLAUDE_CONFIG_DIR"]
+}
+
+// effectiveEnv is the env handed to the driver. It folds the Dir shorthand into
+// CLAUDE_CONFIG_DIR so the CLI actually runs against that account; without this a
+// profile that used Dir would still auth as the default account.
+func (p CLIProfile) effectiveEnv() map[string]string {
+	if p.Dir == "" {
+		return p.Env
+	}
+	env := make(map[string]string, len(p.Env)+1)
+	for k, v := range p.Env {
+		env[k] = v
+	}
+	env["CLAUDE_CONFIG_DIR"] = p.Dir
+	return env
 }
 
 // defaultCLIs is what a machine has until clis.json says otherwise: the one
@@ -77,6 +106,33 @@ func (s *Server) cliNames() []string {
 		names = append(names, c.Name)
 	}
 	return names
+}
+
+// accountRoot pairs an account name with the transcript folder to scan for it.
+type accountRoot struct {
+	name string
+	root string
+}
+
+// accountRoots lists the transcript folders to scan for the Recent list, one per
+// distinct account config dir, each tagged with the account that owns it. The
+// default (~/.claude) is always covered, so the personal account is never lost
+// even if every profile pins a custom dir.
+func (s *Server) accountRoots() []accountRoot {
+	seen := map[string]bool{}
+	var roots []accountRoot
+	for _, c := range s.clis {
+		root := claudeRoot(c.configDir())
+		if seen[root] {
+			continue
+		}
+		seen[root] = true
+		roots = append(roots, accountRoot{name: c.Name, root: root})
+	}
+	if def := claudeRoot(""); !seen[def] {
+		roots = append(roots, accountRoot{name: "", root: def})
+	}
+	return roots
 }
 
 // envSlice turns a profile's env map into the KEY=VALUE form exec wants, sorted
