@@ -220,10 +220,17 @@
             <div class="irow awrow">
               <span class="awk">
                 <span class="awname">Keep working with the lid closed</span>
-                <span class="awsub warn">
-                  Needs the one-time admin setup from install. Overrides lid-close sleep, so watch the
-                  heat; the guard below is what makes this safe to leave.
-                </span>
+                {#if m.stats.thermal_privileged}
+                  <span class="awsub">
+                    Overrides lid-close sleep, so watch the heat; the guard below is what makes this
+                    safe to leave. Admin access is set up.
+                  </span>
+                {:else}
+                  <span class="awsub warn">
+                    Needs the one-time admin setup from install (re-run it with the privileged flag).
+                    Overrides lid-close sleep.
+                  </span>
+                {/if}
               </span>
               <button
                 class="switch"
@@ -282,7 +289,7 @@
                   </label>
                 {/if}
                 <label class="thlim">
-                  <span class="thk">Or after</span>
+                  <span class="thk">Time limit</span>
                   <input
                     class="thin mono"
                     type="number"
@@ -292,7 +299,7 @@
                     disabled={thBusy[m.id]}
                     onchange={(e) => saveThermal(m, { max_hours: +e.currentTarget.value })}
                   />
-                  <span class="thu">hours awake (0 = off)</span>
+                  <span class="thu">hours awake, heat or not (0 = off)</span>
                 </label>
               </div>
               {#if m.stats.cpu_temp_c > 0 || m.stats.thermal_pressure}
@@ -311,12 +318,13 @@
                     <span class="thck">
                       <span class="thcname">Power off if it keeps climbing</span>
                       <span class="thcsub">
-                        {#if m.stats.cpu_temp_c > 0}
-                          Last resort if it stays hot after everything stopped. Needs the admin setup;
-                          the machine shuts down.
+                        Last resort: shuts the machine down if it is still {m.stats.cpu_temp_c > 0
+                          ? 'too hot'
+                          : 'at Critical pressure'} after everything else stopped.
+                        {#if m.stats.thermal_privileged}
+                          Admin access is ready.
                         {:else}
-                          Last resort: powers off on Critical pressure after everything stopped. Needs
-                          the admin setup; the machine shuts down.
+                          Needs the one-time admin setup from install first.
                         {/if}
                       </span>
                     </span>

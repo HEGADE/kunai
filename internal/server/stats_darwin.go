@@ -118,6 +118,13 @@ func thermalPressure() string {
 	return pressVal
 }
 
+// thermalPrivileged reports whether the admin grant is in place. The installer
+// grants pmset, powermetrics, and shutdown in one sudoers file, all or nothing,
+// so a successful pressure read (powermetrics ran) proves the same file also
+// authorizes the lid hold and the poweroff. This reuses the cached read, so it
+// costs no extra sudo spawn.
+func thermalPrivileged() bool { return thermalPressure() != "" }
+
 func readThermalPressure() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

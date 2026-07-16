@@ -112,3 +112,12 @@ func memInfo() (total, avail uint64) {
 // thermalPressure has no macOS-style pressure level on Linux; the guard uses the
 // real cpuTemp() degrees here, so this is always empty.
 func thermalPressure() string { return "" }
+
+// thermalPrivileged reports whether the install-time polkit rule that lets the
+// guard power the host off and hold the lid is present. The installer writes it
+// to this exact path; the file is world-readable, so a stat is enough and needs
+// no privilege of its own.
+func thermalPrivileged() bool {
+	_, err := os.Stat("/etc/polkit-1/rules.d/49-kunai-thermal.rules")
+	return err == nil
+}

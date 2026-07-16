@@ -68,3 +68,6 @@ func cpuTemp() float64 { return 0 }
 
 // thermalPressure is a macOS concept; empty on Windows.
 func thermalPressure() string { return "" }
+
+// thermalPrivileged: no privileged thermal actions on Windows.
+func thermalPrivileged() bool { return false }

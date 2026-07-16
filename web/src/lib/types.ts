@@ -27,6 +27,7 @@ export interface Stats {
   thermal_max_hours: number // wall-clock cap on unattended work
   thermal_hard_c: number // poweroff ceiling (0 = never)
   thermal_action: string // 'sleep' | 'poweroff'
+  thermal_privileged: boolean // admin grant (poweroff/lid) is actually in place
   keep_lid: boolean // lid-closed hold currently held (privileged)
   keep_lid_supported: boolean // platform can hold the lid (Phase 2)
   rate_resets?: Record<string, number> // window -> unix seconds it resets

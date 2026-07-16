@@ -31,9 +31,10 @@ type Stats struct {
 	KunaiUptime   int64   `json:"kunai_uptime_sec"`
 	KeepAwake     bool    `json:"keep_awake"`           // idle-sleep hold currently held
 	KeepAwakeSupp bool    `json:"keep_awake_supported"` // platform can hold it
-	// CPUTempC is the hottest CPU sensor in degrees Celsius, 0 when unreadable
-	// (every macOS build today, so the client hides the tile there). ThermalTrip
-	// is set while the guardian is holding everything stopped after a trip.
+	// CPUTempC is the hottest CPU sensor in degrees Celsius, 0 on macOS (which has
+	// no unprivileged die temperature; it reports ThermalPressure instead, and the
+	// client shows whichever the host has). ThermalTrip is set while the guardian
+	// is holding everything stopped after a trip.
 	CPUTempC    float64 `json:"cpu_temp_c"`
 	ThermalTrip bool    `json:"thermal_trip"`
 	// ThermalPressure is the macOS thermal pressure level ("nominal".."critical"),
@@ -45,10 +46,14 @@ type Stats struct {
 	ThermalGuard    bool    `json:"thermal_guard"`
 	ThermalSoftC    float64 `json:"thermal_soft_c"`
 	ThermalMaxHours float64 `json:"thermal_max_hours"`
-	ThermalHardC    float64 `json:"thermal_hard_c"`
-	ThermalAction   string  `json:"thermal_action"` // "sleep" | "poweroff"
-	KeepLid         bool    `json:"keep_lid"`       // lid-closed hold currently held
-	KeepLidSupp     bool    `json:"keep_lid_supported"`
+	// ThermalPrivileged is true when the admin grant (sudoers/polkit) that lets the
+	// guard power the host off and hold the lid is actually in place, so the UI can
+	// say "ready" instead of "needs setup".
+	ThermalPrivileged bool    `json:"thermal_privileged"`
+	ThermalHardC      float64 `json:"thermal_hard_c"`
+	ThermalAction     string  `json:"thermal_action"` // "sleep" | "poweroff"
+	KeepLid           bool    `json:"keep_lid"`       // lid-closed hold currently held
+	KeepLidSupp       bool    `json:"keep_lid_supported"`
 	// RateResets maps a usage window ("five_hour"/"seven_day") to the unix time
 	// it resets, as last reported by the CLI. Drives scheduler previews.
 	RateResets map[string]int64 `json:"rate_resets,omitempty"`
@@ -86,6 +91,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	st.ThermalGuard, st.ThermalSoftC, st.ThermalMaxHours = gc.Enabled, gc.SoftC, gc.MaxHours
 	st.ThermalHardC, st.ThermalAction = gc.HardC, gc.Action
 	st.KeepLid, st.KeepLidSupp = s.lid.Enabled(), s.lid.Supported()
+	st.ThermalPrivileged = thermalPrivileged()
 	writeJSON(w, http.StatusOK, st)
 }
 
