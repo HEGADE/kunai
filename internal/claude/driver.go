@@ -95,6 +95,12 @@ type Options struct {
 	PermissionMode string // default "default"
 	Resume         string // session id to resume (loads prior transcript), optional
 	SessionID      string // explicit session id (must be a UUID), optional
+	// Bin is the CLI binary to run; empty means "claude" (the default account).
+	// A differently named or wrapped binary lets one machine drive more than one
+	// Claude account. Env is extra environment (KEY=VALUE) appended to the process,
+	// e.g. a CLAUDE_CONFIG_DIR that points at another account's auth.
+	Bin string
+	Env []string
 	// ReadyTimeout bounds how long Start waits for the init handshake.
 	ReadyTimeout time.Duration
 }
@@ -184,9 +190,13 @@ func (s *Session) Start(ctx context.Context) error {
 	// caller's ctx only bounds the readiness wait below. Binding the process to a
 	// request context would kill claude the moment the HTTP handler returns.
 	s.procCtx, s.procCancel = context.WithCancel(context.Background())
-	cmd := exec.CommandContext(s.procCtx, "claude", s.args()...)
+	bin := s.opts.Bin
+	if bin == "" {
+		bin = "claude"
+	}
+	cmd := exec.CommandContext(s.procCtx, bin, s.args()...)
 	cmd.Dir = s.opts.Cwd
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), s.opts.Env...)
 	cmd.Stderr = os.Stderr
 
 	stdin, err := cmd.StdinPipe()

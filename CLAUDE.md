@@ -100,6 +100,20 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   Temperature is read in the stats platform files (`cpuTemp()`, real on Linux via
   `/sys/class/hwmon`, 0 on macOS until a privileged Phase 2). Policy persists in
   `thermal.json`, mirroring `awake.json`.
+- `internal/server/clis.go`: named Claude CLIs, so one machine can drive more than
+  one Claude account. A `CLIProfile` is a name plus the binary to run plus optional
+  env (a `CLAUDE_CONFIG_DIR` pointing at another account's auth). The list loads
+  from `clis.json` (a starter file is written on first boot), the default is a
+  single `Claude`/`claude`, and the first profile is always the default. The chosen
+  profile flows `handleCreateSession` -> `CreateOptions{CLIName,Bin,Env}` ->
+  `claude.Options{Bin,Env}`, where the driver execs that binary with the env
+  appended. `/api/stats` sends the profile names (only when there is a real choice)
+  for the New Session picker; `Meta.CLI` records which account a session runs on.
+  NOTE: account separation via a different `CLAUDE_CONFIG_DIR` puts that account's
+  transcripts in a different dir, so `history.go` (which scans `~/.claude/projects`)
+  will not list or seed those sessions yet, and a resumed loop
+  (`looppersist.go`, once that lands) must carry `CLIName/Bin/Env` or it reverts to
+  the default account. Both are known follow-ups.
 - `internal/project`: reads a directory into the description a session hands a model
   (`Scan` -> `Info`, `Info.Brief()`): layout, language mix, git head from `.git`,
   the files that name it. It never opens the code, and the walk skips `.git`,

@@ -23,6 +23,19 @@ func NewManager() *Manager {
 }
 
 // CreateOptions configure a new session.
+// envKV flattens an env map into the KEY=VALUE slice the driver appends to the
+// process environment.
+func envKV(env map[string]string) []string {
+	if len(env) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(env))
+	for k, v := range env {
+		out = append(out, k+"="+v)
+	}
+	return out
+}
+
 type CreateOptions struct {
 	Cwd    string
 	Title  string
@@ -44,6 +57,12 @@ type CreateOptions struct {
 	ContextTokens int64
 	// Mode is the permission mode to spawn in; empty means DefaultPermissionMode.
 	Mode string
+	// CLI names which Claude CLI (account) this session runs on. CLIName is for
+	// display, Bin is the binary to exec (empty = "claude"), Env is extra process
+	// environment. Set by the server from the chosen CLI profile.
+	CLIName string
+	Bin     string
+	Env     map[string]string
 }
 
 // Create registers a new claude session and returns immediately; the CLI boots
@@ -79,7 +98,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 		mode = DefaultPermissionMode
 	}
 
-	drvOpts := claude.Options{Cwd: opts.Cwd, Model: opts.Model, Effort: opts.Effort, PermissionMode: mode}
+	drvOpts := claude.Options{Cwd: opts.Cwd, Model: opts.Model, Effort: opts.Effort, PermissionMode: mode, Bin: opts.Bin, Env: envKV(opts.Env)}
 	if opts.Resume != "" {
 		drvOpts.Resume = opts.Resume
 	} else {
@@ -91,6 +110,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	s.model = opts.Model
 	s.effort = opts.Effort
 	s.mode = mode
+	s.cliName = opts.CLIName
 	s.contextTokens = opts.ContextTokens
 	if len(opts.Seed) > 0 {
 		s.Seed(opts.Seed)

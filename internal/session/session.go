@@ -50,6 +50,7 @@ type Session struct {
 	model           string
 	mode            string // permission mode
 	effort          string // reasoning effort (spawn-time; changed by restart)
+	cliName         string // which Claude CLI/account this session runs on
 	title           string
 	claudeSessionID string // CLI-assigned id, for --resume cold-start
 	state           string
@@ -700,6 +701,7 @@ type Meta struct {
 	Cwd       string    `json:"cwd"`
 	Model     string    `json:"model"`
 	Effort    string    `json:"effort"`
+	CLI       string    `json:"cli,omitempty"` // the Claude account this session runs on
 	Title     string    `json:"title"`
 	State     string    `json:"state"`
 	CreatedAt time.Time `json:"created_at"`
@@ -708,7 +710,7 @@ type Meta struct {
 func (s *Session) Meta() Meta {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return Meta{ID: s.ID, Cwd: s.Cwd, Model: s.model, Effort: s.effort, Title: s.title, State: s.state, CreatedAt: s.CreatedAt}
+	return Meta{ID: s.ID, Cwd: s.Cwd, Model: s.model, Effort: s.effort, CLI: s.cliName, Title: s.title, State: s.state, CreatedAt: s.CreatedAt}
 }
 
 // ClaudeSessionID returns the CLI-assigned session id (available after init),

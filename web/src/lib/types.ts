@@ -31,6 +31,7 @@ export interface Stats {
   keep_lid: boolean // lid-closed hold currently held (privileged)
   keep_lid_supported: boolean // platform can hold the lid (Phase 2)
   rate_resets?: Record<string, number> // window -> unix seconds it resets
+  clis?: string[] // Claude accounts a new session can pick (first is the default)
 }
 
 // The thermal safety guard's policy, mirroring the Go guardConfig.
@@ -77,6 +78,7 @@ export interface Meta {
   cwd: string
   model: string
   effort?: string
+  cli?: string // the Claude account this session runs on
   title: string
   state: SessionState
   created_at: string

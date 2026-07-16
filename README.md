@@ -179,6 +179,34 @@ all off or inert by default:
 Installer overrides: `KUNAI_PORT` (default 8443), `KUNAI_HUB_URL`,
 `KUNAI_PUSH_EMAIL`, and `KUNAI_THERMAL_PRIVILEGED` (see below).
 
+## Multiple Claude accounts
+
+One machine can drive more than one Claude account (say a personal one and a work
+one) and let you pick which a session runs on. Kunai runs a named binary per
+account; the account separation itself is the CLI's concern. Create
+`~/.kunai/clis.json` (a starter file appears on first run):
+
+```json
+[
+  { "name": "Claude", "bin": "claude" },
+  {
+    "name": "Claude Work",
+    "bin": "claude",
+    "env": { "CLAUDE_CONFIG_DIR": "/Users/you/.claude-work" }
+  }
+]
+```
+
+The first entry is the default. Give each account its own binary, or the same
+binary pointed at a different auth via `CLAUDE_CONFIG_DIR` in `env` (log into that
+account once with `CLAUDE_CONFIG_DIR=... claude`). With more than one configured, a
+new session shows an **Account** picker, defaulting to the first. A session
+remembers its account for its lifetime.
+
+Not yet: a session on an account with its own `CLAUDE_CONFIG_DIR` keeps its
+transcripts in that dir, so it won't appear in the Recent list or resume from
+history until kunai scans per account.
+
 ## Unattended runs and thermal safety
 
 Kunai can keep working while you are away. A **loop** re-feeds one task every time
