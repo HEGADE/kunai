@@ -126,16 +126,18 @@ func (g *guardian) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			g.check(cpuTemp())
+			g.check(cpuTemp(), thermalPressure())
 			t.Reset(guardPoll)
 		}
 	}
 }
 
 // check applies one reading. Split from run so a test can drive it directly with
-// no clock. temp is 0 when unreadable, in which case only the wall-clock cap can
-// fire.
-func (g *guardian) check(temp float64) {
+// no clock. It takes both signals because different platforms have different ones:
+// temp is real Celsius on Linux and 0 on macOS; pressure is a macOS thermal level
+// ("serious"/"critical" mean too hot) and "" on Linux. When neither reports heat,
+// only the wall-clock cap can fire.
+func (g *guardian) check(temp float64, pressure string) {
 	g.mu.Lock()
 	cfg := g.cfg
 	if !cfg.Enabled {
@@ -154,10 +156,13 @@ func (g *guardian) check(temp float64) {
 	}
 
 	// Hard ceiling first, and independent of the soft latch: the whole point is a
-	// host still climbing past the danger line after the soft trip already stopped
-	// everything of ours. That means the heat is not our load, so we pull the plug.
-	// Only ever fires when the owner has explicitly armed the poweroff action.
-	if cfg.powersOff() && temp >= cfg.HardC {
+	// host still past the danger line after the soft trip already stopped everything
+	// of ours. That means the heat is not our load, so we pull the plug. Only fires
+	// when the owner armed the poweroff action. Linux uses the HardC degrees; macOS,
+	// which has no degrees, uses Critical pressure as the equivalent last ceiling.
+	overHardNow := cfg.Action == actionPowerOff &&
+		((cfg.HardC > 0 && temp >= cfg.HardC) || pressure == "critical")
+	if overHardNow {
 		g.overHard++
 	} else {
 		g.overHard = 0
@@ -169,10 +174,15 @@ func (g *guardian) check(temp float64) {
 		return
 	}
 
-	// Already tripped: wait for the machine to cool well below the line before
-	// re-arming, so it does not flap on and off around the threshold.
+	// Whether the host is too hot by either signal.
+	tooHot := (cfg.SoftC > 0 && temp >= cfg.SoftC) || pressureTooHot(pressure)
+
+	// Already tripped: wait for the machine to cool before re-arming, so it does not
+	// flap around the threshold. Cool means degrees well below the line AND pressure
+	// no longer elevated, whichever signal this host has.
 	if g.trip {
-		if cfg.SoftC > 0 && temp > 0 && temp < cfg.SoftC-guardRecoverC {
+		degreesCool := cfg.SoftC <= 0 || temp <= 0 || temp < cfg.SoftC-guardRecoverC
+		if degreesCool && !pressureTooHot(pressure) {
 			g.trip = false
 			g.over = 0
 		}
@@ -180,7 +190,6 @@ func (g *guardian) check(temp float64) {
 		return
 	}
 
-	tooHot := cfg.SoftC > 0 && temp >= cfg.SoftC
 	if tooHot {
 		g.over++
 	} else {

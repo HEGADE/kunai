@@ -36,6 +36,10 @@ type Stats struct {
 	// is set while the guardian is holding everything stopped after a trip.
 	CPUTempC    float64 `json:"cpu_temp_c"`
 	ThermalTrip bool    `json:"thermal_trip"`
+	// ThermalPressure is the macOS thermal pressure level ("nominal".."critical"),
+	// empty on hosts that report real degrees instead (Linux). Apple Silicon has no
+	// unprivileged die temperature, so this is what its guard runs on.
+	ThermalPressure string `json:"thermal_pressure"`
 	// The guard's live policy, so the Settings fan-out can render it without a
 	// second fetch (it is tailnet-only and holds no secret).
 	ThermalGuard    bool    `json:"thermal_guard"`
@@ -76,6 +80,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	st.DiskTotal, st.DiskFree = diskInfo(s.cfg.DataDir)
 	st.ClaudeVersion = claudeVersion()
 	st.CPUTempC = cpuTemp()
+	st.ThermalPressure = thermalPressure()
 	st.ThermalTrip = s.guardian.tripped()
 	gc := s.guardian.config()
 	st.ThermalGuard, st.ThermalSoftC, st.ThermalMaxHours = gc.Enabled, gc.SoftC, gc.MaxHours

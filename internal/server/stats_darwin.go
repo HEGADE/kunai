@@ -76,62 +76,58 @@ func memInfo() (total, avail uint64) {
 	return total, pages * pagesize
 }
 
-// macOS has no /sys or sysctl key for die temperature; it lives in the SMC,
-// reachable only through the private IOKit interface (needs CGO, which this build
-// avoids) or `powermetrics` (needs root). The owner grants a NOPASSWD sudoers
-// entry for powermetrics at install time, which is the door this uses. Absolute
-// paths for launchd's minimal PATH, like the rest of this file.
-//
-// It is cached: cpuTemp is read by both the stats endpoint and the guardian loop,
-// each every ~15s, and a fresh sudo+powermetrics spawn per call would be wasteful
-// and noisy. One reading every tempTTL is plenty for a thermal guard.
-//
-// UNVERIFIED on real hardware from the Linux dev box. On Apple Silicon the SMC
-// sampler's coverage is patchy; if the parse finds nothing the guard degrades to
-// its wall-clock cap, which is the safe direction.
+// cpuTemp is always 0 on macOS. Die temperature has no unprivileged, CGO-free
+// reading here: the SMC lives behind the private IOKit interface, and the `smc`
+// powermetrics sampler does not even exist on Apple Silicon ("unrecognized
+// sampler: smc", confirmed on a real Mac16,12). The signal Apple does expose is
+// thermal PRESSURE, which the guard uses instead; see thermalPressure.
+func cpuTemp() float64 { return 0 }
+
+// The pressure reading is cached: it is read by both the stats endpoint and the
+// guardian loop, each roughly every 15s, and every read is a fresh sudo +
+// powermetrics spawn, which is heavy and logs. One reading per TTL is plenty. A
+// failed read (no sudoers grant yet, powermetrics missing) backs off hard so a Mac
+// that never opted in does not spawn a failing sudo every 10s forever and spam the
+// auth log; the long backoff still notices the grant within a couple of minutes,
+// and a restart re-probes at once.
 var (
-	tempMu   sync.Mutex
-	tempVal  float64
-	tempWhen time.Time
+	pressMu   sync.Mutex
+	pressVal  string
+	pressWhen time.Time
 )
 
 const (
-	tempTTL     = 10 * time.Second // refresh a real reading this often
-	tempFailTTL = 2 * time.Minute  // back off hard after a failed/empty read
+	pressTTL     = 12 * time.Second // refresh a good reading this often
+	pressFailTTL = 2 * time.Minute  // back off after an empty/failed read
 )
 
-// cpuTemp reads the cached temperature, refreshing at most every tempTTL. A
-// failed read (no sudoers grant, powermetrics missing, unparseable) backs off for
-// tempFailTTL instead: on a Mac that never opted into the privileged temperature
-// feature this is every stats poll and every guardian tick, and a failing sudo
-// every 10s forever would spam the auth log. The long backoff still notices the
-// grant being added within a couple of minutes, and a restart re-probes at once.
-func cpuTemp() float64 {
-	tempMu.Lock()
-	defer tempMu.Unlock()
-	ttl := tempTTL
-	if tempVal <= 0 {
-		ttl = tempFailTTL
+// thermalPressure returns the host's current thermal pressure level, lowercased
+// ("nominal"/"fair"/"serious"/"critical"), or "" when it cannot be read.
+func thermalPressure() string {
+	pressMu.Lock()
+	defer pressMu.Unlock()
+	ttl := pressTTL
+	if pressVal == "" {
+		ttl = pressFailTTL
 	}
-	if !tempWhen.IsZero() && time.Since(tempWhen) < ttl {
-		return tempVal
+	if !pressWhen.IsZero() && time.Since(pressWhen) < ttl {
+		return pressVal
 	}
-	tempVal = readPowermetricsTemp()
-	tempWhen = time.Now()
-	return tempVal
+	pressVal = readThermalPressure()
+	pressWhen = time.Now()
+	return pressVal
 }
 
-func readPowermetricsTemp() float64 {
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+func readThermalPressure() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	// -n 1: one sample then exit. -i 200: sample over 200ms. sudo -n: fail rather
-	// than prompt if the NOPASSWD entry is missing.
+	// --samplers thermal: the only temperature-adjacent sampler Apple Silicon has.
+	// -n 1 / -i 300: one sample over 300ms then exit. sudo -n: fail rather than
+	// prompt when the NOPASSWD entry is missing. Absolute paths for launchd's PATH.
 	out, err := exec.CommandContext(ctx, "/usr/bin/sudo", "-n",
-		"/usr/bin/powermetrics", "--samplers", "smc", "-i", "200", "-n", "1").Output()
+		"/usr/bin/powermetrics", "--samplers", "thermal", "-i", "300", "-n", "1").Output()
 	if err != nil {
-		return 0
+		return ""
 	}
-	// The parse lives in a platform-neutral file so it can be unit-tested on the
-	// Linux dev box against captured powermetrics output.
-	return parsePowermetricsTemp(string(out))
+	return parseThermalPressure(string(out))
 }

@@ -1,56 +1,33 @@
 package server
 
-import (
-	"strconv"
-	"strings"
-)
+import "strings"
 
-// parsePowermetricsTemp pulls a CPU die temperature (Celsius) out of the SMC
-// sampler's output. Platform-neutral on purpose: the reader that runs it is
-// macOS-only and unrunnable on the Linux dev box, but the text parsing is where
-// the risk is, and this can be tested against captured samples.
+// parseThermalPressure pulls the level out of `powermetrics --samplers thermal`.
+// Apple Silicon has no unprivileged die-temperature reading (the `smc` sampler
+// does not even exist there), so thermal pressure is the signal it does expose,
+// and the one Apple designed for "should I back off". Real output:
 //
-// Sample lines look like:
+//	**** Thermal pressure ****
 //
-//	CPU die temperature: 51.23 C
-//	GPU die temperature: 44.00 C
+//	Current pressure level: Nominal
 //
-// Prefer the CPU line; fall back to the hottest other "die temperature" line so a
-// renamed or missing CPU key still yields a real signal rather than zero.
-func parsePowermetricsTemp(out string) float64 {
-	var fallback float64
+// Returns the level lowercased ("nominal"/"fair"/"serious"/"critical"), or "" when
+// no line is found. Platform-neutral so it is testable off a Mac against captured
+// output, which is the only way this can be verified from Linux.
+func parseThermalPressure(out string) string {
 	for _, line := range strings.Split(out, "\n") {
-		low := strings.ToLower(line)
-		if !strings.Contains(low, "die temperature") {
+		i := strings.Index(strings.ToLower(line), "pressure level:")
+		if i < 0 {
 			continue
 		}
-		c := parseTempLine(line)
-		if c <= 0 {
-			continue
-		}
-		if strings.Contains(low, "cpu") {
-			return c
-		}
-		if c > fallback {
-			fallback = c
-		}
+		level := strings.TrimSpace(line[i+len("pressure level:"):])
+		return strings.ToLower(level)
 	}
-	return fallback
+	return ""
 }
 
-// parseTempLine pulls the Celsius value out of a "... : 51.23 C" line.
-func parseTempLine(line string) float64 {
-	i := strings.LastIndex(line, ":")
-	if i < 0 {
-		return 0
-	}
-	fields := strings.Fields(line[i+1:])
-	if len(fields) == 0 {
-		return 0
-	}
-	c, err := strconv.ParseFloat(strings.TrimSuffix(fields[0], "C"), 64)
-	if err != nil {
-		return 0
-	}
-	return c
+// pressureTooHot reports whether a level means "stop and cool": Serious is active
+// throttling, Critical is worse. Fair and Nominal are fine.
+func pressureTooHot(level string) bool {
+	return level == "serious" || level == "critical"
 }

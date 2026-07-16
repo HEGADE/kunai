@@ -19,7 +19,8 @@ export interface Stats {
   kunai_uptime_sec: number
   keep_awake: boolean
   keep_awake_supported: boolean
-  cpu_temp_c: number // hottest CPU sensor; 0 when unreadable (all macOS today)
+  cpu_temp_c: number // hottest CPU sensor in Celsius; 0 on macOS (no degrees there)
+  thermal_pressure: string // macOS thermal pressure level; '' on Linux (uses degrees)
   thermal_trip: boolean // guardian is holding everything stopped after a trip
   thermal_guard: boolean // guard enabled on this machine
   thermal_soft_c: number // trip temperature

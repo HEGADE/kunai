@@ -245,6 +245,8 @@
                 <span class="awsub">
                   {#if m.stats.cpu_temp_c > 0}
                     Now {Math.round(m.stats.cpu_temp_c)}°C. Stops every session and lets the machine sleep to cool.
+                  {:else if m.stats.thermal_pressure}
+                    Now {m.stats.thermal_pressure} pressure. Stops on Serious and lets the machine sleep to cool.
                   {:else}
                     Can't read this machine's temperature, so the guard relies on the time limit below.
                   {/if}
@@ -293,7 +295,7 @@
                   <span class="thu">hours awake (0 = off)</span>
                 </label>
               </div>
-              {#if m.stats.cpu_temp_c > 0}
+              {#if m.stats.cpu_temp_c > 0 || m.stats.thermal_pressure}
                 <div class="thpower">
                   <label class="thcheck">
                     <input
@@ -309,12 +311,17 @@
                     <span class="thck">
                       <span class="thcname">Power off if it keeps climbing</span>
                       <span class="thcsub">
-                        Last resort if it stays hot after everything stopped. Needs the admin setup;
-                        the machine shuts down.
+                        {#if m.stats.cpu_temp_c > 0}
+                          Last resort if it stays hot after everything stopped. Needs the admin setup;
+                          the machine shuts down.
+                        {:else}
+                          Last resort: powers off on Critical pressure after everything stopped. Needs
+                          the admin setup; the machine shuts down.
+                        {/if}
                       </span>
                     </span>
                   </label>
-                  {#if m.stats.thermal_action === 'poweroff'}
+                  {#if m.stats.thermal_action === 'poweroff' && m.stats.cpu_temp_c > 0}
                     <label class="thlim">
                       <span class="thk">Power off at</span>
                       <input

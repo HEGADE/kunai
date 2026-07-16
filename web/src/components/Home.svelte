@@ -50,6 +50,12 @@
   const cpuPct = $derived(st && st.cores ? Math.min(100, Math.round((st.load1 / st.cores) * 100)) : 0)
   // Temperature meter is scaled to a 100°C full bar; most CPUs throttle near there.
   const tempPct = $derived(st ? Math.min(100, Math.round(st.cpu_temp_c)) : 0)
+  // Apple Silicon reports a pressure level, not degrees. Map it to a coarse meter
+  // and flag the two levels that mean "backing off".
+  const pressureLevels: Record<string, number> = { nominal: 20, fair: 55, serious: 85, critical: 100 }
+  const pressurePct = $derived(st ? (pressureLevels[st.thermal_pressure] ?? 0) : 0)
+  const pressureHot = $derived(st?.thermal_pressure === 'serious' || st?.thermal_pressure === 'critical')
+  const capitalize = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 
   // Quick-start dirs for the selected machine only — so chips don't each repeat
   // the machine name (that's stated once in the section header).
@@ -147,6 +153,17 @@
           </div>
           <div class="meter"><i class:hot={tempPct >= 80} style="width:{tempPct}%"></i></div>
           <span class="t-foot mono">{st.thermal_trip ? 'guard tripped · stopped' : 'CPU'}</span>
+        </div>
+      {:else if st.thermal_pressure}
+        <div class="tile">
+          <div class="t-top">
+            <span class="t-label">Thermal</span>
+            <span class="t-val sm" class:hot={pressureHot} class:tripped={st.thermal_trip}
+              >{capitalize(st.thermal_pressure)}</span
+            >
+          </div>
+          <div class="meter"><i class:hot={pressureHot} style="width:{pressurePct}%"></i></div>
+          <span class="t-foot mono">{st.thermal_trip ? 'guard tripped · stopped' : 'pressure'}</span>
         </div>
       {/if}
       <div class="tile">

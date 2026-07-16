@@ -108,3 +108,7 @@ func memInfo() (total, avail uint64) {
 	}
 	return total, avail
 }
+
+// thermalPressure has no macOS-style pressure level on Linux; the guard uses the
+// real cpuTemp() degrees here, so this is always empty.
+func thermalPressure() string { return "" }

@@ -65,3 +65,6 @@ func hostUptimeLoad() (uptimeSec int64, load1 float64) {
 // cpuTemp is not implemented on Windows (no unprivileged, dependency-free path);
 // the guardian relies on its wall-clock cap there.
 func cpuTemp() float64 { return 0 }
+
+// thermalPressure is a macOS concept; empty on Windows.
+func thermalPressure() string { return "" }

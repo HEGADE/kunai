@@ -2,48 +2,51 @@ package server
 
 import "testing"
 
-// The powermetrics reader can't run on the Linux dev box, but its parsing is the
-// part that can silently go wrong, so it is tested against captured output shapes.
-func TestParsePowermetricsTemp(t *testing.T) {
-	cases := []struct {
-		name string
-		out  string
-		want float64
-	}{
-		{
-			name: "intel smc block",
-			out: "**** SMC sensors ****\n\n" +
-				"CPU Thermal level: 0\n" +
-				"CPU die temperature: 51.23 C\n" +
-				"GPU die temperature: 44.00 C\n",
-			want: 51.23,
-		},
-		{
-			name: "cpu wins over hotter gpu",
-			out:  "GPU die temperature: 70.0 C\nCPU die temperature: 55.5 C\n",
-			want: 55.5,
-		},
-		{
-			name: "no cpu line falls back to hottest die",
-			out:  "GPU die temperature: 61.0 C\nANE die temperature: 48.0 C\n",
-			want: 61.0,
-		},
-		{
-			name: "nothing readable",
-			out:  "**** SMC sensors ****\nCPU Thermal level: 0\n",
-			want: 0,
-		},
-		{
-			name: "empty",
-			out:  "",
-			want: 0,
-		},
+// Captured verbatim from a real Apple Silicon Mac (Mac16,12, macOS 26): the smc
+// sampler does not exist there, and `--samplers thermal` prints this.
+const realAppleSiliconThermal = `Machine model: Mac16,12
+OS version: 25F84
+Boot arguments:
+Boot time: Mon Jul 13 16:11:25 2026
+
+
+
+*** Sampled system activity (Thu Jul 16 19:35:57 2026 +0530) (301.07ms elapsed) ***
+
+
+
+**** Thermal pressure ****
+
+Current pressure level: Nominal
+`
+
+func TestParseThermalPressure(t *testing.T) {
+	cases := []struct{ name, out, want string }{
+		{"real apple silicon nominal", realAppleSiliconThermal, "nominal"},
+		{"serious", "**** Thermal pressure ****\n\nCurrent pressure level: Serious\n", "serious"},
+		{"critical", "Current pressure level: Critical", "critical"},
+		{"fair", "Current pressure level: Fair", "fair"},
+		{"absent", "**** Thermal pressure ****\n\n(no data)\n", ""},
+		{"empty", "", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := parsePowermetricsTemp(tc.out); got != tc.want {
-				t.Fatalf("parse = %v, want %v", got, tc.want)
+			if got := parseThermalPressure(tc.out); got != tc.want {
+				t.Fatalf("parse = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestPressureTooHot(t *testing.T) {
+	for _, hot := range []string{"serious", "critical"} {
+		if !pressureTooHot(hot) {
+			t.Errorf("%q should be too hot", hot)
+		}
+	}
+	for _, ok := range []string{"nominal", "fair", ""} {
+		if pressureTooHot(ok) {
+			t.Errorf("%q should not be too hot", ok)
+		}
 	}
 }

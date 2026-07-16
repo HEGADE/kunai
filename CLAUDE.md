@@ -288,10 +288,18 @@ Behavioral invariants that were bugs before (do not regress):
   child dying at once and reports the refusal instead of recording a phantom hold.
   macOS `pmset disablesleep` is sticky global state, so `lidhold_darwin.go` clears
   it at boot (undoing a crash that left it on) and the server clears it on graceful
-  shutdown. Mac temperature comes from `sudo powermetrics`; its text parse lives in
-  the platform-neutral `thermal_parse.go` so it is testable on Linux even though
-  the reader is not. The whole Mac-privileged path is UNVERIFIED from a Linux dev
-  box and must be tested on a real Mac.
+  shutdown. Apple Silicon has no unprivileged die temperature: the `smc`
+  powermetrics sampler does not even exist there (confirmed on a real Mac16,12,
+  "unrecognized sampler: smc"), so the Mac guard runs on thermal PRESSURE instead
+  (`sudo powermetrics --samplers thermal`, levels nominal/fair/serious/critical).
+  `cpuTemp()` is 0 on macOS; `thermalPressure()` carries the level, and the guard
+  trips on Serious (soft) or Critical (hard/poweroff). The `Stats` split is
+  deliberate: `cpu_temp_c` for degree hosts (Linux), `thermal_pressure` for Apple
+  Silicon, and the UI shows whichever the host reports. The parse lives in the
+  platform-neutral `thermal_parse.go` so it is testable on Linux against captured
+  output even though the reader is not. The privileged reader/hold/poweroff cannot
+  run from a Linux dev box; only the pressure parse and the guard logic are proven
+  there, so the Mac path must still be exercised on real hardware.
 - A compaction (`/compact`, or automatic near the limit) is context, not
   conversation. The CLI feeds the summary back as a plain-string `user` frame and
   writes it to the transcript flagged `isCompactSummary`; both must be dropped.

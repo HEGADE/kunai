@@ -52,24 +52,24 @@ func TestGuardianNeedsSustainedHeat(t *testing.T) {
 	g, stop, _ := newTestGuardian(guardConfig{Enabled: true, SoftC: 90})
 
 	for i := 0; i < guardTripN-1; i++ {
-		g.check(95)
+		g.check(95, "")
 		if stop.calls != 0 {
 			t.Fatalf("tripped after %d hot reads, want %d", i+1, guardTripN)
 		}
 	}
 	// One cool read resets the streak.
-	g.check(40)
+	g.check(40, "")
 	if g.tripped() {
 		t.Fatal("a cool read did not clear the streak")
 	}
 	// Now a fresh run of hot reads must reach the full count again.
 	for i := 0; i < guardTripN-1; i++ {
-		g.check(95)
+		g.check(95, "")
 	}
 	if stop.calls != 0 {
 		t.Fatal("tripped early: the cool read should have reset the streak")
 	}
-	g.check(95)
+	g.check(95, "")
 	if stop.calls != 1 || !g.tripped() {
 		t.Fatalf("did not trip after %d sustained hot reads", guardTripN)
 	}
@@ -85,7 +85,7 @@ func TestGuardianTripStopsAndReleasesHold(t *testing.T) {
 	g.notify = func(kind, detail string) { notified = kind + ":" + detail }
 
 	for i := 0; i < guardTripN; i++ {
-		g.check(99)
+		g.check(99, "")
 	}
 	if stop.calls != 1 {
 		t.Fatalf("stop calls = %d, want 1", stop.calls)
@@ -106,7 +106,7 @@ func TestGuardianTripReleasesLidHold(t *testing.T) {
 	g.releaseLid = func() { lidReleased++ }
 
 	for i := 0; i < guardTripN; i++ {
-		g.check(99)
+		g.check(99, "")
 	}
 	if lidReleased != 1 {
 		t.Fatalf("lid released %d times, want 1", lidReleased)
@@ -118,25 +118,25 @@ func TestGuardianTripReleasesLidHold(t *testing.T) {
 func TestGuardianLatchesAndReArmsOnlyWhenCool(t *testing.T) {
 	g, stop, _ := newTestGuardian(guardConfig{Enabled: true, SoftC: 90})
 	for i := 0; i < guardTripN; i++ {
-		g.check(99)
+		g.check(99, "")
 	}
 	if stop.calls != 1 {
 		t.Fatalf("stop calls = %d, want 1", stop.calls)
 	}
 	// Still hot, and just below the line: stays latched, no repeat stop.
-	g.check(99)
-	g.check(87) // within guardRecoverC of 90, not cool enough
+	g.check(99, "")
+	g.check(87, "") // within guardRecoverC of 90, not cool enough
 	if !g.tripped() || stop.calls != 1 {
 		t.Fatalf("re-armed too early or stopped again: tripped=%v calls=%d", g.tripped(), stop.calls)
 	}
 	// Cool at last.
-	g.check(80)
+	g.check(80, "")
 	if g.tripped() {
 		t.Fatal("did not re-arm after cooling well below the line")
 	}
 	// And it can trip a second time.
 	for i := 0; i < guardTripN; i++ {
-		g.check(99)
+		g.check(99, "")
 	}
 	if stop.calls != 2 {
 		t.Fatalf("second trip stop calls = %d, want 2", stop.calls)
@@ -147,7 +147,7 @@ func TestGuardianLatchesAndReArmsOnlyWhenCool(t *testing.T) {
 func TestGuardianDisabledNeverTrips(t *testing.T) {
 	g, stop, _ := newTestGuardian(guardConfig{Enabled: false, SoftC: 90})
 	for i := 0; i < guardTripN*3; i++ {
-		g.check(120)
+		g.check(120, "")
 	}
 	if stop.calls != 0 || g.tripped() {
 		t.Fatalf("a disabled guard acted: calls=%d tripped=%v", stop.calls, g.tripped())
@@ -159,7 +159,7 @@ func TestGuardianDisabledNeverTrips(t *testing.T) {
 func TestGuardianIgnoresZeroTemperature(t *testing.T) {
 	g, stop, _ := newTestGuardian(guardConfig{Enabled: true, SoftC: 90})
 	for i := 0; i < guardTripN*2; i++ {
-		g.check(0)
+		g.check(0, "")
 	}
 	if stop.calls != 0 {
 		t.Fatalf("tripped on an unreadable (0) temperature: calls=%d", stop.calls)
@@ -171,7 +171,7 @@ func TestGuardianIgnoresZeroTemperature(t *testing.T) {
 func TestGuardianSoftZeroDisablesTempCheck(t *testing.T) {
 	g, stop, _ := newTestGuardian(guardConfig{Enabled: true, SoftC: 0, MaxHours: 1})
 	for i := 0; i < guardTripN*2; i++ {
-		g.check(99)
+		g.check(99, "")
 	}
 	if stop.calls != 0 {
 		t.Fatalf("tripped on temperature with SoftC=0: calls=%d", stop.calls)
@@ -188,7 +188,7 @@ func TestGuardianWallClockCap(t *testing.T) {
 	// The hold has been up for two hours; a cool reading proves it is time, not
 	// heat, that trips this.
 	g.awakeFrom = time.Now().Add(-2 * time.Hour)
-	g.check(35)
+	g.check(35, "")
 
 	if stop.calls != 1 || !g.tripped() {
 		t.Fatalf("did not trip on the time cap: calls=%d tripped=%v", stop.calls, g.tripped())
@@ -204,12 +204,98 @@ func TestGuardianTimeCapOnlyWhileHeld(t *testing.T) {
 	g, stop, aw := newTestGuardian(guardConfig{Enabled: true, SoftC: 0, MaxHours: 1})
 	aw.on = false
 	g.awakeFrom = time.Now().Add(-5 * time.Hour) // stale, should be cleared
-	g.check(35)
+	g.check(35, "")
 	if stop.calls != 0 {
 		t.Fatalf("tripped the time cap while not holding awake: calls=%d", stop.calls)
 	}
 	if !g.awakeFrom.IsZero() {
 		t.Fatal("awakeFrom not cleared when the hold is down")
+	}
+}
+
+// On Apple Silicon there is no temperature to read; the signal is thermal
+// pressure. Serious pressure means active throttling, which must trip the guard
+// even though temp is 0. This is the guard actually working on a Mac.
+func TestGuardianTripsOnSeriousPressure(t *testing.T) {
+	g, stop, _ := newTestGuardian(guardConfig{Enabled: true, SoftC: 0}) // no degrees, like a Mac
+	for i := 0; i < guardTripN; i++ {
+		g.check(0, "serious")
+	}
+	if stop.calls != 1 || !g.tripped() {
+		t.Fatalf("did not trip on sustained Serious pressure: calls=%d", stop.calls)
+	}
+}
+
+// Nominal and Fair are fine and must never trip: Fair is mild and expected under
+// load, and stopping everything for it would make the Mac guard useless.
+func TestGuardianIgnoresNominalAndFairPressure(t *testing.T) {
+	g, stop, _ := newTestGuardian(guardConfig{Enabled: true, SoftC: 0})
+	for i := 0; i < guardTripN*2; i++ {
+		g.check(0, "nominal")
+		g.check(0, "fair")
+	}
+	if stop.calls != 0 {
+		t.Fatalf("tripped on Nominal/Fair pressure: calls=%d", stop.calls)
+	}
+}
+
+// Critical pressure with the poweroff action armed is the Mac equivalent of the
+// hard ceiling: it powers off, since a Mac has no degrees for HardC to use.
+func TestGuardianCriticalPressurePowersOff(t *testing.T) {
+	var ran int
+	prev := execRun
+	execRun = func(name string, args ...string) error { ran++; return nil }
+	defer func() { execRun = prev }()
+
+	g, stop, _ := newTestGuardian(guardConfig{Enabled: true, SoftC: 0, Action: actionPowerOff})
+	for i := 0; i < guardTripN; i++ {
+		g.check(0, "critical")
+	}
+	if ran != 1 {
+		t.Fatalf("Critical pressure powered off %d times, want 1", ran)
+	}
+	if stop.calls == 0 {
+		t.Fatal("Critical pressure did not stop sessions before powering off")
+	}
+}
+
+// Critical pressure WITHOUT the poweroff action just soft-trips (stop and cool),
+// never shuts down: nothing privileged happens unless the owner armed it.
+func TestGuardianCriticalPressureWithoutPoweroffJustStops(t *testing.T) {
+	var ran int
+	prev := execRun
+	execRun = func(name string, args ...string) error { ran++; return nil }
+	defer func() { execRun = prev }()
+
+	g, stop, _ := newTestGuardian(guardConfig{Enabled: true, SoftC: 0, Action: actionSleep})
+	for i := 0; i < guardTripN; i++ {
+		g.check(0, "critical")
+	}
+	if ran != 0 {
+		t.Fatalf("powered off with the sleep action: ran=%d", ran)
+	}
+	if stop.calls != 1 || !g.tripped() {
+		t.Fatalf("Critical pressure should have soft-tripped: calls=%d", stop.calls)
+	}
+}
+
+// The pressure latch re-arms only when pressure falls back to Nominal/Fair, the
+// pressure analogue of cooling below the degrees line.
+func TestGuardianPressureReArmsWhenEased(t *testing.T) {
+	g, stop, _ := newTestGuardian(guardConfig{Enabled: true, SoftC: 0})
+	for i := 0; i < guardTripN; i++ {
+		g.check(0, "serious")
+	}
+	if stop.calls != 1 {
+		t.Fatalf("first trip calls=%d, want 1", stop.calls)
+	}
+	g.check(0, "serious") // still elevated: stays latched
+	if !g.tripped() {
+		t.Fatal("re-armed while still Serious")
+	}
+	g.check(0, "nominal") // eased: re-arm
+	if g.tripped() {
+		t.Fatal("did not re-arm after pressure eased to Nominal")
 	}
 }
 
@@ -228,7 +314,7 @@ func TestGuardianHardTripPowersOff(t *testing.T) {
 
 	g, stop, _ := newTestGuardian(guardConfig{Enabled: true, SoftC: 90, HardC: 100, Action: actionPowerOff})
 	for i := 0; i < guardTripN; i++ {
-		g.check(103)
+		g.check(103, "")
 	}
 	if len(ran) != 1 {
 		t.Fatalf("poweroff ran %d times, want 1: %v", len(ran), ran)
@@ -248,7 +334,7 @@ func TestGuardianDefaultActionNeverPowersOff(t *testing.T) {
 
 	g, stop, _ := newTestGuardian(guardConfig{Enabled: true, SoftC: 90, HardC: 100, Action: actionSleep})
 	for i := 0; i < guardTripN*2; i++ {
-		g.check(110)
+		g.check(110, "")
 	}
 	if ran != 0 {
 		t.Fatalf("sleep action ran a command %d times, want 0", ran)
@@ -268,7 +354,7 @@ func TestGuardianHardTripSurvivesDeniedPoweroff(t *testing.T) {
 
 	g, stop, _ := newTestGuardian(guardConfig{Enabled: true, SoftC: 90, HardC: 100, Action: actionPowerOff})
 	for i := 0; i < guardTripN; i++ {
-		g.check(105)
+		g.check(105, "")
 	}
 	if stop.calls == 0 {
 		t.Fatal("a denied poweroff should still have stopped the sessions")
