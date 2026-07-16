@@ -530,11 +530,25 @@ func mergeAnswers(input json.RawMessage, answers map[string]string) json.RawMess
 // Interrupt aborts the current turn and drops anything queued behind it: Stop
 // means stop, not "move on to the next one".
 func (s *Session) Interrupt() error {
+	return s.interrupt("you stopped it")
+}
+
+// StopForThermal aborts the turn and any loop because the host is too hot. It is
+// the same stop as the Stop button, with a reason that says who pulled it, so a
+// session ended by the guardian reads "the host got too hot" rather than looking
+// as if you did it. Called across every session by the guardian.
+func (s *Session) StopForThermal() error {
+	return s.interrupt("the host got too hot")
+}
+
+// interrupt is the shared stop path: drop the queue, settle any loop with the
+// given reason, abort the turn, and go idle. Stopping the loop under the lock
+// that tests it is what keeps a loop from starting its next iteration a moment
+// later and making the stop look broken.
+func (s *Session) interrupt(reason string) error {
 	s.mu.Lock()
 	s.dropQueueLocked()
-	// Stop means stop. Without this the loop would simply start the next
-	// iteration a moment later and the button would look broken.
-	s.stopLoopLocked(LoopStopped, "you stopped it")
+	s.stopLoopLocked(LoopStopped, reason)
 	s.mu.Unlock()
 	err := s.drv.Interrupt()
 	s.setState(StateIdle)

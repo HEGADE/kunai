@@ -1,4 +1,4 @@
-import type { Attachment, HistoryEntry, Job, Listing, MachineInfo, Meta, Stats } from './types'
+import type { Attachment, HistoryEntry, Job, Listing, MachineInfo, Meta, Stats, ThermalConfig } from './types'
 
 // Every call takes a `base` origin so the client can reach any machine directly
 // over the tailnet. base === '' means the current origin (the hub), so the hub's
@@ -83,6 +83,16 @@ export function setKeepAwake(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
   }).then((r) => json<{ enabled: boolean; supported: boolean }>(r))
+}
+
+// setThermal updates a machine's thermal-guard policy. Returns the resolved
+// config (the server clamps the thresholds).
+export function setThermal(base: string, cfg: ThermalConfig): Promise<ThermalConfig> {
+  return fetch(at(base, '/api/thermal'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg),
+  }).then((r) => json<ThermalConfig>(r))
 }
 
 // updateMachine tells a machine to self-update: it downloads the latest release

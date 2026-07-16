@@ -19,7 +19,19 @@ export interface Stats {
   kunai_uptime_sec: number
   keep_awake: boolean
   keep_awake_supported: boolean
+  cpu_temp_c: number // hottest CPU sensor; 0 when unreadable (all macOS today)
+  thermal_trip: boolean // guardian is holding everything stopped after a trip
+  thermal_guard: boolean // guard enabled on this machine
+  thermal_soft_c: number // trip temperature
+  thermal_max_hours: number // wall-clock cap on unattended work
   rate_resets?: Record<string, number> // window -> unix seconds it resets
+}
+
+// The thermal safety guard's policy, mirroring the Go guardConfig.
+export interface ThermalConfig {
+  enabled: boolean
+  soft_c: number // trip temperature in Celsius (0 = no temperature check)
+  max_hours: number // stop unattended work after this long awake (0 = no cap)
 }
 
 // --- scheduler ---

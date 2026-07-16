@@ -145,15 +145,34 @@ func (m *Manager) Close(id string) {
 }
 
 func (m *Manager) CloseAll() {
+	for _, s := range m.snapshot() {
+		s.Close()
+	}
+}
+
+// StopForThermal interrupts every live session: it settles any loop and aborts
+// the running turn, but leaves the claude processes alive so the sessions stay
+// resumable. This is the guardian's soft trip: the heat comes from the turns, so
+// stopping them is what cools the machine, and killing the processes outright
+// would throw away recoverable work for no extra cooling. Returns the count.
+func (m *Manager) StopForThermal() int {
+	sessions := m.snapshot()
+	for _, s := range sessions {
+		_ = s.StopForThermal()
+	}
+	return len(sessions)
+}
+
+// snapshot copies the live sessions under the lock, then releases it so a slow
+// per-session call cannot block the registry (the CloseAll pattern).
+func (m *Manager) snapshot() []*Session {
 	m.mu.Lock()
 	all := make([]*Session, 0, len(m.sessions))
 	for _, s := range m.sessions {
 		all = append(all, s)
 	}
 	m.mu.Unlock()
-	for _, s := range all {
-		s.Close()
-	}
+	return all
 }
 
 func (m *Manager) remove(id string) {

@@ -93,6 +93,13 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
 - `internal/session/loop.go`: the self-prompting run (see the invariants below).
   `Session.StartLoop` re-feeds one task each time a turn ends, until a limit it
   cannot argue with stops it.
+- `internal/server/guardian.go`: the thermal safety net (see the invariants
+  below). A background loop reads `cpuTemp()` and, when the host runs too hot or
+  has been held awake too long, calls `Manager.StopForThermal` to end every
+  session and drops the keep-awake hold so a closed-lid machine sleeps and cools.
+  Temperature is read in the stats platform files (`cpuTemp()`, real on Linux via
+  `/sys/class/hwmon`, 0 on macOS until a privileged Phase 2). Policy persists in
+  `thermal.json`, mirroring `awake.json`.
 - `internal/project`: reads a directory into the description a session hands a model
   (`Scan` -> `Info`, `Info.Brief()`): layout, language mix, git head from `.git`,
   the files that name it. It never opens the code, and the walk skips `.git`,
@@ -250,6 +257,24 @@ Behavioral invariants that were bugs before (do not regress):
   not always come from a click: a loop borrows `acceptEdits` and hands it back, so
   a mode set server-side has to reach attached clients or the composer keeps
   showing the mode you last picked while the session runs in another one.
+- The thermal guardian (`internal/server/guardian.go`) is a whole-machine safety
+  net for unattended work, not a loop feature: a loop or a session a phone walked
+  away from can pin the CPU for hours, and with the lid shut that cooks a laptop.
+  When the host runs too hot (sustained, with hysteresis so a one-off spike never
+  nukes a session) or has been held awake past a wall-clock cap, it stops every
+  session via `Manager.StopForThermal` and releases the keep-awake hold. It does
+  NOT power the machine off in this phase: the heat is the running turns, so
+  stopping them is the fix, and on a closed lid dropping the hold lets the machine
+  sleep, which drops the CPU to idle. Sleep is the cooldown. The two arming
+  conditions are the same "whichever comes first" shape as a loop's caps, and the
+  wall-clock cap is the macOS-safe fallback because macOS CPU temperature cannot be
+  read without root or CGO (so `cpuTemp()` returns 0 there and only the time cap
+  can fire). The guard depends on a `stopper` interface, not the concrete
+  `*session.Manager`, so its safety logic is unit-testable without spawning claude.
+  Powering the host off, true lid-closed operation (`pmset disablesleep` /
+  `HandleLidSwitch`), and reading Mac temperature are a deliberately separate,
+  privileged, default-off Phase 2 that needs an admin-installed escalation the
+  user service does not otherwise have.
 - A compaction (`/compact`, or automatic near the limit) is context, not
   conversation. The CLI feeds the summary back as a plain-string `user` frame and
   writes it to the transcript flagged `isCompactSummary`; both must be dropped.

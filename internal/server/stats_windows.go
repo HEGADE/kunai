@@ -61,3 +61,7 @@ func hostUptimeLoad() (uptimeSec int64, load1 float64) {
 	r, _, _ := procGetTickCount64.Call()
 	return int64(uint64(r) / 1000), 0
 }
+
+// cpuTemp is not implemented on Windows (no unprivileged, dependency-free path);
+// the guardian relies on its wall-clock cap there.
+func cpuTemp() float64 { return 0 }

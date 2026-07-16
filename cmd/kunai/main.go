@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 
 	"github.com/hegade/kunai/internal/push"
 	"github.com/hegade/kunai/internal/server"
@@ -28,6 +29,9 @@ func main() {
 	flag.StringVar(&cfg.HubURL, "hub-url", os.Getenv("KUNAI_HUB_URL"), "hub origin to forward Web Push wake-ups to (set on peer machines)")
 	dataDir := flag.String("data", envOr("KUNAI_DATA", defaultDataDir()), "directory for VAPID keys, subscriptions, uploads")
 	pushEmail := flag.String("push-email", os.Getenv("KUNAI_PUSH_EMAIL"), "VAPID contact (mailto) for Web Push")
+	flag.BoolVar(&cfg.ThermalGuard, "thermal-guard", envBool("KUNAI_THERMAL_GUARD", false), "enable the thermal safety guard by default (stops all sessions when the host overheats)")
+	flag.Float64Var(&cfg.ThermalSoftC, "thermal-soft-c", envFloat("KUNAI_THERMAL_SOFT_C", 90), "trip temperature in Celsius (Linux; 0 disables the temperature check)")
+	flag.Float64Var(&cfg.ThermalMaxHours, "thermal-max-hours", envFloat("KUNAI_THERMAL_MAX_HOURS", 0), "stop unattended work after this many hours awake (0 = no cap)")
 	flag.Parse()
 	cfg.DataDir = *dataDir
 
@@ -64,6 +68,24 @@ func defaultDataDir() string {
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+func envBool(key string, def bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return def
+}
+
+func envFloat(key string, def float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
 	}
 	return def
 }

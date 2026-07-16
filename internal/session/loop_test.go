@@ -405,3 +405,33 @@ func TestModeChangeReachesClients(t *testing.T) {
 		t.Fatalf("mode events = %v, want [%s auto]", modes, LoopPermissionMode)
 	}
 }
+
+// StopForThermal is the guardian's per-session stop: it ends any loop with a
+// reason that says the host got too hot, not that you did it, and aborts the turn.
+func TestStopForThermalEndsLoopWithReason(t *testing.T) {
+	fastLoop(t)
+	f := newFakeDriver()
+	s := newSession("lt", "/tmp/p", "", f)
+	defer s.Close()
+
+	if err := s.StartLoop(LoopConfig{Prompt: "go", MaxIters: 50, MaxUSD: 100}); err != nil {
+		t.Fatal(err)
+	}
+	waitPrompts(t, f, 1)
+	if err := s.StopForThermal(); err != nil {
+		t.Fatal(err)
+	}
+	endTurn(f, 0.01)
+	quiet()
+
+	st := loopStatus(s)
+	if st.State != LoopStopped {
+		t.Fatalf("state = %q, want stopped", st.State)
+	}
+	if st.Reason != "the host got too hot" {
+		t.Fatalf("reason = %q, want the host got too hot", st.Reason)
+	}
+	if got := len(f.sentPrompts()); got != 1 {
+		t.Fatalf("ran %d iterations after a thermal stop, want 1", got)
+	}
+}

@@ -73,3 +73,9 @@ func memInfo() (total, avail uint64) {
 	}
 	return total, pages * pagesize
 }
+
+// cpuTemp is a Phase 2 concern on macOS: reading die temperature needs sudo
+// (powermetrics) or a CGO IOKit/SMC dependency, so the CGO-free build reports 0
+// for now and the client hides the tile, exactly as it does for any unavailable
+// stat. The thermal guardian falls back to its wall-clock cap here.
+func cpuTemp() float64 { return 0 }

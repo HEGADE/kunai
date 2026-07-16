@@ -48,6 +48,8 @@
   )
   // Load average relative to core count is a decent at-a-glance CPU pressure gauge.
   const cpuPct = $derived(st && st.cores ? Math.min(100, Math.round((st.load1 / st.cores) * 100)) : 0)
+  // Temperature meter is scaled to a 100°C full bar; most CPUs throttle near there.
+  const tempPct = $derived(st ? Math.min(100, Math.round(st.cpu_temp_c)) : 0)
 
   // Quick-start dirs for the selected machine only — so chips don't each repeat
   // the machine name (that's stated once in the section header).
@@ -133,6 +135,18 @@
           </div>
           <div class="meter"><i style="width:{cpuPct}%"></i></div>
           <span class="t-foot mono">{st.cores} cores · load {st.load1.toFixed(2)}</span>
+        </div>
+      {/if}
+      {#if st.cpu_temp_c > 0}
+        <div class="tile">
+          <div class="t-top">
+            <span class="t-label">Temperature</span>
+            <span class="t-val" class:hot={tempPct >= 80} class:tripped={st.thermal_trip}
+              >{Math.round(st.cpu_temp_c)}<small>°C</small></span
+            >
+          </div>
+          <div class="meter"><i class:hot={tempPct >= 80} style="width:{tempPct}%"></i></div>
+          <span class="t-foot mono">{st.thermal_trip ? 'guard tripped — stopped' : 'CPU'}</span>
         </div>
       {/if}
       <div class="tile">
@@ -396,6 +410,17 @@
     height: 100%;
     border-radius: 3px;
     background: var(--text-2);
+  }
+  /* Heat is the one stat where the number itself is a warning, so it earns the
+     status colours the rest of the dashboard keeps for dots. */
+  .t-val.hot {
+    color: var(--busy);
+  }
+  .t-val.tripped {
+    color: var(--alert);
+  }
+  .meter i.hot {
+    background: var(--busy);
   }
   .t-foot {
     font-size: 10px;

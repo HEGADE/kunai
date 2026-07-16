@@ -31,6 +31,16 @@ type Stats struct {
 	KunaiUptime   int64   `json:"kunai_uptime_sec"`
 	KeepAwake     bool    `json:"keep_awake"`           // idle-sleep hold currently held
 	KeepAwakeSupp bool    `json:"keep_awake_supported"` // platform can hold it
+	// CPUTempC is the hottest CPU sensor in degrees Celsius, 0 when unreadable
+	// (every macOS build today, so the client hides the tile there). ThermalTrip
+	// is set while the guardian is holding everything stopped after a trip.
+	CPUTempC    float64 `json:"cpu_temp_c"`
+	ThermalTrip bool    `json:"thermal_trip"`
+	// The guard's live policy, so the Settings fan-out can render it without a
+	// second fetch (it is tailnet-only and holds no secret).
+	ThermalGuard    bool    `json:"thermal_guard"`
+	ThermalSoftC    float64 `json:"thermal_soft_c"`
+	ThermalMaxHours float64 `json:"thermal_max_hours"`
 	// RateResets maps a usage window ("five_hour"/"seven_day") to the unix time
 	// it resets, as last reported by the CLI. Drives scheduler previews.
 	RateResets map[string]int64 `json:"rate_resets,omitempty"`
@@ -61,6 +71,10 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	st.MemTotal, st.MemAvailable = memInfo()
 	st.DiskTotal, st.DiskFree = diskInfo(s.cfg.DataDir)
 	st.ClaudeVersion = claudeVersion()
+	st.CPUTempC = cpuTemp()
+	st.ThermalTrip = s.guardian.tripped()
+	gc := s.guardian.config()
+	st.ThermalGuard, st.ThermalSoftC, st.ThermalMaxHours = gc.Enabled, gc.SoftC, gc.MaxHours
 	writeJSON(w, http.StatusOK, st)
 }
 

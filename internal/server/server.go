@@ -46,6 +46,11 @@ type Config struct {
 	DataDir       string // dir for uploads (and, via push, VAPID keys/subs)
 	PublicURL     string // this machine's own tailnet origin, e.g. https://host.tailnet.ts.net:8443
 	HubURL        string // if set, this is a peer that forwards push wake-ups to the hub at this URL
+	// Thermal guard defaults, seeded from flags/env. A persisted thermal.json
+	// overrides these on boot; the Settings toggle overrides at runtime.
+	ThermalGuard    bool    // enable the guardian by default
+	ThermalSoftC    float64 // trip temperature in Celsius (0 = no temp check)
+	ThermalMaxHours float64 // wall-clock cap on an unattended awake hold (0 = none)
 }
 
 // Server wires the manager, config, and embedded PWA into an http.Handler.
@@ -59,6 +64,7 @@ type Server struct {
 	disco      discoveryCache
 	awake      awake.Keeper        // opt-in keep-awake while locked/idle
 	sched      *schedule.Scheduler // runs prompts at a time / after quota reset
+	guardian   *guardian           // whole-machine thermal safety net
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -78,6 +84,12 @@ func New(cfg Config, mgr *session.Manager) *Server {
 
 	s := &Server{cfg: cfg, mgr: mgr, pwa: webui.FS(), uploadsDir: uploads, machines: machines, awake: awake.New()}
 	s.loadAwake() // re-apply a persisted keep-awake preference on boot
+	s.guardian = newGuardian(mgr, s.awake, guardConfig{
+		Enabled:  cfg.ThermalGuard,
+		SoftC:    cfg.ThermalSoftC,
+		MaxHours: cfg.ThermalMaxHours,
+	})
+	s.loadThermal() // a persisted policy overrides the flag defaults
 	s.sched = schedule.New(filepath.Join(cfg.DataDir, "schedule.json"), s.fireJob)
 	return s
 }
@@ -117,6 +129,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/machines/discover", s.handleDiscover)
 	mux.HandleFunc("POST /api/update", s.handleUpdate)
 	mux.HandleFunc("POST /api/awake", s.handleAwake)
+	mux.HandleFunc("GET /api/thermal", s.handleThermal)
+	mux.HandleFunc("POST /api/thermal", s.handleThermal)
 	mux.HandleFunc("GET /api/schedule", s.handleScheduleList)
 	mux.HandleFunc("POST /api/schedule", s.handleScheduleCreate)
 	mux.HandleFunc("PUT /api/schedule/{id}", s.handleScheduleReplace)
@@ -134,6 +148,12 @@ func (s *Server) Run(ctx context.Context) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go s.sched.Run(ctx) // fire scheduled jobs while the server is up
+	// The guardian wakes the phone the same way a finished turn does; push may
+	// have been set after New, so wire the notifier here at launch.
+	if s.push != nil || s.cfg.HubURL != "" {
+		s.guardian.notify = s.pushNotifier()
+	}
+	go s.guardian.run(ctx) // stop everything if the host overheats or runs too long
 	go func() {
 		<-ctx.Done()
 		_ = s.awake.Set(false) // release the keep-awake hold on graceful shutdown
@@ -231,6 +251,8 @@ func wakeupText(kind string) (title, body string) {
 		return "Kunai", "A task finished"
 	case "loop":
 		return "Kunai", "A loop finished"
+	case "thermal":
+		return "Kunai", "Stopped everything: the host got too hot"
 	default:
 		return "Kunai", "A session needs your attention"
 	}

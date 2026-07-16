@@ -1,7 +1,7 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
   import { enablePush, disablePush, isSubscribed, pushState } from '../lib/push'
-  import { setKeepAwake } from '../lib/api'
+  import { setKeepAwake, setThermal } from '../lib/api'
   import type { Machine } from '../lib/types'
 
   const st = $derived(app.stats)
@@ -62,6 +62,30 @@
       const b = { ...awBusy }
       delete b[m.id]
       awBusy = b
+    }
+  }
+
+  // Per-machine thermal guard. The switch flips enabled; the number fields edit
+  // the thresholds and commit on change. Each posts to that machine's own
+  // /api/thermal and refreshes the fan-out.
+  let thBusy = $state<Record<string, boolean>>({})
+  async function saveThermal(m: Machine, patch: Partial<{ enabled: boolean; soft_c: number; max_hours: number }>) {
+    if (thBusy[m.id]) return
+    thBusy = { ...thBusy, [m.id]: true }
+    machErr = ''
+    try {
+      await setThermal(m.url, {
+        enabled: patch.enabled ?? m.stats?.thermal_guard ?? false,
+        soft_c: patch.soft_c ?? m.stats?.thermal_soft_c ?? 90,
+        max_hours: patch.max_hours ?? m.stats?.thermal_max_hours ?? 0,
+      })
+      await app.refresh()
+    } catch (e) {
+      machErr = (e as Error).message
+    } finally {
+      const b = { ...thBusy }
+      delete b[m.id]
+      thBusy = b
     }
   }
 
@@ -168,6 +192,63 @@
                 <span class="knob"></span>
               </button>
             </div>
+          {/if}
+          {#if m.online && m.stats}
+            <div class="irow awrow">
+              <span class="awk">
+                <span class="awname">Stop everything if it overheats</span>
+                <span class="awsub">
+                  {#if m.stats.cpu_temp_c > 0}
+                    Now {Math.round(m.stats.cpu_temp_c)}°C. Stops every session and lets the machine sleep to cool.
+                  {:else}
+                    Can't read this machine's temperature, so the guard relies on the time limit below.
+                  {/if}
+                </span>
+              </span>
+              <button
+                class="switch"
+                class:on={m.stats.thermal_guard}
+                onclick={() => saveThermal(m, { enabled: !m.stats?.thermal_guard })}
+                disabled={thBusy[m.id]}
+                role="switch"
+                aria-checked={m.stats.thermal_guard}
+                aria-label="Toggle thermal guard"
+              >
+                <span class="knob"></span>
+              </button>
+            </div>
+            {#if m.stats.thermal_guard}
+              <div class="thlimits">
+                {#if m.stats.cpu_temp_c > 0}
+                  <label class="thlim">
+                    <span class="thk">Trip at</span>
+                    <input
+                      class="thin mono"
+                      type="number"
+                      min="50"
+                      max="105"
+                      value={m.stats.thermal_soft_c}
+                      disabled={thBusy[m.id]}
+                      onchange={(e) => saveThermal(m, { soft_c: +e.currentTarget.value })}
+                    />
+                    <span class="thu">°C</span>
+                  </label>
+                {/if}
+                <label class="thlim">
+                  <span class="thk">Or after</span>
+                  <input
+                    class="thin mono"
+                    type="number"
+                    min="0"
+                    max="72"
+                    value={m.stats.thermal_max_hours}
+                    disabled={thBusy[m.id]}
+                    onchange={(e) => saveThermal(m, { max_hours: +e.currentTarget.value })}
+                  />
+                  <span class="thu">hours awake (0 = off)</span>
+                </label>
+              </div>
+            {/if}
           {/if}
         {/each}
       </div>
@@ -327,6 +408,42 @@
     font-size: 11px;
     color: var(--text-4);
     line-height: 1.45;
+  }
+  .thlimits {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    padding: 2px 8px 8px 34px;
+  }
+  .thlim {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+  .thin {
+    width: 56px;
+    padding: 4px 7px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 12.5px;
+    text-align: right;
+  }
+  .thin:focus-visible {
+    outline: none;
+    border-color: var(--border-2);
+  }
+  .thin::-webkit-outer-spin-button,
+  .thin::-webkit-inner-spin-button {
+    appearance: none;
+    margin: 0;
+  }
+  .thu {
+    font-size: 11px;
+    color: var(--text-4);
   }
   .mdot {
     flex: none;
