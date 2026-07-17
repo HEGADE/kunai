@@ -92,6 +92,18 @@
   }
 </script>
 
+{#snippet gear()}
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2" /><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" /></svg>
+{/snippet}
+
+{#snippet railIcon()}
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M9.5 4v16" /></svg>
+{/snippet}
+
+{#snippet newChat()}
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5a8.5 8.5 0 01-8.5 8.5 8.38 8.38 0 01-3.8-.9L3 21l1.9-4.7a8.38 8.38 0 01-.9-3.8A8.5 8.5 0 0112.5 4" /><path d="M18.5 3v5M21 5.5h-5" /></svg>
+{/snippet}
+
 {#snippet bubble()}
   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" /></svg>
 {/snippet}
@@ -100,11 +112,16 @@
   <header>
     <Wordmark size={17} />
     <div class="actions">
-      <button class="icon" onclick={() => app.openSettings()} aria-label="Settings" title="Settings">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2" /><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" /></svg>
+      <button
+        class="icon deskonly"
+        onclick={() => app.toggleSidebar()}
+        aria-label="Collapse sidebar"
+        title="Collapse sidebar"
+      >
+        {@render railIcon()}
       </button>
-      <button class="add" onclick={() => app.newSession()} aria-label="New session">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+      <button class="add" onclick={() => app.newSession()} aria-label="New chat" title="New chat">
+        {@render newChat()}
       </button>
     </div>
   </header>
@@ -205,15 +222,19 @@
   <!-- Only surface the notification control while it still needs action. Once
        granted it's the desired steady state, so the persistent bar just eats
        session-list space and is dropped. -->
-  {#if notif !== 'unsupported' && notif !== 'granted'}
-    <div class="foot">
+  <div class="foot">
+    {#if notif !== 'unsupported' && notif !== 'granted'}
       {#if notifHint}<p class="hint">{notifHint}</p>{/if}
       <button class="notif" onclick={toggleNotif}>
         <span class="ndot"></span>
         Enable notifications
       </button>
-    </div>
-  {/if}
+    {/if}
+    <button class="navitem" onclick={() => app.openSettings()}>
+      <span class="ic">{@render gear()}</span>
+      Settings
+    </button>
+  </div>
 </div>
 
 <style>
@@ -566,6 +587,27 @@
     color: var(--text-3);
     margin: 0;
     line-height: 1.55;
+  }
+  .navitem {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: var(--r-sm);
+    font-size: 13.5px;
+    color: var(--text-2);
+  }
+  .navitem:hover {
+    color: var(--text);
+    background: var(--panel);
+  }
+  .navitem .ic {
+    display: flex;
+    color: var(--text-3);
+  }
+  .navitem:hover .ic {
+    color: var(--text-2);
   }
   .foot {
     padding: 8px 16px calc(var(--safe-bottom) + 12px);
