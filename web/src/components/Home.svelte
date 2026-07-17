@@ -81,17 +81,25 @@
   const selUrl = $derived(sel?.url ?? '')
   const selOnline = $derived(sel?.online ?? false)
   let use = $state<Usage | null>(null)
+  // Whether this machine's quota has come back yet, either way. It gates the
+  // skeleton, so the skeleton shows once per machine and never again: a refresh
+  // updates the numbers in place rather than blinking the rows away and back.
+  let usageLoaded = $state(false)
   $effect(() => {
     const url = selUrl,
       online = selOnline
     void selId
     use = null
-    if (!online) return
+    usageLoaded = false
+    if (!online) {
+      usageLoaded = true // an offline machine has no quota to wait for
+      return
+    }
     let done = false
     const load = () =>
       usage(url)
-        .then((u) => !done && (use = u))
-        .catch(() => !done && (use = null))
+        .then((u) => !done && ((use = u), (usageLoaded = true)))
+        .catch(() => !done && ((use = null), (usageLoaded = true)))
     load()
     // The server caches for a minute; match it rather than poll faster than the
     // number can move.
@@ -178,7 +186,21 @@
   {#if st}
     <!-- Quota first, and close to alone. It is the only thing on this page that
          can stop you working, so it is the only thing that gets any weight. -->
-    {#if session || weekly}
+    {#if !usageLoaded}
+      <!-- Hold the rows' exact height while the CLI is asked. The quota takes a
+           couple of seconds to arrive, and appearing from nothing shoved the
+           whole page down; this reserves the space and fills it in place. -->
+      <div class="quota" aria-hidden="true">
+        {#each ['Session', 'Weekly'] as k (k)}
+          <div class="q skel">
+            <span class="q-k">{k}</span>
+            <div class="q-track"></div>
+            <span class="q-pct mono">—</span>
+            <span class="q-when mono"></span>
+          </div>
+        {/each}
+      </div>
+    {:else if session || weekly}
       <div class="quota">
         {#if session}
           <div class="q">
@@ -435,6 +457,12 @@
   }
   .q-track i.hot {
     background: var(--busy);
+  }
+  /* The skeleton is the same row with nothing in it: an empty track and a dash.
+     No shimmer — a pulse here would be one more thing moving on a page whose
+     whole point is that a quiet machine looks quiet. */
+  .q.skel .q-pct {
+    color: var(--text-4);
   }
   .q-pct {
     font-size: 15px;

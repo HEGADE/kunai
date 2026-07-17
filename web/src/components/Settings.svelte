@@ -23,6 +23,16 @@
   let showAddMachine = $state(false)
   let showAddAcct = $state<Record<string, boolean>>({})
 
+  // Which machine's settings are on screen. Defaults to this one, the same way
+  // the dashboard's stats picker does.
+  let pickedM = $state('')
+  const selM = $derived(
+    app.machines.find((m) => m.id === pickedM) ??
+      app.machines.find((m) => m.self) ??
+      app.machines[0] ??
+      null,
+  )
+
   async function addMachine() {
     const url = newUrl.trim()
     if (!url || adding) return
@@ -197,7 +207,6 @@
     </header>
 
     <div class="body">
-      <div class="sec">Notifications</div>
       <div class="row">
         <div class="rmeta">
           <span class="rname">Push notifications</span>
@@ -225,231 +234,244 @@
       </div>
       {#if hint}<p class="hint">{hint}</p>{/if}
 
+      <!-- One machine's settings at a time. Every machine's controls stacked
+           made a wall that got taller with the fleet; you are here to change one
+           machine, so pick it. Same chips as the dashboard's stats picker. -->
       <div class="sec">
         Machines
         <button class="discover" onclick={discover} disabled={discovering}>
           {discovering ? 'Scanning…' : 'Discover'}
         </button>
       </div>
-      <div class="info">
+      <div class="mchips">
         {#each app.machines as m (m.id)}
-          <div class="irow mrow">
+          <button class="mchip" class:on={selM?.id === m.id} onclick={() => (pickedM = m.id)}>
             <span class="mdot" class:live={m.online}></span>
-            <span class="mmeta">
-              <span class="mlabel">{m.label}{#if m.self}<span class="mself">this</span>{/if}</span>
-              <span class="murl mono">{m.url}</span>
+            {m.label}
+          </button>
+        {/each}
+        <button class="mchip ghost" onclick={() => (showAddMachine = !showAddMachine)} aria-label="Add a machine by URL">+</button>
+      </div>
+      {#if showAddMachine}
+        <div class="addrow">
+          <input class="min" placeholder="Label" bind:value={newLabel} autocomplete="off" />
+          <input
+            class="min mono"
+            placeholder="https://host.tailnet.ts.net:8443"
+            bind:value={newUrl}
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            onkeydown={(e) => e.key === 'Enter' && addMachine()}
+          />
+          <button class="add" onclick={addMachine} disabled={adding || !newUrl.trim()}>Add</button>
+        </div>
+      {/if}
+      {#if machErr}<p class="hint">{machErr}</p>{/if}
+
+      {#if selM}
+        <!-- What "Server" used to be, folded into the machine it describes: it
+             only ever showed the hub's build while sitting under a list of
+             machines, so on a peer it was quietly the wrong answer. -->
+        <div class="mid">
+          <span class="murl mono">{selM.url || 'this machine'}</span>
+          {#if selM.stats}
+            <span class="mbuild mono">
+              claude {selM.stats.claude_version || '—'} · kunai {selM.stats.kunai_version || '—'}{selM
+                .stats.arch
+                ? ` · ${selM.stats.os}/${selM.stats.arch}`
+                : ''}
             </span>
-            {#if !m.self}
-              <button class="mx" onclick={() => app.removeMachine(m.id)} aria-label="Remove machine">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-              </button>
-            {/if}
-          </div>
-          {#if m.online && m.stats?.keep_awake_supported}
-            <div class="irow awrow">
-              <span class="awk">
-                <span class="awname">Keep awake while locked</span>
-                <span class="awsub">Needs the lid open and power.</span>
-              </span>
-              <button
-                class="switch"
-                class:on={m.stats.keep_awake}
-                onclick={() => toggleAwake(m)}
-                disabled={awBusy[m.id]}
-                role="switch"
-                aria-checked={m.stats.keep_awake}
-                aria-label="Toggle keep awake"
-              >
-                <span class="knob"></span>
-              </button>
-            </div>
           {/if}
-          {#if m.online && m.stats?.keep_lid_supported}
-            <div class="irow awrow">
-              <span class="awk">
-                <span class="awname">Keep working with the lid closed</span>
-                {#if !m.stats.thermal_privileged}
-                  <span class="awsub warn">Needs the admin setup from install.</span>
-                {/if}
-              </span>
-              <button
-                class="switch"
-                class:on={m.stats.keep_lid}
-                onclick={() => toggleLid(m)}
-                disabled={lidBusy[m.id]}
-                role="switch"
-                aria-checked={m.stats.keep_lid}
-                aria-label="Toggle lid-closed hold"
-              >
-                <span class="knob"></span>
-              </button>
-            </div>
+          {#if !selM.self}
+            <button class="mremove" onclick={() => app.removeMachine(selM.id)}>Remove machine</button>
           {/if}
-          {#if m.online && m.stats}
-            <div class="irow awrow">
-              <span class="awk">
-                <span class="awname">Stop everything if it overheats</span>
-                <span class="awsub">
-                  {#if m.stats.cpu_temp_c > 0}
-                    {Math.round(m.stats.cpu_temp_c)}°C now
-                  {:else if m.stats.thermal_pressure}
-                    {m.stats.thermal_pressure} pressure now
-                  {:else}
-                    No temperature here — the time limit is the guard.
-                  {/if}
-                </span>
-              </span>
-              <button
-                class="switch"
-                class:on={m.stats.thermal_guard}
-                onclick={() => saveThermal(m, { enabled: !m.stats?.thermal_guard })}
-                disabled={thBusy[m.id]}
-                role="switch"
-                aria-checked={m.stats.thermal_guard}
-                aria-label="Toggle thermal guard"
-              >
-                <span class="knob"></span>
-              </button>
-            </div>
-            {#if m.stats.thermal_guard}
-              <div class="thlimits">
-                {#if m.stats.cpu_temp_c > 0}
-                  <label class="thlim">
-                    <span class="thk">Trip at</span>
-                    <input
-                      class="thin mono"
-                      type="number"
-                      min="50"
-                      max="105"
-                      value={m.stats.thermal_soft_c}
-                      disabled={thBusy[m.id]}
-                      onchange={(e) => saveThermal(m, { soft_c: +e.currentTarget.value })}
-                    />
-                    <span class="thu">°C</span>
-                  </label>
-                {/if}
-                <label class="thlim">
-                  <span class="thk">Time limit</span>
-                  <input
-                    class="thin mono"
-                    type="number"
-                    min="0"
-                    max="72"
-                    value={m.stats.thermal_max_hours}
-                    disabled={thBusy[m.id]}
-                    onchange={(e) => saveThermal(m, { max_hours: +e.currentTarget.value })}
-                  />
-                  <span class="thu">hours awake (0 = off)</span>
-                </label>
-              </div>
-              {#if m.stats.cpu_temp_c > 0 || m.stats.thermal_pressure}
-                <div class="thpower">
-                  <label class="thcheck">
-                    <input
-                      type="checkbox"
-                      checked={m.stats.thermal_action === 'poweroff'}
-                      disabled={thBusy[m.id]}
-                      onchange={(e) =>
-                        saveThermal(m, {
-                          action: e.currentTarget.checked ? 'poweroff' : 'sleep',
-                          hard_c: e.currentTarget.checked ? m.stats?.thermal_hard_c || 100 : 0,
-                        })}
-                    />
-                    <span class="thck">
-                      <span class="thcname">Power off if it keeps climbing</span>
-                      <span class="thcsub" class:warn={!m.stats.thermal_privileged}>
-                        {#if m.stats.thermal_privileged}
-                          Last resort, once stopping everything was not enough.
-                        {:else}
-                          Needs the admin setup from install.
-                        {/if}
-                      </span>
-                    </span>
-                  </label>
-                  {#if m.stats.thermal_action === 'poweroff' && m.stats.cpu_temp_c > 0}
-                    <label class="thlim">
-                      <span class="thk">Power off at</span>
-                      <input
-                        class="thin mono"
-                        type="number"
-                        min="50"
-                        max="105"
-                        value={m.stats.thermal_hard_c}
-                        disabled={thBusy[m.id]}
-                        onchange={(e) => saveThermal(m, { hard_c: +e.currentTarget.value })}
-                      />
-                      <span class="thu">°C</span>
-                    </label>
-                  {/if}
+        </div>
+
+        {#if !selM.online}
+          <p class="hint">Offline — nothing to change here until it is back.</p>
+        {:else}
+          {#if selM.stats?.keep_awake_supported || selM.stats?.keep_lid_supported || selM.stats}
+            <div class="grp">Unattended</div>
+            <div class="info">
+              {#if selM.stats?.keep_awake_supported}
+                <div class="irow awrow">
+                  <span class="awk">
+                    <span class="awname">Keep awake while locked</span>
+                    <span class="awsub">Needs the lid open and power.</span>
+                  </span>
+                  <button
+                    class="switch"
+                    class:on={selM.stats.keep_awake}
+                    onclick={() => toggleAwake(selM)}
+                    disabled={awBusy[selM.id]}
+                    role="switch"
+                    aria-checked={selM.stats.keep_awake}
+                    aria-label="Toggle keep awake"
+                  >
+                    <span class="knob"></span>
+                  </button>
                 </div>
               {/if}
-            {/if}
+              {#if selM.stats?.keep_lid_supported}
+                <div class="irow awrow">
+                  <span class="awk">
+                    <span class="awname">Keep working with the lid closed</span>
+                    {#if !selM.stats.thermal_privileged}
+                      <span class="awsub warn">Needs the admin setup from install.</span>
+                    {/if}
+                  </span>
+                  <button
+                    class="switch"
+                    class:on={selM.stats.keep_lid}
+                    onclick={() => toggleLid(selM)}
+                    disabled={lidBusy[selM.id]}
+                    role="switch"
+                    aria-checked={selM.stats.keep_lid}
+                    aria-label="Toggle lid-closed hold"
+                  >
+                    <span class="knob"></span>
+                  </button>
+                </div>
+              {/if}
+              {#if selM.stats}
+                <div class="irow awrow">
+                  <span class="awk">
+                    <span class="awname">Stop everything if it overheats</span>
+                    <span class="awsub">
+                      {#if selM.stats.cpu_temp_c > 0}
+                        {Math.round(selM.stats.cpu_temp_c)}°C now
+                      {:else if selM.stats.thermal_pressure}
+                        {selM.stats.thermal_pressure} pressure now
+                      {:else}
+                        No temperature here — the time limit is the guard.
+                      {/if}
+                    </span>
+                  </span>
+                  <button
+                    class="switch"
+                    class:on={selM.stats.thermal_guard}
+                    onclick={() => saveThermal(selM, { enabled: !selM.stats?.thermal_guard })}
+                    disabled={thBusy[selM.id]}
+                    role="switch"
+                    aria-checked={selM.stats.thermal_guard}
+                    aria-label="Toggle thermal guard"
+                  >
+                    <span class="knob"></span>
+                  </button>
+                </div>
+                {#if selM.stats.thermal_guard}
+                  <div class="irow thwrap">
+                    <div class="thlimits">
+                      {#if selM.stats.cpu_temp_c > 0}
+                        <label class="thlim">
+                          <span class="thk">Trip at</span>
+                          <input
+                            class="thin mono"
+                            type="number"
+                            min="50"
+                            max="105"
+                            value={selM.stats.thermal_soft_c}
+                            disabled={thBusy[selM.id]}
+                            onchange={(e) => saveThermal(selM, { soft_c: +e.currentTarget.value })}
+                          />
+                          <span class="thu">°C</span>
+                        </label>
+                      {/if}
+                      <label class="thlim">
+                        <span class="thk">Time limit</span>
+                        <input
+                          class="thin mono"
+                          type="number"
+                          min="0"
+                          max="72"
+                          value={selM.stats.thermal_max_hours}
+                          disabled={thBusy[selM.id]}
+                          onchange={(e) => saveThermal(selM, { max_hours: +e.currentTarget.value })}
+                        />
+                        <span class="thu">hours awake (0 = off)</span>
+                      </label>
+                    </div>
+                    {#if selM.stats.cpu_temp_c > 0 || selM.stats.thermal_pressure}
+                      <label class="thcheck">
+                        <input
+                          type="checkbox"
+                          checked={selM.stats.thermal_action === 'poweroff'}
+                          disabled={thBusy[selM.id]}
+                          onchange={(e) =>
+                            saveThermal(selM, {
+                              action: e.currentTarget.checked ? 'poweroff' : 'sleep',
+                              hard_c: e.currentTarget.checked ? selM.stats?.thermal_hard_c || 100 : 0,
+                            })}
+                        />
+                        <span class="thck">
+                          <span class="thcname">Power off if it keeps climbing</span>
+                          <span class="thcsub" class:warn={!selM.stats.thermal_privileged}>
+                            {#if selM.stats.thermal_privileged}
+                              Last resort, once stopping everything was not enough.
+                            {:else}
+                              Needs the admin setup from install.
+                            {/if}
+                          </span>
+                        </span>
+                      </label>
+                      {#if selM.stats.thermal_action === 'poweroff' && selM.stats.cpu_temp_c > 0}
+                        <label class="thlim">
+                          <span class="thk">Power off at</span>
+                          <input
+                            class="thin mono"
+                            type="number"
+                            min="50"
+                            max="105"
+                            value={selM.stats.thermal_hard_c}
+                            disabled={thBusy[selM.id]}
+                            onchange={(e) => saveThermal(selM, { hard_c: +e.currentTarget.value })}
+                          />
+                          <span class="thu">°C</span>
+                        </label>
+                      {/if}
+                    {/if}
+                  </div>
+                {/if}
+              {/if}
+            </div>
           {/if}
-          {#if m.online && accounts[m.id]}
-            <div class="acctblock">
-              <div class="acctlabel">Claude accounts</div>
-              {#each accounts[m.id] as c, i (c.name)}
-                <div class="acctrow">
+
+          {#if accounts[selM.id]}
+            <div class="grp">Claude accounts</div>
+            <div class="info">
+              {#each accounts[selM.id] as c, i (c.name)}
+                <div class="irow acctrow">
                   <span class="acctname">{c.name}{#if i === 0}<span class="acctdef">default</span>{/if}</span>
                   <span class="acctdir mono">{c.dir || c.bin}</span>
                   {#if i > 0}
-                    <button class="acctx" onclick={() => removeAccount(m, c.name)} disabled={acctBusy[m.id]} aria-label="Remove account">
+                    <button
+                      class="acctx"
+                      onclick={() => removeAccount(selM, c.name)}
+                      disabled={acctBusy[selM.id]}
+                      aria-label="Remove account"
+                    >
                       <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1 1l8 8M9 1l-8 8" /></svg>
                     </button>
                   {/if}
                 </div>
               {/each}
-              {#if showAddAcct[m.id]}
-                <div class="acctadd">
-                  <input class="min" placeholder="Name (e.g. Work)" bind:value={newName[m.id]} autocomplete="off" />
-                  <input class="min mono" placeholder="Config folder, e.g. /Users/you/.claude-work" bind:value={newDir[m.id]} autocomplete="off" autocapitalize="off" spellcheck="false" />
-                  <button class="add" onclick={() => addAccount(m)} disabled={acctBusy[m.id] || !(newName[m.id] || '').trim() || !(newDir[m.id] || '').trim()}>Add</button>
-                </div>
-                <p class="acctnote">
-                  Log in once first: <span class="mono">CLAUDE_CONFIG_DIR=&lt;folder&gt; claude</span>
-                </p>
-              {:else}
-                <button class="more" onclick={() => (showAddAcct[m.id] = true)}>+ Add account</button>
-              {/if}
             </div>
+            {#if showAddAcct[selM.id]}
+              <div class="acctadd">
+                <input class="min" placeholder="Name (e.g. Work)" bind:value={newName[selM.id]} autocomplete="off" />
+                <input class="min mono" placeholder="Config folder, e.g. /Users/you/.claude-work" bind:value={newDir[selM.id]} autocomplete="off" autocapitalize="off" spellcheck="false" />
+                <button class="add" onclick={() => addAccount(selM)} disabled={acctBusy[selM.id] || !(newName[selM.id] || '').trim() || !(newDir[selM.id] || '').trim()}>Add</button>
+              </div>
+              <p class="acctnote">
+                Log in once first: <span class="mono">CLAUDE_CONFIG_DIR=&lt;folder&gt; claude</span>
+              </p>
+            {:else}
+              <button class="more" onclick={() => (showAddAcct[selM.id] = true)}>+ Add account</button>
+            {/if}
           {/if}
-        {/each}
-      </div>
-      {#if showAddMachine}
-      <div class="addrow">
-        <input class="min" placeholder="Label" bind:value={newLabel} autocomplete="off" />
-        <input
-          class="min mono"
-          placeholder="https://host.tailnet.ts.net:8443"
-          bind:value={newUrl}
-          autocomplete="off"
-          autocapitalize="off"
-          spellcheck="false"
-          onkeydown={(e) => e.key === 'Enter' && addMachine()}
-        />
-        <button class="add" onclick={addMachine} disabled={adding || !newUrl.trim()}>Add</button>
-      </div>
-      {:else}
-        <button class="more" onclick={() => (showAddMachine = true)}>+ Add manually</button>
+        {/if}
       {/if}
-      {#if machErr}<p class="hint">{machErr}</p>{/if}
-
-      <div class="sec">Server</div>
-      <div class="info">
-        {#if st?.hostname}
-          <div class="irow"><span class="ik">Host</span><span class="iv mono">{st.hostname}</span></div>
-        {/if}
-        <div class="irow"><span class="ik">Link</span><span class="iv mono">direct over tailnet</span></div>
-        {#if st?.claude_version}
-          <div class="irow"><span class="ik">Claude</span><span class="iv mono">{st.claude_version}</span></div>
-        {/if}
-        {#if st?.kunai_version}
-          <div class="irow"><span class="ik">Kunai</span><span class="iv mono">{st.kunai_version}{st.arch ? ` · ${st.os}/${st.arch}` : ''}</span></div>
-        {/if}
-        {#if st}
-          <div class="irow"><span class="ik">Sessions</span><span class="iv mono">{st.sessions} active</span></div>
-        {/if}
-      </div>
     </div>
   </div>
 </div>
@@ -553,9 +575,6 @@
   .discover:disabled {
     opacity: 0.55;
   }
-  .mrow {
-    gap: 11px;
-  }
   .awrow {
     gap: 14px;
     padding-left: 34px;
@@ -615,18 +634,6 @@
   /* A warning subline earns the one status colour reserved for "be careful". */
   .awsub.warn {
     color: color-mix(in srgb, var(--busy) 80%, var(--text-3));
-  }
-  .acctblock {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin: 4px 8px 10px 34px;
-    padding-top: 9px;
-    border-top: 1px solid var(--border);
-  }
-  .acctlabel {
-    font-size: 12.5px;
-    color: var(--text-2);
   }
   .acctrow {
     display: flex;
@@ -695,6 +702,74 @@
   }
   /* The way into a form you rarely want: present, but not taking up the room a
      form would. */
+  /* Machine picker: the settings panel's spine. */
+  .mchips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .mchip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 11px;
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    font-size: 12.5px;
+    color: var(--text-2);
+  }
+  .mchip:hover {
+    color: var(--text);
+    border-color: var(--border-2);
+  }
+  .mchip.on {
+    color: var(--text);
+    background: var(--panel-2);
+    border-color: var(--border-2);
+  }
+  .mchip.ghost {
+    color: var(--text-4);
+    padding: 6px 10px;
+  }
+  .mid {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 9px 2px 0;
+  }
+  .murl,
+  .mbuild {
+    font-size: 11px;
+    color: var(--text-4);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mremove {
+    align-self: flex-start;
+    margin-top: 4px;
+    font-size: 11.5px;
+    color: var(--text-4);
+  }
+  .mremove:hover {
+    color: var(--alert);
+  }
+  /* Sub-heading inside a machine, quieter than a section eyebrow: these group
+     rows, they do not start a new part of the panel. */
+  .grp {
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--text-4);
+    /* Same vertical rhythm as .sec, one step quieter: these group rows inside a
+       machine rather than starting a new part of the panel. */
+    padding: 16px 2px 8px;
+  }
+  .thwrap {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
   .more {
     align-self: flex-start;
     padding: 5px 0;
@@ -703,14 +778,6 @@
   }
   .more:hover {
     color: var(--text);
-  }
-  .thpower {
-    display: flex;
-    flex-direction: column;
-    gap: 9px;
-    margin: 4px 8px 10px 34px;
-    padding-top: 9px;
-    border-top: 1px solid var(--border);
   }
   .thcheck {
     display: flex;
@@ -746,49 +813,12 @@
   .mdot.live {
     background: var(--live);
   }
-  .mmeta {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .mlabel {
-    font-size: 13.5px;
-    color: var(--text);
-    display: flex;
-    align-items: center;
-    gap: 7px;
-  }
-  .mself {
-    padding: 0 5px;
-    border-radius: 4px;
-    background: var(--panel-3);
-    color: var(--text-4);
-    font-size: 9.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
   .murl {
     font-size: 11px;
     color: var(--text-4);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .mx {
-    flex: none;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    color: var(--text-4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .mx:hover {
-    color: var(--text-2);
-    background: var(--panel-3);
   }
   .addrow {
     display: flex;
@@ -906,17 +936,6 @@
   }
   .irow + .irow {
     border-top: 1px solid var(--border);
-  }
-  .ik {
-    font-size: 13px;
-    color: var(--text-3);
-  }
-  .iv {
-    font-size: 12.5px;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   /* Phone: bottom sheet. */
