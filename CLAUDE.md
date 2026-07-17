@@ -122,23 +122,24 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
 - `internal/server/usage.go`: the account's subscription quota, the same two
   numbers `claude`'s `/usage` prints, on the dashboard. A `rate_limit_info` frame
   only carries a window's reset time and whether a turn was rejected, so the "how
-  full is it" half has to come from the account: `GET /api/oauth/usage` returns
-  `five_hour` and `seven_day` (`utilization` plus `resets_at`). There is no daily
-  window; the limits are 5-hour and 7-day. Both that endpoint and the refresh
-  (`POST https://platform.claude.com/v1/oauth/token`, client id
-  `9d1c250a-...`) are **undocumented CLI endpoints**, quarantined in this one
-  file for the same reason `internal/claude/protocol.go` is; the URLs are `var`s
-  so a test points them at an httptest server instead of the real account. Auth
-  is the account's OAuth token from `<configDir>/.credentials.json`, which is
-  **read fresh on every call and never cached in memory**: every `claude` kunai
-  spawns refreshes that same file, so taking whatever is on disk means we only
-  ever refresh when nobody else has, which is what stops the two from rotating
-  the token out from under each other. The access token only lives an hour, so
-  read-only is not an option. Writes are atomic and rewrite the *decoded
-  original*, never a struct of our own: an unmodelled field dropped from that
-  file logs the account out. macOS keeps the tokens in the Keychain, not a file,
-  so usage is absent there until that is done on real hardware (see the note in
-  `credsPath`).
+  full is it" half has to come from the account. There is no daily window; the
+  limits are 5-hour and 7-day. We get them by **shelling the CLI**
+  (`claude -p --session-id <uuid> /usage`, free: no model call, no tokens) rather
+  than by calling the account's HTTP endpoint, and the reason is credentials: the
+  CLI already knows how to read its own login, which on macOS lives in the
+  Keychain rather than a file. Shelling means kunai never touches that login, so
+  it can never rotate a token out from under a running session or drop a field
+  and log the account out. The costs are real and accepted: ~2s per poll (hence
+  the 60s cache) and prose to parse instead of JSON. Two costs are load-bearing
+  and must not regress. **Every `-p` run records a transcript**, so the poll
+  passes its *own* uuid and deletes exactly that file (`dropTranscript`); without
+  it a 60s cadence buries the Recent list in ~1400 `/usage` sessions a day, and a
+  fixed uuid cannot be reused (the CLI rejects it as "already in use"). And the
+  CLI prints **no year** on a reset (`Jul 17, 10:29pm (Asia/Kolkata)`), so the
+  parse infers the year that puts the reset ahead of now, which is what makes a
+  window spanning New Year come out right. `usageRun` is injectable for the same
+  reason `guardian.go` has `execRun`: a test asserts the command instead of
+  spawning a real claude.
 - `internal/project`: reads a directory into the description a session hands a model
   (`Scan` -> `Info`, `Info.Brief()`): layout, language mix, git head from `.git`,
   the files that name it. It never opens the code, and the walk skips `.git`,

@@ -2,221 +2,236 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
 
-// A real /api/oauth/usage body, trimmed. The endpoint reports far more than we
-// show (per-model windows, overage, spend), so the parse must ignore the rest
-// and must not care that most windows are null.
-const usageBody = `{
-  "five_hour": {"utilization": 7.0, "resets_at": "2026-07-17T17:00:00.327623+00:00"},
-  "seven_day": {"utilization": 17.0, "resets_at": "2026-07-18T09:00:00.327644+00:00"},
-  "seven_day_opus": null,
-  "extra_usage": {"is_enabled": false},
-  "limits": [{"kind": "session", "percent": 7}],
-  "member_dashboard_available": false
-}`
+// Real `claude -p /usage` output, verbatim. The CLI prints a per-model week and
+// a local-activity breakdown too; the parse must take the two windows and ignore
+// the rest, so new prose below never breaks it.
+const usageOut = `You are currently using your subscription to power your Claude Code usage
 
-func TestUsageParse(t *testing.T) {
-	var ur usageResponse
-	if err := json.Unmarshal([]byte(usageBody), &ur); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	s := ur.FiveHour.window()
-	if s == nil || s.Percent != 7 {
-		t.Fatalf("five_hour = %+v, want 7%%", s)
-	}
-	if want := time.Date(2026, 7, 17, 17, 0, 0, 0, time.UTC).Unix(); s.ResetsAt != want {
-		t.Errorf("five_hour resets_at = %d, want %d", s.ResetsAt, want)
-	}
-	if w := ur.SevenDay.window(); w == nil || w.Percent != 17 {
-		t.Fatalf("seven_day = %+v, want 17%%", w)
-	}
-	// A window the account does not have stays nil: an unknown limit and an
-	// empty one are different claims, and the UI shows nil as absent.
-	var absent *usageEntry
-	if absent.window() != nil {
-		t.Error("a null window must decode to nil, not an empty meter")
-	}
-}
+Current session: 21% used · resets Jul 17, 10:29pm (Asia/Kolkata)
+Current week (all models): 17% used · resets Jul 18, 2:29pm (Asia/Kolkata)
+Current week (Fable): 0% used
 
-func writeCreds(t *testing.T, dir string, c map[string]any) {
-	t.Helper()
-	b, _ := json.MarshalIndent(map[string]any{"claudeAiOauth": c}, "", "  ")
-	if err := os.WriteFile(filepath.Join(dir, ".credentials.json"), b, 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
+What's contributing to your limits usage?
+Approximate, based on local sessions on this machine — does not include other devices or claude.ai.
 
-func readCredsRaw(t *testing.T, dir string) map[string]any {
-	t.Helper()
-	b, err := os.ReadFile(filepath.Join(dir, ".credentials.json"))
+Last 24h · 656 requests · 4 sessions
+  95% of your usage was at >150k context
+  Top skills: /claude-api 8%
+`
+
+func TestParseUsage(t *testing.T) {
+	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
+	u := parseUsage(usageOut, now)
+	if u == nil {
+		t.Fatal("no usage parsed")
+	}
+	if u.Session == nil || u.Session.Percent != 21 {
+		t.Fatalf("session = %+v, want 21%%", u.Session)
+	}
+	if u.Weekly == nil || u.Weekly.Percent != 17 {
+		t.Fatalf("weekly = %+v, want 17%%", u.Weekly)
+	}
+	// Jul 17 10:29pm in Asia/Kolkata is 16:59 UTC.
+	kolkata, err := time.LoadLocation("Asia/Kolkata")
 	if err != nil {
-		t.Fatal(err)
+		t.Skip("no tzdata")
 	}
-	var whole map[string]any
-	if err := json.Unmarshal(b, &whole); err != nil {
-		t.Fatal(err)
-	}
-	return whole["claudeAiOauth"].(map[string]any)
-}
-
-// A live token is used as-is: kunai must never refresh a token the CLI is
-// happily using, because refreshing is what can rotate it out from under the CLI.
-func TestTokenUsesLiveTokenWithoutRefreshing(t *testing.T) {
-	dir := t.TempDir()
-	writeCreds(t, dir, map[string]any{
-		"accessToken":  "live",
-		"refreshToken": "r1",
-		"expiresAt":    time.Now().Add(time.Hour).UnixMilli(),
-	})
-	u := newUsageCache()
-	u.http = &http.Client{Transport: noHTTP{t}} // any HTTP call fails the test
-
-	c, err := u.token(context.Background(), dir)
-	if err != nil {
-		t.Fatalf("token: %v", err)
-	}
-	if c.AccessToken != "live" {
-		t.Fatalf("access token = %q, want the on-disk one", c.AccessToken)
+	want := time.Date(2026, 7, 17, 22, 29, 0, 0, kolkata).Unix()
+	if u.Session.ResetsAt != want {
+		t.Errorf("session resets_at = %d (%v), want %d",
+			u.Session.ResetsAt, time.Unix(u.Session.ResetsAt, 0).UTC(), want)
 	}
 }
 
-// An expired token is refreshed, the new one persisted, and every field we do
-// not model preserved: this file is the account's login, so a round trip must
-// not drop scopes/tier or the user is silently logged out.
-func TestTokenRefreshesAndPreservesUnknownFields(t *testing.T) {
-	dir := t.TempDir()
-	writeCreds(t, dir, map[string]any{
-		"accessToken":           "stale",
-		"refreshToken":          "r1",
-		"expiresAt":             time.Now().Add(-time.Hour).UnixMilli(),
-		"refreshTokenExpiresAt": float64(1234),
-		"scopes":                []any{"user:inference"},
-		"subscriptionType":      "max",
-	})
+// The per-model week ("Current week (Fable)") must not be mistaken for the
+// all-models one: they are different limits and only one belongs on the tile.
+func TestParseUsageIgnoresScopedWeek(t *testing.T) {
+	out := "Current session: 5% used\nCurrent week (Fable): 99% used\n"
+	u := parseUsage(out, time.Now())
+	if u == nil || u.Session == nil || u.Session.Percent != 5 {
+		t.Fatalf("session = %+v", u)
+	}
+	if u.Weekly != nil {
+		t.Errorf("weekly = %+v, want nil: a per-model week is not the all-models week", u.Weekly)
+	}
+}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]string
-		json.NewDecoder(r.Body).Decode(&body)
-		if body["grant_type"] != "refresh_token" || body["refresh_token"] != "r1" {
-			t.Errorf("refresh body = %+v", body)
+// A window with no reset half still reports its fill; the reset reads as unknown
+// rather than as epoch.
+func TestParseUsageWindowWithoutReset(t *testing.T) {
+	u := parseUsage("Current session: 8% used\n", time.Now())
+	if u == nil || u.Session == nil || u.Session.Percent != 8 {
+		t.Fatalf("session = %+v", u)
+	}
+	if u.Session.ResetsAt != 0 {
+		t.Errorf("resets_at = %d, want 0 (unknown)", u.Session.ResetsAt)
+	}
+}
+
+// An account that is not on a subscription prints something else entirely: that
+// is an absent tile, not a wrong one.
+func TestParseUsageOnNonSubscription(t *testing.T) {
+	if u := parseUsage("Claude Code is using an API key.\n", time.Now()); u != nil {
+		t.Fatalf("want nil for output with no windows, got %+v", u)
+	}
+}
+
+// The CLI prints no year, so the parse infers the one that puts the reset ahead
+// of now. A window that spans New Year is the case that has to work.
+func TestParseResetAtInfersYearAcrossNewYear(t *testing.T) {
+	now := time.Date(2026, 12, 31, 23, 0, 0, 0, time.UTC)
+	got := parseResetAt("Jan 1, 2:00am (UTC)", now)
+	want := time.Date(2027, 1, 1, 2, 0, 0, 0, time.UTC).Unix()
+	if got != want {
+		t.Errorf("resets_at = %v, want %v (next year, not the one just gone)",
+			time.Unix(got, 0).UTC(), time.Unix(want, 0).UTC())
+	}
+}
+
+func TestParseResetAtUnreadable(t *testing.T) {
+	if got := parseResetAt("some day next week", time.Now()); got != 0 {
+		t.Errorf("resets_at = %d, want 0: an unreadable reset is unknown, not wrong", got)
+	}
+}
+
+func TestNewSessionIDIsV4(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 100; i++ {
+		id, err := newSessionID()
+		if err != nil {
+			t.Fatal(err)
 		}
-		if body["client_id"] != oauthClientID {
-			t.Errorf("client_id = %q", body["client_id"])
+		if len(id) != 36 || id[14] != '4' {
+			t.Fatalf("id = %q, want a v4 uuid", id)
 		}
-		json.NewEncoder(w).Encode(tokenResponse{AccessToken: "fresh", RefreshToken: "r2", ExpiresIn: 3600})
-	}))
-	defer srv.Close()
-	defer swapURL(&tokenURL, srv.URL)()
-
-	c, err := refreshToken(context.Background(), srv.Client(), "r1")
-	if err != nil {
-		t.Fatalf("refreshToken: %v", err)
-	}
-	if c.AccessToken != "fresh" || c.RefreshToken != "r2" {
-		t.Fatalf("refreshed = %+v", c)
-	}
-	if !time.UnixMilli(c.ExpiresAt).After(time.Now().Add(50 * time.Minute)) {
-		t.Errorf("expiresAt = %v, want ~1h out", time.UnixMilli(c.ExpiresAt))
-	}
-
-	// Persist it the way token() does, then check nothing else was lost.
-	_, whole, err := readCreds(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := writeAccessToken(dir, whole, c); err != nil {
-		t.Fatalf("writeAccessToken: %v", err)
-	}
-	got := readCredsRaw(t, dir)
-	if got["accessToken"] != "fresh" || got["refreshToken"] != "r2" {
-		t.Fatalf("tokens not persisted: %+v", got)
-	}
-	if got["refreshTokenExpiresAt"] != float64(1234) || got["subscriptionType"] != "max" {
-		t.Errorf("unmodelled fields dropped on write: %+v", got)
-	}
-	if _, ok := got["scopes"]; !ok {
-		t.Error("scopes dropped on write")
-	}
-	// The login must stay private.
-	fi, err := os.Stat(filepath.Join(dir, ".credentials.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fi.Mode().Perm() != 0o600 {
-		t.Errorf("credentials mode = %v, want 0600", fi.Mode().Perm())
+		if seen[id] {
+			t.Fatalf("duplicate id %q: every poll must get its own", id)
+		}
+		seen[id] = true
 	}
 }
 
-// A refresh that fails must not wipe or corrupt the credentials, and must not
-// take the machine down with it: no usage is a quiet tile, not a broken account.
-func TestRefreshFailureLeavesCredentialsIntact(t *testing.T) {
-	dir := t.TempDir()
-	writeCreds(t, dir, map[string]any{
-		"accessToken":  "stale",
-		"refreshToken": "r1",
-		"expiresAt":    time.Now().Add(-time.Hour).UnixMilli(),
-	})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "nope", http.StatusUnauthorized)
-	}))
-	defer srv.Close()
-	defer swapURL(&tokenURL, srv.URL)()
-
-	if _, err := refreshToken(context.Background(), srv.Client(), "r1"); err == nil {
-		t.Fatal("want an error from a 401 refresh")
-	}
-	got := readCredsRaw(t, dir)
-	if got["accessToken"] != "stale" || got["refreshToken"] != "r1" {
-		t.Fatalf("failed refresh mutated credentials: %+v", got)
-	}
-}
-
-// A logged-out account is a normal state, not a server error.
-func TestTokenOnLoggedOutAccount(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".credentials.json"), []byte(`{}`), 0o600); err != nil {
+// Each -p run records a transcript, so the poll must remove the one it made or a
+// 60s cadence buries the Recent list in ~1400 "/usage" sessions a day.
+func TestFetchDropsItsTranscript(t *testing.T) {
+	cfg := t.TempDir()
+	cwd := t.TempDir()
+	proj := filepath.Join(claudeRoot(cfg), projectSlug(cwd))
+	if err := os.MkdirAll(proj, 0o755); err != nil {
 		t.Fatal(err)
 	}
+
+	var gotArgs []string
+	defer swapRun(func(ctx context.Context, bin string, env []string, dir string, args ...string) ([]byte, error) {
+		gotArgs = args
+		// Stand in for the CLI: writing the transcript is what it really does.
+		id := args[2]
+		if err := os.WriteFile(filepath.Join(proj, id+".jsonl"), []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return []byte(usageOut), nil
+	})()
+
 	u := newUsageCache()
-	if _, err := u.token(context.Background(), dir); err == nil {
-		t.Fatal("want an error for an account with no claudeAiOauth")
+	got, err := u.fetch(context.Background(), CLIProfile{Name: "Claude", Bin: "claude", Dir: cfg}, cwd)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if got.Session == nil || got.Session.Percent != 21 {
+		t.Fatalf("session = %+v", got.Session)
+	}
+	if len(gotArgs) != 4 || gotArgs[0] != "-p" || gotArgs[1] != "--session-id" || gotArgs[3] != "/usage" {
+		t.Fatalf("args = %v, want -p --session-id <uuid> /usage", gotArgs)
+	}
+	left, _ := filepath.Glob(filepath.Join(proj, "*.jsonl"))
+	if len(left) != 0 {
+		t.Errorf("poll left %d transcript(s) behind: %v", len(left), left)
 	}
 }
 
-func TestExpiredSkew(t *testing.T) {
-	if (oauthCreds{ExpiresAt: time.Now().Add(time.Hour).UnixMilli()}).expired() {
-		t.Error("an hour of life is not expired")
+// A failed run must still clean up after itself, and must not take the machine
+// down: no usage is a quiet tile.
+func TestFetchDropsTranscriptOnFailure(t *testing.T) {
+	cfg := t.TempDir()
+	cwd := t.TempDir()
+	proj := filepath.Join(claudeRoot(cfg), projectSlug(cwd))
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if !(oauthCreds{ExpiresAt: time.Now().Add(30 * time.Second).UnixMilli()}).expired() {
-		t.Error("inside the skew must count as expired, so a fetch never races the wall")
+	defer swapRun(func(ctx context.Context, bin string, env []string, dir string, args ...string) ([]byte, error) {
+		os.WriteFile(filepath.Join(proj, args[2]+".jsonl"), []byte("{}\n"), 0o600)
+		return nil, errors.New("boom")
+	})()
+
+	u := newUsageCache()
+	if _, err := u.fetch(context.Background(), CLIProfile{Bin: "claude", Dir: cfg}, cwd); err == nil {
+		t.Fatal("want an error from a failed run")
 	}
-	if (oauthCreds{}).expired() {
-		t.Error("no recorded expiry: let the API judge, do not force a refresh")
+	if left, _ := filepath.Glob(filepath.Join(proj, "*.jsonl")); len(left) != 0 {
+		t.Errorf("failed poll left a transcript behind: %v", left)
 	}
 }
 
-// swapURL points a real endpoint at a test server and returns the undo, so a
-// test can never reach the live account endpoints.
-func swapURL(target *string, url string) func() {
-	old := *target
-	*target = url
-	return func() { *target = old }
+// The account's env must reach the CLI, or a second account's usage would be the
+// default account's.
+func TestFetchRunsAsTheAccount(t *testing.T) {
+	var gotEnv []string
+	var gotBin, gotDir string
+	defer swapRun(func(ctx context.Context, bin string, env []string, dir string, args ...string) ([]byte, error) {
+		gotBin, gotEnv, gotDir = bin, env, dir
+		return []byte(usageOut), nil
+	})()
+
+	u := newUsageCache()
+	p := CLIProfile{Name: "Work", Bin: "claude-work", Dir: "/w"}
+	if _, err := u.fetch(context.Background(), p, "/data"); err != nil {
+		t.Fatal(err)
+	}
+	if gotBin != "claude-work" || gotDir != "/data" {
+		t.Fatalf("ran %q in %q", gotBin, gotDir)
+	}
+	var found bool
+	for _, e := range gotEnv {
+		if e == "CLAUDE_CONFIG_DIR=/w" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("env = %v, want the account's CLAUDE_CONFIG_DIR", gotEnv)
+	}
 }
 
-// noHTTP makes any outbound call a test failure, so a test can assert that a
-// code path stayed entirely local.
-type noHTTP struct{ t *testing.T }
+// The CLI is the slow part: a second look inside the TTL must not shell it again.
+func TestGetCachesWithinTTL(t *testing.T) {
+	runs := 0
+	defer swapRun(func(ctx context.Context, bin string, env []string, dir string, args ...string) ([]byte, error) {
+		runs++
+		return []byte(usageOut), nil
+	})()
 
-func (n noHTTP) RoundTrip(r *http.Request) (*http.Response, error) {
-	n.t.Errorf("unexpected HTTP call to %s", r.URL)
-	return nil, errors.New("no HTTP expected")
+	u := newUsageCache()
+	p := CLIProfile{Bin: "claude", Dir: t.TempDir()}
+	for i := 0; i < 3; i++ {
+		if _, err := u.get(context.Background(), p, t.TempDir()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if runs != 1 {
+		t.Errorf("shelled the CLI %d times, want 1 inside the TTL", runs)
+	}
+}
+
+// swapRun points the CLI shell at a stub and returns the undo, so a test never
+// spawns a real claude.
+func swapRun(fn func(context.Context, string, []string, string, ...string) ([]byte, error)) func() {
+	old := usageRun
+	usageRun = fn
+	return func() { usageRun = old }
 }
