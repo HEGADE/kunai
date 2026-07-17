@@ -220,6 +220,52 @@ func (u *usageCache) get(ctx context.Context, p CLIProfile, cwd string) (*Usage,
 	return u.val, u.err
 }
 
+// usagePollLoop keeps the scheduler's window reset times fresh from /usage, the
+// same source the dashboard shows. Without it a reset job could only learn a
+// reset from a live session's rate_limit frame, which is rare and lost on every
+// restart, so a "fire after reset" job often armed late (to the next window) or
+// never armed to the reset the user actually set it for. /usage knows the real
+// reset every minute regardless of any session, so feeding it here is what makes
+// reset jobs reliable.
+//
+// It runs only while a reset job exists: with none, there is nothing to feed and
+// no reason to shell the CLI. First poll is soon after boot so a job that was
+// waiting when we last died re-learns its reset quickly; after that the cadence
+// is slow, because reset times move on the scale of hours.
+func (s *Server) usagePollLoop(ctx context.Context) {
+	timer := time.NewTimer(20 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		s.feedSchedulerResets(ctx)
+		timer.Reset(5 * time.Minute)
+	}
+}
+
+// feedSchedulerResets hands the current window reset times to the scheduler, so
+// a reset-triggered job arms to the real reset. Does nothing (and skips the CLI)
+// when no reset job is waiting. The window keys are the scheduler's own,
+// "five_hour" for the session window and "seven_day" for the weekly one.
+func (s *Server) feedSchedulerResets(ctx context.Context) {
+	if s.sched == nil || !s.sched.HasResetJobs() {
+		return
+	}
+	u, err := s.usage.get(ctx, s.resolveCLI(""), s.cfg.DataDir)
+	if err != nil || u == nil {
+		return
+	}
+	if u.Session != nil && u.Session.ResetsAt > 0 {
+		s.sched.NoteReset("five_hour", u.Session.ResetsAt)
+	}
+	if u.Weekly != nil && u.Weekly.ResetsAt > 0 {
+		s.sched.NoteReset("seven_day", u.Weekly.ResetsAt)
+	}
+}
+
 // handleUsage serves the default account's quota windows. Quota is per-account
 // and the dashboard shows one machine's default account, so this deliberately
 // takes no account parameter.

@@ -171,8 +171,9 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.push != nil || s.cfg.HubURL != "" {
 		s.guardian.notify = s.pushNotifier()
 	}
-	go s.guardian.run(ctx) // stop everything if the host overheats or runs too long
-	go s.resumeLoops(ctx)  // restart any loop that was running when we last died
+	go s.guardian.run(ctx)  // stop everything if the host overheats or runs too long
+	go s.resumeLoops(ctx)   // restart any loop that was running when we last died
+	go s.usagePollLoop(ctx) // feed real window reset times to the scheduler, so reset jobs fire
 	go func() {
 		<-ctx.Done()
 		_ = s.awake.Set(false) // release the keep-awake hold on graceful shutdown

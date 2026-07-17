@@ -259,8 +259,23 @@ func (s *Scheduler) runOne(it fireItem, now time.Time) {
 	s.mu.Unlock()
 }
 
-// NoteReset records a usage window's reset time (from a rate_limit_event) and
-// wakes the loop so reset-triggered jobs recompute.
+// HasResetJobs reports whether any enabled reset-triggered job exists, so a
+// background poller can skip the cost of fetching reset times nobody needs.
+func (s *Scheduler) HasResetJobs() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, j := range s.jobs {
+		if j.Enabled && j.Trigger.Kind == "reset" {
+			return true
+		}
+	}
+	return false
+}
+
+// NoteReset records a usage window's reset time and wakes the loop so
+// reset-triggered jobs recompute. Fed both by a live session's rate_limit frame
+// and by the background /usage poll, which is what keeps the reset times present
+// even when no session is running and across the restarts that wipe this map.
 func (s *Scheduler) NoteReset(window string, resetsAt int64) {
 	s.mu.Lock()
 	changed := s.resets[window] != resetsAt
