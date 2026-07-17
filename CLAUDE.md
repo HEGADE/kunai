@@ -60,8 +60,10 @@ stale `dist/` or `./kunai` artifact (that was a real bug). `internal/webui/dist`
 
 Hub URL: `https://<hub>.<tailnet>.ts.net:8443`. Logs:
 `journalctl --user -u kunai -f` (Linux) or `~/.kunai/kunai.log` (macOS). TLS certs
-are minted with `tailscale cert` and are NOT auto-renewed yet (roughly 90-day
-expiry).
+are minted with `tailscale cert` (roughly 90-day expiry); `certKeeper`
+(`internal/server/tls.go`) auto-renews them, re-minting via `tailscale cert` once
+within 20 days of expiry and hot-reloading the new keypair from disk without a
+restart.
 
 ## Architecture
 
