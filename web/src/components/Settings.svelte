@@ -17,6 +17,11 @@
   let adding = $state(false)
   let discovering = $state(false)
   let machErr = $state('')
+  // Adding a machine or an account is a once-a-year job, so the forms stay shut
+  // until asked for. Left open they are permanent clutter in a panel you came to
+  // flip one switch in.
+  let showAddMachine = $state(false)
+  let showAddAcct = $state<Record<string, boolean>>({})
 
   async function addMachine() {
     const url = newUrl.trim()
@@ -200,7 +205,7 @@
             {#if !supported}
               Not supported in this browser.
             {:else}
-              A generic wake-up when a session needs you or finishes. No content leaves the tailnet.
+              No content leaves the tailnet.
             {/if}
           </span>
         </div>
@@ -244,7 +249,7 @@
             <div class="irow awrow">
               <span class="awk">
                 <span class="awname">Keep awake while locked</span>
-                <span class="awsub">Prevents idle sleep so sessions stay reachable. Keep the lid open and on power.</span>
+                <span class="awsub">Needs the lid open and power.</span>
               </span>
               <button
                 class="switch"
@@ -263,16 +268,8 @@
             <div class="irow awrow">
               <span class="awk">
                 <span class="awname">Keep working with the lid closed</span>
-                {#if m.stats.thermal_privileged}
-                  <span class="awsub">
-                    Overrides lid-close sleep, so watch the heat; the guard below is what makes this
-                    safe to leave. Admin access is set up.
-                  </span>
-                {:else}
-                  <span class="awsub warn">
-                    Needs the one-time admin setup from install (re-run it with the privileged flag).
-                    Overrides lid-close sleep.
-                  </span>
+                {#if !m.stats.thermal_privileged}
+                  <span class="awsub warn">Needs the admin setup from install.</span>
                 {/if}
               </span>
               <button
@@ -294,11 +291,11 @@
                 <span class="awname">Stop everything if it overheats</span>
                 <span class="awsub">
                   {#if m.stats.cpu_temp_c > 0}
-                    Now {Math.round(m.stats.cpu_temp_c)}°C. Stops every session and lets the machine sleep to cool.
+                    {Math.round(m.stats.cpu_temp_c)}°C now
                   {:else if m.stats.thermal_pressure}
-                    Now {m.stats.thermal_pressure} pressure. Stops on Serious and lets the machine sleep to cool.
+                    {m.stats.thermal_pressure} pressure now
                   {:else}
-                    Can't read this machine's temperature, so the guard relies on the time limit below.
+                    No temperature here — the time limit is the guard.
                   {/if}
                 </span>
               </span>
@@ -342,7 +339,7 @@
                     disabled={thBusy[m.id]}
                     onchange={(e) => saveThermal(m, { max_hours: +e.currentTarget.value })}
                   />
-                  <span class="thu">hours awake, heat or not (0 = off)</span>
+                  <span class="thu">hours awake (0 = off)</span>
                 </label>
               </div>
               {#if m.stats.cpu_temp_c > 0 || m.stats.thermal_pressure}
@@ -360,14 +357,11 @@
                     />
                     <span class="thck">
                       <span class="thcname">Power off if it keeps climbing</span>
-                      <span class="thcsub">
-                        Last resort: shuts the machine down if it is still {m.stats.cpu_temp_c > 0
-                          ? 'too hot'
-                          : 'at Critical pressure'} after everything else stopped.
+                      <span class="thcsub" class:warn={!m.stats.thermal_privileged}>
                         {#if m.stats.thermal_privileged}
-                          Admin access is ready.
+                          Last resort, once stopping everything was not enough.
                         {:else}
-                          Needs the one-time admin setup from install first.
+                          Needs the admin setup from install.
                         {/if}
                       </span>
                     </span>
@@ -405,19 +399,23 @@
                   {/if}
                 </div>
               {/each}
-              <div class="acctadd">
-                <input class="min" placeholder="Name (e.g. Work)" bind:value={newName[m.id]} autocomplete="off" />
-                <input class="min mono" placeholder="Config folder, e.g. /Users/you/.claude-work" bind:value={newDir[m.id]} autocomplete="off" autocapitalize="off" spellcheck="false" />
-                <button class="add" onclick={() => addAccount(m)} disabled={acctBusy[m.id] || !(newName[m.id] || '').trim() || !(newDir[m.id] || '').trim()}>Add</button>
-              </div>
-              <p class="acctnote">
-                Log into the account once in a terminal first:
-                <span class="mono">CLAUDE_CONFIG_DIR=&lt;folder&gt; claude</span>
-              </p>
+              {#if showAddAcct[m.id]}
+                <div class="acctadd">
+                  <input class="min" placeholder="Name (e.g. Work)" bind:value={newName[m.id]} autocomplete="off" />
+                  <input class="min mono" placeholder="Config folder, e.g. /Users/you/.claude-work" bind:value={newDir[m.id]} autocomplete="off" autocapitalize="off" spellcheck="false" />
+                  <button class="add" onclick={() => addAccount(m)} disabled={acctBusy[m.id] || !(newName[m.id] || '').trim() || !(newDir[m.id] || '').trim()}>Add</button>
+                </div>
+                <p class="acctnote">
+                  Log in once first: <span class="mono">CLAUDE_CONFIG_DIR=&lt;folder&gt; claude</span>
+                </p>
+              {:else}
+                <button class="more" onclick={() => (showAddAcct[m.id] = true)}>+ Add account</button>
+              {/if}
             </div>
           {/if}
         {/each}
       </div>
+      {#if showAddMachine}
       <div class="addrow">
         <input class="min" placeholder="Label" bind:value={newLabel} autocomplete="off" />
         <input
@@ -431,6 +429,9 @@
         />
         <button class="add" onclick={addMachine} disabled={adding || !newUrl.trim()}>Add</button>
       </div>
+      {:else}
+        <button class="more" onclick={() => (showAddMachine = true)}>+ Add manually</button>
+      {/if}
       {#if machErr}<p class="hint">{machErr}</p>{/if}
 
       <div class="sec">Server</div>
@@ -691,6 +692,17 @@
     font-size: 11px;
     line-height: 1.5;
     color: var(--text-4);
+  }
+  /* The way into a form you rarely want: present, but not taking up the room a
+     form would. */
+  .more {
+    align-self: flex-start;
+    padding: 5px 0;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+  .more:hover {
+    color: var(--text);
   }
   .thpower {
     display: flex;
