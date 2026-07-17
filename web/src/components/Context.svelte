@@ -4,7 +4,13 @@
   // tokens/model come straight from the chat store, so the meter updates live on
   // every result event — no polling or manual refresh. tokens is 0 until the
   // first turn of a session reports usage.
-  let { tokens, model }: { tokens: number; model: string } = $props()
+  // onCompact keeps this component dumb: it knows how full the window is and
+  // nothing about sessions, so the caller owns what "compact" actually does.
+  let {
+    tokens,
+    model,
+    onCompact,
+  }: { tokens: number; model: string; onCompact?: () => void } = $props()
 
   let open = $state(false)
   const u = $derived(contextUsage(tokens, model))
@@ -51,6 +57,17 @@
           <div class="row"><span>Free space</span><span class="mono">{u.freePct.toFixed(1)}%</span></div>
           <div class="row"><span>In use</span><span class="mono">{u.usedPct.toFixed(1)}%</span></div>
         </div>
+        {#if onCompact}
+          <!-- Just sends /compact as a prompt: the CLI already owns summarising,
+               and the boundary comes back on the normal event stream. -->
+          <button
+            class="compact"
+            onclick={() => {
+              onCompact()
+              open = false
+            }}>Compact</button
+          >
+        {/if}
       {/if}
     </div>
   {/if}
@@ -140,5 +157,18 @@
   }
   .row .mono {
     color: var(--text-2);
+  }
+  .compact {
+    width: 100%;
+    margin-top: 12px;
+    padding: 7px 0;
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-sm);
+    font-size: 12.5px;
+    color: var(--text-2);
+  }
+  .compact:hover {
+    color: var(--text);
+    background: var(--panel-3);
   }
 </style>

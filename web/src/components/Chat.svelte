@@ -459,7 +459,11 @@
           {/if}
         </div>
         <span class="spacer"></span>
-        <Context tokens={chat.contextTokens} model={chat.model} />
+        <Context
+          tokens={chat.contextTokens}
+          model={chat.model}
+          onCompact={() => chat.sendPrompt('/compact')}
+        />
         <!-- While a turn runs you can still send: it queues behind it. Stop stays
              alongside, so stopping and stacking up work are separate choices. -->
         {#if running}
