@@ -1,7 +1,7 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
   import { MODELS } from '../lib/models'
-  import type { Job } from '../lib/types'
+  import type { Job, TaggedJob } from '../lib/types'
 
   const MODES = [
     { id: 'acceptEdits', label: 'Accept edits' },
@@ -118,14 +118,22 @@
     const at = machineOf(f.machineId)?.stats?.rate_resets?.[f.window]
     return at ? rel(new Date(at * 1000).toISOString()) : ''
   })
-  function when(job: Job): string {
+  function when(job: TaggedJob): string {
     const nf = rel(job.next_fire)
-    if (job.trigger.kind === 'reset' && !nf) return 'waiting for quota reading'
-    return nf || '—'
+    if (nf) return nf
+    if (job.trigger.kind === 'reset') {
+      // Armed jobs carry next_fire; in the ~30s before the poll arms one, the
+      // machine's own reset time gives the identical answer (the job pins to it),
+      // so show that rather than a "waiting" limbo that reads as stuck.
+      const at = machineOf(job.machineId)?.stats?.rate_resets?.[job.trigger.window ?? '']
+      if (at) return rel(new Date((at + (job.trigger.offset_sec ?? 0)) * 1000).toISOString())
+      return 'reading quota…' // reset not observed yet (just booted); arms shortly
+    }
+    return '—'
   }
   // A disabled job is either finished (a one-time run that already fired — the
   // scheduler disables it) or paused by the user. Only the latter is "paused".
-  function statusText(job: Job): string {
+  function statusText(job: TaggedJob): string {
     if (job.enabled) return when(job)
     if (!job.rearm && !!job.last_status) return 'done'
     return 'paused'
