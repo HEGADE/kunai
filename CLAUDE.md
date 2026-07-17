@@ -119,6 +119,26 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   `handleCreateSession` seeds from that account's dir. `transcriptPath` and the
   loaders take the config dir; `RestartWithEffort` preserves the account across the
   respawn so an effort change never drops a work session to the default.
+- `internal/server/usage.go`: the account's subscription quota, the same two
+  numbers `claude`'s `/usage` prints, on the dashboard. A `rate_limit_info` frame
+  only carries a window's reset time and whether a turn was rejected, so the "how
+  full is it" half has to come from the account: `GET /api/oauth/usage` returns
+  `five_hour` and `seven_day` (`utilization` plus `resets_at`). There is no daily
+  window; the limits are 5-hour and 7-day. Both that endpoint and the refresh
+  (`POST https://platform.claude.com/v1/oauth/token`, client id
+  `9d1c250a-...`) are **undocumented CLI endpoints**, quarantined in this one
+  file for the same reason `internal/claude/protocol.go` is; the URLs are `var`s
+  so a test points them at an httptest server instead of the real account. Auth
+  is the account's OAuth token from `<configDir>/.credentials.json`, which is
+  **read fresh on every call and never cached in memory**: every `claude` kunai
+  spawns refreshes that same file, so taking whatever is on disk means we only
+  ever refresh when nobody else has, which is what stops the two from rotating
+  the token out from under each other. The access token only lives an hour, so
+  read-only is not an option. Writes are atomic and rewrite the *decoded
+  original*, never a struct of our own: an unmodelled field dropped from that
+  file logs the account out. macOS keeps the tokens in the Keychain, not a file,
+  so usage is absent there until that is done on real hardware (see the note in
+  `credsPath`).
 - `internal/project`: reads a directory into the description a session hands a model
   (`Scan` -> `Info`, `Info.Brief()`): layout, language mix, git head from `.git`,
   the files that name it. It never opens the code, and the walk skips `.git`,

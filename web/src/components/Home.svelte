@@ -1,5 +1,7 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
+  import { usage } from '../lib/api'
+  import type { Usage } from '../lib/types'
   import { updateAvailable } from '../lib/update'
   import Schedules from './Schedules.svelte'
 
@@ -64,6 +66,42 @@
   const pressurePct = $derived(st ? (pressureLevels[st.thermal_pressure] ?? 0) : 0)
   const pressureHot = $derived(st?.thermal_pressure === 'serious' || st?.thermal_pressure === 'critical')
   const capitalize = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
+
+  // The selected machine's Claude quota. Depends on the primitives, not on the
+  // machine object, so a stats refresh that changes nothing here doesn't refetch.
+  const selId = $derived(sel?.id ?? '')
+  const selUrl = $derived(sel?.url ?? '')
+  const selOnline = $derived(sel?.online ?? false)
+  let use = $state<Usage | null>(null)
+  $effect(() => {
+    const url = selUrl,
+      online = selOnline
+    void selId
+    use = null
+    if (!online) return
+    let done = false
+    const load = () =>
+      usage(url)
+        .then((u) => !done && (use = u))
+        .catch(() => !done && (use = null))
+    load()
+    // The server caches for a minute; match it rather than poll faster than the
+    // number can move.
+    const t = setInterval(load, 60_000)
+    return () => {
+      done = true
+      clearInterval(t)
+    }
+  })
+  // A quota window is only worth a meter when we know its fill. `unavailable`
+  // (logged out, offline, token expired) shows nothing rather than a zeroed bar.
+  const session = $derived(use?.session ?? null)
+  const weekly = $derived(use?.weekly ?? null)
+  function resetsIn(unix?: number): string {
+    if (!unix) return 'reset time unknown'
+    const s = unix - Math.floor(Date.now() / 1000)
+    return s <= 0 ? 'resetting' : `resets in ${dur(s)}`
+  }
 
   // Quick-start dirs for the selected machine only — so chips don't each repeat
   // the machine name (that's stated once in the section header).
@@ -172,6 +210,34 @@
           </div>
           <div class="meter"><i class:hot={pressureHot} style="width:{pressurePct}%"></i></div>
           <span class="t-foot mono">{st.thermal_trip ? 'guard tripped · stopped' : 'pressure'}</span>
+        </div>
+      {/if}
+      {#if session}
+        <div class="tile">
+          <div class="t-top">
+            <span class="t-label">Session</span>
+            <span class="t-val" class:hot={session.percent >= 80}
+              >{Math.round(session.percent)}<small>%</small></span
+            >
+          </div>
+          <div class="meter">
+            <i class:hot={session.percent >= 80} style="width:{Math.min(100, session.percent)}%"></i>
+          </div>
+          <span class="t-foot mono">5-hour · {resetsIn(session.resets_at)}</span>
+        </div>
+      {/if}
+      {#if weekly}
+        <div class="tile">
+          <div class="t-top">
+            <span class="t-label">Weekly</span>
+            <span class="t-val" class:hot={weekly.percent >= 80}
+              >{Math.round(weekly.percent)}<small>%</small></span
+            >
+          </div>
+          <div class="meter">
+            <i class:hot={weekly.percent >= 80} style="width:{Math.min(100, weekly.percent)}%"></i>
+          </div>
+          <span class="t-foot mono">7-day · {resetsIn(weekly.resets_at)}</span>
         </div>
       {/if}
       <div class="tile">

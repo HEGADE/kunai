@@ -71,6 +71,7 @@ type Server struct {
 	guardian   *guardian           // whole-machine thermal safety net
 	clis       []CLIProfile        // named Claude CLIs (accounts) a session can run on
 	clisMu     sync.RWMutex        // guards clis, which the Accounts settings edit live
+	usage      *usageCache         // the default account's subscription quota windows
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -88,7 +89,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 
 	machines := newMachineStore(filepath.Join(cfg.DataDir, "machines.json"))
 
-	s := &Server{cfg: cfg, mgr: mgr, pwa: webui.FS(), uploadsDir: uploads, machines: machines, awake: awake.New(), lid: newLidKeeper()}
+	s := &Server{cfg: cfg, mgr: mgr, pwa: webui.FS(), uploadsDir: uploads, machines: machines, awake: awake.New(), lid: newLidKeeper(), usage: newUsageCache()}
 	s.loadAwake() // re-apply a persisted keep-awake preference on boot
 	s.loadLid()   // re-apply a persisted lid-closed preference (after boot-time unstick)
 	s.guardian = newGuardian(mgr, s.awake, clampGuardConfig(guardConfig{
@@ -131,6 +132,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/browse", s.handleBrowse)
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("GET /api/stats", s.handleStats)
+	mux.HandleFunc("GET /api/usage", s.handleUsage)
 	mux.HandleFunc("GET /api/push/pubkey", s.handlePushKey)
 	mux.HandleFunc("POST /api/push/subscribe", s.handlePushSubscribe)
 	mux.HandleFunc("POST /api/push/unsubscribe", s.handlePushUnsubscribe)

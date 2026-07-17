@@ -34,6 +34,26 @@ export interface Stats {
   clis?: string[] // Claude accounts a new session can pick (first is the default)
 }
 
+// One subscription quota window's fill, from the Claude account itself (the
+// same numbers the CLI's /usage prints). A stream `rate_limit` event only says
+// when a window resets and whether the last turn was rejected; the "how full"
+// half only exists here.
+export interface UsageWindow {
+  percent: number // 0-100
+  resets_at?: number // unix seconds; absent = unknown
+}
+
+// The default account's quota. A missing window means the account has no such
+// limit, which reads as absent rather than as an empty meter. `unavailable` is
+// the normal not-an-error state: logged out, offline, or token expired.
+export interface Usage {
+  session?: UsageWindow // rolling 5-hour
+  weekly?: UsageWindow // rolling 7-day
+  plan?: string
+  fetched_at?: number
+  unavailable?: string
+}
+
 // A named Claude account (CLI) a machine can run sessions on.
 export interface CLIProfile {
   name: string

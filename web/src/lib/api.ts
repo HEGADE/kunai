@@ -1,4 +1,4 @@
-import type { Attachment, CLIProfile, HistoryEntry, Job, Listing, MachineInfo, Meta, Stats, ThermalConfig } from './types'
+import type { Attachment, CLIProfile, HistoryEntry, Job, Listing, MachineInfo, Meta, Stats, ThermalConfig, Usage } from './types'
 
 // Every call takes a `base` origin so the client can reach any machine directly
 // over the tailnet. base === '' means the current origin (the hub), so the hub's
@@ -70,6 +70,12 @@ export function history(base: string, limit?: number): Promise<HistoryEntry[]> {
 
 export function stats(base: string): Promise<Stats> {
   return fetch(at(base, '/api/stats')).then((r) => json<Stats>(r))
+}
+
+// usage reads the machine's default Claude account's quota windows (5-hour and
+// weekly). The server caches it, so calling this per dashboard paint is fine.
+export function usage(base: string): Promise<Usage> {
+  return fetch(at(base, '/api/usage')).then((r) => json<Usage>(r))
 }
 
 // setKeepAwake toggles a machine's opt-in keep-awake (prevents idle sleep so a
