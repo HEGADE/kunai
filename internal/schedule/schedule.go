@@ -54,6 +54,7 @@ type Job struct {
 	LastRun        time.Time `json:"last_run,omitempty"`
 	LastStatus     string    `json:"last_status,omitempty"`
 	LastFiredReset int64     `json:"last_fired_reset,omitempty"` // the resetsAt this job last fired for
+	ArmedReset     int64     `json:"armed_reset,omitempty"`      // reset trigger: the resetsAt this job is pinned to fire after
 	NextFire       time.Time `json:"next_fire,omitempty"`        // computed, for display
 }
 
@@ -90,19 +91,34 @@ func (s *Scheduler) nextFireLocked(j *Job) time.Time {
 	case "at":
 		return j.Trigger.At
 	case "reset":
-		r := s.resets[j.Trigger.Window]
-		if r == 0 {
+		// A reset job fires at the reset it is pinned to (armLocked), plus the
+		// offset. It stays pinned even as newer windows are observed: a
+		// rate_limit_info's resetsAt is always the *current* (future) window's
+		// end, so recomputing from the live map every tick left the fire time
+		// perpetually in the future and the job never became due on an always-on
+		// machine. Zero until a reset has been observed to pin to.
+		if j.ArmedReset == 0 {
 			return time.Time{}
 		}
-		fire := time.Unix(r, 0).Add(time.Duration(j.Trigger.OffsetSec) * time.Second)
-		if j.LastFiredReset == r {
-			// Already fired for this window; predict the next one. A fresh
-			// rate_limit_event will correct this once the real next reset lands.
-			fire = fire.Add(windowLen(j.Trigger.Window))
-		}
-		return fire
+		return time.Unix(j.ArmedReset, 0).Add(time.Duration(j.Trigger.OffsetSec) * time.Second)
 	}
 	return time.Time{}
+}
+
+// armLocked pins a reset job to the current observed reset if it is not already
+// waiting for one. Returns true if it armed (so the caller can persist). The pin
+// is what stops the fire time from sliding to a later window every time a fresh
+// reset is observed.
+func (s *Scheduler) armLocked(j *Job) bool {
+	if !j.Enabled || j.Trigger.Kind != "reset" || j.ArmedReset != 0 {
+		return false
+	}
+	r := s.resets[j.Trigger.Window]
+	if r == 0 || r <= j.LastFiredReset {
+		return false // nothing observed yet, or already fired for this reset
+	}
+	j.ArmedReset = r
+	return true
 }
 
 func catchupLimit(j Job) time.Duration {
@@ -144,6 +160,13 @@ type fireItem struct {
 func (s *Scheduler) tick() time.Duration {
 	now := s.clock.Now()
 	s.mu.Lock()
+	// Pin any reset job that has seen a reset but isn't waiting for one yet.
+	armed := false
+	for _, j := range s.jobs {
+		if s.armLocked(j) {
+			armed = true
+		}
+	}
 	var due []fireItem
 	for _, j := range s.jobs {
 		if !j.Enabled {
@@ -160,7 +183,7 @@ func (s *Scheduler) tick() time.Duration {
 		due = append(due, fireItem{*j, nf})
 		s.reserveLocked(j, now)
 	}
-	if len(due) > 0 {
+	if len(due) > 0 || armed {
 		s.save()
 	}
 	s.mu.Unlock()
@@ -201,7 +224,10 @@ func (s *Scheduler) tick() time.Duration {
 func (s *Scheduler) reserveLocked(j *Job, now time.Time) {
 	j.LastRun = now
 	if j.Trigger.Kind == "reset" {
-		j.LastFiredReset = s.resets[j.Trigger.Window]
+		// Record the reset we fired for and release the pin, so a rearm job
+		// arms onto the *next* observed reset instead of re-firing for this one.
+		j.LastFiredReset = j.ArmedReset
+		j.ArmedReset = 0
 	}
 	if j.Rearm {
 		if j.Trigger.Kind == "at" {
@@ -239,6 +265,20 @@ func (s *Scheduler) NoteReset(window string, resetsAt int64) {
 	s.mu.Lock()
 	changed := s.resets[window] != resetsAt
 	s.resets[window] = resetsAt
+	if changed {
+		// Pin any reset job that was waiting to observe a reset. Already-pinned
+		// jobs keep their target, so a newly observed (later) window never drags
+		// a pending fire forward.
+		armed := false
+		for _, j := range s.jobs {
+			if s.armLocked(j) {
+				armed = true
+			}
+		}
+		if armed {
+			s.save()
+		}
+	}
 	s.mu.Unlock()
 	if changed {
 		s.kick()

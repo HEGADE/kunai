@@ -240,6 +240,16 @@ Behavioral invariants that were bugs before (do not regress):
 - The scheduler **reserves an occurrence and saves it before firing**. Marking a job
   fired afterwards meant a restart mid-fire re-ran it, which duplicated a session.
   At-most-once is the deliberate choice: a missed run beats two agents.
+- A **reset** trigger **pins** the observed reset onto the job (`Job.ArmedReset`)
+  and fires at that reset plus the offset, never recomputing from the live
+  `resets` map. A `rate_limit_info`'s `resetsAt` is always the *current* (future)
+  window's end, so recomputing every tick left the fire time perpetually ahead of
+  now and the job never became due on an always-on machine. The pin is persisted
+  on the job, so it also survives a restart (the `resets` map is in-memory only);
+  firing clears the pin so a rearm job latches onto the next observed reset.
+  `allowed_warning` (the CLI approaching the wall, e.g. 91%) is **not** a limit:
+  only `rejected` marks the window spent, so a warning never raises the banner or
+  stops a loop, though its `resetsAt` is still recorded for pinning.
 - Only fingerprinted `assets/*` may be cached immutably. `sw.js`, its registration
   shim, the manifest and the shell must revalidate: an immutably cached service
   worker strands clients on an old build no matter how often they reload.

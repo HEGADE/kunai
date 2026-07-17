@@ -319,8 +319,13 @@ export class ChatConnection {
           this.rateLimit = {
             window: ev.window ?? 'five_hour',
             resetsAt: ev.resets_at,
-            // Anything other than "allowed" means the window is exhausted/limited.
-            limited: !!ev.limit_status && ev.limit_status !== 'allowed',
+            // Only a hard "rejected" means the window is spent. "allowed_warning"
+            // is the CLI approaching the limit (e.g. 91%), not a wall, so it must
+            // not raise the "rate-limited" banner.
+            limited:
+              !!ev.limit_status &&
+              ev.limit_status !== 'allowed' &&
+              ev.limit_status !== 'allowed_warning',
           }
         }
         break

@@ -277,9 +277,11 @@ func (s *Session) pump() {
 		case claude.EventRateLimit:
 			s.mu.Lock()
 			fn := s.onRateLimit
-			// Anything but "allowed" means the window is spent. A loop must not keep
-			// throwing turns at a wall, so this is latched for afterTurn to read.
-			s.rateLimited = ev.LimitStatus != "" && ev.LimitStatus != "allowed"
+			// Only a hard "rejected" means the window is actually spent.
+			// "allowed_warning" is the CLI approaching the limit (e.g. 91%), not a
+			// wall: treating it as limited cried "rate-limited" before the quota was
+			// gone and would stop a loop early. This is latched for afterTurn to read.
+			s.rateLimited = ev.LimitStatus != "" && ev.LimitStatus != "allowed" && ev.LimitStatus != "allowed_warning"
 			s.mu.Unlock()
 			if fn != nil && ev.ResetsAt > 0 {
 				go fn(ev.Window, ev.ResetsAt)

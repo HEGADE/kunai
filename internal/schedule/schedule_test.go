@@ -98,6 +98,43 @@ func TestResetFireAndRearm(t *testing.T) {
 	}
 }
 
+func TestResetDoesNotSlideForward(t *testing.T) {
+	// The reported bug: on an always-on machine a rate_limit_info always reports
+	// the *current* (future) window's reset, so the observed reset kept moving to
+	// the next window before the job fired. Recomputing the fire time from the live
+	// map every tick left it perpetually in the future and it never became due.
+	// Once pinned, a job must keep its target even as newer resets are observed.
+	fired := 0
+	s, fc := newTest(func(Job) error { fired++; return nil })
+	s.Create(Job{Trigger: Trigger{Kind: "reset", Window: "five_hour", OffsetSec: 60}, Target: Target{Cwd: "/x"}, Prompt: "go"})
+	s.NoteReset("five_hour", 1100)  // pin to fire at 1160
+	s.NoteReset("five_hour", 90000) // a later window observed before it fires
+	fc.t = time.Unix(1200, 0)       // past the original 1160, well before 90000
+	s.tick()
+	if fired != 1 {
+		t.Fatalf("pinned reset job did not fire at its original reset (slid forward?), fired %d", fired)
+	}
+}
+
+func TestResetPinSurvivesRestart(t *testing.T) {
+	// A pinned reset job must fire after a restart even though the fresh process
+	// starts with an empty resets map (the pin lives on the persisted job). This
+	// is what an auto-update or reboot between arming and firing used to break.
+	p := filepath.Join(t.TempDir(), "schedule.json")
+	fired := 0
+	s := New(p, func(Job) error { fired++; return nil })
+	s.clock = &fakeClock{t: time.Unix(1000, 0)}
+	s.Create(Job{Trigger: Trigger{Kind: "reset", Window: "five_hour", OffsetSec: 60}, Target: Target{Cwd: "/x"}, Prompt: "go"})
+	s.NoteReset("five_hour", 1100) // pin to 1160, persisted on the job
+
+	s2 := New(p, func(Job) error { fired++; return nil }) // restart: empty resets map
+	s2.clock = &fakeClock{t: time.Unix(1200, 0)}
+	s2.tick()
+	if fired != 1 {
+		t.Fatalf("pinned reset job lost its target across restart, fired %d", fired)
+	}
+}
+
 func TestCatchupSkipsWhenTooOverdue(t *testing.T) {
 	fired := 0
 	s, fc := newTest(func(Job) error { fired++; return nil })
