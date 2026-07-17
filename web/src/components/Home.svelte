@@ -69,9 +69,7 @@
   // What the page is actually asked from a phone at 2am: is anything working?
   const running = $derived(
     selSessions === 0
-      ? selResumable
-        ? `Nothing running · ${selResumable} to resume`
-        : 'Nothing running'
+      ? 'Nothing running'
       : `${selSessions} session${selSessions === 1 ? '' : 's'} running`,
   )
 
@@ -265,8 +263,15 @@
     {#if st.thermal_trip}
       <p class="alarm">Ran too hot — the guard stopped every session here.</p>
     {/if}
-    <p class="state">{running}</p>
-    <div class="vitals mono">
+    <div class="status">
+      <p class="state" class:live={selSessions > 0}>
+        <span class="sdot" class:live={selSessions > 0} aria-hidden="true"></span>
+        {running}
+        <!-- A count of what you could reopen is navigation, not status, so it
+             rides along quietly rather than sharing the sentence's weight. -->
+        {#if selSessions === 0 && selResumable}<span class="sresume">· {selResumable} to resume</span>{/if}
+      </p>
+      <div class="vitals mono">
       {#if st.cpu_temp_c > 0}
         <span class:warn={tempHot}>{Math.round(st.cpu_temp_c)}°C</span>
       {:else if st.thermal_pressure}
@@ -280,7 +285,8 @@
       {#if st.disk_total}
         <span class:warn={diskLow} title="of {gbDisk(st.disk_total)}">{gbDisk(st.disk_free)} free</span>
       {/if}
-      {#if st.uptime_sec}<span>up {dur(st.uptime_sec)}</span>{/if}
+        {#if st.uptime_sec}<span>up {dur(st.uptime_sec)}</span>{/if}
+      </div>
     </div>
   {/if}
 
@@ -541,18 +547,50 @@
     font-size: 13px;
     color: var(--alert);
   }
+  .status {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 26px;
+  }
   .state {
-    margin: 0 0 5px;
+    margin: 0;
     font-size: 13.5px;
     color: var(--text-2);
+  }
+  .sresume {
+    color: var(--text-4);
   }
   .vitals {
     display: flex;
     flex-wrap: wrap;
-    gap: 0 10px;
+    align-items: baseline;
+    gap: 0 8px;
     font-size: 12px;
     color: var(--text-4);
-    margin-bottom: 26px;
+  }
+  /* The dots come from the layout, not the markup, so a vital that is absent
+     never leaves a separator stranded. */
+  .vitals span + span::before {
+    content: '·';
+    margin-right: 8px;
+    color: var(--text-4);
+    opacity: 0.5;
+  }
+  .state.live {
+    color: var(--text);
+  }
+  .sdot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-right: 7px;
+    border-radius: 100px;
+    background: var(--text-4);
+    vertical-align: 1px;
+  }
+  .sdot.live {
+    background: var(--live);
   }
   .vitals .warn {
     color: var(--busy);
