@@ -33,6 +33,10 @@ const (
 	usageTTL = 60 * time.Second
 	// A cold CLI start is ~2s; leave room without hanging the dashboard.
 	usageTimeout = 30 * time.Second
+	// A failure is cached far more briefly than an answer. Holding a transient
+	// error for a full minute means a blank meter for a minute, which reads as
+	// broken; retrying soon costs one cheap CLI run.
+	usageFailTTL = 10 * time.Second
 )
 
 // UsageWindow is one quota window's fill. Mirrors web/src/lib/types.ts.
@@ -199,11 +203,16 @@ func (u *usageCache) fetch(ctx context.Context, p CLIProfile, cwd string) (*Usag
 }
 
 // get returns the cached usage, refetching at most once per usageTTL. A failure
-// is cached too, so a logged-out or broken CLI is not re-shelled every paint.
+// is held only briefly (usageFailTTL) so a blip clears itself, while still not
+// re-shelling the CLI on every paint.
 func (u *usageCache) get(ctx context.Context, p CLIProfile, cwd string) (*Usage, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if time.Since(u.at) < usageTTL {
+	ttl := usageTTL
+	if u.err != nil {
+		ttl = usageFailTTL
+	}
+	if time.Since(u.at) < ttl {
 		return u.val, u.err
 	}
 	u.val, u.err = u.fetch(ctx, p, cwd)

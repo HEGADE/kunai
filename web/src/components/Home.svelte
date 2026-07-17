@@ -85,12 +85,16 @@
   // skeleton, so the skeleton shows once per machine and never again: a refresh
   // updates the numbers in place rather than blinking the rows away and back.
   let usageLoaded = $state(false)
+  // Why there are no numbers, when there are none. Without this a failed read
+  // just deleted the rows, which reads as "still loading" forever.
+  let usageErr = $state('')
   $effect(() => {
     const url = selUrl,
       online = selOnline
     void selId
     use = null
     usageLoaded = false
+    usageErr = ''
     if (!online) {
       usageLoaded = true // an offline machine has no quota to wait for
       return
@@ -98,8 +102,23 @@
     let done = false
     const load = () =>
       usage(url)
-        .then((u) => !done && ((use = u), (usageLoaded = true)))
-        .catch(() => !done && ((use = null), (usageLoaded = true)))
+        .then((u) => {
+          if (done) return
+          usageLoaded = true
+          // Keep the last good numbers if a later poll comes back empty: a blip
+          // should not blank a meter that was right a minute ago.
+          if (u?.session || u?.weekly) {
+            use = u
+            usageErr = ''
+          } else {
+            usageErr = u?.unavailable || 'unavailable'
+          }
+        })
+        .catch((e) => {
+          if (done) return
+          usageLoaded = true
+          usageErr = String(e?.message || e)
+        })
     load()
     // The server caches for a minute; match it rather than poll faster than the
     // number can move.
@@ -197,6 +216,17 @@
             <div class="q-track"></div>
             <span class="q-pct mono">—</span>
             <span class="q-when mono"></span>
+          </div>
+        {/each}
+      </div>
+    {:else if usageErr && !session && !weekly}
+      <div class="quota">
+        {#each ['Session', 'Weekly'] as k (k)}
+          <div class="q skel">
+            <span class="q-k">{k}</span>
+            <div class="q-track"></div>
+            <span class="q-pct mono">—</span>
+            <span class="q-when mono">{usageErr === 'unavailable' ? 'no quota reported' : 'unavailable'}</span>
           </div>
         {/each}
       </div>
