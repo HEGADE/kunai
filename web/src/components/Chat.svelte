@@ -747,9 +747,36 @@
   .ratebanner button:hover {
     background: var(--panel-2);
   }
+  /* The sheets (add-project, loop, schedule) rise from the composer as a
+     floating card in its own lane — not a full-width band. Each component's
+     root gets the card; the wrapper only provides the gutter. */
   .floater {
-    border-top: 1px solid var(--border-2);
+    padding: 0 16px 6px;
+  }
+  @media (min-width: 861px) {
+    .floater {
+      padding: 0 24px 8px;
+    }
+  }
+  .floater > :global(*) {
+    max-width: 720px;
+    margin: 0 auto;
     background: var(--panel);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-lg);
+    box-shadow: 0 14px 44px -16px rgba(0, 0, 0, 0.72);
+    animation: floatUp 0.16s ease-out both;
+  }
+  @keyframes floatUp {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .floater > :global(*) {
+      animation: none;
+    }
   }
 
   /* The composer floats on the chat canvas — no full-width divider or band

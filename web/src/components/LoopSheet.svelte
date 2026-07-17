@@ -47,27 +47,27 @@
 
   <!-- The structural claim of this form: two limits, equal billing, and the loop
        ends at whichever arrives first. That is the actual rule, so it is the
-       heading rather than a footnote. -->
+       heading rather than a footnote. The two numbers live side by side split by
+       a rule, not each in its own box — one enclosure, so the eye lands here. -->
   <div class="limits">
     <span class="eyebrow">Stops at whichever comes first</span>
     <div class="pair">
       <label class="lim">
-        <input type="number" class="mono" bind:value={iters} min="1" max="200" />
+        <input type="number" class="mono num" bind:value={iters} min="1" max="200" />
         <span class="unit">iterations</span>
       </label>
+      <span class="split" aria-hidden="true"></span>
       <label class="lim">
-        <input type="number" class="mono" bind:value={budget} min="0.25" max="50" step="0.25" />
-        <span class="unit">dollars</span>
+        <span class="pre mono">$</span>
+        <input type="number" class="mono num" bind:value={budget} min="0.25" max="50" step="0.25" />
+        <span class="unit">of spend</span>
       </label>
     </div>
-    <p class="fine">
-      Hard limits. At most {iters} turns or {usd(budget)}, whichever it hits first, then it stops on
-      its own.
-    </p>
+    <p class="fine">Both are hard. The loop ends itself at the first one it reaches: {iters} turns or {usd(budget)}.</p>
   </div>
 
   <label class="promise">
-    <span class="plabel">Or as soon as Claude says</span>
+    <span class="plabel">Or the moment Claude says</span>
     <input type="text" class="mono" bind:value={promise} placeholder="DONE" spellcheck="false" />
   </label>
 
@@ -79,10 +79,7 @@
     display: flex;
     flex-direction: column;
     gap: 11px;
-    max-width: 720px;
-    width: 100%;
-    margin: 0 auto;
-    padding: 14px 16px 12px;
+    padding: 15px 17px 14px;
   }
   .head {
     display: flex;
@@ -132,17 +129,20 @@
   }
 
   /* The limits get the only enclosure in the form. Nothing else is boxed, so the
-     eye lands here, which is the one place it should land before you walk away. */
+     eye lands here, which is the one place it should land before you walk away.
+     The two numbers sit inside that one frame, split by a hairline rather than
+     each in its own box — the ceiling reads as one thing, which it is. */
   .limits {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 11px 12px;
+    gap: 10px;
+    padding: 11px 4px 12px;
     background: var(--panel-2);
     border: 1px solid var(--border-2);
     border-radius: var(--r-sm);
   }
   .eyebrow {
+    padding: 0 10px;
     font-size: 9.5px;
     letter-spacing: 0.11em;
     text-transform: uppercase;
@@ -150,41 +150,46 @@
   }
   .pair {
     display: flex;
-    gap: 8px;
+    align-items: stretch;
   }
   .lim {
     flex: 1;
     display: flex;
     align-items: baseline;
     gap: 7px;
-    padding: 8px 10px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 6px;
+    padding: 2px 16px;
     cursor: text;
-  }
-  .lim:focus-within {
-    border-color: var(--border-2);
-  }
-  .lim input {
-    width: 100%;
     min-width: 0;
+  }
+  .pre {
+    flex: none;
+    font-size: 18px;
+    color: var(--text-3);
+  }
+  .lim:focus-within .pre {
+    color: var(--text-2);
+  }
+  .num {
+    min-width: 1ch;
+    field-sizing: content;
+    max-width: 100%;
     background: none;
     border: none;
     color: var(--text);
-    font-size: 15px;
+    font-size: 22px;
+    letter-spacing: -0.01em;
     padding: 0;
   }
-  .lim input:focus-visible {
+  .num:focus-visible {
     outline: none;
   }
   /* The spinners add chrome and invite fiddling; the number is the point. */
-  .lim input::-webkit-outer-spin-button,
-  .lim input::-webkit-inner-spin-button {
+  .num::-webkit-outer-spin-button,
+  .num::-webkit-inner-spin-button {
     appearance: none;
     margin: 0;
   }
-  .lim input[type='number'] {
+  .num[type='number'] {
     -moz-appearance: textfield;
     appearance: textfield;
   }
@@ -193,8 +198,16 @@
     font-size: 11px;
     color: var(--text-4);
   }
+  .split {
+    flex: none;
+    width: 1px;
+    align-self: center;
+    height: 26px;
+    background: var(--border);
+  }
   .fine {
     margin: 0;
+    padding: 0 10px;
     font-size: 11.5px;
     line-height: 1.45;
     color: var(--text-3);

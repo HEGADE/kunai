@@ -66,9 +66,11 @@
 
 <div class="sa">
   <div class="sa-top">
-    <span class="k">Schedule this session</span>
+    <span class="title">Schedule this session</span>
     <button class="x" onclick={onClose} aria-label="Close">✕</button>
   </div>
+  <p class="lede">Arm a prompt to run later. When it fires, this session resumes and picks it up, even if you've closed the tab.</p>
+
   <textarea bind:value={prompt} rows="2" placeholder="Prompt to run when it fires…"></textarea>
 
   <div class="seg">
@@ -77,7 +79,7 @@
   </div>
   {#if kind === 'reset'}
     <div class="row">
-      <label class="off"><input type="number" min="0" bind:value={offsetMin} /> min after {winLabel} reset</label>
+      <label class="off"><input type="number" class="mono" min="0" bind:value={offsetMin} /> min after {winLabel} reset</label>
       {#if resetsAt}<span class="hint">resets {rel(resetsAt)}</span>{/if}
     </div>
   {:else}
@@ -90,35 +92,41 @@
 
 <style>
   .sa {
-    max-width: 720px;
-    margin: 0 auto;
     display: flex;
     flex-direction: column;
-    gap: 9px;
-    padding: 13px 20px calc(var(--safe-bottom) + 12px);
+    gap: 10px;
+    padding: 15px 17px 14px;
   }
   .sa-top {
     display: flex;
     align-items: center;
     justify-content: space-between;
   }
-  .k {
-    font-size: 11.5px;
-    font-weight: 550;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--text-4);
+  .title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
   }
   .x {
-    width: 24px;
-    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    margin: -4px -6px -4px 0;
     border-radius: 50%;
     color: var(--text-4);
-    font-size: 11px;
+    font-size: 12px;
   }
   .x:hover {
-    color: var(--text-2);
+    color: var(--text);
     background: var(--panel-3);
+  }
+  .lede {
+    margin: -6px 0 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-4);
   }
   textarea,
   input,
@@ -134,9 +142,22 @@
   textarea {
     resize: vertical;
   }
+  textarea::placeholder {
+    color: var(--text-4);
+  }
   textarea:focus,
   input:focus {
     border-color: var(--border-2);
+  }
+  /* Spinners add chrome and invite fiddling; the number is the point. */
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+    appearance: textfield;
   }
   .seg {
     display: flex;
@@ -144,12 +165,15 @@
   }
   .seg button {
     flex: 1;
-    padding: 8px;
+    padding: 9px;
     border-radius: var(--r-sm);
     background: var(--panel-2);
     border: 1px solid var(--border);
     color: var(--text-3);
     font-size: 12.5px;
+  }
+  .seg button:hover {
+    color: var(--text-2);
   }
   .seg button.on {
     color: var(--text);
@@ -164,12 +188,14 @@
   .off {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
+    gap: 8px;
     font-size: 12.5px;
     color: var(--text-3);
   }
   .off input {
-    width: 54px;
+    width: 52px;
+    text-align: center;
+    padding: 8px 6px;
   }
   .hint {
     font-size: 11px;
@@ -179,18 +205,21 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
+    margin-top: 1px;
     font-size: 12.5px;
     color: var(--text-3);
   }
   .go {
-    padding: 11px;
+    height: 40px;
+    margin-top: 2px;
     border-radius: var(--r);
     background: var(--white);
     color: #0b0b0c;
     font-weight: 600;
-    font-size: 14px;
+    font-size: 13.5px;
   }
   .go:disabled {
-    opacity: 0.45;
+    background: var(--panel-2);
+    color: var(--text-4);
   }
 </style>
