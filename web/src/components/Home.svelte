@@ -56,16 +56,24 @@
   const memUsedPct = $derived(
     st && st.mem_total ? Math.round(((st.mem_total - st.mem_available) / st.mem_total) * 100) : 0,
   )
-  // Load average relative to core count is a decent at-a-glance CPU pressure gauge.
-  const cpuPct = $derived(st && st.cores ? Math.min(100, Math.round((st.load1 / st.cores) * 100)) : 0)
-  // Temperature meter is scaled to a 100°C full bar; most CPUs throttle near there.
-  const tempPct = $derived(st ? Math.min(100, Math.round(st.cpu_temp_c)) : 0)
-  // Apple Silicon reports a pressure level, not degrees. Map it to a coarse meter
-  // and flag the two levels that mean "backing off".
-  const pressureLevels: Record<string, number> = { nominal: 20, fair: 55, serious: 85, critical: 100 }
-  const pressurePct = $derived(st ? (pressureLevels[st.thermal_pressure] ?? 0) : 0)
+  // Apple Silicon reports a pressure level, not degrees; these two levels mean
+  // "backing off".
   const pressureHot = $derived(st?.thermal_pressure === 'serious' || st?.thermal_pressure === 'critical')
   const capitalize = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
+
+  // A vital is only worth reading when it is a problem, so these are the only
+  // reason any of them raises its voice. Everything else stays a quiet line.
+  const tempHot = $derived(!!st && (st.cpu_temp_c >= 80 || pressureHot))
+  const memHigh = $derived(memUsedPct >= 90)
+  const diskLow = $derived(!!st && !!st.disk_total && st.disk_free / st.disk_total < 0.1)
+  // What the page is actually asked from a phone at 2am: is anything working?
+  const running = $derived(
+    selSessions === 0
+      ? selResumable
+        ? `Nothing running · ${selResumable} to resume`
+        : 'Nothing running'
+      : `${selSessions} session${selSessions === 1 ? '' : 's'} running`,
+  )
 
   // The selected machine's Claude quota. Depends on the primitives, not on the
   // machine object, so a stats refresh that changes nothing here doesn't refetch.
@@ -168,115 +176,59 @@
   {/if}
 
   {#if st}
-    <div class="tiles">
-      {#if st.mem_total}
-        <div class="tile">
-          <div class="t-top">
-            <span class="t-label">Memory</span>
-            <span class="t-val">{memUsedPct}<small>%</small></span>
-          </div>
-          <div class="meter"><i style="width:{memUsedPct}%"></i></div>
-          <span class="t-foot mono">{gb(st.mem_total - st.mem_available)} of {gb(st.mem_total)}</span>
-        </div>
-      {/if}
-      {#if !compact && st.cores}
-        <div class="tile">
-          <div class="t-top">
-            <span class="t-label">CPU</span>
-            <span class="t-val">{cpuPct}<small>%</small></span>
-          </div>
-          <div class="meter"><i style="width:{cpuPct}%"></i></div>
-          <span class="t-foot mono">{st.cores} cores · load {st.load1.toFixed(2)}</span>
-        </div>
-      {/if}
-      {#if st.cpu_temp_c > 0}
-        <div class="tile">
-          <div class="t-top">
-            <span class="t-label">Temperature</span>
-            <span class="t-val" class:hot={tempPct >= 80} class:tripped={st.thermal_trip}
-              >{Math.round(st.cpu_temp_c)}<small>°C</small></span
-            >
-          </div>
-          <div class="meter"><i class:hot={tempPct >= 80} style="width:{tempPct}%"></i></div>
-          <span class="t-foot mono">{st.thermal_trip ? 'guard tripped · stopped' : 'CPU'}</span>
-        </div>
-      {:else if st.thermal_pressure}
-        <div class="tile">
-          <div class="t-top">
-            <span class="t-label">Thermal</span>
-            <span class="t-val sm" class:hot={pressureHot} class:tripped={st.thermal_trip}
-              >{capitalize(st.thermal_pressure)}</span
-            >
-          </div>
-          <div class="meter"><i class:hot={pressureHot} style="width:{pressurePct}%"></i></div>
-          <span class="t-foot mono">{st.thermal_trip ? 'guard tripped · stopped' : 'pressure'}</span>
-        </div>
-      {/if}
-      {#if session}
-        <div class="tile">
-          <div class="t-top">
-            <span class="t-label">Session</span>
-            <span class="t-val" class:hot={session.percent >= 80}
+    <!-- Quota first, and close to alone. It is the only thing on this page that
+         can stop you working, so it is the only thing that gets any weight. -->
+    {#if session || weekly}
+      <div class="quota">
+        {#if session}
+          <div class="q">
+            <span class="q-k">Session</span>
+            <div class="q-track">
+              <i class:hot={session.percent >= 80} style="width:{Math.max(1.5, Math.min(100, session.percent))}%"></i>
+            </div>
+            <span class="q-pct mono" class:hot={session.percent >= 80}
               >{Math.round(session.percent)}<small>%</small></span
             >
-          </div>
-          <div class="meter">
-            <i class:hot={session.percent >= 80} style="width:{Math.min(100, session.percent)}%"></i>
-          </div>
-          <span class="t-foot mono">5-hour · {resetsIn(session.resets_at)}</span>
-        </div>
-      {/if}
-      {#if weekly}
-        <div class="tile">
-          <div class="t-top">
-            <span class="t-label">Weekly</span>
-            <span class="t-val" class:hot={weekly.percent >= 80}
-              >{Math.round(weekly.percent)}<small>%</small></span
-            >
-          </div>
-          <div class="meter">
-            <i class:hot={weekly.percent >= 80} style="width:{Math.min(100, weekly.percent)}%"></i>
-          </div>
-          <span class="t-foot mono">7-day · {resetsIn(weekly.resets_at)}</span>
-        </div>
-      {/if}
-      <div class="tile">
-        <div class="t-top">
-          <span class="t-label">Disk free</span>
-          <span class="t-val">{gbDisk(st.disk_free).split(' ')[0]}<small> GB</small></span>
-        </div>
-        {#if st.disk_total}
-          <div class="meter">
-            <i style="width:{Math.round(((st.disk_total - st.disk_free) / st.disk_total) * 100)}%"></i>
+            <span class="q-when mono">{resetsIn(session.resets_at)}</span>
           </div>
         {/if}
-        <span class="t-foot mono">of {gbDisk(st.disk_total)}</span>
-      </div>
-      {#if st.uptime_sec}
-        <div class="tile">
-          <div class="t-top">
-            <span class="t-label">Uptime</span>
-            <span class="t-val sm">{dur(st.uptime_sec)}</span>
+        {#if weekly}
+          <div class="q">
+            <span class="q-k">Weekly</span>
+            <div class="q-track">
+              <i class:hot={weekly.percent >= 80} style="width:{Math.max(1.5, Math.min(100, weekly.percent))}%"></i>
+            </div>
+            <span class="q-pct mono" class:hot={weekly.percent >= 80}
+              >{Math.round(weekly.percent)}<small>%</small></span
+            >
+            <span class="q-when mono">{resetsIn(weekly.resets_at)}</span>
           </div>
-          <span class="t-foot mono">load {st.load1.toFixed(2)}</span>
-        </div>
-      {/if}
-      <div class="tile">
-        <div class="t-top">
-          <span class="t-label">Sessions</span>
-          <span class="t-val">{selSessions}</span>
-        </div>
-        <span class="t-foot mono">kunai up {dur(st.kunai_uptime_sec)}</span>
+        {/if}
       </div>
-      {#if !compact}
-        <div class="tile">
-          <div class="t-top">
-            <span class="t-label">Resumable</span>
-            <span class="t-val">{selResumable}</span>
-          </div>
-          <span class="t-foot mono">past sessions</span>
-        </div>
+    {/if}
+
+    <!-- The machine, by exception. A vital that is fine is not news, so it stays
+         one quiet line; the guard tripping is news, so it says so in words. The
+         silence is the signal. -->
+    {#if st.thermal_trip}
+      <p class="alarm">Ran too hot — the guard stopped every session here.</p>
+    {/if}
+    <p class="state">{running}</p>
+    <div class="vitals mono">
+      {#if st.cpu_temp_c > 0}
+        <span class:warn={tempHot}>{Math.round(st.cpu_temp_c)}°C</span>
+      {:else if st.thermal_pressure}
+        <span class:warn={tempHot}>{capitalize(st.thermal_pressure)}</span>
       {/if}
+      {#if st.mem_total}
+        <span class:warn={memHigh} title="{gb(st.mem_total - st.mem_available)} of {gb(st.mem_total)}"
+          >{memUsedPct}% memory</span
+        >
+      {/if}
+      {#if st.disk_total}
+        <span class:warn={diskLow} title="of {gbDisk(st.disk_total)}">{gbDisk(st.disk_free)} free</span>
+      {/if}
+      {#if st.uptime_sec}<span>up {dur(st.uptime_sec)}</span>{/if}
     </div>
   {/if}
 
@@ -447,79 +399,107 @@
   .ubtn:disabled {
     opacity: 0.6;
   }
-  .tiles {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 8px;
-  }
-  .home:not(.compact) .tiles {
-    grid-template-columns: repeat(3, 1fr);
-  }
-  .tile {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    padding: 13px 14px 12px;
+  /* Quota: the page's one piece of weight. Reuses the track/fill and mono
+     numerals the context meter already uses, so a budget reads the same
+     everywhere in kunai. */
+  .quota {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    min-width: 0;
+    gap: 11px;
+    margin-bottom: 20px;
+    /* A row has to read as one unit. Left to fill the canvas, the eye travels
+       from bar to number to reset and the three stop belonging together. */
+    max-width: 34rem;
   }
-  .t-top {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px;
+  .q {
+    display: grid;
+    grid-template-columns: 3.4rem 1fr auto auto;
+    align-items: center;
+    gap: 12px;
   }
-  .t-label {
-    font-size: 11.5px;
-    color: var(--text-3);
+  .q-k {
+    font-size: 13px;
+    color: var(--text-2);
   }
-  .t-val {
-    font-size: 19px;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    color: var(--text);
-    white-space: nowrap;
-  }
-  .t-val small {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text-3);
-  }
-  .t-val.sm {
-    font-size: 15px;
-  }
-  .meter {
-    height: 3px;
-    border-radius: 3px;
+  .q-track {
+    height: 6px;
+    border-radius: 100px;
     background: var(--panel-3);
     overflow: hidden;
   }
-  .meter i {
+  .q-track i {
     display: block;
     height: 100%;
-    border-radius: 3px;
+    border-radius: 100px;
     background: var(--text-2);
   }
-  /* Heat is the one stat where the number itself is a warning, so it earns the
-     status colours the rest of the dashboard keeps for dots. */
-  .t-val.hot {
-    color: var(--busy);
-  }
-  .t-val.tripped {
-    color: var(--alert);
-  }
-  .meter i.hot {
+  .q-track i.hot {
     background: var(--busy);
   }
-  .t-foot {
-    font-size: 10px;
-    color: var(--text-4);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .q-pct {
+    font-size: 15px;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    min-width: 2.8rem;
+    text-align: right;
   }
+  .q-pct small {
+    font-size: 0.72em;
+    color: var(--text-3);
+    margin-left: 1px;
+  }
+  .q-pct.hot {
+    color: var(--busy);
+  }
+  .q-when {
+    font-size: 12px;
+    color: var(--text-3);
+    text-align: right;
+    white-space: nowrap;
+  }
+  /* On a phone the reset earns its own row rather than squeezing the track. */
+  .home.compact .q {
+    grid-template-columns: 1fr auto;
+    row-gap: 7px;
+  }
+  .home.compact .q-k {
+    order: 1;
+  }
+  .home.compact .q-pct {
+    order: 2;
+  }
+  .home.compact .q-track {
+    order: 3;
+    grid-column: 1 / -1;
+  }
+  .home.compact .q-when {
+    order: 4;
+    grid-column: 1 / -1;
+    text-align: left;
+    min-width: 0;
+  }
+  .alarm {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: var(--alert);
+  }
+  .state {
+    margin: 0 0 5px;
+    font-size: 13.5px;
+    color: var(--text-2);
+  }
+  .vitals {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 10px;
+    font-size: 12px;
+    color: var(--text-4);
+    margin-bottom: 26px;
+  }
+  .vitals .warn {
+    color: var(--busy);
+  }
+
   .start {
     display: flex;
     flex-direction: column;
