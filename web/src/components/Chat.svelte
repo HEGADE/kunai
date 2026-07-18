@@ -248,7 +248,7 @@
     <div class="actions">
       <button class="abtn add" onclick={() => (addProjOpen = true)} aria-label="Add project" title="Add another project to this session">
         <span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /><path d="M12 11v4M10 13h4" /></svg></span>
-        <span class="albl">Project</span>
+        <span class="albl">Add project</span>
       </button>
       {#if chat.loop?.state === 'running'}
         <button class="abtn loop on" onclick={() => chat.stopLoop()} aria-label="Stop the loop" title="Stop the loop">
@@ -580,6 +580,7 @@
     color: var(--text-2);
     font-size: 12.5px;
     font-weight: 500;
+    cursor: pointer;
   }
   .abtn:hover {
     border-color: var(--border-2);
