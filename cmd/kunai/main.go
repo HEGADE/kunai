@@ -45,8 +45,15 @@ func main() {
 
 	srv := server.New(cfg, mgr)
 
-	subscriber := ""
-	if *pushEmail != "" {
+	// The VAPID "subscriber" is the contact in the signed push token. Apple's Web
+	// Push rejects a mailto: subscriber with 403 (so iPhones never got a single
+	// notification) and requires an https: one, while Chrome/FCM accepts anything
+	// — which is why desktop worked and iOS silently did not. The machine's own
+	// public URL is a valid https contact and is exactly what an iOS-capable hub
+	// already has; the mailto is only a fallback for a dev box with no public URL,
+	// where iOS push cannot work anyway but FCM still can.
+	subscriber := cfg.PublicURL
+	if subscriber == "" && *pushEmail != "" {
 		subscriber = "mailto:" + *pushEmail
 	}
 	if pm, err := push.New(filepath.Join(*dataDir, "push"), subscriber); err != nil {

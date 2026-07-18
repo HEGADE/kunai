@@ -10,10 +10,24 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 )
+
+// pushHost is the push service host of an endpoint (e.g. web.push.apple.com),
+// for a log line that doesn't dump the whole opaque endpoint URL.
+func pushHost(endpoint string) string {
+	s := endpoint
+	if i := strings.Index(s, "//"); i >= 0 {
+		s = s[i+2:]
+	}
+	if i := strings.IndexByte(s, '/'); i >= 0 {
+		s = s[:i]
+	}
+	return s
+}
 
 // Manager holds the VAPID keypair and the set of browser subscriptions, both
 // persisted so they survive restarts.
@@ -157,8 +171,14 @@ func (m *Manager) Notify(title, body string) {
 			continue
 		}
 		resp.Body.Close()
-		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
-			dead = append(dead, s.Endpoint)
+		switch {
+		case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
+			dead = append(dead, s.Endpoint) // subscription expired; prune it
+		case resp.StatusCode >= 300:
+			// A rejection that is not "gone" (e.g. Apple's 403 for a bad VAPID
+			// subscriber) used to vanish silently, so a whole platform could get no
+			// notifications with no trace. Name it.
+			log.Printf("push: %s rejected the send with HTTP %d", pushHost(s.Endpoint), resp.StatusCode)
 		}
 	}
 	if len(dead) > 0 {
