@@ -35,6 +35,24 @@ func TestLoadContextTokensHonorsTrailingCompaction(t *testing.T) {
 	}
 }
 
+// post_tokens is conversation-only and omits the fixed overhead (system prompt,
+// tools, memory, skills) that the pre-compaction assistant usage included.
+// Seeding the bare post size read far too LOW on resume (11.6k when Claude's own
+// /context showed ~49k); the seed must subtract only the dropped conversation
+// and keep the overhead.
+func TestLoadContextTokensKeepsOverheadAcrossCompaction(t *testing.T) {
+	cfg := t.TempDir()
+	writeTranscriptLines(t, cfg, "sess",
+		// ~813k conversation plus ~37k fixed overhead = 850k resident.
+		`{"type":"assistant","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":849990}}}`,
+		`{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual","preTokens":813000,"postTokens":11600}}`,
+	)
+	// 849990 + 10 - (813000 - 11600) = 48600, not the bare 11600 post size.
+	if got := loadTranscriptContextTokens(cfg, "sess"); got != 48600 {
+		t.Fatalf("seed = %d, want 48600 (post size plus preserved overhead, not 11600)", got)
+	}
+}
+
 // A turn that regrew the window after a compaction still wins: whichever context
 // event is last in the transcript is the current size.
 func TestLoadContextTokensUsesAssistantAfterCompaction(t *testing.T) {

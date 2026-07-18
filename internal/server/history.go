@@ -469,18 +469,29 @@ func loadTranscriptContextTokens(configDir, id string) int64 {
 			} `json:"message"`
 			// A compaction resets the window; on disk the field is camelCase.
 			CompactMetadata *struct {
+				PreTokens  int64 `json:"preTokens"`
 				PostTokens int64 `json:"postTokens"`
 			} `json:"compactMetadata"`
 		}
 		if json.Unmarshal(sc.Bytes(), &v) != nil {
 			continue
 		}
-		// A compaction supersedes any earlier assistant usage: its postTokens is
-		// the new context size, and no assistant message follows it to report the
-		// smaller number. Without this, resuming a session that was compacted last
-		// seeds the meter from the pre-compaction usage and it reads far too high.
+		// A compaction supersedes any earlier assistant usage: no assistant
+		// message follows it to report the smaller number. But its postTokens
+		// counts only the compacted conversation, not the fixed overhead (system
+		// prompt, tool schemas, memory, skills) that stays resident in the
+		// window. `last` is the pre-compaction assistant usage, which included
+		// that overhead, so subtract only the dropped conversation and keep it;
+		// seeding the bare postTokens read far too LOW (11.6k when Claude's own
+		// /context showed ~49k). Fall back to postTokens when there is no larger
+		// prior occupancy to subtract from (a partial or absent usage sample).
 		if v.Type == "system" && v.Subtype == "compact_boundary" && v.CompactMetadata != nil && v.CompactMetadata.PostTokens > 0 {
-			last = v.CompactMetadata.PostTokens
+			post := v.CompactMetadata.PostTokens
+			if dropped := v.CompactMetadata.PreTokens - post; dropped > 0 && last-dropped > post {
+				last -= dropped
+			} else {
+				last = post
+			}
 			continue
 		}
 		u := v.Usage

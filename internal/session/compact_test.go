@@ -57,6 +57,46 @@ func TestCompactResetsContextTokens(t *testing.T) {
 	}
 }
 
+// post_tokens is conversation-only; the fixed overhead (system prompt, tool
+// schemas, memory, skills) stays resident in the window. The meter, set from an
+// assistant usage that included that overhead, must subtract only the dropped
+// conversation and keep the overhead. Dropping to the bare post_tokens read far
+// too LOW right after a /compact (11.6k when Claude's own /context showed ~49k).
+func TestCompactKeepsOverheadInMeter(t *testing.T) {
+	f := newFakeDriver()
+	s := newSession("c3", "/tmp/p", "", f)
+	defer s.Close()
+	_, _, sub := s.Attach(0)
+
+	// A big turn: ~813k conversation plus ~37k fixed overhead = 850k resident.
+	f.events <- claude.Event{Kind: claude.EventAssistant, Assistant: &claude.AssistantMessage{
+		Usage: &claude.MessageUsage{Input: 10, CacheRead: 849990},
+	}}
+	// /compact reports the conversation shrank 813k -> 11.6k.
+	f.events <- claude.Event{Kind: claude.EventCompact, Compact: &claude.Compact{
+		Trigger: "manual", PreTokens: 813000, PostTokens: 11600,
+	}}
+
+	var compact *AppEvent
+	for _, ev := range drain(t, sub, 2) { // assistant, compact
+		if ev.T == EvCompact {
+			e := ev
+			compact = &e
+		}
+	}
+	if compact == nil {
+		t.Fatal("no compact event broadcast")
+	}
+	// 850000 - (813000 - 11600) = 48600: the overhead survives the compaction.
+	if compact.ContextTokens != 48600 {
+		t.Errorf("context_tokens = %d, want 48600 (overhead preserved, not the bare 11600 post)", compact.ContextTokens)
+	}
+	hello, _, _ := s.Attach(0)
+	if hello.ContextTokens != 48600 {
+		t.Errorf("hello context_tokens = %d, want 48600", hello.ContextTokens)
+	}
+}
+
 // After a compaction the meter must keep climbing as the conversation regrows:
 // every later assistant call reports the real (larger) context, and the meter
 // has to follow it, not latch on the small post-compaction number. This is the

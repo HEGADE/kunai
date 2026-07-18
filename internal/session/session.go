@@ -244,17 +244,32 @@ func (s *Session) pump() {
 			// Compaction is the one time the context window shrinks, and it reports
 			// the new size itself: no assistant message follows it, so without this
 			// the meter would sit on the pre-compaction number until the next turn.
+			//
+			// But post_tokens counts only the compacted conversation, not the fixed
+			// overhead that stays resident in the window: the system prompt, tool
+			// schemas, memory files, and skills, tens of thousands of tokens. Our
+			// meter comes from an assistant usage that included that overhead, so
+			// dropping to post_tokens verbatim reads far too low right after a
+			// /compact (11.6k when Claude's own /context shows ~49k). Subtract only
+			// the dropped conversation and keep the overhead; floor at post_tokens
+			// for the degenerate case where there is no larger prior occupancy to
+			// subtract from (a fresh or resumed session, or a partial usage sample).
 			c := ev.Compact
+			s.mu.Lock()
+			newCtx := s.contextTokens
 			if c.PostTokens > 0 {
-				s.mu.Lock()
-				s.contextTokens = c.PostTokens
-				s.mu.Unlock()
+				newCtx = c.PostTokens
+				if dropped := c.PreTokens - c.PostTokens; dropped > 0 && s.contextTokens-dropped > c.PostTokens {
+					newCtx = s.contextTokens - dropped
+				}
+				s.contextTokens = newCtx
 			}
+			s.mu.Unlock()
 			s.broadcast(AppEvent{
 				T:             EvCompact,
 				Trigger:       c.Trigger,
 				PreTokens:     c.PreTokens,
-				ContextTokens: c.PostTokens,
+				ContextTokens: newCtx,
 			})
 
 		case claude.EventResult:
