@@ -95,7 +95,6 @@ export interface Job {
   prompt: string
   last_run?: string
   last_status?: string
-  pending_fire?: string // an occurrence reserved but not yet confirmed (re-fired after a restart)
   next_fire?: string
 }
 export type TaggedJob = Job & { machineId: string }

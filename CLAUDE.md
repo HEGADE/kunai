@@ -260,21 +260,16 @@ Behavioral invariants that were bugs before (do not regress):
 - A prompt sent while a turn runs is **queued in the session**, not the client: the
   phone may be gone. `Prompt` claims the turn under the same lock that tested for it,
   or a second prompt races into the CLI mid-stream. Stop clears the queue.
-- The scheduler **reserves an occurrence and saves it before firing** (marks the
-  job fired, sets `Job.PendingFire` to the occurrence, persists), then fires, then
-  clears `PendingFire` and saves again. On boot, `tick()` re-fires any job with
-  `PendingFire` still set (an occurrence whose fire a restart interrupted before
-  it completed), so a scheduled run **survives a restart** instead of being
-  silently lost (which is what an update-churned machine did to a real job). This
-  is deliberately at-least-once: the earlier design was at-most-once (reserve
-  before fire, never re-run), but that dropped a run whenever a restart landed in
-  the seconds-wide `mgr.Create` window. The trade is a *tiny* double-run window:
-  a restart between a fire completing and the confirm save (one save wide, versus
-  the whole fire in the old at-most-once bug). `runOne` logs every outcome and
-  records `LastStatus` (`fired` / `skipped (overdue)` / `error: …`), surfaced in
-  the schedule row, so "did my job run?" is answerable from the UI or the logs.
-  `catchupLimit` still bounds recovery (a reset window / 24h), so a long outage
-  never dumps a backlog.
+- The scheduler **reserves an occurrence and saves it before firing**. Marking a
+  job fired afterwards meant a restart mid-fire re-ran it, which duplicated a
+  session. At-most-once is the deliberate choice: a missed run beats two agents.
+  The job list itself is always persisted (`schedule.json`), so a restart before
+  the fire time never loses a job; only a restart landing in the seconds-wide
+  `mgr.Create` window at the exact fire moment drops that one occurrence, which is
+  the accepted cost of at-most-once. `runOne` logs every outcome and records
+  `LastStatus` (`fired` / `skipped (overdue)` / `error: …`), surfaced in the
+  schedule row, so "did my job run?" is answerable from the UI or the logs (a fire
+  that failed silently used to leave no trace at all).
 - A **reset** trigger **pins** the observed reset onto the job (`Job.ArmedReset`)
   and fires at that reset plus the offset, never recomputing from the live
   `resets` map. A `rate_limit_info`'s `resetsAt` is always the *current* (future)

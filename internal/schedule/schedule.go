@@ -56,12 +56,7 @@ type Job struct {
 	LastStatus     string    `json:"last_status,omitempty"`
 	LastFiredReset int64     `json:"last_fired_reset,omitempty"` // the resetsAt this job last fired for
 	ArmedReset     int64     `json:"armed_reset,omitempty"`      // reset trigger: the resetsAt this job is pinned to fire after
-	// PendingFire is an occurrence that was reserved but not yet confirmed fired.
-	// It is set the moment a job is reserved and cleared once the fire completes,
-	// so a restart that lands mid-fire finds it still set and re-fires it — this
-	// is what makes a job survive a restart instead of silently vanishing.
-	PendingFire time.Time `json:"pending_fire,omitempty"`
-	NextFire    time.Time `json:"next_fire,omitempty"` // computed, for display
+	NextFire       time.Time `json:"next_fire,omitempty"`        // computed, for display
 }
 
 // Scheduler owns the jobs and the firing loop.
@@ -175,16 +170,6 @@ func (s *Scheduler) tick() time.Duration {
 		}
 	}
 	var due []fireItem
-	// Recover occurrences reserved but never confirmed: a restart interrupted the
-	// fire between reserving it and completing it. Re-fire them (runOne still
-	// bounds this by catchupLimit, so a long outage never dumps a backlog). This
-	// is what lets a job survive a restart that lands mid-fire.
-	for _, j := range s.jobs {
-		if !j.PendingFire.IsZero() {
-			log.Printf("scheduler: re-firing job %q (%s), interrupted by a restart", j.Name, j.ID)
-			due = append(due, fireItem{*j, j.PendingFire})
-		}
-	}
 	for _, j := range s.jobs {
 		if !j.Enabled {
 			continue
@@ -195,12 +180,10 @@ func (s *Scheduler) tick() time.Duration {
 			continue
 		}
 		// Reserve this occurrence and persist it BEFORE firing: mark the job
-		// fired (a repeat advances, a one-shot disables), flag it in-flight, and
-		// save first. So a restart mid-fire never runs the same occurrence twice
-		// (it is already spent) yet still re-fires it (PendingFire is still set).
+		// fired (a repeat advances, a one-shot disables) and save first, so a
+		// crash or restart mid-fire can never run the same occurrence twice.
 		due = append(due, fireItem{*j, nf})
 		s.reserveLocked(j, now)
-		j.PendingFire = nf
 	}
 	if len(due) > 0 || armed {
 		s.save()
@@ -274,13 +257,8 @@ func (s *Scheduler) runOne(it fireItem, now time.Time) {
 
 	s.mu.Lock()
 	if j := s.findLocked(it.job.ID); j != nil {
-		j.LastRun = now
 		j.LastStatus = status
-		// Clear the in-flight marker so a later restart does not re-fire this
-		// occurrence, and persist it at once — the window between here and the
-		// tick's own save is the only chance a completed fire could be repeated.
-		j.PendingFire = time.Time{}
-		s.save()
+		s.save() // persist the outcome at once, so the schedule row reflects it
 	}
 	s.mu.Unlock()
 }
