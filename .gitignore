@@ -19,3 +19,6 @@ web/playwright-report/
 # Release binaries at the repo root (NOT internal/webui/dist, which is the
 # committed, go:embed'd web build).
 /dist/
+# The locally-built binary (go build -o kunai); never committed, and it must not
+# show up as an untracked "changed file" in the review panel.
+/kunai
