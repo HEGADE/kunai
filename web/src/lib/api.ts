@@ -1,4 +1,4 @@
-import type { Attachment, CLIProfile, HistoryEntry, Job, Listing, MachineInfo, Meta, Stats, ThermalConfig, Usage } from './types'
+import type { Attachment, ChangesResp, CLIProfile, DiffResp, HistoryEntry, Job, Listing, MachineInfo, Meta, Stats, ThermalConfig, Usage } from './types'
 
 // Every call takes a `base` origin so the client can reach any machine directly
 // over the tailnet. base === '' means the current origin (the hub), so the hub's
@@ -76,6 +76,17 @@ export function setEffort(base: string, id: string, effort: string): Promise<Met
 export function browse(base: string, path: string): Promise<Listing> {
   const q = path ? `?path=${encodeURIComponent(path)}` : ''
   return fetch(at(base, `/api/browse${q}`)).then((r) => json<Listing>(r))
+}
+
+// fetchChanges lists what a live session's working tree differs from its last
+// commit by (the summary the changed-files tree is built from).
+export function fetchChanges(base: string, id: string): Promise<ChangesResp> {
+  return fetch(at(base, `/api/sessions/${id}/changes`)).then((r) => json<ChangesResp>(r))
+}
+
+// fetchDiff returns the structured diff for one changed file (lazy, per row).
+export function fetchDiff(base: string, id: string, path: string): Promise<DiffResp> {
+  return fetch(at(base, `/api/sessions/${id}/diff?path=${encodeURIComponent(path)}`)).then((r) => json<DiffResp>(r))
 }
 
 export function uploadFile(base: string, file: File): Promise<Attachment> {

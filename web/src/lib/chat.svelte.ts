@@ -138,6 +138,11 @@ export class ChatConnection {
     return this.base || location.origin
   }
 
+  // sessionId is this session's id on its machine, for review/diff calls.
+  get sessionId(): string {
+    return this.id
+  }
+
   private connect() {
     this.status = this.retries === 0 ? 'connecting' : 'offline'
     const u = new URL(this.base || location.origin)
