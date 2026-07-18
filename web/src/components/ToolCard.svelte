@@ -80,23 +80,25 @@
 </div>
 
 <style>
+  /* No box: a tool call is a light activity line, not a bordered card. The row
+     only highlights on hover / while open; expanding threads the detail beneath
+     it with a hairline rule instead of a panel. */
   .tool {
-    border: 1px solid var(--border);
     border-radius: var(--r-sm);
-    background: var(--bg-raised);
-    overflow: hidden;
   }
   .head {
     width: 100%;
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 10px;
+    padding: 5px 8px;
+    border-radius: var(--r-sm);
     text-align: left;
     font-size: 13px;
     color: var(--text-2);
   }
-  .head:hover {
+  .head:hover,
+  .open > .head {
     background: var(--panel);
   }
   .ic {
@@ -237,8 +239,9 @@
     }
   }
   .body {
-    padding: 10px;
-    border-top: 1px solid var(--border);
+    margin: 3px 0 6px 11px;
+    padding-left: 14px;
+    border-left: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     gap: 8px;
