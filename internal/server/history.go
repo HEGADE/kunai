@@ -461,12 +461,26 @@ func loadTranscriptContextTokens(configDir, id string) int64 {
 	sc.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
 	for sc.Scan() {
 		var v struct {
+			Type    string           `json:"type"`
+			Subtype string           `json:"subtype"`
 			Usage   *transcriptUsage `json:"usage"`
 			Message struct {
 				Usage *transcriptUsage `json:"usage"`
 			} `json:"message"`
+			// A compaction resets the window; on disk the field is camelCase.
+			CompactMetadata *struct {
+				PostTokens int64 `json:"postTokens"`
+			} `json:"compactMetadata"`
 		}
 		if json.Unmarshal(sc.Bytes(), &v) != nil {
+			continue
+		}
+		// A compaction supersedes any earlier assistant usage: its postTokens is
+		// the new context size, and no assistant message follows it to report the
+		// smaller number. Without this, resuming a session that was compacted last
+		// seeds the meter from the pre-compaction usage and it reads far too high.
+		if v.Type == "system" && v.Subtype == "compact_boundary" && v.CompactMetadata != nil && v.CompactMetadata.PostTokens > 0 {
+			last = v.CompactMetadata.PostTokens
 			continue
 		}
 		u := v.Usage
