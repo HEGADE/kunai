@@ -69,9 +69,10 @@ type Server struct {
 	lid        lidKeeper           // opt-in, privileged: keep working with the lid shut
 	sched      *schedule.Scheduler // runs prompts at a time / after quota reset
 	guardian   *guardian           // whole-machine thermal safety net
-	clis       []CLIProfile        // named Claude CLIs (accounts) a session can run on
-	clisMu     sync.RWMutex        // guards clis, which the Accounts settings edit live
-	usage      *usageCache         // the default account's subscription quota windows
+	clis        []CLIProfile        // named Claude CLIs (accounts) a session can run on
+	clisMu      sync.RWMutex        // guards clis, which the Accounts settings edit live
+	usage       *usageCache         // the default account's subscription quota windows
+	sessionMeta *sessionMetaStore   // per-session pins and renames (nil without a data dir)
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -104,6 +105,9 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	s.loadThermal() // a persisted policy overrides the flag defaults
 	s.clis = loadCLIs(cfg.DataDir)
 	s.sched = schedule.New(filepath.Join(cfg.DataDir, "schedule.json"), s.fireJob)
+	if cfg.DataDir != "" {
+		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))
+	}
 	return s
 }
 
@@ -128,9 +132,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleCloseSession)
+	mux.HandleFunc("PATCH /api/sessions/{id}", s.handleUpdateSessionMeta)
 	mux.HandleFunc("POST /api/sessions/{id}/effort", s.handleSetEffort)
 	mux.HandleFunc("GET /api/browse", s.handleBrowse)
 	mux.HandleFunc("GET /api/history", s.handleHistory)
+	mux.HandleFunc("DELETE /api/history/{id}", s.handleDeleteHistory)
 	mux.HandleFunc("GET /api/stats", s.handleStats)
 	mux.HandleFunc("GET /api/usage", s.handleUsage)
 	mux.HandleFunc("GET /api/push/pubkey", s.handlePushKey)
@@ -201,7 +207,11 @@ func (s *Server) Run(ctx context.Context) error {
 // --- REST handlers ---
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.mgr.List())
+	metas := s.mgr.List()
+	if s.sessionMeta != nil {
+		mergeMeta(metas, s.sessionMeta.all())
+	}
+	writeJSON(w, http.StatusOK, metas)
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {

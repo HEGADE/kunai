@@ -29,7 +29,7 @@ func TestScanHistoryTagsEachAccount(t *testing.T) {
 	writeTranscript(t, work, "-home-me-work", "id-work", "/home/me/work")
 
 	roots := []accountRoot{{name: "Claude", root: personal}, {name: "Claude Work", root: work}}
-	got := scanHistory(map[string]bool{}, 25, roots)
+	got := scanHistory(map[string]bool{}, 25, roots, nil)
 
 	byID := map[string]string{}
 	for _, e := range got {
@@ -53,7 +53,7 @@ func TestScanHistoryExcludesLiveAndDedupes(t *testing.T) {
 	writeTranscript(t, b, "-x", "dup", "/x") // same id under a second root
 
 	roots := []accountRoot{{name: "A", root: a}, {name: "B", root: b}}
-	got := scanHistory(map[string]bool{"live-one": true}, 25, roots)
+	got := scanHistory(map[string]bool{"live-one": true}, 25, roots, nil)
 
 	ids := map[string]int{}
 	for _, e := range got {

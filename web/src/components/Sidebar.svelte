@@ -1,10 +1,11 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
-  import { closeSession, createSession } from '../lib/api'
+  import { createSession } from '../lib/api'
   import { enablePush, pushState } from '../lib/push'
   import type { TaggedHistoryEntry, TaggedMeta } from '../lib/types'
   import Wordmark from './Wordmark.svelte'
   import Home from './Home.svelte'
+  import SessionMenu from './SessionMenu.svelte'
 
   let notif = $state(pushState())
   let notifHint = $state('')
@@ -37,10 +38,18 @@
           machineLabel(h.machineId).toLowerCase().includes(query)),
     ),
   )
+  // Pinned sessions rise to the top in their own section, drawn from both the
+  // live list and Recent (an id is in exactly one). They keep their own kind, so
+  // a pinned live session still opens and a pinned past one still resumes.
+  const pinnedActive = $derived(activeList.filter((m) => m.pinned))
+  const pinnedRecent = $derived(recentList.filter((h) => h.pinned))
+  const hasPinned = $derived(pinnedActive.length > 0 || pinnedRecent.length > 0)
+  const activeUnpinned = $derived(activeList.filter((m) => !m.pinned))
+  const recentUnpinned = $derived(recentList.filter((h) => !h.pinned))
   // Keep the sidebar tidy: show only the most recent few; the rest live behind
   // "View all sessions" (a full, searchable, paginated view).
   const RECENT_MAX = 8
-  const recentDisplay = $derived(recentList.slice(0, RECENT_MAX))
+  const recentDisplay = $derived(recentUnpinned.slice(0, RECENT_MAX))
   function activeCount(mid: string): number {
     return app.sessions.filter((m) => m.machineId === mid).length
   }
@@ -64,12 +73,6 @@
 
   function shortName(m: TaggedMeta): string {
     return m.title || m.cwd.replace(/\/+$/, '').split('/').slice(-1)[0] || 'session'
-  }
-  async function remove(e: MouseEvent, m: TaggedMeta) {
-    e.stopPropagation()
-    await closeSession(app.baseForMachine(m.machineId), m.id)
-    app.closeTabFor(m.machineId, m.id) // the session is gone, so its tab goes too
-    app.refresh()
   }
   async function resume(h: TaggedHistoryEntry) {
     if (resuming) return
@@ -106,6 +109,29 @@
 
 {#snippet bubble()}
   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" /></svg>
+{/snippet}
+
+{#snippet activeRow(m: TaggedMeta)}
+  <div class="row" class:current={app.activeId === m.id && app.activeMachineId === m.machineId}>
+    <button class="hit" onclick={() => app.open(m.machineId, m.id)}>
+      <span class="ic">
+        {@render bubble()}
+        <span class="live" data-state={m.state}></span>
+      </span>
+      <span class="name">{shortName(m)}</span>
+    </button>
+    <SessionMenu machineId={m.machineId} id={m.id} title={shortName(m)} pinned={m.pinned} kind="live" />
+  </div>
+{/snippet}
+
+{#snippet recentRow(h: TaggedHistoryEntry)}
+  <div class="row">
+    <button class="hit" onclick={() => resume(h)} disabled={!!resuming}>
+      <span class="ic">{@render bubble()}</span>
+      <span class="name">{resuming === h.id ? 'Resuming…' : h.title}</span>
+    </button>
+    <SessionMenu machineId={h.machineId} id={h.id} title={h.title} pinned={h.pinned} kind="recent" />
+  </div>
 {/snippet}
 
 <div class="sb">
@@ -172,33 +198,27 @@
       <p class="note mono">{app.listError}</p>
     {/if}
 
-    {#if activeList.length > 0}
-      <div class="sec">Active</div>
-      {#each activeList as m (m.machineId + ':' + m.id)}
-        <div class="row" class:current={app.activeId === m.id && app.activeMachineId === m.machineId}>
-          <button class="hit" onclick={() => app.open(m.machineId, m.id)}>
-            <span class="ic">
-              {@render bubble()}
-              <span class="live" data-state={m.state}></span>
-            </span>
-            <span class="name">{shortName(m)}</span>
-          </button>
-          <button class="x" onclick={(e) => remove(e, m)} aria-label="Close session">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-          </button>
-        </div>
+    {#if hasPinned}
+      <div class="sec">Pinned</div>
+      {#each pinnedActive as m (m.machineId + ':' + m.id)}
+        {@render activeRow(m)}
+      {/each}
+      {#each pinnedRecent as h (h.machineId + ':' + h.id)}
+        {@render recentRow(h)}
       {/each}
     {/if}
 
-    {#if recentList.length > 0}
+    {#if activeUnpinned.length > 0}
+      <div class="sec">Active</div>
+      {#each activeUnpinned as m (m.machineId + ':' + m.id)}
+        {@render activeRow(m)}
+      {/each}
+    {/if}
+
+    {#if recentDisplay.length > 0}
       <div class="sec">Recent</div>
       {#each recentDisplay as h (h.machineId + ':' + h.id)}
-        <div class="row">
-          <button class="hit" onclick={() => resume(h)} disabled={!!resuming}>
-            <span class="ic">{@render bubble()}</span>
-            <span class="name">{resuming === h.id ? 'Resuming…' : h.title}</span>
-          </button>
-        </div>
+        {@render recentRow(h)}
       {/each}
     {/if}
 
@@ -526,27 +546,17 @@
   .row.current .name {
     font-weight: 500;
   }
-  .x {
-    position: absolute;
-    right: 6px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
-    color: var(--text-4);
-    background: var(--panel-2);
-    display: none;
-    align-items: center;
-    justify-content: center;
+  /* The per-row menu (SessionMenu) lives where the close button used to; reveal
+     its trigger on row hover, matching the old close affordance. */
+  .row:hover :global(.trigger) {
+    opacity: 1;
   }
-  .row:hover .x {
-    display: flex;
-  }
-  .x:hover,
-  .x:active {
-    color: var(--text-2);
-    background: var(--panel-3);
+  /* A row whose menu is open stays highlighted, and is lifted into its own
+     stacking layer so its dropdown paints above the rows below it (they are
+     positioned too, so without this they'd cover the menu). */
+  .row:has(:global(.wrap.open)) {
+    background: var(--panel);
+    z-index: 20;
   }
   .viewall {
     width: 100%;

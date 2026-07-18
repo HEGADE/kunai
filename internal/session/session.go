@@ -710,6 +710,10 @@ type Meta struct {
 	Title     string    `json:"title"`
 	State     string    `json:"state"`
 	CreatedAt time.Time `json:"created_at"`
+	// Pinned is a user override the server merges in from its session-metadata
+	// store; the session itself never sets it (a live session doesn't know it is
+	// pinned). Kept here so the live list and the Recent list carry the same flag.
+	Pinned bool `json:"pinned,omitempty"`
 }
 
 func (s *Session) Meta() Meta {

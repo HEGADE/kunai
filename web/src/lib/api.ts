@@ -40,6 +40,29 @@ export function closeSession(base: string, id: string): Promise<void> {
   return fetch(at(base, `/api/sessions/${id}`), { method: 'DELETE' }).then(() => undefined)
 }
 
+// updateSessionMeta renames and/or pins a session by id. Both fields are
+// optional; the server leaves an omitted one unchanged. The id is shared by a
+// live session and its resumable transcript, so this works in either list.
+export function updateSessionMeta(
+  base: string,
+  id: string,
+  patch: { name?: string; pinned?: boolean },
+): Promise<void> {
+  return fetch(at(base, `/api/sessions/${id}`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).then((r) => json<unknown>(r)).then(() => undefined)
+}
+
+// deleteHistory permanently removes a past session: its transcript on disk and
+// any pin/rename. The server refuses (409) a session that is currently live.
+export function deleteHistory(base: string, id: string): Promise<void> {
+  return fetch(at(base, `/api/history/${id}`), { method: 'DELETE' }).then((r) => {
+    if (!r.ok) throw new Error(r.status === 409 ? 'Close the session before deleting it.' : `HTTP ${r.status}`)
+  })
+}
+
 // setEffort relaunches a session at a new reasoning effort (server closes and
 // resumes it; the id is unchanged). Returns the restarted session's Meta.
 export function setEffort(base: string, id: string, effort: string): Promise<Meta> {

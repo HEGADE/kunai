@@ -108,6 +108,7 @@ export interface Meta {
   title: string
   state: SessionState
   created_at: string
+  pinned?: boolean // user override, merged from the server's session-metadata store
 }
 
 export interface Block {
@@ -279,6 +280,7 @@ export interface HistoryEntry {
   title: string
   cli?: string // the Claude account this session belongs to (reopen on it)
   mtime: string
+  pinned?: boolean // user override, merged from the server's session-metadata store
 }
 
 // --- multi-machine ---

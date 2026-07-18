@@ -20,11 +20,12 @@ import (
 // HistoryEntry is a past Claude Code session found on disk that can be resumed
 // with --resume. Sessions survive server restarts this way.
 type HistoryEntry struct {
-	ID    string    `json:"id"`
-	Cwd   string    `json:"cwd"`
-	Title string    `json:"title"`
-	CLI   string    `json:"cli,omitempty"` // the account this session belongs to
-	Mtime time.Time `json:"mtime"`
+	ID     string    `json:"id"`
+	Cwd    string    `json:"cwd"`
+	Title  string    `json:"title"`
+	CLI    string    `json:"cli,omitempty"` // the account this session belongs to
+	Mtime  time.Time `json:"mtime"`
+	Pinned bool      `json:"pinned,omitempty"` // user override, merged from the metadata store
 }
 
 // claudeRoot is the transcripts folder for a Claude config dir. An empty configDir
@@ -56,14 +57,32 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
 		limit = min(v, historyMaxLimit)
 	}
-	writeJSON(w, http.StatusOK, scanHistory(live, limit, s.accountRoots()))
+	var keep map[string]bool
+	var over map[string]sessionMeta
+	if s.sessionMeta != nil {
+		keep = s.sessionMeta.pinnedIDs() // a pinned session survives the newest-N clamp
+		over = s.sessionMeta.all()
+	}
+	entries := scanHistory(live, limit, s.accountRoots(), keep)
+	for i := range entries {
+		if o, ok := over[entries[i].ID]; ok {
+			if o.Name != "" {
+				entries[i].Title = o.Name
+			}
+			entries[i].Pinned = o.Pinned
+		}
+	}
+	writeJSON(w, http.StatusOK, entries)
 }
 
 // scanHistory walks each account's <configDir>/projects/*/<sessionId>.jsonl
 // transcripts, newest first, tagging every entry with the account it belongs to
 // so the client can reopen it on the right one. A session id is unique, so the
 // same id is never listed twice across accounts.
-func scanHistory(live map[string]bool, limit int, roots []accountRoot) []HistoryEntry {
+// keep, when non-nil, is a set of session ids that must survive the newest-N
+// clamp — a pinned session stays in the list even when it is older than the last
+// entry the limit would otherwise allow.
+func scanHistory(live map[string]bool, limit int, roots []accountRoot, keep map[string]bool) []HistoryEntry {
 	out := []HistoryEntry{}
 	seen := map[string]bool{}
 	for _, ar := range roots {
@@ -106,7 +125,21 @@ func scanHistory(live map[string]bool, limit int, roots []accountRoot) []History
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Mtime.After(out[j].Mtime) })
 	if limit > 0 && len(out) > limit {
-		out = out[:limit]
+		head := out[:limit]
+		// A pinned session past the cutoff is appended so a pin is never hidden by
+		// the newest-N window; both slices stay mtime-sorted.
+		if len(keep) > 0 {
+			inHead := make(map[string]bool, len(head))
+			for _, e := range head {
+				inHead[e.ID] = true
+			}
+			for _, e := range out[limit:] {
+				if keep[e.ID] && !inHead[e.ID] {
+					head = append(head, e)
+				}
+			}
+		}
+		out = head
 	}
 	return out
 }
