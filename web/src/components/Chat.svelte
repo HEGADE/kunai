@@ -57,7 +57,6 @@
     return () => setReloadGuard(() => false)
   })
 
-  let menuOpen = $state(false)
   let schedOpen = $state(false)
   let addProjOpen = $state(false)
   let loopOpen = $state(false)
@@ -242,23 +241,30 @@
         </button>
       {/if}
     </div>
-    <button class="hbtn menu" onclick={() => (menuOpen = !menuOpen)} aria-label="Menu">⋯</button>
-    {#if menuOpen}
-      <button class="menu-scrim" onclick={() => (menuOpen = false)} aria-label="Close menu"></button>
-      <div class="menu-pop">
-        {#if running}
-          <button onclick={() => { chat.interrupt(); menuOpen = false }}>Interrupt</button>
-        {/if}
-        <button onclick={() => { addProjOpen = true; menuOpen = false }}>Add project…</button>
-        {#if chat.loop?.state === 'running'}
-          <button onclick={() => { chat.stopLoop(); menuOpen = false }}>Stop the loop</button>
-        {:else}
-          <button onclick={() => { loopOpen = true; menuOpen = false }}>Run in a loop…</button>
-        {/if}
-        <button onclick={() => { schedOpen = true; menuOpen = false }}>Schedule a prompt…</button>
-        <button class="danger" onclick={() => { app.closeSessionActive(); menuOpen = false }}>Close session</button>
-      </div>
-    {/if}
+    <!-- The session's actions, one tap each instead of buried in a menu. Nav
+         (back/home) stays framed; these are lighter so the two groups read
+         apart. Close is set off and caution-tinted so it isn't fat-fingered. -->
+    <div class="actions">
+      <button class="abtn" onclick={() => (addProjOpen = true)} aria-label="Add project" title="Add project">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /><path d="M12 11v4M10 13h4" /></svg>
+      </button>
+      {#if chat.loop?.state === 'running'}
+        <button class="abtn active" onclick={() => chat.stopLoop()} aria-label="Stop the loop" title="Stop the loop">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4" /><path d="M3 11V9a4 4 0 014-4h14" /><path d="M7 22l-4-4 4-4" /><path d="M21 13v2a4 4 0 01-4 4H3" /></svg>
+        </button>
+      {:else}
+        <button class="abtn" onclick={() => (loopOpen = true)} aria-label="Run in a loop" title="Run in a loop">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4" /><path d="M3 11V9a4 4 0 014-4h14" /><path d="M7 22l-4-4 4-4" /><path d="M21 13v2a4 4 0 01-4 4H3" /></svg>
+        </button>
+      {/if}
+      <button class="abtn" onclick={() => (schedOpen = true)} aria-label="Schedule a prompt" title="Schedule a prompt">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></svg>
+      </button>
+      <span class="adiv" aria-hidden="true"></span>
+      <button class="abtn danger" onclick={() => app.closeSessionActive()} aria-label="Close session" title="Close session">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v8" /><path d="M18 7.5a8 8 0 11-12 0" /></svg>
+      </button>
+    </div>
   </header>
 
   <div class="scroll" bind:this={scroller} onscroll={onScroll}>
@@ -550,10 +556,43 @@
     color: var(--text);
     border-color: var(--border-2);
   }
-  .menu {
-    font-size: 18px;
-    line-height: 1;
-    letter-spacing: 0.06em;
+  /* The session's action row: lighter than the framed nav buttons so the two
+     read as different groups, and tight so they cluster as one unit. */
+  .actions {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 1px;
+  }
+  .abtn {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-3);
+  }
+  .abtn:hover {
+    color: var(--text);
+    background: var(--panel-2);
+  }
+  /* A loop is running: the toggle both signals and stops it. */
+  .abtn.active {
+    color: var(--busy);
+  }
+  .abtn.active:hover {
+    color: var(--busy);
+  }
+  .abtn.danger:hover {
+    color: var(--alert);
+  }
+  .adiv {
+    flex: none;
+    width: 1px;
+    height: 17px;
+    margin: 0 5px;
+    background: var(--border);
   }
   /* Plain left-aligned title — no pill box. */
   .htitle {
@@ -576,39 +615,6 @@
     unicode-bidi: plaintext;
     text-align: left;
   }
-  .menu-scrim {
-    position: fixed;
-    inset: 0;
-    z-index: 30;
-    background: none;
-  }
-  .menu-pop {
-    position: absolute;
-    z-index: 31;
-    top: calc(100% - 4px);
-    right: 12px;
-    min-width: 168px;
-    padding: 5px;
-    background: var(--panel-2);
-    border: 1px solid var(--border-2);
-    border-radius: var(--r);
-    box-shadow: 0 16px 40px -14px rgba(0, 0, 0, 0.7);
-  }
-  .menu-pop button {
-    width: 100%;
-    text-align: left;
-    padding: 9px 11px;
-    border-radius: var(--r-sm);
-    font-size: 13.5px;
-    color: var(--text);
-  }
-  .menu-pop button:hover {
-    background: var(--panel-3);
-  }
-  .menu-pop .danger {
-    color: var(--alert);
-  }
-
   .scroll {
     flex: 1;
     overflow-y: auto;
