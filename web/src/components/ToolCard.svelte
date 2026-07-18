@@ -15,9 +15,36 @@
   // by tool_use_id) — which is exactly how a background agent finishes late.
   const running = $derived(!result)
   const isAgent = $derived(name === 'Agent' || name === 'Task')
+
+  // A shell call reads as a terminal prompt, not a labelled box: the ❯ says
+  // "command", so the word "Bash" is dropped, and the `cd <dir> &&` the agent
+  // prepends dims to a whisper so the command you care about leads. The first
+  // line is enough for the collapsed row; the body shows the whole thing.
+  const isShell = $derived(name === 'Bash')
+  const cmdLine = $derived((label.text ?? '').split('\n')[0])
+  // Strip a leading `cd <dir> &&` so the operative command leads; the full
+  // command (cd and all) is still in the expanded body.
+  const cdMatch = $derived(cmdLine.match(/^cd\s+[^&]+&&\s*([\s\S]+)$/))
+  const cmdRest = $derived(cdMatch ? cdMatch[1] : cmdLine)
+  const multiline = $derived((label.text ?? '').includes('\n'))
 </script>
 
-<div class="tool" class:open class:running>
+<div class="tool" class:open class:running class:shell={isShell}>
+  {#if isShell}
+    <button class="head prompt" onclick={() => (open = !open)}>
+      <span class="caret" aria-hidden="true">❯</span>
+      <span class="cmd mono"><span class="real">{cmdRest}</span>{#if multiline}<span class="ell"> …</span>{/if}</span>
+      <span class="sp"></span>
+      {#if result?.isError}
+        <span class="errdot" title="Command reported an error"></span>
+      {:else if running}
+        <span class="spin" aria-label="Running" title="Running"></span>
+      {/if}
+      <span class="car" aria-hidden="true">
+        <svg width="9" height="9" viewBox="0 0 8 8" fill="currentColor"><path d="M2 0l4 4-4 4z" /></svg>
+      </span>
+    </button>
+  {:else}
   <button class="head" onclick={() => (open = !open)}>
     <span class="ic"><ToolIcon {name} size={13} /></span>
     <span class="name">{label.action}</span>
@@ -36,6 +63,7 @@
       <svg width="9" height="9" viewBox="0 0 8 8" fill="currentColor"><path d="M2 0l4 4-4 4z" /></svg>
     </span>
   </button>
+  {/if}
   {#if open}
     <div class="body">
       <ToolBody {name} {input} />
@@ -74,6 +102,42 @@
   .ic {
     flex: none;
     display: inline-flex;
+    color: var(--text-4);
+  }
+  /* Shell prompt line: the ❯ leads, the command is the hero in mono, and the
+     `cd …&&` boilerplate dims out of the way. */
+  .head.prompt {
+    gap: 10px;
+    align-items: baseline;
+  }
+  .head.prompt .caret {
+    flex: none;
+    font-family: var(--mono);
+    font-weight: 600;
+    color: var(--text-3);
+    transform: translateY(1px);
+  }
+  .head.prompt:hover .caret {
+    color: var(--text);
+  }
+  .cmd {
+    display: flex;
+    align-items: baseline;
+    min-width: 0;
+    flex: 0 1 auto;
+    font-size: 12.5px;
+    letter-spacing: 0;
+    color: var(--text);
+  }
+  .cmd .real {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cmd .ell {
+    flex: none;
     color: var(--text-4);
   }
   .name {
