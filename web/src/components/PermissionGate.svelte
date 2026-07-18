@@ -12,14 +12,18 @@
 </script>
 
 {#if current}
-  <div class="gate">
-    {#if isQuestion}
+  {#if isQuestion}
+    <!-- A question rides in the composer lane as a floating card, like the
+         sheets, rather than a full-width band: it isn't an allow/deny gate. -->
+    <div class="qfloat">
       <QuestionForm
         input={current.input}
         onSubmit={(answers) => chat.resolve(current.request_id, 'allow', false, answers)}
         onSkip={() => chat.resolve(current.request_id, 'deny')}
       />
-    {:else}
+    </div>
+  {:else}
+    <div class="gate">
       <div class="inner">
         <div class="head">
           <span class="k">Authorize</span>
@@ -36,11 +40,21 @@
           Always allow {current.tool_name} this session
         </button>
       </div>
-    {/if}
-  </div>
+    </div>
+  {/if}
 {/if}
 
 <style>
+  /* A question isn't a band: it floats in the composer's lane, so it only needs
+     the gutter here — QuestionForm carries its own card frame and rise. */
+  .qfloat {
+    padding: 0 16px 6px;
+  }
+  @media (min-width: 861px) {
+    .qfloat {
+      padding: 0 24px 8px;
+    }
+  }
   .gate {
     background: var(--panel);
     border-top: 1px solid var(--border-2);

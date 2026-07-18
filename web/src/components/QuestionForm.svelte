@@ -1,10 +1,13 @@
 <script lang="ts">
-  // AskUserQuestion, rendered as a compact one-question-at-a-time wizard so it
-  // stays small and never overflows: each step shows a single question (its
-  // options scroll within a bounded panel if long), and Back / Skip / Continue
-  // move through them. The last step submits. The answer contract is
-  // { [question text]: chosen answer } (multi-select comma-joined); an all-skip
-  // declines. Fully skipped questions are simply omitted.
+  // AskUserQuestion, rendered as a floating card (the same lane as the add-
+  // project / loop / schedule sheets) so it reads as a distinct surface, not a
+  // full-width band. It's a one-question-at-a-time wizard so it stays small and
+  // never overflows: each step shows a single question (its options scroll
+  // within a bounded panel if long), and Back / Skip / Continue move through
+  // them. The last step submits. The answer contract is
+  // { [question text]: chosen answer } (multi-select comma-joined). Dismissing
+  // (the ✕, Escape, or an all-skip) declines the whole ask; fully skipped
+  // questions are simply omitted.
   type Option = { label: string; description?: string }
   type Question = { question: string; header?: string; options?: Option[]; multiSelect?: boolean }
 
@@ -19,6 +22,7 @@
   } = $props()
 
   const questions = $derived<Question[]>((input as { questions?: Question[] } | null)?.questions ?? [])
+  const multiStep = $derived(questions.length > 1)
 
   let step = $state(0)
   let selected = $state<string[][]>([])
@@ -28,6 +32,19 @@
     selected = questions.map(() => [])
     other = questions.map(() => '')
     step = 0
+  })
+
+  // Esc dismisses the whole ask, the same as the ✕ — the desktop reflex for a
+  // dialog you don't want to answer.
+  $effect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onSkip()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   })
 
   const q = $derived<Question | undefined>(questions[step])
@@ -69,20 +86,19 @@
 </script>
 
 {#if q}
-  <div class="qwrap">
-    <div class="qtop">
+  <div class="qwrap" role="dialog" aria-label="Claude is asking">
+    <div class="head">
       <span class="k">Claude is asking</span>
-      <div class="dots">
-        {#each questions as _, i (i)}
-          <span class="dot" class:on={i === step} class:done={i < step}></span>
-        {/each}
+      <div class="right">
+        {#if multiStep}<span class="count mono">{step + 1} / {questions.length}</span>{/if}
+        <button class="x" onclick={onSkip} aria-label="Dismiss" title="Dismiss without answering">✕</button>
       </div>
     </div>
 
-    <div class="qbody">
+    <div class="body">
       <div class="qhead">
         {#if q.header}<span class="chip">{q.header}</span>{/if}
-        {#if q.multiSelect}<span class="multi">choose any</span>{/if}
+        {#if q.multiSelect}<span class="multi">Choose any</span>{/if}
       </div>
       <p class="qtext">{q.question}</p>
       <div class="opts">
@@ -98,18 +114,20 @@
         {/each}
         <input
           class="other"
-          placeholder="Something else…"
+          placeholder="Type another answer…"
           value={other[step] ?? ''}
           oninput={(e) => setOther((e.target as HTMLInputElement).value)}
         />
       </div>
     </div>
 
-    <div class="qfoot">
+    <div class="foot">
       {#if step > 0}
-        <button class="ghost" onclick={() => (step -= 1)} aria-label="Back">Back</button>
+        <button class="ghost" onclick={() => (step -= 1)}>Back</button>
       {/if}
-      <button class="ghost" onclick={skip}>Skip</button>
+      {#if multiStep}
+        <button class="ghost" onclick={skip}>Skip question</button>
+      {/if}
       <button class="cont" disabled={!answered} onclick={advance}>
         {last ? 'Submit' : 'Continue'}
       </button>
@@ -118,43 +136,72 @@
 {/if}
 
 <style>
+  /* The card itself — same floating frame as the add-project / loop / schedule
+     sheets (border, radius, shadow, rise), so an ask reads as one surface. */
   .qwrap {
     max-width: 720px;
     margin: 0 auto;
     display: flex;
     flex-direction: column;
-    max-height: min(52vh, 460px);
-    padding: 13px 20px calc(var(--safe-bottom) + 12px);
+    max-height: min(56vh, 480px);
+    background: var(--panel);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-lg);
+    box-shadow: 0 14px 44px -16px rgba(0, 0, 0, 0.72);
+    animation: floatUp 0.16s ease-out both;
+    padding: 13px 17px 14px;
   }
-  .qtop {
+  @keyframes floatUp {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .qwrap {
+      animation: none;
+    }
+  }
+
+  .head {
     flex: none;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 10px;
+    margin-bottom: 11px;
   }
   .k {
-    font-size: 11px;
-    font-weight: 500;
+    font-size: 12px;
+    font-weight: 550;
     color: var(--text-3);
   }
-  .dots {
+  .right {
     display: flex;
-    gap: 5px;
+    align-items: center;
+    gap: 8px;
   }
-  .dot {
-    width: 6px;
-    height: 6px;
+  .count {
+    font-size: 11px;
+    color: var(--text-4);
+  }
+  /* The dismiss the ask was missing: ✕ (and Esc) decline the whole thing. */
+  .x {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    margin: -4px -6px -4px 0;
     border-radius: 50%;
+    color: var(--text-3);
+    font-size: 12px;
+  }
+  .x:hover {
+    color: var(--text);
     background: var(--panel-3);
   }
-  .dot.done {
-    background: var(--text-4);
-  }
-  .dot.on {
-    background: var(--white);
-  }
-  .qbody {
+
+  .body {
     flex: 1 1 auto;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
@@ -258,7 +305,7 @@
     border-style: solid;
     border-color: var(--border-2);
   }
-  .qfoot {
+  .foot {
     flex: none;
     display: flex;
     gap: 9px;
