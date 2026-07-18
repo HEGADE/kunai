@@ -30,8 +30,10 @@
     }
   }
   $effect(() => {
-    // Refetch when the session changes (chat prop swaps between tabs).
+    // Refetch when the session changes (chat prop swaps between tabs); clear
+    // first so the panel never shows the previous session's changes mid-load.
     void chat.sessionId
+    data = null
     load()
   })
   // Refresh the moment a turn ends: the agent has just finished touching files,
@@ -126,32 +128,44 @@
   {/if}
 {/snippet}
 
-<!-- A clean tree or a non-repo session shows nothing: the panel appears only
-     when the agent actually changed files, right at the end of the chat. -->
-{#if data?.repo && data.files.length}
-  <div class="changes">
+<!-- Always present in a git repo, at the end of the chat: the full tree when
+     the agent changed files, a quiet clean state otherwise. A non-git session
+     has nothing to review, so it shows nothing at all. -->
+{#if data?.repo}
+  {@const has = data.files.length > 0}
+  <div class="changes" class:empty={!has}>
     <div class="chead">
       <div class="ctitle">
         <span class="eyebrow">Changed files</span>
-        <span class="n mono">{data.files.length}</span>
-        {@render counts(data.added, data.removed)}
+        {#if has}
+          <span class="n mono">{data.files.length}</span>
+          {@render counts(data.added, data.removed)}
+        {:else}
+          <span class="clean">Clean</span>
+        {/if}
       </div>
       <div class="cbtns">
-        <button class="tbtn" onclick={collapseAll} disabled={anyCollapsed && collapsed.size >= tree.length}>Collapse all</button>
+        {#if has}
+          <button class="tbtn" onclick={collapseAll} disabled={anyCollapsed && collapsed.size >= tree.length}>Collapse all</button>
+        {/if}
         <button class="tbtn" onclick={load} aria-label="Refresh" title="Refresh">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-3-6.7" /><path d="M21 3v5h-5" /></svg>
         </button>
       </div>
     </div>
 
-    <div class="body">
-      <div class="tree">
-        {#each tree as n (n.kind === 'dir' ? n.path : n.file.path)}
-          {@render row(n, 0)}
-        {/each}
+    {#if has}
+      <div class="body">
+        <div class="tree">
+          {#each tree as n (n.kind === 'dir' ? n.path : n.file.path)}
+            {@render row(n, 0)}
+          {/each}
+        </div>
+        {#if data.truncated}<p class="state sub">Showing the first {data.files.length} files.</p>{/if}
       </div>
-      {#if data.truncated}<p class="state sub">Showing the first {data.files.length} files.</p>{/if}
-    </div>
+    {:else}
+      <p class="cleanmsg">No uncommitted changes — the working tree matches the last commit.</p>
+    {/if}
   </div>
 {/if}
 
@@ -175,6 +189,20 @@
     gap: 10px;
     padding: 9px 12px;
     border-bottom: 1px solid var(--border);
+  }
+  /* Clean state: one quiet row, no divider or tree beneath it. */
+  .changes.empty .chead {
+    border-bottom: none;
+  }
+  .clean {
+    font-size: 11.5px;
+    color: var(--text-4);
+  }
+  .cleanmsg {
+    margin: 0;
+    padding: 0 12px 11px;
+    font-size: 12px;
+    color: var(--text-4);
   }
   .ctitle {
     display: flex;
