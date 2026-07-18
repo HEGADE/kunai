@@ -151,6 +151,20 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   parses them into seed turns on resume (that is why resumed sessions show their old
   conversation and tool outputs: `--resume` alone loads model context but never
   re-emits messages).
+- `internal/server/review.go` (+ `review_diff.go`): what a session changed on
+  disk, so you can read the diff from a phone. Two **read-only** GET endpoints,
+  `/api/sessions/{id}/changes` (the changed-files tree) and `/diff` (one file's
+  structured hunks), that shell `git` in the live session's cwd through an
+  injectable `gitRun` (the same testable-subprocess pattern as `usageRun`/
+  `execRun`). The summary stitches numstat counts, name-status statuses, and
+  untracked files (line-counted through a fixed 32K buffer) into one tree vs the
+  last commit; `review_diff.go` reshapes `git diff` into typed rows so the client
+  never re-diffs. Everything is bounded (file count, rows per file, bytes per
+  line) so a machine-sized sweep can't balloon a response or memory. **Nothing
+  here writes** (diff/status/read only), so a review can never mutate the working
+  tree it reports on; do not add a write path without making that guarantee
+  explicit. The locally-built `/kunai` binary is gitignored so it never shows as
+  a phantom untracked change.
 - `web/`: Svelte 5 (runes: `$state`/`$derived` in `.svelte.ts` stores), Vite plus
   vite-plugin-pwa with `injectManifest` and a hand-written `src/sw.ts`.
 - `internal/server/stats.go` is cross-platform (disk via `syscall.Statfs`,
@@ -173,8 +187,22 @@ The web client renders the conversation richly from data already on the client
   highlighted content, `Bash` shows the command, `Read`/`Grep`/`Glob` show fields,
   `TodoWrite` a checklist, with a JSON fallback for unknown tools.
   `ResultView.svelte` renders the tool's output beneath the request.
+- `ToolCard.svelte` is the wrapper: a tool call is a **light activity line**, not
+  a bordered box: the row only highlights on hover / while open, and expanding
+  threads the detail beneath it with a hairline rule. A `Bash` call reads as a
+  terminal prompt (`❯` + command), with the agent's `cd <dir> &&` boilerplate
+  dropped from the collapsed line (the full command stays in the body).
 - `web/src/lib/{highlight,diff,toolMeta}.ts` hold the shared, pure helpers.
   `highlight.js` is the only new runtime dependency.
+
+`Changes.svelte` renders the changed-files review as a card at the **end of the
+chat** (fed by `internal/server/review.go`; tree built by the pure
+`web/src/lib/fileTree.ts`, diffs by `FileDiff.svelte`). It is always present in a
+git repo (the full tree when the agent changed files, a compact "Clean" row
+otherwise) and hidden entirely for a non-git session. Per-file diffs load lazily
+(one request per file you open), and it refetches itself when a turn ends. It was
+briefly a header toggle and then hidden-when-empty; both read as broken, so the
+rule is: always-there in a repo, never for a non-repo, at the end of the log.
 
 The log is windowed, and that is load-bearing rather than an optimisation. The
 whole backlog arrives at once on open, so `Chat.svelte` waits for `chat.ready` (the
@@ -283,6 +311,13 @@ Behavioral invariants that were bugs before (do not regress):
 - Only fingerprinted `assets/*` may be cached immutably. `sw.js`, its registration
   shim, the manifest and the shell must revalidate: an immutably cached service
   worker strands clients on an old build no matter how often they reload.
+- A long-open PWA updates itself (`web/src/lib/updater.ts`): the browser only
+  re-checks the service worker on a navigation, so `startUpdatePolling` calls
+  `registration.update()` on an interval and on refocus, and the existing
+  `controllerchange` reload swaps in the new build. The reload is **held while the
+  composer has an unsent prompt or a staged attachment** (the only thing a reload
+  would lose) and applies the moment it clears, so an auto-refresh never eats a
+  draft. `Chat.svelte` registers that guard via `setReloadGuard`.
 - A loop (`internal/session/loop.go`) is a self-prompting run: the same task fed
   back every time a turn ends, which is Ralph's technique (ghuntley.com/ralph).
   It lives in the session for the same reason the queue does, because the point is
