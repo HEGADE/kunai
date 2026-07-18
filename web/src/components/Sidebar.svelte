@@ -436,6 +436,10 @@
   }
   .list {
     flex: 1;
+    /* Without min-height:0 a flex scroll-child can refuse to shrink and overflow
+       under the footer (seen on iOS): the session rows then bleed through the
+       Settings row. This lets the list scroll within its track instead. */
+    min-height: 0;
     overflow-y: auto;
     padding: 4px 14px 14px;
   }
@@ -619,8 +623,20 @@
   .navitem:hover .ic {
     color: var(--text-2);
   }
+  /* Opaque and never-shrinking, sitting above the list: even if the scroll area
+     ever runs long on a stubborn browser, the footer covers it cleanly instead
+     of letting a session row show through Settings. */
   .foot {
+    flex: none;
+    position: relative;
+    z-index: 2;
+    background: var(--bg);
     padding: 8px 16px calc(var(--safe-bottom) + 12px);
+  }
+  @media (min-width: 861px) {
+    .foot {
+      background: var(--bg-raised);
+    }
   }
   .hint {
     margin: 0 2px 8px;
