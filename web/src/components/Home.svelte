@@ -1,7 +1,7 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
   import { usage } from '../lib/api'
-  import type { Usage } from '../lib/types'
+  import type { Usage, UsageWindow } from '../lib/types'
   import { updateAvailable } from '../lib/update'
   import Schedules from './Schedules.svelte'
 
@@ -130,9 +130,13 @@
   // (logged out, offline, token expired) shows nothing rather than a zeroed bar.
   const session = $derived(use?.session ?? null)
   const weekly = $derived(use?.weekly ?? null)
-  function resetsIn(unix?: number): string {
-    if (!unix) return 'reset time unknown'
-    const s = unix - Math.floor(Date.now() / 1000)
+  // The rolling window only carries a reset time once it has usage in it. An idle
+  // 5-hour window (0% used) reports no reset, which is not "unknown" — nothing has
+  // started the clock — so say that plainly instead of raising a false alarm.
+  function resetsIn(w: UsageWindow | null): string {
+    if (!w) return ''
+    if (!w.resets_at) return w.percent > 0 ? 'reset time unknown' : 'no usage this window'
+    const s = w.resets_at - Math.floor(Date.now() / 1000)
     return s <= 0 ? 'resetting' : `resets in ${dur(s)}`
   }
 
@@ -239,7 +243,7 @@
             <span class="q-pct mono" class:hot={session.percent >= 80}
               >{Math.round(session.percent)}<small>%</small></span
             >
-            <span class="q-when mono">{resetsIn(session.resets_at)}</span>
+            <span class="q-when mono">{resetsIn(session)}</span>
           </div>
         {/if}
         {#if weekly}
@@ -251,7 +255,7 @@
             <span class="q-pct mono" class:hot={weekly.percent >= 80}
               >{Math.round(weekly.percent)}<small>%</small></span
             >
-            <span class="q-when mono">{resetsIn(weekly.resets_at)}</span>
+            <span class="q-when mono">{resetsIn(weekly)}</span>
           </div>
         {/if}
       </div>
