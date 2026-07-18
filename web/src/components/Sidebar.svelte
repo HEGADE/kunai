@@ -152,44 +152,40 @@
     </div>
   </header>
 
-  <div class="searchwrap">
-    <div class="search">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+  <!-- Search and machine scope share one hairline bar: both narrow the session
+       list, so they read as one control rather than two stacked pills. The
+       scope shows the current machine as mono data with its status dot, and
+       only appears when there's more than one machine to choose between. -->
+  <div class="filterbar">
+    <div class="fbar">
+      <svg class="mag" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
       <input type="search" placeholder="Search sessions" bind:value={q} autocomplete="off" />
-    </div>
-  </div>
-
-  {#if multi}
-    <div class="mfilterwrap">
-      <button class="mfilter" onclick={() => (filterOpen = !filterOpen)}>
-        {#if currentFilter}
-          <span class="fdot" class:live={currentFilter.online}></span>
-          <span class="flabel">{currentFilter.label}</span>
-        {:else}
-          <svg class="fico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg>
-          <span class="flabel">All machines</span>
-        {/if}
-        <svg class="fchev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-      </button>
-      {#if filterOpen}
-        <button class="fscrim" onclick={() => (filterOpen = false)} aria-label="Close"></button>
-        <div class="fpop">
-          <button class="fopt" class:on={app.machineFilter === 'all'} onclick={() => pickFilter('all')}>
-            <svg class="fico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg>
-            <span class="flabel">All machines</span>
-            <span class="fcount">{app.sessions.length}</span>
-          </button>
-          {#each app.machines as m (m.id)}
-            <button class="fopt" class:on={app.machineFilter === m.id} onclick={() => pickFilter(m.id)} title={m.url}>
-              <span class="fdot" class:live={m.online}></span>
-              <span class="flabel">{m.label}</span>
-              {#if activeCount(m.id)}<span class="fcount">{activeCount(m.id)}</span>{/if}
-            </button>
-          {/each}
-        </div>
+      {#if multi}
+        <button class="scope" onclick={() => (filterOpen = !filterOpen)} aria-label="Filter by machine">
+          <span class="fdot" class:live={currentFilter?.online}></span>
+          <span class="mlabel mono">{currentFilter ? currentFilter.label : 'All'}</span>
+          <svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+        </button>
       {/if}
     </div>
-  {/if}
+    {#if multi && filterOpen}
+      <button class="fscrim" onclick={() => (filterOpen = false)} aria-label="Close"></button>
+      <div class="fpop">
+        <button class="fopt" class:on={app.machineFilter === 'all'} onclick={() => pickFilter('all')}>
+          <span class="fdot"></span>
+          <span class="mlabel mono">All machines</span>
+          <span class="fcount">{app.sessions.length}</span>
+        </button>
+        {#each app.machines as m (m.id)}
+          <button class="fopt" class:on={app.machineFilter === m.id} onclick={() => pickFilter(m.id)} title={m.url}>
+            <span class="fdot" class:live={m.online}></span>
+            <span class="mlabel mono">{m.label}</span>
+            {#if activeCount(m.id)}<span class="fcount">{activeCount(m.id)}</span>{/if}
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </div>
 
   <div class="list">
     <div class="homewrap"><Home compact /></div>
@@ -305,89 +301,84 @@
   .icon:hover {
     background: var(--panel);
   }
-  .searchwrap {
-    padding: 0 14px 4px;
+  /* Search and machine scope in one hairline bar — boxy like the app's cards,
+     not a candy pill, and one row instead of two so the list gets the space. */
+  .filterbar {
+    position: relative;
+    padding: 4px 14px 6px;
   }
-  .search {
+  .fbar {
     display: flex;
     align-items: center;
     gap: 9px;
-    padding: 0 13px;
+    height: 38px;
+    padding: 0 5px 0 12px;
     background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: 100px;
+    border-radius: var(--r);
     color: var(--text-4);
   }
-  .search:focus-within {
+  .fbar:focus-within {
     border-color: var(--border-2);
+  }
+  .mag {
+    flex: none;
+    color: var(--text-4);
+  }
+  .fbar:focus-within .mag {
     color: var(--text-3);
   }
-  .search input {
+  .fbar input {
     flex: 1;
     min-width: 0;
     background: none;
     border: none;
     outline: none;
-    padding: 10px 0;
-    font-size: 14px;
+    padding: 0;
+    font-size: 13.5px;
     color: var(--text);
   }
-  .search input::placeholder {
+  .fbar input::placeholder {
     color: var(--text-4);
   }
-  .search input::-webkit-search-cancel-button {
+  .fbar input::-webkit-search-cancel-button {
     -webkit-appearance: none;
   }
-  /* Machine filter: a dropdown so it stays one line no matter how many
-     machines join the fleet. */
-  .mfilterwrap {
-    position: relative;
-    padding: 8px 14px 4px;
-  }
-  .mfilter {
-    width: 100%;
+  /* The scope chip: the current machine as mono data behind a hairline rule. */
+  .scope {
+    flex: none;
     display: flex;
     align-items: center;
-    gap: 9px;
-    padding: 9px 12px;
-    border-radius: 100px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    color: var(--text-2);
-    font-size: 13px;
-    font-weight: 500;
+    gap: 6px;
+    height: 24px;
+    padding: 0 7px 0 10px;
+    margin-left: 1px;
+    border-left: 1px solid var(--border);
+    color: var(--text-3);
+    font-size: 12px;
   }
-  .mfilter:hover {
-    border-color: var(--border-2);
+  .scope:hover {
     color: var(--text);
   }
-  .fchev {
-    flex: none;
-    color: var(--text-4);
-  }
-  .flabel {
-    flex: 1;
-    min-width: 0;
-    text-align: left;
+  .mlabel {
+    max-width: 82px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .fico,
-  .fdot {
+  .chev {
     flex: none;
+    color: var(--text-4);
   }
   .fdot {
-    width: 7px;
-    height: 7px;
+    flex: none;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
     background: var(--text-4);
   }
   .fdot.live {
     background: var(--live);
-  }
-  .fico {
-    color: var(--text-4);
   }
   .fscrim {
     position: fixed;
@@ -397,7 +388,7 @@
   .fpop {
     position: absolute;
     z-index: 31;
-    top: calc(100% - 2px);
+    top: calc(100% - 4px);
     left: 14px;
     right: 14px;
     padding: 5px;
@@ -418,13 +409,14 @@
     color: var(--text-2);
     font-size: 13px;
   }
-  .fopt:hover {
+  .fopt:hover,
+  .fopt.on {
     background: var(--panel-3);
     color: var(--text);
   }
-  .fopt.on {
-    color: var(--text);
-    background: var(--panel-3);
+  .fopt .mlabel {
+    flex: 1;
+    max-width: none;
   }
   .fcount {
     flex: none;
