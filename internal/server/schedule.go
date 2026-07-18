@@ -20,6 +20,20 @@ func (s *Server) fireJob(j schedule.Job) error {
 	if mode == "" {
 		mode = "acceptEdits"
 	}
+
+	// A resume whose target session is already open cannot be re-created (the CLI
+	// rejects a duplicate live id, so the fire would just error). Deliver the
+	// prompt to the running session instead, which is what "resume this session"
+	// means when you happen to have it open: it appears in the live chat (queued
+	// if a turn is in flight). Put it in the job's autonomous mode first so the
+	// scheduled run does not stall on a permission prompt.
+	if j.Target.Kind == "resume" && j.Target.SessionID != "" {
+		if sess, ok := s.mgr.Get(j.Target.SessionID); ok {
+			_ = sess.SetPermissionMode(mode)
+			return sess.Prompt(j.Prompt, nil, nil)
+		}
+	}
+
 	opts := session.CreateOptions{
 		Cwd:    j.Target.Cwd,
 		Title:  j.Name,
