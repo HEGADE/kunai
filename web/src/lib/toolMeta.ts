@@ -20,6 +20,10 @@ export type IconKey =
   | 'todo'
   | 'web'
   | 'task'
+  | 'ask'
+  | 'skill'
+  | 'plan'
+  | 'clock'
   | 'tool'
 
 export function iconFor(name: string): IconKey {
@@ -57,6 +61,18 @@ export function iconFor(name: string): IconKey {
     case 'TaskOutput':
     case 'Monitor':
       return 'task'
+    case 'AskUserQuestion':
+      return 'ask'
+    case 'Skill':
+      return 'skill'
+    case 'ExitPlanMode':
+      return 'plan'
+    case 'ToolSearch':
+      return 'search'
+    case 'Artifact':
+      return 'write'
+    case 'ScheduleWakeup':
+      return 'clock'
     default:
       return 'tool'
   }
@@ -173,8 +189,25 @@ export function describe(name: string, input: unknown, result?: { content: strin
     case 'TaskGet':
     case 'TaskList':
       return { ...base, action: name === 'TaskList' ? 'List tasks' : 'Task status', text: str(i.task_id), mono: true }
-    case 'Monitor':
-      return { ...base, action: 'Monitor', text: str(i.command) || str(i.until), mono: true }
+    case 'Monitor': {
+      const ids = Array.isArray(i.agentIds) ? i.agentIds.length : 0
+      const wait = str(i.wait_for)
+      return { ...base, action: 'Monitor', text: ids ? `${ids} agent${ids === 1 ? '' : 's'}${wait ? ` · ${wait}` : ''}` : str(i.command) }
+    }
+    case 'AskUserQuestion': {
+      const qs = Array.isArray(i.questions) ? (i.questions as Obj[]) : []
+      return { ...base, action: 'Ask', text: qs.length === 1 ? str(qs[0].question) : qs.length ? `${qs.length} questions` : '' }
+    }
+    case 'Skill':
+      return { ...base, action: 'Skill', text: str(i.skill), mono: true }
+    case 'ToolSearch':
+      return { ...base, action: 'Tool search', text: str(i.query), mono: true }
+    case 'ExitPlanMode':
+      return { ...base, action: 'Present plan' }
+    case 'Artifact':
+      return { ...base, action: 'Artifact', text: str(i.title) || baseName(str(i.file_path)) }
+    case 'ScheduleWakeup':
+      return { ...base, action: i.stop ? 'Cancel wake-up' : 'Schedule wake-up', text: str(i.reason) }
     default:
       return {
         ...base,
