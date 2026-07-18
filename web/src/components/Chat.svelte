@@ -6,6 +6,7 @@
   import type { Attachment } from '../lib/types'
   import { groupTurns } from '../lib/turns'
   import { MODELS, EFFORTS, modelLabel, effortLabel } from '../lib/models'
+  import { setReloadGuard } from '../lib/updater'
   import PermissionGate from './PermissionGate.svelte'
   import Context from './Context.svelte'
   import Queued from './Queued.svelte'
@@ -47,6 +48,15 @@
   let fileInput = $state<HTMLInputElement | null>(null)
   let attachments = $state<Attachment[]>([])
   let uploading = $state(false)
+
+  // Hold an auto-update reload while there's unsent work in the composer, so a
+  // deploy never wipes a half-typed prompt out from under you. Clears back to
+  // "always safe" when this chat unmounts.
+  $effect(() => {
+    setReloadGuard(() => draft.trim() !== '' || attachments.length > 0)
+    return () => setReloadGuard(() => false)
+  })
+
   let menuOpen = $state(false)
   let schedOpen = $state(false)
   let addProjOpen = $state(false)
