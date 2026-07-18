@@ -25,11 +25,13 @@ func (s *Server) fireJob(j schedule.Job) error {
 	// rejects a duplicate live id, so the fire would just error). Deliver the
 	// prompt to the running session instead, which is what "resume this session"
 	// means when you happen to have it open: it appears in the live chat (queued
-	// if a turn is in flight). Put it in the job's autonomous mode first so the
-	// scheduled run does not stall on a permission prompt.
+	// if a turn is in flight). Leave its permission mode untouched — the session
+	// is already running in a mode someone chose, so forcing the job's mode onto
+	// it would yank an attended session into accept-edits out from under you. The
+	// autonomous-mode default is applied only when the job spawns a fresh session
+	// (below), which is the genuinely unattended case.
 	if j.Target.Kind == "resume" && j.Target.SessionID != "" {
 		if sess, ok := s.mgr.Get(j.Target.SessionID); ok {
-			_ = sess.SetPermissionMode(mode)
 			return sess.Prompt(j.Prompt, nil, nil)
 		}
 	}
