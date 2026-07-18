@@ -241,28 +241,32 @@
         </button>
       {/if}
     </div>
-    <!-- The session's actions, one tap each instead of buried in a menu. Nav
-         (back/home) stays framed; these are lighter so the two groups read
-         apart. Close is set off and caution-tinted so it isn't fat-fingered. -->
+    <!-- The session's actions, one tap each instead of buried in a menu. Each
+         carries a label (desktop) and its own colour so loop and schedule read
+         at a glance; a phone drops to coloured icons to fit beside the path.
+         Close is icon-only and alert-red so a terminal action stands apart. -->
     <div class="actions">
-      <button class="abtn" onclick={() => (addProjOpen = true)} aria-label="Add project" title="Add project">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /><path d="M12 11v4M10 13h4" /></svg>
+      <button class="abtn add" onclick={() => (addProjOpen = true)} aria-label="Add project" title="Add another project to this session">
+        <span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /><path d="M12 11v4M10 13h4" /></svg></span>
+        <span class="albl">Project</span>
       </button>
       {#if chat.loop?.state === 'running'}
-        <button class="abtn active" onclick={() => chat.stopLoop()} aria-label="Stop the loop" title="Stop the loop">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4" /><path d="M3 11V9a4 4 0 014-4h14" /><path d="M7 22l-4-4 4-4" /><path d="M21 13v2a4 4 0 01-4 4H3" /></svg>
+        <button class="abtn loop on" onclick={() => chat.stopLoop()} aria-label="Stop the loop" title="Stop the loop">
+          <span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-3-6.7" /><path d="M21 3v5h-5" /></svg></span>
+          <span class="albl">Stop</span>
         </button>
       {:else}
-        <button class="abtn" onclick={() => (loopOpen = true)} aria-label="Run in a loop" title="Run in a loop">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4" /><path d="M3 11V9a4 4 0 014-4h14" /><path d="M7 22l-4-4 4-4" /><path d="M21 13v2a4 4 0 01-4 4H3" /></svg>
+        <button class="abtn loop" onclick={() => (loopOpen = true)} aria-label="Run in a loop" title="Run this prompt in a loop">
+          <span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-3-6.7" /><path d="M21 3v5h-5" /></svg></span>
+          <span class="albl">Loop</span>
         </button>
       {/if}
-      <button class="abtn" onclick={() => (schedOpen = true)} aria-label="Schedule a prompt" title="Schedule a prompt">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></svg>
+      <button class="abtn sched" onclick={() => (schedOpen = true)} aria-label="Schedule a prompt" title="Schedule a prompt for later">
+        <span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 1.5" /><path d="M5 3L2 6M22 6l-3-3" /></svg></span>
+        <span class="albl">Schedule</span>
       </button>
-      <span class="adiv" aria-hidden="true"></span>
-      <button class="abtn danger" onclick={() => app.closeSessionActive()} aria-label="Close session" title="Close session">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v8" /><path d="M18 7.5a8 8 0 11-12 0" /></svg>
+      <button class="abtn close" onclick={() => app.closeSessionActive()} aria-label="Close session" title="Close this session">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v8" /><path d="M18 7.5a8 8 0 11-12 0" /></svg>
       </button>
     </div>
   </header>
@@ -556,43 +560,76 @@
     color: var(--text);
     border-color: var(--border-2);
   }
-  /* The session's action row: lighter than the framed nav buttons so the two
-     read as different groups, and tight so they cluster as one unit. */
+  /* The session's action row: labelled, colour-coded pills on desktop so loop
+     and schedule are unmistakable; each icon keeps its own hue. */
   .actions {
     flex: none;
     display: flex;
     align-items: center;
-    gap: 1px;
+    gap: 5px;
   }
   .abtn {
-    width: 34px;
-    height: 34px;
-    border-radius: 50%;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    color: var(--text-3);
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px 0 9px;
+    border-radius: 100px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    font-size: 12.5px;
+    font-weight: 500;
   }
   .abtn:hover {
+    border-color: var(--border-2);
     color: var(--text);
-    background: var(--panel-2);
   }
-  /* A loop is running: the toggle both signals and stops it. */
-  .abtn.active {
+  .abtn .ic {
+    display: flex;
+  }
+  /* One hue per action, so the row reads by colour as well as shape. */
+  .abtn.add .ic {
+    color: #8698ad;
+  }
+  .abtn.loop .ic {
     color: var(--busy);
   }
-  .abtn.active:hover {
-    color: var(--busy);
+  .abtn.sched .ic {
+    color: #a08ac0;
   }
-  .abtn.danger:hover {
+  .abtn.close {
     color: var(--alert);
+    padding: 0;
+    width: 32px;
+    justify-content: center;
   }
-  .adiv {
-    flex: none;
-    width: 1px;
-    height: 17px;
-    margin: 0 5px;
-    background: var(--border);
+  /* A loop is running: the toggle both signals (amber fill) and stops it. */
+  .abtn.loop.on {
+    color: var(--busy);
+    border-color: rgba(198, 161, 94, 0.4);
+    background: rgba(198, 161, 94, 0.1);
+  }
+  .abtn.loop.on:hover {
+    border-color: rgba(198, 161, 94, 0.6);
+  }
+  /* A phone header can't hold four labelled pills beside the path, so there the
+     actions drop to coloured icon buttons — the hue and clearer glyphs carry
+     the meaning. */
+  @media (max-width: 860px) {
+    .abtn {
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      justify-content: center;
+      border-radius: 50%;
+    }
+    .abtn.close {
+      width: 34px;
+    }
+    .albl {
+      display: none;
+    }
   }
   /* Plain left-aligned title — no pill box. */
   .htitle {

@@ -86,15 +86,23 @@
   // Why there are no numbers, when there are none. Without this a failed read
   // just deleted the rows, which reads as "still loading" forever.
   let usageErr = $state('')
+  // Only a real machine switch clears the meter. A transient poll blip (a
+  // dropped fetch that flips a machine offline for one tick) must NOT blank
+  // numbers that were right a second ago: that blanking collapsed the quota
+  // rows to zero height and shoved the whole sidebar list ("dancing").
+  let usageFor = ''
   $effect(() => {
     const url = selUrl,
-      online = selOnline
-    void selId
-    use = null
-    usageLoaded = false
-    usageErr = ''
+      online = selOnline,
+      id = selId
+    if (id !== usageFor) {
+      usageFor = id
+      use = null
+      usageLoaded = false
+      usageErr = ''
+    }
     if (!online) {
-      usageLoaded = true // an offline machine has no quota to wait for
+      usageLoaded = true // an offline machine has no quota to wait for; keep the last-good numbers
       return
     }
     let done = false
@@ -572,6 +580,14 @@
     gap: 0 8px;
     font-size: 12px;
     color: var(--text-4);
+  }
+  /* On the phone dashboard the vitals sit at the top of the session list, so a
+     poll that changes a number's width (uptime ticking, "Nominal"→"45°C") must
+     not wrap the line and shove every row below it. Pin it to one line; the
+     least-important tail (uptime) is what clips if space runs out. */
+  .home.compact .vitals {
+    flex-wrap: nowrap;
+    overflow: hidden;
   }
   /* The dots come from the layout, not the markup, so a vital that is absent
      never leaves a separator stranded. */
