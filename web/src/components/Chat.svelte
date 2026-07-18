@@ -61,16 +61,6 @@
   let schedOpen = $state(false)
   let addProjOpen = $state(false)
   let loopOpen = $state(false)
-  // Which face of the session view is showing: the conversation, or the
-  // changed-files review. The header toggle flips it; the composer hides while
-  // reviewing since you're reading, not typing.
-  let view = $state<'chat' | 'changes'>('chat')
-  // Focusing a different session drops back to its conversation, so a tab switch
-  // never lands you on another session's diff.
-  $effect(() => {
-    void chat.sessionId
-    view = 'chat'
-  })
 
   function resetRel(unixSec: number): string {
     let s = Math.round(unixSec - Date.now() / 1000)
@@ -257,10 +247,6 @@
          at a glance; a phone drops to coloured icons to fit beside the path.
          Close is icon-only and alert-red so a terminal action stands apart. -->
     <div class="actions">
-      <button class="abtn changes" class:on={view === 'changes'} onclick={() => (view = view === 'changes' ? 'chat' : 'changes')} aria-label="Changed files" title="Review changed files">
-        <span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.6" /><circle cx="18" cy="18" r="2.6" /><path d="M12.5 6H16a2 2 0 012 2v6.5" /><path d="M11.5 18H8a2 2 0 01-2-2V9.5" /></svg></span>
-        <span class="albl">Changes</span>
-      </button>
       <button class="abtn add" onclick={() => (addProjOpen = true)} aria-label="Add project" title="Add another project to this session">
         <span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /><path d="M12 11v4M10 13h4" /></svg></span>
         <span class="albl">Add project</span>
@@ -286,9 +272,6 @@
     </div>
   </header>
 
-  {#if view === 'changes'}
-    <div class="changesview"><Changes {chat} /></div>
-  {:else}
   <div class="scroll" bind:this={scroller} onscroll={onScroll}>
     <!-- Wait for the backlog to fully arrive, then mount it in one paint (see the
          init effect). This is what keeps opening a long session smooth. -->
@@ -363,6 +346,10 @@
         {/if}
 
         {#if chat.errorLine}<div class="err mono">{chat.errorLine}</div>{/if}
+
+        <!-- What the session changed on disk, at the end of the conversation:
+             review the files and diffs right where the work finished. -->
+        <Changes {chat} />
       </div>
     {/if}
   </div>
@@ -371,7 +358,6 @@
     <button class="jump" style="bottom: {dockH + 14}px" onclick={() => toBottom(true)} aria-label="Scroll to latest">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6" /></svg>
     </button>
-  {/if}
   {/if}
 
   <PermissionGate {chat} />
@@ -406,7 +392,7 @@
     </div>
   {/if}
 
-  <div class="dock" class:gone={view === 'changes'} bind:clientHeight={dockH}>
+  <div class="dock" bind:clientHeight={dockH}>
     <LoopBar {chat} />
     <Queued {chat} />
     <div class="field">
@@ -624,19 +610,6 @@
     width: 32px;
     justify-content: center;
   }
-  /* Changes is a view toggle, not a command, so it reads neutral and fills in
-     (like a pressed tab) when it's the active face. */
-  .abtn.changes .ic {
-    color: var(--text-3);
-  }
-  .abtn.changes.on {
-    color: var(--text);
-    border-color: var(--border-2);
-    background: var(--panel-2);
-  }
-  .abtn.changes.on .ic {
-    color: var(--text);
-  }
   /* A loop is running: the toggle both signals (amber fill) and stops it. */
   .abtn.loop.on {
     color: var(--busy);
@@ -690,16 +663,6 @@
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     position: relative;
-  }
-  /* The review face takes the body's whole height and scrolls itself. */
-  .changesview {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-  }
-  .dock.gone {
-    display: none;
   }
   .blank {
     position: absolute;

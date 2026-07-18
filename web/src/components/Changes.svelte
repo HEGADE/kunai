@@ -12,8 +12,6 @@
   let { chat }: { chat: ChatConnection } = $props()
 
   let data = $state<ChangesResp | null>(null)
-  let error = $state('')
-  let loading = $state(true)
 
   // dir paths that are collapsed, file paths whose diff is open, and the diff
   // cache (a FileDiff, or the sentinels while it loads / if it failed). Reactive
@@ -25,20 +23,24 @@
   const tree = $derived<TreeNode[]>(data?.files ? buildTree(data.files) : [])
 
   async function load() {
-    loading = true
-    error = ''
     try {
       data = await fetchChanges(chat.origin, chat.sessionId)
-    } catch (e) {
-      error = (e as Error).message
-    } finally {
-      loading = false
+    } catch {
+      // A failed read just leaves the panel hidden; the chat is unaffected.
     }
   }
   $effect(() => {
     // Refetch when the session changes (chat prop swaps between tabs).
     void chat.sessionId
     load()
+  })
+  // Refresh the moment a turn ends: the agent has just finished touching files,
+  // so the panel updates itself instead of waiting for a manual refresh.
+  let wasRunning = false
+  $effect(() => {
+    const runningNow = chat.sessionState === 'running'
+    if (wasRunning && !runningNow) load()
+    wasRunning = runningNow
   })
 
   function toggleDir(path: string) {
@@ -124,51 +126,46 @@
   {/if}
 {/snippet}
 
-<div class="changes">
-  <div class="chead">
-    <div class="ctitle">
-      <span class="eyebrow">Changed files</span>
-      {#if data?.repo && data.files.length}
+<!-- A clean tree or a non-repo session shows nothing: the panel appears only
+     when the agent actually changed files, right at the end of the chat. -->
+{#if data?.repo && data.files.length}
+  <div class="changes">
+    <div class="chead">
+      <div class="ctitle">
+        <span class="eyebrow">Changed files</span>
         <span class="n mono">{data.files.length}</span>
         {@render counts(data.added, data.removed)}
-      {/if}
-    </div>
-    {#if data?.repo && data.files.length}
+      </div>
       <div class="cbtns">
         <button class="tbtn" onclick={collapseAll} disabled={anyCollapsed && collapsed.size >= tree.length}>Collapse all</button>
         <button class="tbtn" onclick={load} aria-label="Refresh" title="Refresh">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-3-6.7" /><path d="M21 3v5h-5" /></svg>
         </button>
       </div>
-    {/if}
-  </div>
+    </div>
 
-  <div class="body">
-    {#if loading && !data}
-      <p class="state">Reading changes…</p>
-    {:else if error}
-      <p class="state err">{error}</p>
-    {:else if !data?.repo}
-      <p class="state">This folder isn't a git repository, so there's nothing to diff.</p>
-    {:else if data.files.length === 0}
-      <p class="state">No uncommitted changes. The working tree matches the last commit.</p>
-    {:else}
+    <div class="body">
       <div class="tree">
         {#each tree as n (n.kind === 'dir' ? n.path : n.file.path)}
           {@render row(n, 0)}
         {/each}
       </div>
       {#if data.truncated}<p class="state sub">Showing the first {data.files.length} files.</p>{/if}
-    {/if}
+    </div>
   </div>
-</div>
+{/if}
 
 <style>
+  /* An inline card at the end of the conversation, like a tool card but wider:
+     it holds the review where the work finished. */
   .changes {
     display: flex;
     flex-direction: column;
-    height: 100%;
-    min-height: 0;
+    margin-top: 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-raised);
+    overflow: hidden;
   }
   .chead {
     flex: none;
@@ -176,7 +173,8 @@
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    padding: 10px 16px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
   }
   .ctitle {
     display: flex;
@@ -213,11 +211,10 @@
   }
 
   .body {
-    flex: 1;
-    min-height: 0;
+    max-height: 460px;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
-    padding: 0 10px 20px;
+    padding: 6px 8px 8px;
   }
   .tree {
     display: flex;
@@ -313,7 +310,6 @@
     font-size: 12px;
     color: var(--text-4);
   }
-  .state.err,
   .dnote.err {
     color: var(--alert);
   }
