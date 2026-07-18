@@ -1,6 +1,8 @@
 package schedule
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -149,11 +151,47 @@ func TestCatchupSkipsWhenTooOverdue(t *testing.T) {
 	}
 }
 
-func TestAtMostOnceAcrossRestartMidFire(t *testing.T) {
-	// The reported bug: a one-time job fired twice because the process restarted
-	// (RestartSec) between firing and persisting the disabled state, so a second
-	// process loaded it still enabled and fired it again. The occurrence must be
-	// reserved and saved BEFORE firing, so a mid-fire restart cannot repeat it.
+// An occurrence whose fire was interrupted before it completed (the session was
+// never created) is re-fired when the scheduler comes back — the run survives a
+// restart rather than being silently lost. This is the reservation left behind
+// by a restart mid-fire: PendingFire set, the one-shot already reserved-disabled.
+func TestReFiresInterruptedOccurrence(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "schedule.json")
+	jobs := []Job{{
+		ID: "x", Name: "n", Enabled: false, // one-shot, reserved-disabled before firing
+		Trigger:     Trigger{Kind: "at", At: time.Unix(1060, 0)},
+		PendingFire: time.Unix(1060, 0), // reserved but never confirmed
+	}}
+	b, _ := json.MarshalIndent(jobs, "", "  ")
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	fired := 0
+	s := New(p, func(Job) error { fired++; return nil })
+	s.clock = &fakeClock{t: time.Unix(1070, 0)}
+	s.tick()
+	if fired != 1 {
+		t.Fatalf("interrupted occurrence should re-fire once on restart, got %d", fired)
+	}
+	// It must not re-fire again: the recovery cleared PendingFire and persisted it.
+	s.tick()
+	if fired != 1 {
+		t.Fatalf("re-fired after recovery, got %d", fired)
+	}
+	if s.List()[0].PendingFire.IsZero() == false {
+		t.Fatal("PendingFire should be cleared after the occurrence resolves")
+	}
+	if got := s.List()[0].LastStatus; got != "fired" {
+		t.Fatalf("last_status = %q, want fired", got)
+	}
+}
+
+// The tradeoff of the above: a restart that lands in the tiny window AFTER a fire
+// has completed but BEFORE it was marked confirmed re-runs the occurrence. We
+// accept this (survive-restart over never-double) — the window is one save wide,
+// versus the whole fire in the original at-most-once bug. This documents it.
+func TestRestartAfterFireCanReRun(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "schedule.json")
 	total := 0
 	var s *Scheduler
@@ -161,9 +199,7 @@ func TestAtMostOnceAcrossRestartMidFire(t *testing.T) {
 	s = New(p, func(Job) error {
 		total++
 		if !restarted {
-			restarted = true
-			// Stand in for a crash/restart in the middle of the first fire: a
-			// fresh scheduler loads the persisted state and ticks at the same time.
+			restarted = true // stand in for a restart before the confirm save lands
 			s2 := New(p, func(Job) error { total++; return nil })
 			s2.clock = &fakeClock{t: time.Unix(1070, 0)}
 			s2.tick()
@@ -173,8 +209,8 @@ func TestAtMostOnceAcrossRestartMidFire(t *testing.T) {
 	s.clock = &fakeClock{t: time.Unix(1070, 0)}
 	s.Create(Job{Trigger: Trigger{Kind: "at", At: time.Unix(1060, 0)}, Target: Target{Cwd: "/x"}, Prompt: "hi"})
 	s.tick()
-	if total != 1 {
-		t.Fatalf("occurrence fired %d times across a mid-fire restart, want 1", total)
+	if total != 2 {
+		t.Fatalf("a restart before the confirm save should re-run the occurrence, got %d", total)
 	}
 }
 
