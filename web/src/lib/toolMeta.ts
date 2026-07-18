@@ -45,7 +45,17 @@ export function iconFor(name: string): IconKey {
     case 'WebFetch':
     case 'WebSearch':
       return 'web'
+    // The subagent launcher (current CLIs name it `Agent`; older ones `Task`)
+    // plus the background-task family that manages long-running work.
+    case 'Agent':
     case 'Task':
+    case 'TaskCreate':
+    case 'TaskUpdate':
+    case 'TaskStop':
+    case 'TaskGet':
+    case 'TaskList':
+    case 'TaskOutput':
+    case 'Monitor':
       return 'task'
     default:
       return 'tool'
@@ -71,6 +81,7 @@ export interface ToolLabel {
   file?: string
   path?: string
   text?: string
+  agent?: string // subagent type, shown as a pill (Agent tool only)
   mono: boolean
   added: number
   removed: number
@@ -146,8 +157,24 @@ export function describe(name: string, input: unknown, result?: { content: strin
       return { ...base, action: 'Fetch', text: str(i.url), mono: true }
     case 'WebSearch':
       return { ...base, action: 'Search', text: str(i.query) }
+    // A subagent launch. The type (Explore, general-purpose, …) reads as a pill;
+    // the description is the human summary of what it was asked to do.
+    case 'Agent':
     case 'Task':
-      return { ...base, action: 'Task', text: str(i.subagent_type) || str(i.description) }
+      return { ...base, action: 'Agent', agent: str(i.subagent_type), text: str(i.description) }
+    case 'TaskCreate':
+      return { ...base, action: 'Start task', text: str(i.description) || str(i.prompt) }
+    case 'TaskUpdate':
+      return { ...base, action: 'Update task', text: str(i.status) || str(i.description) }
+    case 'TaskStop':
+      return { ...base, action: 'Stop task', text: str(i.task_id), mono: true }
+    case 'TaskOutput':
+      return { ...base, action: 'Read task output', text: str(i.task_id), mono: true }
+    case 'TaskGet':
+    case 'TaskList':
+      return { ...base, action: name === 'TaskList' ? 'List tasks' : 'Task status', text: str(i.task_id), mono: true }
+    case 'Monitor':
+      return { ...base, action: 'Monitor', text: str(i.command) || str(i.until), mono: true }
     default:
       return {
         ...base,

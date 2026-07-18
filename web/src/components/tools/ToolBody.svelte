@@ -65,7 +65,7 @@
     <div class="fields">
       <div class="f"><span class="k">Query</span><span class="v">{s(i.query)}</span></div>
     </div>
-  {:else if name === 'Task'}
+  {:else if name === 'Agent' || name === 'Task'}
     <div class="fields">
       {#if s(i.subagent_type)}<div class="f"><span class="k">Agent</span><span class="v mono">{s(i.subagent_type)}</span></div>{/if}
       {#if s(i.description)}<div class="f"><span class="k">Task</span><span class="v">{s(i.description)}</span></div>{/if}
