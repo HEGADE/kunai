@@ -217,3 +217,22 @@ type Attachment struct {
 	Name      string `json:"name,omitempty"`
 	MediaType string `json:"media_type,omitempty"`
 }
+
+// Notification kinds: the reason kunai wants to wake a phone. They are the
+// vocabulary shared by the things that raise a notification (a session, a loop,
+// the thermal guard) and the server that turns one into push text, so they live
+// here with the rest of the cross-package contract rather than as literals at
+// each end.
+//
+// Every kind carries a `detail` string alongside it. That detail is always
+// kunai's own description of its own state: which tool is waiting, why a loop
+// ended, why the guard tripped. It is never model output or user text, which is
+// what lets it ride the push channel without breaking the promise that a
+// notification carries no session content.
+const (
+	NotifyPermission = "permission" // a tool call is waiting on you; detail is the tool's name
+	NotifyDone       = "done"       // a turn finished; detail is how long it took and what it cost
+	NotifyFailed     = "failed"     // a turn ended in an error; detail is how long it ran
+	NotifyLoop       = "loop"       // a loop ended; detail is the limit that ended it
+	NotifyThermal    = "thermal"    // the guard stopped everything; detail is why
+)

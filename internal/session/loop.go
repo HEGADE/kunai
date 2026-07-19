@@ -359,7 +359,7 @@ func (s *Session) afterTurn(turnFailed bool) {
 	if state != "" {
 		s.stopLoopLocked(state, reason)
 		s.mu.Unlock()
-		s.notifyAttention("loop", reason)
+		s.notifyAttention(NotifyLoop, reason)
 		return
 	}
 	s.mu.Unlock()

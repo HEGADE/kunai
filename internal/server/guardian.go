@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hegade/kunai/internal/awake"
+	"github.com/hegade/kunai/internal/session"
 )
 
 // stopper is the guardian's view of the session manager: the one action it
@@ -217,7 +218,7 @@ func (g *guardian) check(temp float64, pressure string) {
 	g.releaseHolds()
 	log.Printf("thermal guard tripped (%s): stopped %d session(s), released keep-awake", reason, n)
 	if g.notify != nil {
-		g.notify("thermal", reason)
+		g.notify(session.NotifyThermal, reason)
 	}
 }
 
@@ -234,7 +235,7 @@ func (g *guardian) hardTrip(temp float64) {
 	g.releaseHolds()
 	log.Printf("thermal guard HARD trip at %.0fC: stopped %d session(s), powering off", temp, n)
 	if g.notify != nil {
-		g.notify("thermal", "powering off: host too hot")
+		g.notify(session.NotifyThermal, "powering off: host too hot")
 	}
 	if err := hostPowerOff(); err != nil {
 		// The soft stop already happened, so a denied poweroff is not a disaster:
