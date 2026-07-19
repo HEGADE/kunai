@@ -313,19 +313,61 @@ func transcriptPath(configDir, id string) string {
 	return ""
 }
 
-func loadTranscriptTurns(configDir, id string) []session.SeedTurn {
-	path := transcriptPath(configDir, id)
-	if path == "" {
-		return nil
-	}
+// seedTailBytes caps how much of a transcript resume-seeding reads. A long-lived
+// session's transcript grows to tens of MB, and parsing all of it synchronously
+// in the create-session handler was the resume delay (measured: 1.8s on a 69MB
+// file, two full scans). The client only mounts the trailing window of turns and
+// reveals more from what was seeded, so the tail is all a reopen actually shows;
+// reading only it makes resume time constant no matter how big the session got.
+// The trade: scrollback on a resumed session ends at this boundary instead of
+// the session's birth.
+const seedTailBytes = 4 << 20
+
+// transcriptTail returns the last seedTailBytes of the file aligned to a line
+// start (the whole file when smaller), or nil if it cannot be read.
+func transcriptTail(path string) []byte {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
 	}
 	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil
+	}
+	if st.Size() > seedTailBytes {
+		if _, err := f.Seek(st.Size()-seedTailBytes, io.SeekStart); err != nil {
+			return nil
+		}
+		b, err := io.ReadAll(f)
+		if err != nil {
+			return nil
+		}
+		// Drop the partial first line the seek landed in.
+		if i := bytes.IndexByte(b, '\n'); i >= 0 {
+			return b[i+1:]
+		}
+		return nil
+	}
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+func loadTranscriptTurns(configDir, id string) []session.SeedTurn {
+	path := transcriptPath(configDir, id)
+	if path == "" {
+		return nil
+	}
+	tail := transcriptTail(path)
+	if tail == nil {
+		return nil
+	}
 
 	var turns []session.SeedTurn
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(bytes.NewReader(tail))
 	sc.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
 	for sc.Scan() {
 		var v struct {
@@ -466,14 +508,17 @@ func loadTranscriptContextTokens(configDir, id string) (tokens, overhead int64) 
 	if path == "" {
 		return 0, 0
 	}
-	f, err := os.Open(path)
-	if err != nil {
+	// Tail-only, like the seed: the current occupancy is the newest usage, which
+	// is always in the tail. The overhead measurement only sees compactions inside
+	// the tail; an older one is re-measured live at the next compaction, which is
+	// the accepted cost of a constant-time resume.
+	tail := transcriptTail(path)
+	if tail == nil {
 		return 0, 0
 	}
-	defer f.Close()
 
 	var last, pendingPost int64
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(bytes.NewReader(tail))
 	sc.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
 	for sc.Scan() {
 		var v struct {

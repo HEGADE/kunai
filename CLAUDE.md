@@ -150,7 +150,15 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   `~/.claude/projects/*/<sessionId>.jsonl` transcripts for the Recent list and
   parses them into seed turns on resume (that is why resumed sessions show their old
   conversation and tool outputs: `--resume` alone loads model context but never
-  re-emits messages).
+  re-emits messages). Resume seeding is **tail-capped** (`seedTailBytes`,
+  `transcriptTail`): only the last few MB of the transcript are read, aligned to a
+  line start, so resume time stays constant as a session grows. Parsing a 69MB
+  transcript in full took ~1.8s of synchronous handler time (two scans) and was
+  the whole "resume is slow" delay; the client only mounts the trailing window
+  anyway, so the tail is all a reopen shows. The trade, accepted: scrollback on a
+  resumed session ends at the cap, and the overhead measurement only sees
+  compactions inside the tail (an older one re-measures live at the next
+  compaction).
 - The changed-files review is **client-side and per-query**, not a server endpoint:
   `web/src/components/TurnChanges.svelte` renders what each query changed straight
   from that turn's Edit/Write/MultiEdit tool inputs (`fileEditsOf` in `toolMeta.ts`).

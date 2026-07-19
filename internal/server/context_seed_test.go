@@ -1,10 +1,54 @@
 package server
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// A transcript past seedTailBytes is seeded from its tail only: resume time must
+// stay constant as a session's transcript grows (a 69MB transcript made resume
+// take ~1.8s of synchronous parsing). The tail read aligns to a line start, so a
+// cut line never yields a corrupt turn, the newest turns are always present, and
+// the oldest are the ones dropped.
+func TestSeedReadsOnlyTheTail(t *testing.T) {
+	cfg := t.TempDir()
+	pad := strings.Repeat("x", 64*1024)
+	var lines []string
+	n := (seedTailBytes / (64 * 1024)) + 40 // comfortably past the cap
+	for i := 0; i < n; i++ {
+		lines = append(lines, fmt.Sprintf(
+			`{"type":"user","message":{"role":"user","content":"msg-%d %s"}}`, i, pad))
+	}
+	writeTranscriptLines(t, cfg, "big", lines...)
+
+	turns := loadTranscriptTurns(cfg, "big")
+	if len(turns) == 0 || len(turns) >= n {
+		t.Fatalf("seeded %d of %d turns, want a proper tail subset", len(turns), n)
+	}
+	// The newest line survives; the oldest is dropped; every turn is intact.
+	if want := fmt.Sprintf("msg-%d", n-1); !strings.HasPrefix(turns[len(turns)-1].Text, want) {
+		t.Errorf("last turn = %.20q, want prefix %q", turns[len(turns)-1].Text, want)
+	}
+	for _, tr := range turns {
+		if !strings.HasPrefix(tr.Text, "msg-") {
+			t.Fatalf("corrupt turn from a cut line: %.40q", tr.Text)
+		}
+	}
+	first, _ := msgIndex(turns[0].Text)
+	if first == 0 {
+		t.Errorf("oldest line survived a tail read (turn 0 = %.20q)", turns[0].Text)
+	}
+}
+
+// msgIndex pulls the index out of a "msg-<i> ..." seed line.
+func msgIndex(s string) (int, error) {
+	var i int
+	_, err := fmt.Sscanf(s, "msg-%d", &i)
+	return i, err
+}
 
 func writeTranscriptLines(t *testing.T, configDir, id string, lines ...string) {
 	t.Helper()
