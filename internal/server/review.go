@@ -266,7 +266,7 @@ func (s *Server) handleChanges(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, ChangesResp{Repo: false})
 		return
 	}
-	resp, err := changes(ctx, sess.Cwd, sessionBase(ctx, sess.Cwd, sess.CreatedAt))
+	resp, err := changes(ctx, sess.Cwd, sessionBase(ctx, sess.Cwd, s.sessionStart(sess.ID, sess.CreatedAt)))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -286,7 +286,7 @@ func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"repo": false})
 		return
 	}
-	files, err := fileDiff(ctx, sess.Cwd, r.URL.Query().Get("path"), sessionBase(ctx, sess.Cwd, sess.CreatedAt))
+	files, err := fileDiff(ctx, sess.Cwd, r.URL.Query().Get("path"), sessionBase(ctx, sess.Cwd, s.sessionStart(sess.ID, sess.CreatedAt)))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

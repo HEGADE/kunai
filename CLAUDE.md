@@ -170,12 +170,18 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   committing the work does not empty the panel: "what did this session do" stays
   answerable after a commit (`git diff <base>` with no second ref diffs the working
   tree against base, catching both). `sessionBase` derives it from the session's
-  `CreatedAt` via `git rev-list -1 --before=@<unix>`, so it needs no capture at
+  start time via `git rev-list -1 --before=@<unix>`, so it needs no capture at
   create and works for every already-running session; it falls back to `HEAD` when
   the start is unknown or predates the first commit (so it never explodes to a
-  whole-repo diff). `CreatedAt` is not persisted, so a resumed session's base is
-  effectively its resume time, i.e. changes since resume, which is the honest
-  reading when the prior run's work was already committed.
+  whole-repo diff). The start time is the session's **true birth**, read from the
+  first timestamped frame of its transcript (`Server.sessionStart` ->
+  `firstTranscriptTime`), NOT the in-memory `CreatedAt`: `CreatedAt` resets to the
+  resume time on every restart, which for a long-lived session collapses the base
+  back to "now" and empties the panel the moment it is resumed (a real bug: the
+  running session had been resumed after its commits, so it showed "Clean"). The
+  transcript birth survives restarts and is retroactive, so the review shows a
+  multi-day session's whole footprint. It falls back to `CreatedAt` only for a
+  brand-new session with no transcript yet.
 - `web/`: Svelte 5 (runes: `$state`/`$derived` in `.svelte.ts` stores), Vite plus
   vite-plugin-pwa with `injectManifest` and a hand-written `src/sw.ts`.
 - `internal/server/stats.go` is cross-platform (disk via `syscall.Statfs`,
