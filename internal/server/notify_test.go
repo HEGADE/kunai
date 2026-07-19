@@ -38,6 +38,7 @@ func TestWakeupTextFallsBackWithoutDetail(t *testing.T) {
 		session.NotifyPermission: "A session needs your approval",
 		session.NotifyThermal:    "Stopped everything: the host got too hot",
 		session.NotifyDone:       "A task finished",
+		session.NotifyFailed:     "A turn failed",
 		"something-new":          "A session needs your attention",
 	}
 	for kind, want := range cases {
@@ -50,11 +51,19 @@ func TestWakeupTextFallsBackWithoutDetail(t *testing.T) {
 	}
 }
 
-// A finished turn deliberately carries nothing: naming the session would mean
-// showing its title, which is the prompt you typed.
-func TestWakeupTextDoneIgnoresDetail(t *testing.T) {
-	if _, body := wakeupText(session.NotifyDone, "refactor the auth handler"); body != "A task finished" {
-		t.Errorf("body = %q, want the detail ignored for a finished turn", body)
+// A failed turn used to send the same words as a successful one, so the one
+// outcome worth acting on differently was indistinguishable on a lock screen.
+func TestWakeupTextDistinguishesFailureFromSuccess(t *testing.T) {
+	_, ok := wakeupText(session.NotifyDone, "4m 12s · $0.42")
+	_, bad := wakeupText(session.NotifyFailed, "1m 3s")
+	if ok != "Task finished: 4m 12s · $0.42" {
+		t.Errorf("done body = %q", ok)
+	}
+	if bad != "Turn failed: 1m 3s" {
+		t.Errorf("failed body = %q", bad)
+	}
+	if ok == bad {
+		t.Error("a failed turn reads the same as a finished one")
 	}
 }
 

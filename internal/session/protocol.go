@@ -231,7 +231,8 @@ type Attachment struct {
 // notification carries no session content.
 const (
 	NotifyPermission = "permission" // a tool call is waiting on you; detail is the tool's name
-	NotifyDone       = "done"       // a turn finished; no detail
+	NotifyDone       = "done"       // a turn finished; detail is how long it took and what it cost
+	NotifyFailed     = "failed"     // a turn ended in an error; detail is how long it ran
 	NotifyLoop       = "loop"       // a loop ended; detail is the limit that ended it
 	NotifyThermal    = "thermal"    // the guard stopped everything; detail is why
 )

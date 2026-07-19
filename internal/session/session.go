@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -312,7 +314,13 @@ func (s *Session) pump() {
 			more := len(s.queue) > 0 || (s.loop != nil && s.loop.state == LoopRunning)
 			s.mu.Unlock()
 			if !more {
-				s.notifyAttention(NotifyDone, "")
+				// A turn that ended in an error used to report as finished, which
+				// is the one thing you would want distinguished at a glance.
+				kind := NotifyDone
+				if res.IsError {
+					kind = NotifyFailed
+				}
+				s.notifyAttention(kind, turnSummary(res))
 			}
 			s.drainQueue()
 			s.afterTurn(res.IsError)
@@ -853,5 +861,40 @@ func parseResult(raw json.RawMessage) AppEvent {
 		CachedTokens: r.Usage.CacheRead,                   // context re-read, billed at a fraction
 		OutputTokens: r.Usage.Output,
 		CostUSD:      r.CostUSD,
+	}
+}
+
+// turnSummary describes a finished turn the way kunai measured it: how long it
+// ran and what it cost. Both are numbers kunai produced about its own work, not
+// anything that was asked or answered, so they can ride the notification channel
+// without carrying session content. Returns "" when the frame reported neither,
+// which leaves the notification at its plain wording.
+func turnSummary(ev AppEvent) string {
+	parts := make([]string, 0, 2)
+	if d := shortDuration(ev.DurationMs); d != "" {
+		parts = append(parts, d)
+	}
+	// Below a cent the rounded figure would read "$0.00", which says less than
+	// saying nothing.
+	if ev.CostUSD >= 0.01 {
+		parts = append(parts, fmt.Sprintf("$%.2f", ev.CostUSD))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// shortDuration renders a turn length for a notification: "38s", "4m 12s",
+// "1h 4m". Compact because it sits on a lock screen next to other words.
+func shortDuration(ms int64) string {
+	if ms <= 0 {
+		return ""
+	}
+	sec := ms / 1000
+	switch {
+	case sec < 60:
+		return fmt.Sprintf("%ds", sec)
+	case sec < 3600:
+		return fmt.Sprintf("%dm %ds", sec/60, sec%60)
+	default:
+		return fmt.Sprintf("%dh %dm", sec/3600, (sec%3600)/60)
 	}
 }

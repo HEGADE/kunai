@@ -36,9 +36,14 @@ func wakeupBody(kind, detail string) string {
 		// run, which is worth waking up for, while the command itself is content.
 		return withDetail("A session needs your approval", "Needs approval: ", detail)
 	case session.NotifyDone:
-		// A finished turn has no detail worth carrying; saying which session
-		// finished would mean naming it, and a session's name is your prompt.
-		return "A task finished"
+		// How long it ran and what it cost: measurements kunai took of its own
+		// work. Which session finished stays out, because naming it means showing
+		// its title, and a title is the prompt you typed.
+		return withDetail("A task finished", "Task finished: ", detail)
+	case session.NotifyFailed:
+		// Worth its own wording. A failed turn used to report as finished, so the
+		// one outcome you would act on differently read exactly like success.
+		return withDetail("A turn failed", "Turn failed: ", detail)
 	case session.NotifyLoop:
 		return withDetail("A loop finished", "Loop finished: ", detail)
 	case session.NotifyThermal:
