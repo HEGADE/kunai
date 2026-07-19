@@ -134,8 +134,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleCloseSession)
 	mux.HandleFunc("PATCH /api/sessions/{id}", s.handleUpdateSessionMeta)
 	mux.HandleFunc("POST /api/sessions/{id}/effort", s.handleSetEffort)
-	mux.HandleFunc("GET /api/sessions/{id}/changes", s.handleChanges)
-	mux.HandleFunc("GET /api/sessions/{id}/diff", s.handleDiff)
 	mux.HandleFunc("GET /api/browse", s.handleBrowse)
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("DELETE /api/history/{id}", s.handleDeleteHistory)

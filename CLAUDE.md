@@ -151,37 +151,15 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   parses them into seed turns on resume (that is why resumed sessions show their old
   conversation and tool outputs: `--resume` alone loads model context but never
   re-emits messages).
-- `internal/server/review.go` (+ `review_diff.go`): what a session changed on
-  disk, so you can read the diff from a phone. Two **read-only** GET endpoints,
-  `/api/sessions/{id}/changes` (the changed-files tree) and `/diff` (one file's
-  structured hunks), that shell `git` in the live session's cwd through an
-  injectable `gitRun` (the same testable-subprocess pattern as `usageRun`/
-  `execRun`). The summary stitches numstat counts, name-status statuses, and
-  untracked files (line-counted through a fixed 32K buffer) into one tree;
-  `review_diff.go` reshapes `git diff` into typed rows so the client never
-  re-diffs. Everything is bounded (file count, rows per file, bytes per line) so a
-  machine-sized sweep can't balloon a response or memory. **Nothing here writes**
-  (diff/status/read only), so a review can never mutate the working tree it reports
-  on; do not add a write path without making that guarantee explicit. The
-  locally-built `/kunai` binary is gitignored so it never shows as a phantom
-  untracked change.
-- The diff base is the **session-start commit**, not `HEAD`, so the review shows
-  what *this session* changed (its commits AND its uncommitted work), and
-  committing the work does not empty the panel: "what did this session do" stays
-  answerable after a commit (`git diff <base>` with no second ref diffs the working
-  tree against base, catching both). `sessionBase` derives it from the session's
-  start time via `git rev-list -1 --before=@<unix>`, so it needs no capture at
-  create and works for every already-running session; it falls back to `HEAD` when
-  the start is unknown or predates the first commit (so it never explodes to a
-  whole-repo diff). The start time is the session's **true birth**, read from the
-  first timestamped frame of its transcript (`Server.sessionStart` ->
-  `firstTranscriptTime`), NOT the in-memory `CreatedAt`: `CreatedAt` resets to the
-  resume time on every restart, which for a long-lived session collapses the base
-  back to "now" and empties the panel the moment it is resumed (a real bug: the
-  running session had been resumed after its commits, so it showed "Clean"). The
-  transcript birth survives restarts and is retroactive, so the review shows a
-  multi-day session's whole footprint. It falls back to `CreatedAt` only for a
-  brand-new session with no transcript yet.
+- The changed-files review is **client-side and per-query**, not a server endpoint:
+  `web/src/components/TurnChanges.svelte` renders what each query changed straight
+  from that turn's Edit/Write/MultiEdit tool inputs (`fileEditsOf` in `toolMeta.ts`).
+  See the "Rich chat rendering" section. An earlier git-shelling model
+  (`internal/server/review.go`, a `/changes` + `/diff` endpoint pair diffing the
+  working tree against a base commit) was removed: it read as one session-wide blob
+  and went "Clean" the moment the work was committed, when what was wanted was
+  always "what did *this query* change". The locally-built `/kunai` binary is still
+  gitignored so it never shows as a phantom untracked change.
 - `web/`: Svelte 5 (runes: `$state`/`$derived` in `.svelte.ts` stores), Vite plus
   vite-plugin-pwa with `injectManifest` and a hand-written `src/sw.ts`.
 - `internal/server/stats.go` is cross-platform (disk via `syscall.Statfs`,
@@ -212,19 +190,21 @@ The web client renders the conversation richly from data already on the client
 - `web/src/lib/{highlight,diff,toolMeta}.ts` hold the shared, pure helpers.
   `highlight.js` is the only new runtime dependency.
 
-`Changes.svelte` renders the changed-files review as a card **anchored to the turn
-that produced the changes** (fed by `internal/server/review.go`; tree built by the
-pure `web/src/lib/fileTree.ts`, diffs by `FileDiff.svelte`). It is always present in
-a git repo (the full tree when the agent changed files, a compact "Clean" row
-otherwise) and hidden entirely for a non-git session. Per-file diffs load lazily
-(one request per file you open), and it refetches itself when a turn ends. It was
-briefly a header toggle and then hidden-when-empty; both read as broken, so the
-rule is: always-there in a repo, never for a non-repo. Placement: `Chat.svelte`
-computes `changesAnchor`, the last mounted turn whose `files` are non-empty, and
-renders the card right after it, so a new unrelated query flows **below** the
-review instead of shoving it to the bottom of the log. It falls back to the end of
-the log only when no mounted turn edited a file (a clean tree, or changes made
-outside the window or via a Bash command), where there is no turn to anchor to.
+`TurnChanges.svelte` renders a **per-query** changed-files card, right under the
+reply that made the changes: the files that query's Edit/Write/MultiEdit calls
+touched, each expandable to its diff. It is fed entirely from the turn's own tool
+inputs (`fileEditsOf` in `toolMeta.ts`, the sibling of `fileChangesOf`) and the
+same `DiffView`/`CodeView` the tool cards use, so it is **client-side only** (no
+git, no server round-trip), scoped to one query, and stays correct after the work
+is committed, because the diffs live in the conversation, not the working tree.
+`Chat.svelte` renders one after every turn (the card self-hides when the turn
+edited no files), so each query owns its own review. This deliberately **replaced**
+an earlier git-shelling model (a single session-wide panel fed by
+`internal/server/review.go`) that kept confusing: it showed the whole working tree
+against a base commit, so it read as one big blob and went "Clean" the moment the
+work was committed. The wanted behaviour was always "what did *this query* change",
+which the tool inputs already answer. The `review.go`/`review_diff.go` endpoints
+and their `Changes.svelte` client are gone; per-turn edits are the source of truth.
 
 The log is windowed, and that is load-bearing rather than an optimisation. The
 whole backlog arrives at once on open, so `Chat.svelte` waits for `chat.ready` (the

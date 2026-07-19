@@ -22,7 +22,7 @@
   import ScheduleAfter from './ScheduleAfter.svelte'
   import ToolGroup from './ToolGroup.svelte'
   import TurnFooter from './TurnFooter.svelte'
-  import Changes from './Changes.svelte'
+  import TurnChanges from './TurnChanges.svelte'
 
   let { chat }: { chat: ChatConnection } = $props()
 
@@ -43,15 +43,6 @@
   let firstVisible = $state(0)
   const turns = $derived(allTurns.slice(firstVisible))
 
-  // The changed-files review belongs to the work that produced it, not to the
-  // bottom of the log: anchor it right after the last turn that actually edited a
-  // file, so a new, unrelated query flows below it instead of shoving it down. If
-  // no mounted turn changed files (a clean tree, or changes made outside the
-  // window, e.g. via Bash) it falls back to the end of the log so it stays present.
-  const changesAnchor = $derived.by(() => {
-    for (let i = allTurns.length - 1; i >= 0; i--) if (allTurns[i].files.length > 0) return i
-    return -1
-  })
 
   let draft = $state('')
   let scroller = $state<HTMLElement | null>(null)
@@ -348,9 +339,9 @@
               </div>
             </div>
           {/if}
-          {#if firstVisible + ti === changesAnchor}
-            <Changes {chat} />
-          {/if}
+          <!-- What this query changed, right under the reply that changed it.
+               Self-hides when the turn edited no files. -->
+          <TurnChanges {turn} />
         {/each}
 
         {#if chat.thinking || chat.streaming || running}
@@ -368,12 +359,6 @@
 
         {#if chat.errorLine}<div class="err mono">{chat.errorLine}</div>{/if}
 
-        <!-- Fallback slot: when no mounted turn edited a file (clean tree, or the
-             changes came from outside the window / a Bash command), the review has
-             no turn to anchor to, so it sits at the end of the log and stays present. -->
-        {#if changesAnchor < firstVisible}
-          <Changes {chat} />
-        {/if}
       </div>
     {/if}
   </div>

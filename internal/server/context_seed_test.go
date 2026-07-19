@@ -4,32 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
-
-// The review base is the session's true birth, read from the first timestamped
-// frame of its transcript, so it survives a resume (the in-memory CreatedAt
-// resets on restart and would collapse the base to "now"). A leading frame with
-// no timestamp (e.g. a summary) is skipped.
-func TestFirstTranscriptTime(t *testing.T) {
-	cfg := t.TempDir()
-	writeTranscriptLines(t, cfg, "sess",
-		`{"type":"summary","summary":"x"}`,
-		`{"type":"user","timestamp":"2026-07-14T12:25:18.124Z","message":{}}`,
-		`{"type":"assistant","timestamp":"2026-07-19T10:00:00Z"}`,
-	)
-	path := filepath.Join(cfg, "projects", "-proj", "sess.jsonl")
-	want, _ := time.Parse(time.RFC3339, "2026-07-14T12:25:18.124Z")
-	if got := firstTranscriptTime(path); !got.Equal(want) {
-		t.Fatalf("first time = %v, want %v (first timestamped frame, summary skipped)", got, want)
-	}
-	if !firstTranscriptTime("").IsZero() {
-		t.Error("empty path should return zero time")
-	}
-	if !firstTranscriptTime(filepath.Join(cfg, "missing.jsonl")).IsZero() {
-		t.Error("missing file should return zero time")
-	}
-}
 
 func writeTranscriptLines(t *testing.T, configDir, id string, lines ...string) {
 	t.Helper()

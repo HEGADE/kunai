@@ -441,68 +441,6 @@ type transcriptUsage struct {
 	CacheRead   int64 `json:"cache_read_input_tokens"`
 }
 
-// sessionStart is when the session was originally created, read from the first
-// timestamped frame of its transcript. The live CreatedAt resets to the resume
-// time on every restart, which for a long-lived session collapses the review base
-// back to "now" (and the changed-files panel to "Clean") the moment it is resumed.
-// The transcript's first frame is the true birth and survives restarts, so the
-// review shows the whole session even after a resume. Falls back to createdAt
-// when no transcript timestamp is available (a brand-new session with no turns).
-func (s *Server) sessionStart(id string, createdAt time.Time) time.Time {
-	if t := firstTranscriptTime(s.transcriptForID(id)); !t.IsZero() {
-		return t
-	}
-	return createdAt
-}
-
-// transcriptForID finds a session's transcript across every account's projects
-// (an id is globally unique, so at most one matches), mirroring deleteTranscript.
-func (s *Server) transcriptForID(id string) string {
-	if id == "" || strings.ContainsAny(id, `/\.`) {
-		return ""
-	}
-	for _, ar := range s.accountRoots() {
-		dirs, err := os.ReadDir(ar.root)
-		if err != nil {
-			continue
-		}
-		for _, d := range dirs {
-			p := filepath.Join(ar.root, d.Name(), id+".jsonl")
-			if _, err := os.Stat(p); err == nil {
-				return p
-			}
-		}
-	}
-	return ""
-}
-
-// firstTranscriptTime returns the timestamp of the first frame that carries one,
-// i.e. when the session was created. Only the opening lines are read, so it stays
-// cheap even on a multi-megabyte transcript.
-func firstTranscriptTime(path string) time.Time {
-	if path == "" {
-		return time.Time{}
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return time.Time{}
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 8<<20)
-	for i := 0; i < 50 && sc.Scan(); i++ {
-		var v struct {
-			Timestamp string `json:"timestamp"`
-		}
-		if json.Unmarshal(sc.Bytes(), &v) == nil && v.Timestamp != "" {
-			if t, err := time.Parse(time.RFC3339, v.Timestamp); err == nil {
-				return t
-			}
-		}
-	}
-	return time.Time{}
-}
-
 // loadTranscriptContextTokens returns the context-window occupancy (input plus
 // cache tokens) from a transcript's most recent usage, so a resumed session
 // shows its real context fill at once instead of the "send a message" prompt.

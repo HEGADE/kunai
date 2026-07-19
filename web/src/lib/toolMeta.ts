@@ -265,3 +265,60 @@ export function fileChangesOf(blocks: Block[]): FileChange[] {
   }
   return [...byPath.values()]
 }
+
+// One edit a turn made to a file: an Edit/MultiEdit hunk (old -> new) or a Write
+// (whole content). Rendered by the per-query changed-files card via the same
+// DiffView/CodeView the tool cards use.
+export type EditOp =
+  | { kind: 'edit'; oldStr: string; newStr: string; replaceAll: boolean }
+  | { kind: 'write'; content: string }
+
+export interface FileEdits extends FileChange {
+  ops: EditOp[]
+}
+
+// fileEditsOf is fileChangesOf plus the actual operations per file, in order, so
+// the per-query card can show what each query changed (tree + expandable diffs)
+// straight from the conversation — no git, and it survives commits. Same source
+// (Edit/MultiEdit/Write tool calls), same order-preserving grouping by path.
+export function fileEditsOf(blocks: Block[]): FileEdits[] {
+  const byPath = new Map<string, FileEdits>()
+  const at = (path: string): FileEdits | null => {
+    if (!path) return null
+    let e = byPath.get(path)
+    if (!e) {
+      e = { path, name: baseName(path), added: 0, removed: 0, ops: [] }
+      byPath.set(path, e)
+    }
+    return e
+  }
+  for (const b of blocks) {
+    if (b.type !== 'tool_use') continue
+    const i = obj(b.input)
+    if (b.name === 'Edit') {
+      const e = at(str(i.file_path))
+      if (!e) continue
+      const d = diffLines(str(i.old_string), str(i.new_string))
+      e.added += d.added
+      e.removed += d.removed
+      e.ops.push({ kind: 'edit', oldStr: str(i.old_string), newStr: str(i.new_string), replaceAll: i.replace_all === true })
+    } else if (b.name === 'MultiEdit') {
+      const e = at(str(i.file_path))
+      if (!e) continue
+      const edits = Array.isArray(i.edits) ? (i.edits as Obj[]) : []
+      for (const ed of edits) {
+        const d = diffLines(str(ed.old_string), str(ed.new_string))
+        e.added += d.added
+        e.removed += d.removed
+        e.ops.push({ kind: 'edit', oldStr: str(ed.old_string), newStr: str(ed.new_string), replaceAll: ed.replace_all === true })
+      }
+    } else if (b.name === 'Write') {
+      const e = at(str(i.file_path))
+      if (!e) continue
+      const content = str(i.content)
+      e.added += lineCount(content)
+      e.ops.push({ kind: 'write', content })
+    }
+  }
+  return [...byPath.values()]
+}
