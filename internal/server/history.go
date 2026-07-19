@@ -83,8 +83,21 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 // clamp — a pinned session stays in the list even when it is older than the last
 // entry the limit would otherwise allow.
 func scanHistory(live map[string]bool, limit int, roots []accountRoot, keep map[string]bool) []HistoryEntry {
-	out := []HistoryEntry{}
-	seen := map[string]bool{}
+	// Switching a session's account copies its transcript into the target's
+	// folder, so one id can exist under several accounts. The copy its owning
+	// account is still appending to is the newest, so newest mtime wins: that is
+	// both the account the session last ran on and the timestamp Recent should
+	// sort it by. Taking the first root instead credited whichever account was
+	// listed first (always the default) and sorted by a stale copy's time, and
+	// since the client sends this tag back on reopen, it also resumed the session
+	// on the wrong account, seeding it from that account's older copy.
+	type candidate struct {
+		path  string
+		cli   string
+		mtime time.Time
+		size  int64
+	}
+	best := map[string]candidate{}
 	for _, ar := range roots {
 		dirs, err := os.ReadDir(ar.root)
 		if err != nil {
@@ -104,26 +117,59 @@ func scanHistory(live map[string]bool, limit int, roots []accountRoot, keep map[
 					continue
 				}
 				id := strings.TrimSuffix(name, ".jsonl")
-				if live[id] || seen[id] {
+				if live[id] {
 					continue
 				}
 				info, err := f.Info()
+				// A zero-byte copy is not a conversation, so it can never win over
+				// a real one (a truncated stage once hid a session entirely).
 				if err != nil || info.Size() == 0 {
 					continue
 				}
-				cwd, title := probeTranscript(filepath.Join(ar.root, d.Name(), name))
-				if cwd == "" {
-					continue
+				if cur, ok := best[id]; ok {
+					if info.ModTime().Before(cur.mtime) {
+						continue
+					}
+					// Timestamps can tie: the switch copies a transcript and both
+					// sides are then touched within the same second, and some
+					// filesystems only keep coarse times anyway. A transcript is
+					// append-only, so on a tie the longer copy is the one that ran
+					// further. (Seen for real: two copies of one session sharing a
+					// timestamp and differing by 16KB.)
+					if info.ModTime().Equal(cur.mtime) && info.Size() <= cur.size {
+						continue
+					}
 				}
-				if title == "" {
-					title = filepath.Base(cwd)
+				best[id] = candidate{
+					path:  filepath.Join(ar.root, d.Name(), name),
+					cli:   ar.name,
+					mtime: info.ModTime(),
+					size:  info.Size(),
 				}
-				seen[id] = true
-				out = append(out, HistoryEntry{ID: id, Cwd: cwd, Title: title, CLI: ar.name, Mtime: info.ModTime()})
 			}
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Mtime.After(out[j].Mtime) })
+	// Read each session once, from the copy that won: probing every copy would
+	// multiply the expensive part of this scan by the number of accounts.
+	out := make([]HistoryEntry, 0, len(best))
+	for id, c := range best {
+		cwd, title := probeTranscript(c.path)
+		if cwd == "" {
+			continue
+		}
+		if title == "" {
+			title = filepath.Base(cwd)
+		}
+		out = append(out, HistoryEntry{ID: id, Cwd: cwd, Title: title, CLI: c.cli, Mtime: c.mtime})
+	}
+	// Map order is random, so equal timestamps need a tiebreak or the list would
+	// reshuffle between polls.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].Mtime.Equal(out[j].Mtime) {
+			return out[i].Mtime.After(out[j].Mtime)
+		}
+		return out[i].ID < out[j].ID
+	})
 	if limit > 0 && len(out) > limit {
 		head := out[:limit]
 		// A pinned session past the cutoff is appended so a pin is never hidden by

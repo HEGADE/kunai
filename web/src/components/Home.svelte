@@ -157,6 +157,29 @@
     return s <= 0 ? 'resetting' : `resets in ${dur(s)}`
   }
 
+  // With several accounts, two meters each is a wall: six bars that mostly say
+  // "fine". The limit that stops you first is the only honest single reading, so
+  // an account collapses to one row showing its fuller window, named, with when
+  // it frees up. Same argument the loop meter makes for its two caps. Tapping a
+  // row opens both windows, so nothing is lost, it is just not all shouted at
+  // once.
+  type Binding = { pct: number; window: string; when: string }
+  function binding(u: Usage | null): Binding | null {
+    const s = u?.session ?? null
+    const w = u?.weekly ?? null
+    if (!s && !w) return null
+    const pick = !s ? w! : !w ? s! : w.percent >= s.percent ? w : s
+    return { pct: pick.percent, window: pick === w ? 'weekly' : 'session', when: shortReset(pick) }
+  }
+  // Terse enough for a phone: "2h 39m", not "resets in 2h 39m".
+  function shortReset(w: UsageWindow): string {
+    if (!w.resets_at) return w.percent > 0 ? '' : 'idle'
+    const s = w.resets_at - Math.floor(Date.now() / 1000)
+    return s <= 0 ? 'resetting' : dur(s)
+  }
+  // Which account's detail is open. One at a time: this is a glance, not a table.
+  let openAcct = $state('')
+
   // Quick-start dirs for the selected machine only — so chips don't each repeat
   // the machine name (that's stated once in the section header).
   const selProjects = $derived.by(() => {
@@ -241,21 +264,60 @@
           </div>
         {/each}
       </div>
+    {:else if accounts.length > 1}
+      <!-- Several accounts: one line each, the binding window only. Six bars that
+           mostly say "fine" is not a dashboard, and on a phone it is a wall. -->
+      <div class="qroster">
+        {#each accounts as cli (cli)}
+          {@const u = uses[cli] ?? null}
+          {@const b = binding(u)}
+          {@const err = usageErrs[cli] ?? ''}
+          {@const open = openAcct === cli}
+          <button
+            class="qrow"
+            class:hot={(b?.pct ?? 0) >= 80}
+            class:open
+            onclick={() => (openAcct = open ? '' : cli)}
+            aria-expanded={open}
+            title="{cli} — tap for both windows"
+          >
+            <i class="qfill" style="width:{Math.min(100, b?.pct ?? 0)}%"></i>
+            <span class="qname">{cli}</span>
+            {#if b}
+              <span class="qwhen mono">{b.window}{b.when ? ` · ${b.when}` : ''}</span>
+              <span class="qpct mono">{Math.round(b.pct)}<small>%</small></span>
+            {:else}
+              <span class="qwhen mono">{err ? 'no quota' : '—'}</span>
+              <span class="qpct mono">—</span>
+            {/if}
+          </button>
+          {#if open && u}
+            <!-- Both windows, on demand. -->
+            <div class="qdetail">
+              {#each [{ k: 'Session', w: u.session }, { k: 'Weekly', w: u.weekly }] as { k, w } (k)}
+                {#if w}
+                  <div class="q">
+                    <span class="q-k">{k}</span>
+                    <div class="q-track">
+                      <i class:hot={w.percent >= 80} style="width:{Math.max(1.5, Math.min(100, w.percent))}%"></i>
+                    </div>
+                    <span class="q-pct mono" class:hot={w.percent >= 80}>{Math.round(w.percent)}<small>%</small></span>
+                    <span class="q-when mono">{resetsIn(w)}</span>
+                  </div>
+                {/if}
+              {/each}
+            </div>
+          {/if}
+        {/each}
+      </div>
     {:else}
-      <!-- One group per account. With a single account this is exactly the old
-           two rows; with several, each is named, because "switch when one runs
-           out" is only a choice you can make if you can see both. -->
+      <!-- One account: two rows was never the clutter, and it says more. -->
       {#each accounts as cli (cli)}
         {@const u = uses[cli] ?? null}
         {@const session = u?.session ?? null}
         {@const weekly = u?.weekly ?? null}
         {@const err = usageErrs[cli] ?? ''}
         <div class="quota">
-          {#if accounts.length > 1}
-            <div class="q-acct mono" class:spent={(session?.percent ?? 0) >= 100 || (weekly?.percent ?? 0) >= 100}>
-              {cli}
-            </div>
-          {/if}
           {#if err && !session && !weekly}
             {#each ['Session', 'Weekly'] as k (k)}
               <div class="q skel">
@@ -505,20 +567,85 @@
   /* Quota: the page's one piece of weight. Reuses the track/fill and mono
      numerals the context meter already uses, so a budget reads the same
      everywhere in kunai. */
-  /* The account a group of meters belongs to. Mono and quiet: it labels data
-     rather than competing with it, and only appears when there is more than one
-     account to tell apart. */
-  .q-acct {
-    font-size: 11px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--text-4);
-    margin-bottom: -3px;
+  /* The multi-account roster: one line per account, and the meter IS the row's
+     fill, so a bar costs no vertical space at all. Three accounts read as three
+     lines rather than six bars. */
+  .qroster {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 20px;
+    max-width: 34rem;
   }
-  /* A spent account is the one fact worth raising your voice for: it is why you
-     would switch a session to the other one. */
-  .q-acct.spent {
-    color: var(--text-2);
+  .qrow {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    text-align: left;
+    padding: 9px 12px;
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--panel);
+  }
+  .qrow:hover,
+  .qrow.open {
+    background: var(--panel-2);
+  }
+  /* The fill sits behind the text: positioned so it paints over the row's own
+     background, with the labels positioned after it so they stay on top. */
+  .qfill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: var(--panel-3);
+    pointer-events: none;
+  }
+  .qrow.hot .qfill {
+    background: color-mix(in oklab, var(--busy) 20%, transparent);
+  }
+  .qname,
+  .qwhen,
+  .qpct {
+    position: relative;
+  }
+  .qname {
+    flex: 1;
+    min-width: 0;
+    font-size: 13.5px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .qwhen {
+    flex: none;
+    font-size: 11px;
+    color: var(--text-4);
+  }
+  .qpct {
+    flex: none;
+    font-size: 14px;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    min-width: 2.6rem;
+    text-align: right;
+  }
+  .qrow.hot .qpct {
+    color: var(--busy);
+  }
+  .qpct small {
+    font-size: 0.72em;
+    opacity: 0.65;
+  }
+  /* Both windows, revealed under the row that asked for them. */
+  .qdetail {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 12px 6px;
   }
   .quota {
     display: flex;
