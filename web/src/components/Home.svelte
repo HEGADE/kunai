@@ -20,6 +20,7 @@
   const st = $derived(sel?.stats ?? null)
   const outdated = $derived(updateAvailable(st?.kunai_version, app.latestVersion))
   const updating = $derived(sel ? !!app.updating[sel.id] : false)
+  const updateErr = $derived(sel ? (app.updateError[sel.id] ?? '') : '')
   const selSessions = $derived(sel ? app.sessions.filter((s) => s.machineId === sel.id).length : 0)
   const selResumable = $derived(sel ? app.history.filter((h) => h.machineId === sel.id).length : 0)
 
@@ -213,9 +214,12 @@
       <div class="utext">
         <span class="uhead">Update available</span>
         <span class="mono usub">{st?.kunai_version} → {app.latestVersion} · restarts {sel.label}, sessions resume</span>
+        {#if updateErr}
+          <span class="mono uerr">update failed: {updateErr}</span>
+        {/if}
       </div>
       <button class="ubtn" disabled={updating} onclick={() => sel && app.updateMachine(sel.id)}>
-        {updating ? 'Updating…' : 'Update'}
+        {updating ? 'Updating…' : updateErr ? 'Retry' : 'Update'}
       </button>
     </div>
   {/if}
@@ -474,6 +478,13 @@
   .usub {
     font-size: 10.5px;
     color: var(--text-4);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .uerr {
+    font-size: 10.5px;
+    color: var(--alert);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
