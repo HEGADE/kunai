@@ -330,13 +330,21 @@ type AccountInfo struct {
 }
 
 // handleAccounts lists the machine's accounts with their signed-in status, for the
-// Accounts screen. Status is checked live (one cheap `auth status` per account).
+// Accounts screen. Each status is a live `auth status` shell (~1s), so they run
+// concurrently: the whole list resolves in about one check, not one per account.
 func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 	list := s.cliList()
-	out := make([]AccountInfo, 0, len(list))
+	out := make([]AccountInfo, len(list))
+	var wg sync.WaitGroup
 	for i, c := range list {
-		out = append(out, AccountInfo{Name: c.Name, Default: i == 0, Ready: authOK(c.Bin, c.configDir())})
+		out[i] = AccountInfo{Name: c.Name, Default: i == 0}
+		wg.Add(1)
+		go func(i int, c CLIProfile) {
+			defer wg.Done()
+			out[i].Ready = authOK(c.Bin, c.configDir()) // distinct index: no shared write
+		}(i, c)
 	}
+	wg.Wait()
 	writeJSON(w, http.StatusOK, out)
 }
 

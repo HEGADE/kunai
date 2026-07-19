@@ -10,15 +10,20 @@
     removeAccount,
   } from '../lib/api'
 
-  // Manage the Claude accounts a machine can run sessions on. Each account is an
-  // identity with its own monogram sigil; adding one mints that identity as you
-  // name it, then hands you the sign-in link. Accounts are per-machine (each keeps
-  // its own login + transcripts), so everything is scoped to the selected machine.
+  // Manage the Claude accounts a machine can run sessions on. Accounts are
+  // per-machine (each keeps its own login and transcripts), so everything is
+  // scoped to the selected machine. The list reads like a small credential
+  // roster: a status dot, the name, and its role; a signed-out account is dimmed
+  // because you cannot switch a session onto it.
   let machineId = $state(app.activeMachineId ?? app.machines[0]?.id ?? '')
   const base = $derived(app.baseForMachine(machineId))
   const machine = $derived(app.machines.find((m) => m.id === machineId) ?? null)
 
-  let accounts = $state<AccountInfo[]>([])
+  // A row's `ready` is undefined while its signed-in check is still in flight, so
+  // the dot can show "checking" instead of guessing. Cached names paint at once;
+  // fetchAccounts fills the real status in.
+  type Row = { name: string; default: boolean; ready?: boolean }
+  let accounts = $state<Row[]>([])
   let loading = $state(true)
   let error = $state('')
 
@@ -31,17 +36,19 @@
   let busy = $state(false)
   let flowError = $state('')
 
-  // A monogram: up to two initials from the account name, the identity sigil.
-  function initials(n: string): string {
-    const parts = n.trim().split(/\s+/).filter(Boolean)
-    if (!parts.length) return '?'
-    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+  // Seed rows from the machine's cached account names so the list paints the
+  // instant it opens, with status still resolving. The names ship in /api/stats
+  // only when the machine has a real choice (>1 account); a single-account
+  // machine has none cached, so it falls through to the skeleton.
+  function seedFromCache() {
+    const names = machine?.stats?.clis ?? []
+    accounts = names.map((n, i) => ({ name: n, default: i === 0 }))
   }
 
   async function load() {
-    loading = true
     error = ''
+    seedFromCache()
+    loading = accounts.length === 0
     try {
       accounts = await fetchAccounts(base)
     } catch (e) {
@@ -101,7 +108,7 @@
     }
   }
 
-  async function remove(a: AccountInfo) {
+  async function remove(a: Row) {
     if (a.default) return
     try {
       await removeAccount(base, a.name)
@@ -110,6 +117,9 @@
       error = (e as Error).message
     }
   }
+
+  const statusText = (a: Row): string =>
+    a.ready === undefined ? 'checking' : a.ready ? '' : 'signed out'
 </script>
 
 <div class="backdrop" onclick={() => app.closeAccounts()} role="presentation">
@@ -118,10 +128,7 @@
     <button class="back" onclick={() => app.closeAccounts()} aria-label="Back">
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
     </button>
-    <div class="htext">
-      <span class="eyebrow">Identities</span>
-      <h1>Claude accounts</h1>
-    </div>
+    <h1>Claude accounts</h1>
     {#if app.machines.length > 1}
       <label class="mpick">
         <select bind:value={machineId} aria-label="Machine">
@@ -140,101 +147,94 @@
     hits its limit, switch a session to the other.
   </p>
 
-  <div class="body">
-    {#if loading}
-      <p class="state">Loading accounts…</p>
-    {:else if error}
-      <p class="state err">{error}</p>
-    {:else}
-      <ul class="ids">
-        {#each accounts as a (a.name)}
-          <li class="id" class:muted={!a.ready}>
-            <span class="sigil" class:def={a.default}>{initials(a.name)}</span>
-            <span class="meta">
-              <span class="nm">{a.name}</span>
-              <span class="sub">
-                {#if a.default}Default account{:else if a.ready}Signed in{:else}Signed out{/if}
-              </span>
-            </span>
-            {#if a.ready}<span class="live" title="Signed in"></span>{/if}
-            {#if !a.default}
-              <button class="rm" onclick={() => remove(a)} aria-label="Remove {a.name}">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" /><path d="M6 6l1 14a2 2 0 002 2h6a2 2 0 002-2l1-14" /></svg>
-              </button>
-            {/if}
-          </li>
-        {/each}
+  {#if error}
+    <p class="state err">{error}</p>
+  {:else if loading}
+    <div class="roster" aria-hidden="true">
+      {#each [0, 1] as i (i)}
+        <div class="row"><span class="dot checking"></span><span class="skname"></span></div>
+      {/each}
+    </div>
+  {:else}
+    <div class="roster">
+      {#each accounts as a (a.name)}
+        <div class="row" class:off={a.ready === false}>
+          <span
+            class="dot"
+            class:on={a.ready === true}
+            class:hollow={a.ready === false}
+            class:checking={a.ready === undefined}></span>
+          <span class="nm">{a.name}</span>
+          {#if a.default}<span class="tag">default</span>{/if}
+          {#if statusText(a)}<span class="status">{statusText(a)}</span>{/if}
+          {#if !a.default}
+            <button class="rm" onclick={() => remove(a)} aria-label="Remove {a.name}" title="Remove {a.name}">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" /><path d="M6 6l1 14a2 2 0 002 2h6a2 2 0 002-2l1-14" /></svg>
+            </button>
+          {/if}
+        </div>
+      {/each}
+    </div>
+  {/if}
 
-        {#if step === 'idle'}
-          <li>
-            <button class="addrow" onclick={() => (step = 'name')}>
-              <span class="sigil add">
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
-              </span>
-              <span class="meta">
-                <span class="nm">Add account</span>
-                <span class="sub">Sign in another Claude subscription</span>
-              </span>
-            </button>
-          </li>
-        {/if}
-      </ul>
-    {/if}
-
-    {#if step !== 'idle'}
-      <div class="flow">
-        {#if step === 'name'}
-          <div class="mint">
-            <span class="sigil big" class:empty={!name.trim()}>{name.trim() ? initials(name) : '?'}</span>
-            <div class="mintf">
-              <label class="flabel" for="acctname">Name this identity</label>
-              <input
-                id="acctname"
-                placeholder="Work"
-                bind:value={name}
-                onkeydown={(e) => e.key === 'Enter' && beginLink()}
-                autofocus />
-              <span class="hint">A label only, so you can tell your accounts apart.</span>
-            </div>
-          </div>
-          <div class="actions">
-            <button class="ghost" onclick={reset}>Cancel</button>
-            <button class="primary" disabled={!name.trim() || busy} onclick={beginLink}>
-              {busy ? 'Preparing…' : 'Continue'}
-            </button>
-          </div>
-        {:else}
-          <div class="signin">
-            <span class="sigil big" class:def={true}>{initials(name)}</span>
-            <p class="lead">
-              Almost there. Open the sign-in page, log in as the account you want
-              <b>{name}</b> to be, then paste the code Claude gives you back.
-            </p>
-          </div>
-          <a class="cta" href={url} target="_blank" rel="noopener noreferrer">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><path d="M15 3h6v6" /><path d="M10 14L21 3" /></svg>
-            Open the sign-in page
-          </a>
-          <label class="codef">
-            <span class="flabel">Paste the code</span>
-            <input
-              class="code"
-              placeholder="paste it here"
-              bind:value={code}
-              onkeydown={(e) => e.key === 'Enter' && complete()}
-              disabled={step === 'saving'} />
-          </label>
-          {#if flowError}<p class="flowerr">{flowError}</p>{/if}
-          <div class="actions">
-            <button class="ghost" onclick={reset} disabled={step === 'saving'}>Cancel</button>
-            <button class="primary" disabled={!code.trim() || step === 'saving'} onclick={complete}>
-              {step === 'saving' ? 'Signing in…' : 'Finish'}
-            </button>
-          </div>
-        {/if}
-      </div>
-    {/if}
-  </div>
+  {#if step === 'idle'}
+    <button class="add" onclick={() => (step = 'name')}>
+      <span class="plus">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+      </span>
+      <span class="addtext">
+        <span class="at">Add account</span>
+        <span class="as">Sign in another Claude subscription</span>
+      </span>
+    </button>
+  {:else}
+    <div class="flow">
+      {#if step === 'name'}
+        <div class="fhead"><span class="fstep">New account</span><span class="fnum">Step 1 of 2</span></div>
+        <label class="field">
+          <span class="flabel">Name this account</span>
+          <input
+            placeholder="Work"
+            bind:value={name}
+            onkeydown={(e) => e.key === 'Enter' && beginLink()}
+            autofocus />
+          <span class="hint">A label only, so you can tell your accounts apart.</span>
+        </label>
+        <div class="actions">
+          <button class="ghost" onclick={reset}>Cancel</button>
+          <button class="primary" disabled={!name.trim() || busy} onclick={beginLink}>
+            {busy ? 'Preparing…' : 'Continue'}
+          </button>
+        </div>
+      {:else}
+        <div class="fhead"><span class="fstep">Sign in {name}</span><span class="fnum">Step 2 of 2</span></div>
+        <p class="lead">
+          Open the sign-in page, log in as the account you want <b>{name}</b> to be,
+          then paste the code Claude gives you back.
+        </p>
+        <a class="cta" href={url} target="_blank" rel="noopener noreferrer">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><path d="M15 3h6v6" /><path d="M10 14L21 3" /></svg>
+          Open the sign-in page
+        </a>
+        <label class="field">
+          <span class="flabel">Paste the code</span>
+          <input
+            class="code"
+            placeholder="paste it here"
+            bind:value={code}
+            onkeydown={(e) => e.key === 'Enter' && complete()}
+            disabled={step === 'saving'} />
+        </label>
+        {#if flowError}<p class="flowerr">{flowError}</p>{/if}
+        <div class="actions">
+          <button class="ghost" onclick={reset} disabled={step === 'saving'}>Cancel</button>
+          <button class="primary" disabled={!code.trim() || step === 'saving'} onclick={complete}>
+            {step === 'saving' ? 'Signing in…' : 'Finish'}
+          </button>
+        </div>
+      {/if}
+    </div>
+  {/if}
 </section>
 </div>
 
@@ -251,7 +251,7 @@
   }
   .sheet {
     width: 100%;
-    max-width: 540px;
+    max-width: 500px;
     max-height: min(90dvh, 800px);
     display: flex;
     flex-direction: column;
@@ -267,12 +267,13 @@
   .top {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
   }
   .back {
     flex: none;
     width: 34px;
     height: 34px;
+    margin-left: -6px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -283,23 +284,11 @@
     background: var(--panel);
     color: var(--text);
   }
-  .htext {
+  .top h1 {
     flex: 1;
     min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-  }
-  .eyebrow {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--text-4);
-  }
-  .htext h1 {
     margin: 0;
-    font-size: 20px;
+    font-size: 19px;
     font-weight: 600;
     letter-spacing: -0.01em;
   }
@@ -328,183 +317,216 @@
     pointer-events: none;
   }
   .lede {
-    margin: 14px 2px 20px;
-    font-size: 13.5px;
+    margin: 13px 2px 18px;
+    font-size: 13px;
     line-height: 1.6;
     color: var(--text-3);
   }
 
-  .body {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
+  /* The roster: one framed panel, hairline-divided rows. A single account reads
+     as one line, not a card, so a machine's whole identity list is legible in a
+     glance. */
+  .roster {
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    background: var(--panel);
+    overflow: hidden;
   }
-  .ids {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 9px;
-  }
-
-  /* The signature: an identity row. A monogram sigil carries the account's
-     identity; the name and status sit beside it. */
-  .id {
+  .row {
     display: flex;
     align-items: center;
-    gap: 13px;
-    padding: 12px 14px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 15px;
-    transition: border-color 0.12s;
+    gap: 12px;
+    padding: 14px 16px;
+    min-height: 52px;
   }
-  .id.muted .nm {
-    color: var(--text-2);
+  .row + .row {
+    border-top: 1px solid var(--border);
   }
-  .sigil {
+  .row.off .nm {
+    color: var(--text-3);
+  }
+
+  /* The status dot is the whole signal: filled green when signed in, a hollow
+     ring when signed out, a soft pulse while the check is still in flight. */
+  .dot {
     flex: none;
-    width: 42px;
-    height: 42px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    box-sizing: border-box;
+  }
+  .dot.on {
+    background: var(--live);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--live) 16%, transparent);
+  }
+  .dot.hollow {
+    border: 1.5px solid var(--text-4);
+  }
+  .dot.checking {
+    background: var(--text-3);
+    animation: pulse 1.1s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 0.3;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+  .nm {
+    flex: 1;
+    min-width: 0;
+    font-size: 14.5px;
+    font-weight: 550;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tag {
+    flex: none;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--text-4);
+    padding: 3px 7px;
+    border: 1px solid var(--border-2);
+    border-radius: 6px;
+  }
+  .status {
+    flex: none;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text-3);
+  }
+  .rm {
+    flex: none;
+    width: 30px;
+    height: 30px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 13px;
-    border: 1px solid var(--border-2);
-    background: var(--panel-2);
-    font-family: var(--mono);
-    font-size: 15px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    color: var(--text-2);
-  }
-  /* The default account's sigil is inverted: it is the machine's home identity. */
-  .sigil.def {
-    background: var(--text);
-    color: var(--bg);
-    border-color: var(--text);
-  }
-  .sigil.add {
-    border-style: dashed;
+    border-radius: 8px;
     color: var(--text-4);
-    background: none;
+    transition: color 0.12s, background 0.12s;
   }
-  .meta {
-    flex: 1;
-    min-width: 0;
+  .rm:hover,
+  .rm:active {
+    color: var(--alert);
+    background: var(--panel-2);
+  }
+  .skname {
+    height: 11px;
+    width: 96px;
+    border-radius: 4px;
+    background: var(--panel-3);
+    animation: pulse 1.1s ease-in-out infinite;
+  }
+
+  .state {
+    font-size: 13px;
+    color: var(--text-4);
+    padding: 14px 4px;
+  }
+  .state.err {
+    color: var(--alert);
+  }
+
+  /* Add is a distinct dashed slot below the list, not a row in it. */
+  .add {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    text-align: left;
+    margin-top: 12px;
+    padding: 13px 16px;
+    border: 1px dashed var(--border-2);
+    border-radius: var(--r-lg);
+    color: var(--text-2);
+    transition: border-color 0.12s, background 0.12s;
+  }
+  .add:hover {
+    border-color: var(--text-4);
+    background: var(--panel);
+  }
+  .plus {
+    flex: none;
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9px;
+    border: 1px solid var(--border-2);
+    color: var(--text-3);
+  }
+  .add:hover .plus {
+    color: var(--text-2);
+    border-color: var(--text-4);
+  }
+  .addtext {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 1px;
   }
-  .nm {
-    font-size: 15px;
+  .at {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .as {
+    font-size: 11.5px;
+    color: var(--text-4);
+  }
+
+  /* The two-step add flow. Numbering is real here: name, then sign in. */
+  .flow {
+    margin-top: 12px;
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-lg);
+    background: var(--panel);
+    padding: 16px 17px 17px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+  }
+  .fhead {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .fstep {
+    font-size: 14.5px;
     font-weight: 600;
     color: var(--text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .sub {
-    font-size: 12px;
-    color: var(--text-4);
-  }
-  .live {
+  .fnum {
     flex: none;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--live);
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--live) 18%, transparent);
-  }
-  .rm {
-    flex: none;
-    width: 32px;
-    height: 32px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 9px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
     color: var(--text-4);
   }
-  .rm:hover {
-    color: var(--alert);
-    background: var(--panel-2);
-  }
-
-  /* The add row reads as an empty identity slot, consistent with the list. */
-  .addrow {
-    display: flex;
-    align-items: center;
-    gap: 13px;
-    width: 100%;
-    text-align: left;
-    padding: 12px 14px;
-    border: 1px dashed var(--border-2);
-    border-radius: 15px;
-    color: var(--text-2);
-  }
-  .addrow:hover {
-    border-color: var(--text-4);
-    background: var(--panel);
-  }
-  .addrow:hover .sigil.add {
-    color: var(--text-2);
-    border-color: var(--text-4);
-  }
-
-  .state {
-    font-size: 13px;
-    color: var(--text-4);
-    padding: 6px 2px;
-  }
-  .state.err {
-    color: var(--alert);
-  }
-
-  /* The mint / sign-in ceremony. */
-  .flow {
-    border: 1px solid var(--border-2);
-    border-radius: 17px;
-    background: var(--panel);
-    padding: 18px;
+  .field {
     display: flex;
     flex-direction: column;
-    gap: 16px;
-  }
-  .mint,
-  .signin {
-    display: flex;
-    align-items: center;
-    gap: 15px;
-  }
-  .signin {
-    align-items: flex-start;
-  }
-  .sigil.big {
-    width: 56px;
-    height: 56px;
-    border-radius: 17px;
-    font-size: 20px;
-  }
-  .sigil.big.empty {
-    color: var(--text-4);
-    background: var(--panel-2);
-  }
-  .mintf {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
+    gap: 6px;
   }
   .flabel {
     font-size: 12.5px;
     color: var(--text-3);
   }
-  .mintf input,
-  .code {
-    height: 42px;
+  .field input {
+    height: 44px;
     padding: 0 13px;
     background: var(--bg);
     border: 1px solid var(--border-2);
@@ -513,10 +535,13 @@
     font-size: 15.5px;
     width: 100%;
   }
-  .mintf input:focus,
-  .code:focus {
+  .field input:focus {
     outline: none;
     border-color: var(--text-4);
+  }
+  .code {
+    font-family: var(--mono);
+    letter-spacing: 0.04em;
   }
   .hint {
     font-size: 11.5px;
@@ -524,7 +549,7 @@
   }
   .lead {
     margin: 0;
-    font-size: 13.5px;
+    font-size: 13px;
     line-height: 1.55;
     color: var(--text-3);
   }
@@ -537,25 +562,16 @@
     align-items: center;
     justify-content: center;
     gap: 9px;
-    height: 48px;
-    border-radius: 13px;
+    height: 46px;
+    border-radius: 12px;
     background: var(--text);
     color: var(--bg);
-    font-size: 15px;
+    font-size: 14.5px;
     font-weight: 600;
     text-decoration: none;
   }
   .cta:hover {
     opacity: 0.92;
-  }
-  .codef {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .code {
-    font-family: var(--mono);
-    letter-spacing: 0.04em;
   }
   .flowerr {
     margin: 0;
