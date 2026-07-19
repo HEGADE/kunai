@@ -238,7 +238,7 @@
         <span class="uhead">Update available</span>
         <span class="mono usub">{st?.kunai_version} → {app.latestVersion} · restarts {sel.label}, sessions resume</span>
         {#if updateErr}
-          <span class="mono uerr">update failed: {updateErr}</span>
+          <span class="mono uerr" title={updateErr}>update failed: {updateErr}</span>
         {/if}
       </div>
       <button class="ubtn" disabled={updating} onclick={() => sel && app.updateMachine(sel.id)}>
@@ -544,12 +544,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* The reason is the whole point of showing this, so it wraps rather than
+     truncating: the real messages ("cannot write to /usr/local/bin (update needs
+     a writable install dir)") are longer than a phone is wide, and an ellipsis
+     cut it back to almost nothing useful. Two lines is the ceiling. */
   .uerr {
     font-size: 10.5px;
+    line-height: 1.4;
     color: var(--alert);
-    white-space: nowrap;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     overflow: hidden;
-    text-overflow: ellipsis;
   }
   .ubtn {
     flex: none;
