@@ -1,8 +1,36 @@
 <script lang="ts">
   import type { Turn } from '../lib/turns'
+  import type { Block } from '../lib/types'
   import { formatDuration, formatTokens, formatCost } from '../lib/format'
 
   let { turn }: { turn: Turn } = $props()
+
+  // What the agent wrote this turn, as markdown, for the clipboard. The answer
+  // is the trailing text the view leaves visible, which is what you are looking
+  // at when you reach for copy. A turn that ended on tool activity has no answer,
+  // so fall back to every text block: still only what the agent said, never what
+  // it ran.
+  const textOf = (bs: Block[]) =>
+    bs
+      .filter((b) => b.type === 'text' && b.text?.trim())
+      .map((b) => b.text!.trim())
+      .join('\n\n')
+  const reply = $derived(textOf(turn.answer) || textOf(turn.blocks))
+
+  let copied = $state(false)
+  let copyTimer: ReturnType<typeof setTimeout> | undefined
+  async function copyReply() {
+    if (!reply) return
+    try {
+      await navigator.clipboard.writeText(reply)
+      copied = true
+      clearTimeout(copyTimer)
+      copyTimer = setTimeout(() => (copied = false), 1200)
+    } catch {
+      // No clipboard (an insecure origin, or permission refused). Saying nothing
+      // is right here: the button simply does not confirm.
+    }
+  }
 
   const duration = $derived(turn.durationMs != null ? formatDuration(turn.durationMs) : '')
   const cost = $derived(turn.costUsd ? formatCost(turn.costUsd) : '')
@@ -18,9 +46,26 @@
   let explain = $state(false)
 </script>
 
-{#if meta}
+<!-- The footer also carries copy, so it appears for a reply that reported no
+     numbers rather than leaving that turn with no way to take its text. -->
+{#if meta || reply}
   <div class="footer">
     {#if meta}<span class="dur mono">{meta}</span>{/if}
+    {#if reply}
+      <button
+        class="ibtn"
+        class:done={copied}
+        onclick={copyReply}
+        aria-label={copied ? 'Copied' : 'Copy reply'}
+        title={copied ? 'Copied' : 'Copy reply'}
+      >
+        {#if copied}
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+        {:else}
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 012-2h8" /></svg>
+        {/if}
+      </button>
+    {/if}
     {#if hasSplit}
       <span class="info">
         <button class="ibtn" onclick={() => (explain = !explain)} aria-label="What these numbers mean" title="What these numbers mean">
@@ -75,6 +120,11 @@
   }
   .ibtn:hover {
     color: var(--text-2);
+  }
+  /* Confirmation is the icon becoming a tick, not a toast: the answer is that it
+     worked, and it is already under your thumb. */
+  .ibtn.done {
+    color: var(--text);
   }
   .scrim {
     position: fixed;
