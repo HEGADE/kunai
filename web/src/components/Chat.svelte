@@ -135,6 +135,8 @@
   $effect(() => {
     chat.items.length
     chat.streaming
+    chat.thinking
+    chat.sessionState // so the "Working…" line, which appears on state change alone, is followed too
     chat.pending.length
     if (atBottom) requestAnimationFrame(() => toBottom(false))
   })
@@ -193,6 +195,12 @@
     draft = ''
     attachments = []
     if (textarea) textarea.style.height = 'auto'
+    // Sending is an explicit action, so always snap to the bottom: you want to
+    // see your message land and the "Working…" line, even if you'd scrolled up to
+    // read. Re-pin so the reply then follows as it streams. tick() first so the
+    // new content is laid out and scrollHeight includes it.
+    atBottom = true
+    tick().then(() => toBottom())
   }
   // On a physical keyboard, Enter sends and Shift+Enter inserts a newline. On a
   // touch device there is no Shift key, so Enter must insert a newline (the
