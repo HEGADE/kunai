@@ -410,7 +410,18 @@ func (s *Server) handleSetAccount(w http.ResponseWriter, r *http.Request) {
 	if cid == "" {
 		cid = id
 	}
-	if src := s.transcriptForID(cid); src != "" {
+	// Source the transcript from the account the session is running on now, not a
+	// blind first-match scan: transcriptForID walks the default account first, so a
+	// switch away from a non-default account would pick the default's own (stale or
+	// empty) copy as the source and copy it over the target, losing the real
+	// conversation. Fall back to the global scan only if the current account's dir
+	// has no copy (an id assigned but not yet flushed there).
+	cur := s.resolveCLI(sess.Meta().CLI)
+	src := transcriptPath(cur.configDir(), cid)
+	if src == "" {
+		src = s.transcriptForID(cid)
+	}
+	if src != "" {
 		slug := filepath.Base(filepath.Dir(src))
 		dst := filepath.Join(claudeRoot(target.configDir()), slug, cid+".jsonl")
 		if err := copyFile(src, dst); err != nil {
@@ -437,18 +448,36 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	defer in.Close()
+	// Never copy a file onto itself: os.Create truncates the destination first, so
+	// a self-copy would zero the source before reading it and destroy the
+	// transcript. When src and dst are the same file the content is already in
+	// place, so there is nothing to do. (This was a real data-loss bug: a switch
+	// whose source lookup resolved to the target account's own copy wiped it.)
+	if si, err := in.Stat(); err == nil {
+		if di, err := os.Stat(dst); err == nil && os.SameFile(si, di) {
+			return nil
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return err
 	}
-	out, err := os.Create(dst)
+	// Write to a temp file and rename in, so an interrupted copy of a large
+	// transcript never leaves a truncated file the resume would load as empty.
+	tmp := dst + ".tmp"
+	out, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
 		out.Close()
+		os.Remove(tmp)
 		return err
 	}
-	return out.Close()
+	if err := out.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, dst)
 }
 
 // loginSweepLoop kills abandoned login flows on an interval.

@@ -37,3 +37,49 @@ func TestAccountSlug(t *testing.T) {
 		}
 	}
 }
+
+// TestCopyFileSelfCopyPreserves guards the data-loss bug where copying a
+// transcript onto itself truncated it to zero (os.Create truncates first). A
+// self-copy must be a no-op that keeps the content intact.
+func TestCopyFileSelfCopyPreserves(t *testing.T) {
+	dir := t.TempDir()
+	p := dir + "/t.jsonl"
+	want := "line one\nline two\n"
+	if err := os.WriteFile(p, []byte(want), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(p, p); err != nil {
+		t.Fatalf("self-copy: %v", err)
+	}
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("self-copy truncated the file: got %q, want %q", got, want)
+	}
+}
+
+// TestCopyFileNormal copies to a distinct path (the real switch case).
+func TestCopyFileNormal(t *testing.T) {
+	dir := t.TempDir()
+	src, dst := dir+"/a.jsonl", dir+"/sub/b.jsonl"
+	want := "hello\n"
+	if err := os.WriteFile(src, []byte(want), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(src, dst); err != nil {
+		t.Fatalf("copy: %v", err)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("copy = %q, want %q", got, want)
+	}
+	// The source must be untouched.
+	if s, _ := os.ReadFile(src); string(s) != want {
+		t.Fatalf("source changed: %q", s)
+	}
+}
