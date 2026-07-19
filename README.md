@@ -1,64 +1,127 @@
 <div align="center">
 
-<img src="docs/logo.svg" alt="Kunai" width="92" />
+<img src="docs/logo.svg" alt="Kunai" width="96" />
 
 # Kunai
 
-**One app for Claude Code across every machine you own. Self-hosted, relay-free,
-from your phone.**
-
-Install Kunai on each machine you work on, then drive them all from a single app
-over your Tailscale network. Your Linux boxes and your Mac show up side by side,
-and you choose which one a session runs on. No cloud relay sits between you and
-Claude, so every token takes the shortest path, and nothing but a generic push
-notification ever leaves the tailnet.
+**One app for Claude Code across every machine you own.**
+Self-hosted, relay-free, driven from your phone.
 
 <p>
 <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-52525b?style=flat-square" />
-<img alt="Go 1.22+" src="https://img.shields.io/badge/Go-1.22%2B-52525b?style=flat-square&logo=go&logoColor=white" />
+<img alt="Go 1.26+" src="https://img.shields.io/badge/Go-1.26%2B-52525b?style=flat-square&logo=go&logoColor=white" />
 <img alt="Svelte 5" src="https://img.shields.io/badge/Svelte-5-52525b?style=flat-square&logo=svelte&logoColor=white" />
 <img alt="Tailscale" src="https://img.shields.io/badge/network-Tailscale-52525b?style=flat-square&logo=tailscale&logoColor=white" />
 <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-52525b?style=flat-square" />
-<img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-52525b?style=flat-square" />
 </p>
 
-<img src="docs/screenshot.png" alt="Kunai showing a tool call with its output and a syntax-highlighted code block" width="860" />
+<img src="docs/screenshot.png" alt="Kunai showing an assistant reply with a highlighted code block, a Bash tool call with its output, and a per-query changed-files card" width="880" />
 
 </div>
 
-## Why
+Install Kunai on each machine you work on, then drive them all from a single
+installable web app over your Tailscale network. Your Linux boxes and your Mac
+show up side by side, and you pick which one a session runs on. No cloud relay
+sits between you and Claude, so every token takes the shortest path, and nothing
+but a content-free push notification ever leaves the tailnet.
 
-Anthropic's Remote Control and similar third-party tools route every message
-through a relay server before it reaches your machine, which adds a round trip on
-top of Claude's own generation time. A Tailscale link between your devices is
-direct peer to peer almost all of the time, so a client that talks straight over
-that tunnel feels noticeably faster. Kunai's hard rule: the only thing that ever
-leaves the tailnet is a content-free push wake-up.
+---
 
-It is a single Go binary. It wraps the `claude` CLI, serves an installable web app
-(a PWA), and speaks to your devices directly over the tailnet.
+**Contents** ·
+[Quick start](#quick-start) ·
+[Features](#features) ·
+[How it works](#how-it-works) ·
+[Configuration](#configuration) ·
+[Unattended runs & thermal safety](#unattended-runs--thermal-safety) ·
+[Multiple Claude accounts](#multiple-claude-accounts) ·
+[Security](#security) ·
+[Develop](#develop)
 
-## Highlights
+## Quick start
 
-- **A fleet, not one box.** This is the core idea. Run the same binary on every
-  machine you use. One installed app aggregates their sessions and talks to each
-  machine directly over the tailnet, with no traffic proxied through a middle
-  server. The machine you install from is the hub; the rest are peers that are
-  auto-discovered when they come online. You pick which machine a session runs on
-  from the sidebar and the dashboard, and the home screen shows live stats for
-  each one (memory, CPU, disk, uptime).
+### Prerequisites
+
+- A machine on your Tailscale tailnet (Linux or macOS).
+- [Claude Code](https://claude.com/claude-code) installed and authenticated, with
+  `claude` on your `PATH`.
+- Tailscale with **MagicDNS** and **HTTPS certificates** enabled (admin console →
+  DNS → HTTPS Certificates).
+
+No toolchain is needed to start. The one-liner downloads a prebuilt binary; a
+source build auto-installs a local Go toolchain under `~/.kunai` (no root) if `go`
+is missing, and the web app ships prebuilt and embedded, so Node is never
+required.
+
+### 1. Install on your main machine
+
+One line, and it downloads a prebuilt binary and sets everything up:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/HEGADE/kunai/main/install.sh | bash
+```
+
+<sub>Or from a source checkout (builds from source): `git clone https://github.com/HEGADE/kunai && cd kunai && ./install.sh`</sub>
+
+The installer does the rest and prints the URL to open:
+
+1. gets the binary (a prebuilt release, or a source build in a checkout),
+2. detects your tailnet address and MagicDNS name,
+3. mints a TLS certificate with `tailscale cert`,
+4. installs a service (a systemd user unit on Linux, a launchd agent on macOS),
+5. health-checks it and prints `https://<your-machine>.<tailnet>.ts.net:8443`.
+
+### 2. Open it on your phone
+
+Open the printed URL. On iOS: **Safari → Share → Add to Home Screen**, then enable
+notifications from the installed app. This machine is now your **hub**.
+
+### 3. Add more machines (optional)
+
+Run the installer on any other machine, pointing it at your hub so its
+notifications reach your phone:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/HEGADE/kunai/main/install.sh \
+  | KUNAI_HUB_URL=https://<hub>.<tailnet>.ts.net:8443 bash
+```
+
+Open the hub's app and the new machine appears automatically. Pick which machine
+to start a session on from the sidebar or the dashboard.
+
+### Updating
+
+The home screen shows an **Update available** badge when a machine is behind the
+latest release. Tap **Update** and that machine pulls the new binary from GitHub,
+verifies its checksum, swaps it in, and restarts itself in a few seconds (active
+sessions resume from their transcript). Each machine updates itself, so you never
+have to SSH in. You can also re-run the installer by hand at any time.
+
+## Features
+
+- **A fleet, not one box.** Run the same binary on every machine you use. One
+  installed app aggregates their sessions and talks to each machine **directly**
+  over the tailnet, with nothing proxied through a middle server. The machine you
+  install from is the hub; the rest are peers, auto-discovered when they come
+  online. The home screen shows live stats (memory, CPU, disk, uptime) per
+  machine.
 - **Rich chat.** Token streaming rendered as markdown, syntax-highlighted code
-  with copy, real red and green diffs for file edits, and a card per tool that
-  shows both the request and the output (command stdout, file contents, and
-  errors), correlated to the tool call.
-- **Approve and deny gate.** Every tool that needs permission is gated, with
-  "always allow this session". The gate shows the actual diff or command you are
-  approving. Permission modes: Ask, Auto, Accept edits, Plan.
+  with copy, real red/green diffs for edits, and a card per tool showing both the
+  request and its output (stdout, file contents, errors), correlated to the call.
+- **Per-query changed files.** Every reply that edits files gets its own
+  changed-files card right below it, each file expandable to its diff, so you can
+  review exactly what a query did, from your phone.
+- **Approve/deny gate.** Every tool that needs permission is gated, showing the
+  actual diff or command you are approving, with "always allow this session".
+  Permission modes: Ask, Auto, Accept edits, Plan.
 - **Survives the phone.** Backgrounding kills the socket, not the session. On
-  reconnect the client replays exactly what it missed. Past sessions resume with
-  their full conversation and tool outputs restored.
-- **On your terms.** Bound to the tailnet only, no login system, no accounts. File
-  and image attachments, and Web Push that carries only a content-free wake-up.
+  reconnect the client replays exactly what it missed, and past sessions resume
+  with their full conversation and tool outputs restored.
+- **Unattended runs.** Self-prompting **loops** keep an agent working with nobody
+  at the keyboard, bounded so they can't run forever, with a **thermal safety
+  guard** for a laptop left running (see [below](#unattended-runs--thermal-safety)).
+- **On your terms.** Bound to the tailnet only: no login system, no accounts.
+  File and image attachments, and Web Push that carries only a content-free
+  wake-up.
 
 ## How it works
 
@@ -76,83 +139,22 @@ kunai (single Go binary, bound to the tailnet IP)
 claude CLI (Claude Code)
 ```
 
-Kunai drives Claude Code over its stream-json control protocol on stdin and
-stdout, the same protocol the official Agent SDK uses. The tailnet is the entire
-auth perimeter: the server binds to the Tailscale interface only, and Tailscale
-ACLs decide who can reach it.
+Kunai is a single Go binary. It wraps the `claude` CLI, driving Claude Code over
+its stream-json control protocol on stdin/stdout (the same protocol the official
+Agent SDK uses), and serves an installable web app straight over the tailnet.
 
-In a multi-machine setup, the machine you install the app from is the **hub** (it
-owns the machine registry, Web Push, and peer discovery). Every other machine is a
+**The tailnet is the entire auth perimeter:** the server binds to the Tailscale
+interface only, and Tailscale ACLs decide who can reach it.
+
+In a multi-machine setup, the machine you install the app from is the **hub**: it
+owns the machine registry, Web Push, and peer discovery. Every other machine is a
 **peer**. The client fetches the machine list from the hub, then connects directly
 to each machine's tailnet origin, so no traffic is proxied and the relay-free
 promise holds across the whole fleet.
 
-## Get started
-
-### Prerequisites
-
-- A machine on your Tailscale tailnet (Linux or macOS).
-- [Claude Code](https://claude.com/claude-code) installed and authenticated, with
-  `claude` on your PATH.
-- Tailscale with MagicDNS and HTTPS certificates enabled (admin console: DNS, then
-  HTTPS Certificates).
-- No toolchain needed to start: `install.sh` builds from source and
-  auto-installs a local Go toolchain if `go` is missing (a self-contained
-  download under `~/.kunai`, no root). The web app is prebuilt and embedded, so
-  Node is not required.
-
-### 1. Install on your main machine
-
-One line, no toolchain. Downloads a prebuilt binary and sets everything up:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/HEGADE/kunai/main/install.sh | bash
-```
-
-Or from a source checkout (builds from source, installing a local Go toolchain
-automatically if `go` is missing):
-
-```sh
-git clone https://github.com/HEGADE/kunai && cd kunai
-./install.sh
-```
-
-The installer does everything and prints the URL to open:
-
-1. gets the binary (a prebuilt release, or a source build in a checkout),
-2. detects your tailnet address and MagicDNS name,
-3. mints a TLS certificate with `tailscale cert`,
-4. installs a service (a systemd user unit on Linux, a launchd agent on macOS),
-5. health-checks it and prints `https://<your-machine>.<tailnet>.ts.net:8443`.
-
-**Updating** (Mac or Linux): the home screen shows an **Update available** badge
-when a machine is behind the latest release. Tap **Update** and that machine pulls
-the new binary from GitHub, verifies its checksum, swaps it in, and restarts
-itself (a few seconds; active sessions resume from their transcript). Each machine
-updates itself, so you never have to SSH in. You can still re-run the installer by
-hand (the one-liner again, or `./install.sh` in a checkout) if you prefer.
-
-### 2. Open it on your phone
-
-Open the printed URL. On iOS, use Safari, then Share, then Add to Home Screen, and
-enable notifications from the installed app. That machine is now your **hub**.
-
-### 3. Add more machines (optional)
-
-Run the installer on any other machine, pointing it at your hub so its
-notifications reach your phone:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/HEGADE/kunai/main/install.sh \
-  | KUNAI_HUB_URL=https://<hub>.<tailnet>.ts.net:8443 bash
-```
-
-Open the hub's app and the new machine appears automatically. Pick which machine
-to start a session on from the sidebar and dashboard.
-
 ## Configuration
 
-Set with a flag or an environment variable.
+Every option takes a flag or an environment variable.
 
 | Flag          | Env                | Default          | Description                                        |
 | ------------- | ------------------ | ---------------- | -------------------------------------------------- |
@@ -165,46 +167,22 @@ Set with a flag or an environment variable.
 | `-model`      | `KUNAI_MODEL`      |                  | Default model for new sessions                     |
 | `-push-email` | `KUNAI_PUSH_EMAIL` |                  | VAPID contact for Web Push                         |
 
-Thermal guard (see [Unattended runs and thermal safety](#unattended-runs-and-thermal-safety));
-all off or inert by default:
+Thermal guard flags (all off or inert by default; see
+[Unattended runs & thermal safety](#unattended-runs--thermal-safety)):
 
-| Flag                 | Env                       | Default | Description                                             |
-| -------------------- | ------------------------- | ------- | ------------------------------------------------------- |
-| `-thermal-guard`     | `KUNAI_THERMAL_GUARD`     | `false` | Enable the thermal safety guard by default              |
-| `-thermal-soft-c`    | `KUNAI_THERMAL_SOFT_C`    | `90`    | Trip temperature in Celsius (Linux; `0` disables it)    |
-| `-thermal-max-hours` | `KUNAI_THERMAL_MAX_HOURS` | `0`     | Stop unattended work after this many hours awake (`0` off) |
-| `-thermal-hard-c`    | `KUNAI_THERMAL_HARD_C`    | `0`     | Power-off ceiling, with `-thermal-action=poweroff`      |
-| `-thermal-action`    | `KUNAI_THERMAL_ACTION`    | `sleep` | Hard-trip action: `sleep` or `poweroff`                 |
+| Flag                 | Env                       | Default | Description                                                 |
+| -------------------- | ------------------------- | ------- | ----------------------------------------------------------- |
+| `-thermal-guard`     | `KUNAI_THERMAL_GUARD`     | `false` | Enable the thermal safety guard by default                  |
+| `-thermal-soft-c`    | `KUNAI_THERMAL_SOFT_C`    | `90`    | Trip temperature in Celsius (Linux; `0` disables it)        |
+| `-thermal-max-hours` | `KUNAI_THERMAL_MAX_HOURS` | `0`     | Stop unattended work after this many hours awake (`0` = off) |
+| `-thermal-hard-c`    | `KUNAI_THERMAL_HARD_C`    | `0`     | Power-off ceiling, with `-thermal-action=poweroff`          |
+| `-thermal-action`    | `KUNAI_THERMAL_ACTION`    | `sleep` | Hard-trip action: `sleep` or `poweroff`                     |
 
-Installer overrides: `KUNAI_PORT` (default 8443), `KUNAI_HUB_URL`,
-`KUNAI_PUSH_EMAIL`, and `KUNAI_THERMAL_PRIVILEGED` (see below).
+Installer-only variables: `KUNAI_PORT` (default `8443`), `KUNAI_HUB_URL`,
+`KUNAI_PUSH_EMAIL`, and `KUNAI_THERMAL_PRIVILEGED`
+([privileged grant](#lid-closed-work--power-off-privileged-opt-in)).
 
-## Multiple Claude accounts
-
-One machine can drive more than one Claude account (say a personal one and a work
-one), pick which a session runs on, and see each account's past sessions labeled
-in Recent. A second account is two steps:
-
-1. **Log into it once** in a terminal, in its own config folder:
-   ```sh
-   CLAUDE_CONFIG_DIR=/Users/you/.claude-work claude
-   ```
-   Sign in as the second account, then quit. That folder now holds its login.
-   (The config folder is what actually separates two accounts.)
-2. **Add it in the app:** Settings, under a machine, "Claude accounts", enter a
-   name (e.g. Work) and that folder. It applies live, no restart.
-
-The first account is the default. With more than one, a new session shows an
-**Account** picker, and the **Recent** list scans every account's folder and
-labels each past session with its account, so a work session reopens on the work
-account. A session keeps its account for its lifetime, and a loop that survives a
-restart stays on its account too.
-
-Accounts persist to `~/.kunai/clis.json`, which you can also hand-edit if you
-prefer (a `bin` per account for separate binaries, or `env` for extra process
-environment); the Settings editor covers the common name-plus-folder case.
-
-## Unattended runs and thermal safety
+## Unattended runs & thermal safety
 
 Kunai can keep working while you are away. A **loop** re-feeds one task every time
 a turn ends (Ralph's technique), so an agent keeps going with nobody at the
@@ -214,81 +192,110 @@ spend limits comes first, or when the model reports the task complete.
 
 Unattended work can pin the CPU for hours, and a closed laptop lid doing that
 cooks the machine. The **thermal guard** is the safety net that makes leaving it
-running safe. It is off by default and turned on per machine in Settings.
+running safe. It is off by default and enabled per machine in Settings.
 
 ### The guard (no privileges)
 
 When the host runs too hot, or has been held awake past a wall-clock cap, the
 guard stops every session and drops the keep-awake hold. On a closed-lid machine
-that lets it sleep, which drops the CPU to idle: sleep is the cooldown. Whichever
-limit comes first wins, the same shape as a loop's caps. It trips only on
-sustained heat, not a one-off spike.
+that lets it sleep, which drops the CPU to idle: **sleep is the cooldown.**
+Whichever limit comes first wins, the same shape as a loop's caps, and it trips
+only on sustained heat, never a one-off spike.
 
 Temperature is read directly on Linux (`/sys/class/hwmon`). On macOS it needs the
 privileged grant below; without it the guard falls back to the wall-clock cap.
 
-### Lid-closed work and power-off (privileged, opt-in)
+### Lid-closed work & power-off (privileged, opt-in)
 
-Keeping a laptop working with the lid **shut**, reading macOS temperature, and
-powering the host off as a last resort each need a privilege the plain service
-does not have. They stay off until you install the grant, deliberately, once:
+Three things each need a privilege the plain service does not have: keeping a
+laptop working with the lid **shut**, reading **macOS** temperature, and
+**powering the host off** as a last resort. They stay off until you install the
+grant, deliberately, once:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/HEGADE/kunai/main/install.sh | KUNAI_THERMAL_PRIVILEGED=1 bash
+curl -fsSL https://raw.githubusercontent.com/HEGADE/kunai/main/install.sh \
+  | KUNAI_THERMAL_PRIVILEGED=1 bash
 ```
 
-Put `KUNAI_THERMAL_PRIVILEGED=1` on the **`bash`** side of the pipe, as shown. A
-prefix before `curl` sets it for `curl` only and never reaches the script, so the
-grant is silently skipped.
+> Put `KUNAI_THERMAL_PRIVILEGED=1` on the **`bash`** side of the pipe, as shown. A
+> prefix before `curl` sets it for `curl` only and never reaches the script, so
+> the grant is silently skipped.
 
-It prompts for your password once and grants exactly:
+It prompts for your password once and grants **exactly** this, nothing broader
+(the installer prints what it granted):
 
-- **macOS:** a sudoers NOPASSWD line for `pmset disablesleep` (hold the lid),
+- **macOS**: a sudoers `NOPASSWD` line for `pmset disablesleep` (hold the lid),
   `powermetrics` (read temperature), and `shutdown -h now` (power off).
-- **Linux:** a polkit rule for `power-off` and the `handle-lid-switch` inhibitor.
+- **Linux**: a polkit rule for `power-off` and the `handle-lid-switch` inhibitor.
 
-Nothing broader, and the installer prints what it granted. Enable the features in
-Settings afterward; they stay off until you do. To confirm the macOS grant landed:
+Enable the features in Settings afterward; they stay off until you do. To confirm
+the macOS grant landed:
 
 ```sh
 ls -l /etc/sudoers.d/kunai-thermal
 sudo -n /usr/bin/pmset -a disablesleep 1 && sudo -n /usr/bin/pmset -a disablesleep 0 && echo "GRANT OK"
 ```
 
-Power-off is the last resort: the guard's default action is to stop and cool, and
+**Power-off is the last resort.** The guard's default action is to stop and cool;
 a shutdown fires only if you turn it on **and** the host is still over a higher
-ceiling after everything of kunai's was already stopped, meaning the heat is not
+ceiling *after* everything of kunai's was already stopped, meaning the heat is not
 its load. A denied power-off is logged and survived, never forced. The macOS lid
 setting is sticky, so kunai clears it on a clean shutdown and again at the next
 start, undoing anything a crash left on. To clear it by hand:
 `sudo pmset -a disablesleep 0`.
 
+## Multiple Claude accounts
+
+One machine can drive more than one Claude account (say a personal one and a work
+one), let you pick which a session runs on, and label each account's past sessions
+in Recent. Adding a second account is two steps:
+
+1. **Log into it once** in a terminal, in its own config folder:
+   ```sh
+   CLAUDE_CONFIG_DIR=/Users/you/.claude-work claude
+   ```
+   Sign in as the second account, then quit. That folder now holds its login. (The
+   config folder is what actually separates two accounts.)
+2. **Add it in the app:** Settings → under a machine → "Claude accounts" → enter a
+   name (e.g. `Work`) and that folder. It applies live, no restart.
+
+The first account is the default. With more than one, a new session shows an
+**Account** picker, and the **Recent** list scans every account's folder and
+labels each past session, so a work session reopens on the work account. A session
+keeps its account for its lifetime, and a loop that survives a restart stays on its
+account too.
+
+Accounts persist to `~/.kunai/clis.json`, which you can also hand-edit (a `bin` per
+account for separate binaries, or `env` for extra process environment); the
+Settings editor covers the common name-plus-folder case.
+
 ## Security
 
-- Bind to the tailnet IP, never `0.0.0.0`. Tailscale ACLs are the perimeter.
-- Anyone who can reach the server can run Claude Code in any directory the
-  server's user can read. Treat access to the port as access to the machine.
+- **Bind to the tailnet IP, never `0.0.0.0`.** Tailscale ACLs are the perimeter.
+- Anyone who can reach the server can run Claude Code in any directory the server's
+  user can read. **Treat access to the port as access to the machine.**
 - Cross-origin access is allowed only because the tailnet is the perimeter and the
   API uses no cookies or sessions. Do not add cookie auth without tightening it.
 - Web Push is the single hop outside the tailnet (Apple and Google push services).
-  The payload is a generic wake-up string, never content.
-- TLS certificates from `tailscale cert` are not auto-renewed yet, so plan to
-  re-mint them (roughly every 90 days).
+  The payload is a generic wake-up string, **never content**.
+- TLS certificates from `tailscale cert` (roughly 90-day expiry) are auto-renewed:
+  `certKeeper` re-mints them before expiry and hot-reloads the new keypair without
+  a restart.
 
-## Build from source and develop
+## Develop
 
 ```sh
-make build       # web app plus a local binary
-make release     # cross-compiles linux and darwin (amd64 and arm64) into dist/
-make deploy HOST=user@machine   # push a fresh linux build to a host and restart it
+make build                       # web app plus a local binary
+make release                     # cross-compiles linux and darwin (amd64 + arm64) into dist/
+make deploy HOST=user@machine    # push a fresh linux build to a host and restart it
 
-go test ./...            # backend tests
-cd web && npm run check  # svelte-check and tsc
-cd web && npm run dev    # frontend dev server
+go test ./...                    # backend tests
+cd web && npm run check          # svelte-check and tsc
+cd web && npm run dev            # frontend dev server
 ```
 
-The web app is embedded into the binary with `go:embed`, so a frontend change
-needs a web rebuild before the Go build:
+The web app is embedded into the binary with `go:embed`, so **a frontend change
+needs a web rebuild before the Go build**:
 
 ```sh
 cd web && npm run build && cd ..
@@ -299,20 +306,20 @@ Manage the installed service with `systemctl --user status|restart kunai` and
 `journalctl --user -u kunai -f` on Linux, or `launchctl` and `~/.kunai/kunai.log`
 on macOS.
 
-## Repository layout
+### Repository layout
 
 ```
 cmd/kunai/          entrypoint: flags, TLS, server wiring
 internal/claude/    stream-json driver for the claude CLI, including tool results
-internal/session/   session lifecycle, ring buffer, seq replay, permissions
-internal/server/    HTTP and WebSocket API, history, stats, uploads, machines, discovery, push
+internal/session/   session lifecycle, ring buffer, seq replay, permissions, loops
+internal/server/    HTTP + WebSocket API, history, stats, uploads, machines, discovery, push, thermal guard
 internal/push/      Web Push (VAPID) keys, subscriptions, wake-ups
 internal/fsbrowse/  directory listing for the project picker
 internal/webui/     embedded production build of the web app
-web/                Svelte 5 and Vite PWA source
+web/                Svelte 5 + Vite PWA source
 ```
 
-The `claude` stream-json protocol is undocumented. The closest reference is the
+The `claude` stream-json protocol is undocumented; the closest reference is the
 type definitions shipped with `@anthropic-ai/claude-agent-sdk`. Kunai keeps every
 protocol type in `internal/claude` so a CLI change stays a one-file fix.
 
@@ -320,8 +327,8 @@ protocol type in `internal/claude` so a CLI change stays a one-file fix.
 
 Issues and pull requests are welcome. A few house rules:
 
-- The frontend build in `internal/webui/dist` is committed and embedded, so
-  rebuild the web app before the Go binary when you change the frontend.
+- The frontend build in `internal/webui/dist` is committed and embedded, so rebuild
+  the web app before the Go binary when you change the frontend.
 - Run `go test ./...` and `cd web && npm run check` before opening a PR.
 - No emojis or em dashes in commit messages or docs.
 
