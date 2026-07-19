@@ -905,6 +905,10 @@
     padding: 4px 0 2px;
     font-size: 16px;
     line-height: 1.5;
+    /* Start a couple of lines tall so the box has room to think in, then grow
+       with the text up to the cap. The JS auto-size sets an inline height; this
+       floor keeps an empty composer comfortably sized. */
+    min-height: 58px;
     max-height: 180px;
     outline: none;
   }
