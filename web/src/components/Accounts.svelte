@@ -107,8 +107,8 @@
   }
 </script>
 
-<div class="scrim" onclick={() => app.closeAccounts()} role="presentation"></div>
-<section class="sheet" role="dialog" aria-label="Claude accounts">
+<div class="backdrop" onclick={() => app.closeAccounts()} role="presentation">
+<section class="sheet" role="dialog" aria-label="Claude accounts" onclick={(e) => e.stopPropagation()}>
   <header class="top">
     <button class="back" onclick={() => app.closeAccounts()} aria-label="Back">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
@@ -214,34 +214,35 @@
     {/if}
   </div>
 </section>
+</div>
 
 <style>
-  .scrim {
+  /* One flex-centered backdrop with the sheet as a child (mirrors Settings): iOS
+     Safari collapses two sibling fixed elements sized with inset:0 + margin:auto
+     to near-zero height, which showed only the dark scrim. */
+  .backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
     z-index: 60;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
   }
   .sheet {
-    position: fixed;
-    z-index: 61;
-    inset: 0;
-    margin: auto;
-    width: min(560px, 100%);
-    max-height: 100dvh;
+    width: 100%;
+    max-width: 560px;
+    max-height: min(88dvh, 780px);
     display: flex;
     flex-direction: column;
     background: var(--bg);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-2);
+    border-radius: 16px;
     overflow-y: auto;
-    padding: calc(var(--safe-top) + 20px) 22px calc(var(--safe-bottom) + 24px);
-  }
-  @media (min-width: 620px) {
-    .sheet {
-      inset: auto;
-      border-radius: 16px;
-      max-height: 86dvh;
-    }
+    -webkit-overflow-scrolling: touch;
+    box-shadow: 0 24px 70px -24px rgba(0, 0, 0, 0.75);
+    padding: 22px;
   }
   .top {
     display: flex;
