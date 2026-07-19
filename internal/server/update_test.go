@@ -49,7 +49,8 @@ func TestApplyUpdateSwaps(t *testing.T) {
 	if err := os.WriteFile(self, []byte("old-kunai"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := applyUpdate(asset, self); err != nil {
+	var lastDone, lastTotal int64
+	if err := applyUpdate(asset, self, func(done, total int64) { lastDone, lastTotal = done, total }); err != nil {
 		t.Fatalf("applyUpdate: %v", err)
 	}
 	got, err := os.ReadFile(self)
@@ -58,6 +59,9 @@ func TestApplyUpdateSwaps(t *testing.T) {
 	}
 	if string(got) != string(newBytes) {
 		t.Fatalf("binary not swapped: got %q", got)
+	}
+	if lastDone != int64(len(newBytes)) || lastTotal != int64(len(newBytes)) {
+		t.Fatalf("progress reported %d/%d, want %d/%d", lastDone, lastTotal, len(newBytes), len(newBytes))
 	}
 }
 
@@ -72,7 +76,7 @@ func TestApplyUpdateChecksumMismatchLeavesBinary(t *testing.T) {
 	if err := os.WriteFile(self, []byte("old-kunai"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := applyUpdate(asset, self); err == nil {
+	if err := applyUpdate(asset, self, nil); err == nil {
 		t.Fatal("expected a checksum-mismatch error")
 	}
 	got, _ := os.ReadFile(self)

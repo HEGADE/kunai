@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -48,12 +49,39 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	asset := fmt.Sprintf("kunai-%s-%s", runtime.GOOS, runtime.GOARCH)
-	if err := applyUpdate(asset, self); err != nil {
-		writeErr(w, http.StatusBadGateway, "update failed: "+err.Error())
+
+	// From here on the response streams NDJSON: {done,total} lines while the
+	// asset downloads, then a final {status} or {error}. The client renders the
+	// lines as a progress bar; failures after this point ride the stream (the
+	// status code is already sent).
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.WriteHeader(http.StatusOK)
+	fl, _ := w.(http.Flusher)
+	enc := json.NewEncoder(w)
+	send := func(v any) {
+		_ = enc.Encode(v)
+		if fl != nil {
+			fl.Flush()
+		}
+	}
+	last := int64(-1)
+	if err := applyUpdate(asset, self, func(done, total int64) {
+		// One line per percent, or per MiB when the size is unknown.
+		mark := done >> 20
+		if total > 0 {
+			mark = done * 100 / total
+		}
+		if mark == last {
+			return
+		}
+		last = mark
+		send(map[string]int64{"done": done, "total": total})
+	}); err != nil {
+		send(map[string]string{"error": err.Error()})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+	send(map[string]string{"status": "updated"})
 	// Give the response time to flush, then exit so the service manager restarts
 	// us on the new binary.
 	go func() {
@@ -65,8 +93,10 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 // applyUpdate downloads the asset, verifies its sha256, and atomically swaps it
 // over self. Everything but the process exit lives here so it is testable.
-func applyUpdate(asset, self string) error {
-	newBin, err := downloadAndVerify(asset, filepath.Dir(self))
+// progress (optional) is called with downloaded and total bytes; total is -1
+// when the release server sends no Content-Length.
+func applyUpdate(asset, self string, progress func(done, total int64)) error {
+	newBin, err := downloadAndVerify(asset, filepath.Dir(self), progress)
 	if err != nil {
 		return err
 	}
@@ -97,9 +127,21 @@ func writableTarget(path string) error {
 	return nil
 }
 
+// progressWriter reports cumulative bytes written through it.
+type progressWriter struct {
+	done, total int64
+	report      func(done, total int64)
+}
+
+func (p *progressWriter) Write(b []byte) (int, error) {
+	p.done += int64(len(b))
+	p.report(p.done, p.total)
+	return len(b), nil
+}
+
 // downloadAndVerify fetches the release asset and checksums.txt, verifies the
 // asset's sha256, and writes it to a temp file in dir. Returns the temp path.
-func downloadAndVerify(asset, dir string) (string, error) {
+func downloadAndVerify(asset, dir string, progress func(done, total int64)) (string, error) {
 	client := &http.Client{Timeout: updateTimeout}
 
 	want, err := checksumFor(client, asset)
@@ -126,7 +168,11 @@ func downloadAndVerify(asset, dir string) (string, error) {
 	}
 
 	h := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(tmp, h), resp.Body); err != nil {
+	dst := io.MultiWriter(tmp, h)
+	if progress != nil {
+		dst = io.MultiWriter(dst, &progressWriter{total: resp.ContentLength, report: progress})
+	}
+	if _, err := io.Copy(dst, resp.Body); err != nil {
 		cleanup()
 		return "", err
 	}

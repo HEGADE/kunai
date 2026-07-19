@@ -21,6 +21,13 @@
   const outdated = $derived(updateAvailable(st?.kunai_version, app.latestVersion))
   const updating = $derived(sel ? !!app.updating[sel.id] : false)
   const updateErr = $derived(sel ? (app.updateError[sel.id] ?? '') : '')
+  const updateProg = $derived(sel ? (app.updateProgress[sel.id] ?? -1) : -1)
+  const updateLabel = $derived.by(() => {
+    if (!updating) return updateErr ? 'Retry' : 'Update'
+    if (updateProg >= 1) return 'Restarting…'
+    if (updateProg >= 0) return `${Math.round(updateProg * 100)}%`
+    return 'Updating…'
+  })
   const selSessions = $derived(sel ? app.sessions.filter((s) => s.machineId === sel.id).length : 0)
   const selResumable = $derived(sel ? app.history.filter((h) => h.machineId === sel.id).length : 0)
 
@@ -240,9 +247,12 @@
         {#if updateErr}
           <span class="mono uerr">update failed: {updateErr}</span>
         {/if}
+        {#if updating && updateProg >= 0 && updateProg < 1}
+          <div class="ubar"><div class="ubar-fill" style="width: {Math.round(updateProg * 100)}%"></div></div>
+        {/if}
       </div>
       <button class="ubtn" disabled={updating} onclick={() => sel && app.updateMachine(sel.id)}>
-        {updating ? 'Updating…' : updateErr ? 'Retry' : 'Update'}
+        {updateLabel}
       </button>
     </div>
   {/if}
@@ -550,6 +560,19 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .ubar {
+    margin-top: 4px;
+    height: 3px;
+    border-radius: 100px;
+    background: var(--panel-3);
+    overflow: hidden;
+  }
+  .ubar-fill {
+    height: 100%;
+    border-radius: 100px;
+    background: var(--text-2);
+    transition: width 120ms linear;
   }
   .ubtn {
     flex: none;
