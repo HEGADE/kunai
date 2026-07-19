@@ -312,7 +312,7 @@ func (s *Session) pump() {
 			more := len(s.queue) > 0 || (s.loop != nil && s.loop.state == LoopRunning)
 			s.mu.Unlock()
 			if !more {
-				s.notifyAttention("done", "")
+				s.notifyAttention(NotifyDone, "")
 			}
 			s.drainQueue()
 			s.afterTurn(res.IsError)
@@ -372,7 +372,7 @@ func (s *Session) onPermission(ask *claude.PermissionAsk) {
 	s.emitLocked(sequenced)
 	s.mu.Unlock()
 
-	s.notifyAttention("permission", ask.ToolName)
+	s.notifyAttention(NotifyPermission, ask.ToolName)
 }
 
 // --- commands (client → session) ---

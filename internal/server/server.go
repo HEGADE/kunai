@@ -278,37 +278,6 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, sess.Meta())
 }
 
-// pushNotifier returns a callback that sends a generic wake-up — never content.
-// On a peer (HubURL set) it forwards to the hub; on the hub (or a standalone
-// machine) it sends the push directly.
-func (s *Server) pushNotifier() func(kind, detail string) {
-	return func(kind, detail string) {
-		title, body := wakeupText(kind)
-		if s.cfg.HubURL != "" {
-			s.forwardWake(title, body)
-			return
-		}
-		if s.push != nil {
-			s.push.Notify(title, body)
-		}
-	}
-}
-
-func wakeupText(kind string) (title, body string) {
-	switch kind {
-	case "permission":
-		return "Kunai", "A session needs your approval"
-	case "done":
-		return "Kunai", "A task finished"
-	case "loop":
-		return "Kunai", "A loop finished"
-	case "thermal":
-		return "Kunai", "Stopped everything: the host got too hot"
-	default:
-		return "Kunai", "A session needs your attention"
-	}
-}
-
 func (s *Server) handlePushKey(w http.ResponseWriter, r *http.Request) {
 	if s.push == nil {
 		writeErr(w, http.StatusNotFound, "push disabled")
