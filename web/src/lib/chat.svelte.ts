@@ -276,7 +276,9 @@ export class ChatConnection {
           {
             role: 'compact',
             preTokens: ev.pre_tokens ?? 0,
-            postTokens: ev.context_tokens ?? 0,
+            // The divider shows the raw conversation-only post size (matching the
+            // CLI banner); context_tokens is the meter value with overhead added.
+            postTokens: ev.post_tokens ?? ev.context_tokens ?? 0,
             trigger: ev.trigger ?? 'manual',
           },
         ]

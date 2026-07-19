@@ -58,42 +58,57 @@ func TestCompactResetsContextTokens(t *testing.T) {
 }
 
 // post_tokens is conversation-only; the fixed overhead (system prompt, tool
-// schemas, memory, skills) stays resident in the window. The meter, set from an
-// assistant usage that included that overhead, must subtract only the dropped
-// conversation and keep the overhead. Dropping to the bare post_tokens read far
-// too LOW right after a /compact (11.6k when Claude's own /context showed ~49k).
+// schemas, memory, skills) stays resident in the window. It is NOT in the
+// compaction frame (pre_tokens is the full pre-compaction context, the same
+// basis as the assistant usage the meter comes from), so it can only be
+// measured: the first assistant usage after a compaction reports the true full
+// size, and its excess over the compacted conversation is the overhead. The next
+// compaction then adds it back, so the meter is post_tokens+overhead, not the
+// bare post that read far too LOW (13k when Claude's own /context showed ~50k).
 func TestCompactKeepsOverheadInMeter(t *testing.T) {
 	f := newFakeDriver()
 	s := newSession("c3", "/tmp/p", "", f)
 	defer s.Close()
 	_, _, sub := s.Attach(0)
 
-	// A big turn: ~813k conversation plus ~37k fixed overhead = 850k resident.
-	f.events <- claude.Event{Kind: claude.EventAssistant, Assistant: &claude.AssistantMessage{
-		Usage: &claude.MessageUsage{Input: 10, CacheRead: 849990},
-	}}
-	// /compact reports the conversation shrank 813k -> 11.6k.
+	// A first /compact to a 12k conversation (overhead not yet known: the meter
+	// falls back to the bare post).
 	f.events <- claude.Event{Kind: claude.EventCompact, Compact: &claude.Compact{
-		Trigger: "manual", PreTokens: 813000, PostTokens: 11600,
+		Trigger: "manual", PreTokens: 800000, PostTokens: 12000,
+	}}
+	// The turn that regrows the window reports 48k full: the 36k gap is overhead.
+	f.events <- claude.Event{Kind: claude.EventAssistant, Assistant: &claude.AssistantMessage{
+		Usage: &claude.MessageUsage{CacheRead: 48000},
+	}}
+	// A second /compact: now the meter must keep the measured overhead.
+	f.events <- claude.Event{Kind: claude.EventCompact, Compact: &claude.Compact{
+		Trigger: "manual", PreTokens: 655263, PostTokens: 13000,
 	}}
 
-	var compact *AppEvent
-	for _, ev := range drain(t, sub, 2) { // assistant, compact
+	var compacts []AppEvent
+	for _, ev := range drain(t, sub, 3) { // compact, assistant, compact
 		if ev.T == EvCompact {
-			e := ev
-			compact = &e
+			compacts = append(compacts, ev)
 		}
 	}
-	if compact == nil {
-		t.Fatal("no compact event broadcast")
+	if len(compacts) != 2 {
+		t.Fatalf("got %d compact events, want 2", len(compacts))
 	}
-	// 850000 - (813000 - 11600) = 48600: the overhead survives the compaction.
-	if compact.ContextTokens != 48600 {
-		t.Errorf("context_tokens = %d, want 48600 (overhead preserved, not the bare 11600 post)", compact.ContextTokens)
+	// First compaction: overhead unknown, so the bare post.
+	if compacts[0].ContextTokens != 12000 {
+		t.Errorf("first compact context_tokens = %d, want 12000 (no overhead measured yet)", compacts[0].ContextTokens)
+	}
+	// Second: 13000 post + 36000 measured overhead = 49000.
+	if compacts[1].ContextTokens != 49000 {
+		t.Errorf("second compact context_tokens = %d, want 49000 (post plus measured overhead)", compacts[1].ContextTokens)
+	}
+	// The divider still shows the raw conversation-only post size.
+	if compacts[1].PostTokens != 13000 {
+		t.Errorf("second compact post_tokens = %d, want 13000 (raw post for the divider)", compacts[1].PostTokens)
 	}
 	hello, _, _ := s.Attach(0)
-	if hello.ContextTokens != 48600 {
-		t.Errorf("hello context_tokens = %d, want 48600", hello.ContextTokens)
+	if hello.ContextTokens != 49000 {
+		t.Errorf("hello context_tokens = %d, want 49000", hello.ContextTokens)
 	}
 }
 

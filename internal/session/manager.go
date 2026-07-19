@@ -55,6 +55,11 @@ type CreateOptions struct {
 	// ContextTokens seeds the context-usage meter for a resumed session, so it
 	// shows the real fill immediately instead of waiting for the next turn.
 	ContextTokens int64
+	// Overhead seeds the resident context overhead (system prompt, tools, memory,
+	// skills) measured from the transcript, so the meter stays right the moment a
+	// resumed session next compacts: a compaction's postTokens omits this, and it
+	// cannot be recovered from the compaction frame alone. See loadTranscriptContextTokens.
+	Overhead int64
 	// Mode is the permission mode to spawn in; empty means DefaultPermissionMode.
 	Mode string
 	// CLI names which Claude CLI (account) this session runs on. CLIName is for
@@ -114,6 +119,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	s.cliBin = opts.Bin
 	s.cliEnv = opts.Env
 	s.contextTokens = opts.ContextTokens
+	s.overhead = opts.Overhead
 	if len(opts.Seed) > 0 {
 		s.Seed(opts.Seed)
 	}
@@ -228,6 +234,7 @@ func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seed
 	cid := old.ClaudeSessionID()
 	meta := old.Meta()
 	ctxTokens := old.ContextTokens() // preserve the context meter across the respawn
+	overhead := old.Overhead()       // and the measured overhead, so the meter stays right if it compacts
 	// The account (bin/env) is set once at create and never mutated, so read it
 	// directly to carry it across the respawn; an effort change must not drop a
 	// work session back onto the default account. dir is where its transcript lives.
@@ -249,7 +256,7 @@ func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seed
 	//   - brand-new session, no turns and no transcript: respawn fresh under the
 	//     same handle id.
 	opts := CreateOptions{
-		Cwd: meta.Cwd, Title: meta.Title, Model: meta.Model, Effort: effort, ContextTokens: ctxTokens,
+		Cwd: meta.Cwd, Title: meta.Title, Model: meta.Model, Effort: effort, ContextTokens: ctxTokens, Overhead: overhead,
 		CLIName: cliName, Bin: cliBin, Env: cliEnv,
 	}
 	if cid != "" {

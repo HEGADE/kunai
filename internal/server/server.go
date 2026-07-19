@@ -257,7 +257,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// transcript, not the default account's.
 		dir := cli.configDir()
 		opts.Seed = loadTranscriptTurns(dir, req.Resume)
-		opts.ContextTokens = loadTranscriptContextTokens(dir, req.Resume)
+		opts.ContextTokens, opts.Overhead = loadTranscriptContextTokens(dir, req.Resume)
 	}
 	sess, err := s.mgr.Create(ctx, opts)
 	if err != nil {

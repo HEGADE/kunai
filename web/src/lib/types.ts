@@ -205,6 +205,10 @@ export interface AppEvent {
   // compact: what the window held before, and what triggered the summary. The
   // summary text is never sent — it is the model's context, not a message.
   pre_tokens?: number
+  // compact: the raw conversation-only size the CLI reported (context_tokens adds
+  // the resident overhead back for the meter). The divider shows this so it matches
+  // Claude's own /compact banner.
+  post_tokens?: number
   trigger?: string
   // result
   is_error?: boolean

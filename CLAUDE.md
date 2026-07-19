@@ -195,14 +195,19 @@ The web client renders the conversation richly from data already on the client
 - `web/src/lib/{highlight,diff,toolMeta}.ts` hold the shared, pure helpers.
   `highlight.js` is the only new runtime dependency.
 
-`Changes.svelte` renders the changed-files review as a card at the **end of the
-chat** (fed by `internal/server/review.go`; tree built by the pure
-`web/src/lib/fileTree.ts`, diffs by `FileDiff.svelte`). It is always present in a
-git repo (the full tree when the agent changed files, a compact "Clean" row
+`Changes.svelte` renders the changed-files review as a card **anchored to the turn
+that produced the changes** (fed by `internal/server/review.go`; tree built by the
+pure `web/src/lib/fileTree.ts`, diffs by `FileDiff.svelte`). It is always present in
+a git repo (the full tree when the agent changed files, a compact "Clean" row
 otherwise) and hidden entirely for a non-git session. Per-file diffs load lazily
 (one request per file you open), and it refetches itself when a turn ends. It was
 briefly a header toggle and then hidden-when-empty; both read as broken, so the
-rule is: always-there in a repo, never for a non-repo, at the end of the log.
+rule is: always-there in a repo, never for a non-repo. Placement: `Chat.svelte`
+computes `changesAnchor`, the last mounted turn whose `files` are non-empty, and
+renders the card right after it, so a new unrelated query flows **below** the
+review instead of shoving it to the bottom of the log. It falls back to the end of
+the log only when no mounted turn edited a file (a clean tree, or changes made
+outside the window or via a Bash command), where there is no turn to anchor to.
 
 The log is windowed, and that is load-bearing rather than an optimisation. The
 whole backlog arrives at once on open, so `Chat.svelte` waits for `chat.ready` (the
@@ -414,12 +419,31 @@ Behavioral invariants that were bugs before (do not regress):
   writes it to the transcript flagged `isCompactSummary`; both must be dropped.
   Seeding it replayed tens of thousands of characters as a user message and buried
   the conversation on every resumed session. Only the boundary is shown
-  (`CompactDivider.svelte`). Its `post_tokens` is the *only* report of the new
+  (`CompactDivider.svelte`). The boundary is also the *only* report of the new
   context size, because a compaction emits no assistant message: drop the frame
   and the context meter sits on the pre-compaction number until the next turn
   happens to correct it. The wire spells the metadata snake_case
   (`compact_metadata`/`post_tokens`); the transcript file on disk spells the same
   data camelCase (`compactMetadata`/`postTokens`), so each side decodes its own.
+- But `post_tokens` counts only the compacted *conversation*, not the fixed
+  overhead that stays resident in the window (system prompt, tool schemas, memory,
+  skills, tens of thousands of tokens). Setting the meter to the bare `post_tokens`
+  reads far too LOW right after a `/compact` (13k when Claude's own `/context`
+  shows ~50k). The overhead is NOT recoverable from the frame: `pre_tokens` is the
+  full pre-compaction context, the *same basis* as the assistant usage the meter
+  comes from, so `pre_tokens - post_tokens` over-subtracts and collapses the meter
+  right back to `post_tokens` (this was a real, twice-shipped bug). The only honest
+  source is measurement: the gap between a compaction's `post_tokens` and the first
+  assistant usage after it is the overhead (plus that turn's new prompt), so the
+  smallest such gap is the estimate. The meter is then `post_tokens + overhead`.
+  The overhead is measured live (`Session.overhead`, refined on the first usage
+  after each compaction via `pendingPost`) and seeded from the transcript on resume
+  (`loadTranscriptContextTokens` returns it too, carried through `CreateOptions.Overhead`
+  and preserved across `RestartWithEffort`), so a resumed session is right the
+  moment it next compacts instead of only after a full turn. The compaction event
+  carries both: `context_tokens` is `post_tokens + overhead` (drives the meter) and
+  `post_tokens` is the raw conversation-only size (the divider shows it, matching
+  the CLI's own `/compact` banner).
 - Sessions spawn in `session.DefaultPermissionMode` (auto), applied as the CLI flag
   at spawn so it holds from the first tool call. Sending it afterwards is too late.
   Scheduled jobs deliberately keep `acceptEdits`: auto can still stop for a risky

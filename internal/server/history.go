@@ -444,19 +444,35 @@ type transcriptUsage struct {
 // loadTranscriptContextTokens returns the context-window occupancy (input plus
 // cache tokens) from a transcript's most recent usage, so a resumed session
 // shows its real context fill at once instead of the "send a message" prompt.
-// Returns 0 if the transcript records no usage yet.
-func loadTranscriptContextTokens(configDir, id string) int64 {
+// It also returns the measured context overhead (see below), which seeds the
+// resumed session so the meter is right the moment it next compacts. Returns
+// 0, 0 if the transcript records no usage yet.
+//
+// The overhead is the fixed cost that stays resident in the window no matter how
+// small the conversation gets: the system prompt, tool schemas, memory, and
+// skills, tens of thousands of tokens. It matters because a compaction's
+// postTokens counts ONLY the compacted conversation and omits that overhead, so
+// a meter set to the bare postTokens reads far too LOW (13k when Claude's own
+// /context shows ~50k). The overhead is NOT in the compaction frame: preTokens
+// is the full pre-compaction context, the same basis as the assistant usage the
+// meter comes from, so preTokens-postTokens over-subtracts and collapses the
+// meter to postTokens. The only honest source is measurement: the gap between a
+// compaction's postTokens and the first assistant usage right after it is
+// overhead plus that turn's new prompt, so the smallest such gap across the
+// transcript is the tightest overhead estimate. With it, the post-compaction
+// meter is postTokens+overhead.
+func loadTranscriptContextTokens(configDir, id string) (tokens, overhead int64) {
 	path := transcriptPath(configDir, id)
 	if path == "" {
-		return 0
+		return 0, 0
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return 0
+		return 0, 0
 	}
 	defer f.Close()
 
-	var last int64
+	var last, pendingPost int64
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
 	for sc.Scan() {
@@ -477,21 +493,14 @@ func loadTranscriptContextTokens(configDir, id string) int64 {
 			continue
 		}
 		// A compaction supersedes any earlier assistant usage: no assistant
-		// message follows it to report the smaller number. But its postTokens
-		// counts only the compacted conversation, not the fixed overhead (system
-		// prompt, tool schemas, memory, skills) that stays resident in the
-		// window. `last` is the pre-compaction assistant usage, which included
-		// that overhead, so subtract only the dropped conversation and keep it;
-		// seeding the bare postTokens read far too LOW (11.6k when Claude's own
-		// /context showed ~49k). Fall back to postTokens when there is no larger
-		// prior occupancy to subtract from (a partial or absent usage sample).
+		// message follows it to report the smaller number. Keep the resident
+		// overhead by seeding postTokens+overhead; the next assistant usage (if
+		// any) will refine it. Remember postTokens so that next usage can measure
+		// the overhead gap.
 		if v.Type == "system" && v.Subtype == "compact_boundary" && v.CompactMetadata != nil && v.CompactMetadata.PostTokens > 0 {
 			post := v.CompactMetadata.PostTokens
-			if dropped := v.CompactMetadata.PreTokens - post; dropped > 0 && last-dropped > post {
-				last -= dropped
-			} else {
-				last = post
-			}
+			last = post + overhead
+			pendingPost = post
 			continue
 		}
 		u := v.Usage
@@ -500,7 +509,16 @@ func loadTranscriptContextTokens(configDir, id string) int64 {
 		}
 		if u != nil {
 			last = u.Input + u.CacheCreate + u.CacheRead
+			// First real usage after a compaction: its size over the compacted
+			// conversation is the overhead (plus this turn's new prompt). Take the
+			// smallest such gap as the tightest estimate.
+			if pendingPost > 0 {
+				if gap := last - pendingPost; gap > 0 && (overhead == 0 || gap < overhead) {
+					overhead = gap
+				}
+				pendingPost = 0
+			}
 		}
 	}
-	return last
+	return last, overhead
 }

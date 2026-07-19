@@ -75,11 +75,16 @@ type AppEvent struct {
 	ContextTokens int64 `json:"context_tokens,omitempty"`
 
 	// "compact": the conversation was replaced by a summary. ContextTokens above
-	// carries the size afterwards; these say where it came from. The summary text
-	// itself is deliberately never sent — it is the model's context, not a
-	// message anyone wrote, and dumping it in the log buries the conversation.
-	PreTokens int64  `json:"pre_tokens,omitempty"`
-	Trigger   string `json:"trigger,omitempty"` // "manual" (/compact) | "auto"
+	// carries the full window afterwards (conversation plus the resident overhead
+	// that never leaves), which drives the meter; PostTokens is the raw
+	// conversation-only size the CLI reported, which the compaction divider shows
+	// as the "after" number so it matches Claude's own /compact banner. PreTokens
+	// is where it came from. The summary text itself is deliberately never sent: it
+	// is the model's context, not a message anyone wrote, and dumping it in the log
+	// buries the conversation.
+	PreTokens  int64  `json:"pre_tokens,omitempty"`
+	PostTokens int64  `json:"post_tokens,omitempty"`
+	Trigger    string `json:"trigger,omitempty"` // "manual" (/compact) | "auto"
 
 	// "result"
 	IsError    bool    `json:"is_error,omitempty"`

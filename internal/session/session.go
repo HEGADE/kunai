@@ -57,6 +57,8 @@ type Session struct {
 	claudeSessionID string // CLI-assigned id, for --resume cold-start
 	state           string
 	contextTokens   int64   // context-window occupancy from the latest result (or seeded on resume)
+	overhead        int64   // fixed resident cost (system prompt, tools, memory, skills) a compaction's postTokens omits
+	pendingPost     int64   // a just-compacted conversation size, awaiting the next usage to measure overhead
 	lastCostUSD     float64 // running session total from the CLI, to difference per turn
 	buf             *ring
 	subs            map[*Subscriber]struct{}
@@ -174,7 +176,7 @@ func (s *Session) Seed(turns []SeedTurn) {
 		case "tool_result":
 			ev = AppEvent{T: EvToolResult, ToolUseID: t.ToolUseID, Content: t.Text, IsError: t.IsError}
 		case "compact":
-			ev = AppEvent{T: EvCompact, Trigger: t.Trigger, PreTokens: t.PreTokens, ContextTokens: t.PostTokens}
+			ev = AppEvent{T: EvCompact, Trigger: t.Trigger, PreTokens: t.PreTokens, PostTokens: t.PostTokens, ContextTokens: t.PostTokens + s.overhead}
 		case "loop":
 			// LoopSeam, not LoopRunning: this lap is history recovered from a
 			// transcript. The loop it belonged to died with the process that ran it,
@@ -218,6 +220,16 @@ func (s *Session) pump() {
 			s.mu.Lock()
 			if ctx > 0 {
 				s.contextTokens = ctx
+				// First real usage after a compaction reports the true full size,
+				// so its excess over the compacted conversation is the resident
+				// overhead (plus this turn's new prompt). Keep the smallest such
+				// gap as the estimate the next compaction will add back.
+				if s.pendingPost > 0 {
+					if gap := ctx - s.pendingPost; gap > 0 && (s.overhead == 0 || gap < s.overhead) {
+						s.overhead = gap
+					}
+					s.pendingPost = 0
+				}
 			}
 			// Remember the turn's newest words: a loop's completion promise has to
 			// be found in the last thing the model actually said.
@@ -249,26 +261,27 @@ func (s *Session) pump() {
 			// overhead that stays resident in the window: the system prompt, tool
 			// schemas, memory files, and skills, tens of thousands of tokens. Our
 			// meter comes from an assistant usage that included that overhead, so
-			// dropping to post_tokens verbatim reads far too low right after a
-			// /compact (11.6k when Claude's own /context shows ~49k). Subtract only
-			// the dropped conversation and keep the overhead; floor at post_tokens
-			// for the degenerate case where there is no larger prior occupancy to
-			// subtract from (a fresh or resumed session, or a partial usage sample).
+			// showing the bare post_tokens reads far too low right after a /compact
+			// (13k when Claude's own /context shows ~50k). The overhead is not in the
+			// frame (pre_tokens is the full pre-compaction context, the same basis as
+			// our meter, so pre-post over-subtracts to ~post), so we add the overhead
+			// measured from a prior compaction's regrowth: post_tokens+overhead. With
+			// no measurement yet the meter falls back to post_tokens and the next
+			// assistant usage, which reports the true full size, corrects it.
 			c := ev.Compact
 			s.mu.Lock()
 			newCtx := s.contextTokens
 			if c.PostTokens > 0 {
-				newCtx = c.PostTokens
-				if dropped := c.PreTokens - c.PostTokens; dropped > 0 && s.contextTokens-dropped > c.PostTokens {
-					newCtx = s.contextTokens - dropped
-				}
+				newCtx = c.PostTokens + s.overhead
 				s.contextTokens = newCtx
+				s.pendingPost = c.PostTokens
 			}
 			s.mu.Unlock()
 			s.broadcast(AppEvent{
 				T:             EvCompact,
 				Trigger:       c.Trigger,
 				PreTokens:     c.PreTokens,
+				PostTokens:    c.PostTokens,
 				ContextTokens: newCtx,
 			})
 
@@ -751,6 +764,15 @@ func (s *Session) ContextTokens() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.contextTokens
+}
+
+// Overhead returns the measured resident context overhead, so a restart can
+// carry it into the respawned session and keep the meter right if it compacts
+// before the next assistant turn re-measures it.
+func (s *Session) Overhead() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.overhead
 }
 
 func toAppBlocks(msg *claude.AssistantMessage) []AppBlock {

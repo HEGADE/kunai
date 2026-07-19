@@ -98,13 +98,15 @@ func (s *Server) resumeOneLoop(ctx context.Context, rec session.LoopPersist) {
 	cctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 
+	ctxTokens, overhead := loadTranscriptContextTokens(rec.Env["CLAUDE_CONFIG_DIR"], rec.SessionID)
 	sess, err := s.mgr.Create(cctx, session.CreateOptions{
 		Cwd:           rec.Cwd,
 		Model:         rec.Model,
 		Effort:        rec.Effort,
 		Resume:        rec.SessionID,
 		Seed:          loadTranscriptTurns(rec.Env["CLAUDE_CONFIG_DIR"], rec.SessionID),
-		ContextTokens: loadTranscriptContextTokens(rec.Env["CLAUDE_CONFIG_DIR"], rec.SessionID),
+		ContextTokens: ctxTokens,
+		Overhead:      overhead,
 		// Carry the account across the restart, or the resumed loop would jump to
 		// the default Claude and spend the wrong budget.
 		CLIName: rec.CLIName,
