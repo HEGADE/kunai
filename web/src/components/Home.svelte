@@ -557,9 +557,7 @@
   .uerr {
     font-size: 10.5px;
     color: var(--alert);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
   }
   .ubar {
     margin-top: 4px;
