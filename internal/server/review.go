@@ -60,6 +60,26 @@ func diffBase(ctx context.Context, dir string) string {
 	return emptyTree
 }
 
+// sessionBase is the commit that was HEAD when the session started, so the review
+// shows everything the session changed — its commits AND its uncommitted work —
+// not just what is still uncommitted. Diffing the working tree against this base
+// means committing the work does not empty the panel: "what did this session do"
+// stays answerable after a commit. It is derived from the session's start time
+// (git rev-list -1 --before), so it needs no capture at create and works for
+// every already-running session. Falls back to HEAD when the session start is
+// unknown or predates the first commit (so it never explodes to a whole-repo diff).
+func sessionBase(ctx context.Context, dir string, since time.Time) string {
+	base := diffBase(ctx, dir)
+	if since.IsZero() || base == emptyTree {
+		return base
+	}
+	out, err := gitRun(ctx, dir, "rev-list", "-1", "--before=@"+strconv.FormatInt(since.Unix(), 10), "HEAD")
+	if sha := strings.TrimSpace(string(out)); err == nil && sha != "" {
+		return sha
+	}
+	return base
+}
+
 // ChangedFile is one row of the changed-files tree.
 type ChangedFile struct {
 	Path    string `json:"path"`
@@ -84,12 +104,13 @@ var statusWord = map[byte]string{
 	'R': "renamed", 'C': "added", 'T': "modified",
 }
 
-// changes lists what the working tree differs from its last commit by: tracked
-// changes (with line counts from numstat, statuses from name-status) plus
-// untracked files as additions. Three cheap git reads and a bounded read of each
-// untracked file, so it stays fast on the common handful-of-files case.
-func changes(ctx context.Context, dir string) (*ChangesResp, error) {
-	base := diffBase(ctx, dir)
+// changes lists what the working tree differs from base by: tracked changes (with
+// line counts from numstat, statuses from name-status) plus untracked files as
+// additions. Base is the session-start commit, so this is the session's whole
+// footprint (committed and uncommitted), not just the uncommitted remainder.
+// Three cheap git reads and a bounded read of each untracked file, so it stays
+// fast on the common handful-of-files case.
+func changes(ctx context.Context, dir, base string) (*ChangesResp, error) {
 
 	// added \t removed \t path  (binary shows "-\t-\tpath")
 	counts := map[string][2]int{}
@@ -201,8 +222,7 @@ func countAdded(path string) (int, bool) {
 // fileDiff returns the structured diff for one path, or for every changed
 // tracked file when path is empty. Untracked files aren't in `git diff`, so they
 // diff against /dev/null instead.
-func fileDiff(ctx context.Context, dir, path string) ([]FileDiff, error) {
-	base := diffBase(ctx, dir)
+func fileDiff(ctx context.Context, dir, path, base string) ([]FileDiff, error) {
 	args := []string{"-c", "core.quotepath=false", "diff", base, "--"}
 	if path != "" {
 		if !isTracked(ctx, dir, path) {
@@ -246,7 +266,7 @@ func (s *Server) handleChanges(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, ChangesResp{Repo: false})
 		return
 	}
-	resp, err := changes(ctx, sess.Cwd)
+	resp, err := changes(ctx, sess.Cwd, sessionBase(ctx, sess.Cwd, sess.CreatedAt))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -266,7 +286,7 @@ func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"repo": false})
 		return
 	}
-	files, err := fileDiff(ctx, sess.Cwd, r.URL.Query().Get("path"))
+	files, err := fileDiff(ctx, sess.Cwd, r.URL.Query().Get("path"), sessionBase(ctx, sess.Cwd, sess.CreatedAt))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

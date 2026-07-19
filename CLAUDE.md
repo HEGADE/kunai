@@ -157,14 +157,25 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   structured hunks), that shell `git` in the live session's cwd through an
   injectable `gitRun` (the same testable-subprocess pattern as `usageRun`/
   `execRun`). The summary stitches numstat counts, name-status statuses, and
-  untracked files (line-counted through a fixed 32K buffer) into one tree vs the
-  last commit; `review_diff.go` reshapes `git diff` into typed rows so the client
-  never re-diffs. Everything is bounded (file count, rows per file, bytes per
-  line) so a machine-sized sweep can't balloon a response or memory. **Nothing
-  here writes** (diff/status/read only), so a review can never mutate the working
-  tree it reports on; do not add a write path without making that guarantee
-  explicit. The locally-built `/kunai` binary is gitignored so it never shows as
-  a phantom untracked change.
+  untracked files (line-counted through a fixed 32K buffer) into one tree;
+  `review_diff.go` reshapes `git diff` into typed rows so the client never
+  re-diffs. Everything is bounded (file count, rows per file, bytes per line) so a
+  machine-sized sweep can't balloon a response or memory. **Nothing here writes**
+  (diff/status/read only), so a review can never mutate the working tree it reports
+  on; do not add a write path without making that guarantee explicit. The
+  locally-built `/kunai` binary is gitignored so it never shows as a phantom
+  untracked change.
+- The diff base is the **session-start commit**, not `HEAD`, so the review shows
+  what *this session* changed (its commits AND its uncommitted work), and
+  committing the work does not empty the panel: "what did this session do" stays
+  answerable after a commit (`git diff <base>` with no second ref diffs the working
+  tree against base, catching both). `sessionBase` derives it from the session's
+  `CreatedAt` via `git rev-list -1 --before=@<unix>`, so it needs no capture at
+  create and works for every already-running session; it falls back to `HEAD` when
+  the start is unknown or predates the first commit (so it never explodes to a
+  whole-repo diff). `CreatedAt` is not persisted, so a resumed session's base is
+  effectively its resume time, i.e. changes since resume, which is the honest
+  reading when the prior run's work was already committed.
 - `web/`: Svelte 5 (runes: `$state`/`$derived` in `.svelte.ts` stores), Vite plus
   vite-plugin-pwa with `injectManifest` and a hand-written `src/sw.ts`.
 - `internal/server/stats.go` is cross-platform (disk via `syscall.Statfs`,

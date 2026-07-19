@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // changes() stitches three git reads plus a real read of each untracked file
@@ -39,7 +40,7 @@ func TestChangesAssembly(t *testing.T) {
 		return nil, fmt.Errorf("unexpected git %v", args)
 	}
 
-	resp, err := changes(context.Background(), dir)
+	resp, err := changes(context.Background(), dir, "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,5 +68,53 @@ func TestChangesAssembly(t *testing.T) {
 	}
 	if resp.Added != 6 || resp.Removed != 3 {
 		t.Errorf("totals = +%d/-%d, want +6/-3", resp.Added, resp.Removed)
+	}
+}
+
+// sessionBase resolves the commit that was HEAD when the session started, so the
+// review shows the session's committed work too (not just what is still
+// uncommitted). It is derived from the start time via `git rev-list -1 --before`.
+func TestSessionBase(t *testing.T) {
+	dir := t.TempDir()
+	start := time.Unix(1_700_000_000, 0)
+	orig := gitRun
+	defer func() { gitRun = orig }()
+
+	// The commit at session start is returned, and --before carries the start ts.
+	var sawBefore bool
+	gitRun = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		key := strings.Join(args, " ")
+		switch {
+		case strings.Contains(key, "rev-parse --verify -q HEAD"):
+			return nil, nil // HEAD exists
+		case strings.Contains(key, "rev-list -1 --before=@1700000000 HEAD"):
+			sawBefore = true
+			return []byte("abc123def456\n"), nil
+		}
+		return nil, fmt.Errorf("unexpected git %v", args)
+	}
+	if got := sessionBase(context.Background(), dir, start); got != "abc123def456" {
+		t.Errorf("base = %q, want abc123def456", got)
+	}
+	if !sawBefore {
+		t.Error("rev-list --before was never run")
+	}
+
+	// A session that predates the first commit (rev-list finds nothing) falls back
+	// to HEAD rather than the empty tree, so it never explodes to a whole-repo diff.
+	gitRun = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		key := strings.Join(args, " ")
+		if strings.Contains(key, "rev-parse --verify -q HEAD") {
+			return nil, nil
+		}
+		return nil, nil // rev-list returns empty
+	}
+	if got := sessionBase(context.Background(), dir, start); got != "HEAD" {
+		t.Errorf("base = %q, want HEAD (fallback)", got)
+	}
+
+	// A zero start time (unknown) is just HEAD.
+	if got := sessionBase(context.Background(), dir, time.Time{}); got != "HEAD" {
+		t.Errorf("base = %q, want HEAD for zero time", got)
 	}
 }
