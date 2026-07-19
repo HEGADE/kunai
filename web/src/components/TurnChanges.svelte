@@ -7,16 +7,21 @@
   import DiffView from './tools/DiffView.svelte'
   import CodeView from './tools/CodeView.svelte'
 
-  // What this one query changed: a folder tree of the files its Edit/Write/
-  // MultiEdit calls touched, each file expandable to its diff. Fed entirely from
-  // the turn's tool inputs (fileEditsOf), so it is per-query, needs no git, and
-  // stays correct after the work is committed.
+  // What this one query changed, read like a live `git diff --stat`: a folder
+  // tree of the files its Edit/Write/MultiEdit calls touched, each with a scaled
+  // add/remove gauge so the churn's shape is legible at a glance, and each file
+  // expandable to its diff. Fed entirely from the turn's tool inputs (fileEditsOf),
+  // so it is per-query, needs no git, and stays correct after the work is committed.
   let { turn }: { turn: Turn } = $props()
 
   const files = $derived(fileEditsOf(turn.blocks))
   const tree = $derived<TreeNode[]>(buildTree(files))
   const added = $derived(files.reduce((n, f) => n + f.added, 0))
   const removed = $derived(files.reduce((n, f) => n + f.removed, 0))
+  const total = $derived(added + removed)
+  // Gauge scale: the busiest file fills the bar, the rest read against it, so the
+  // longest bar marks where the real work happened.
+  const maxChurn = $derived(Math.max(1, ...files.map((f) => f.added + f.removed)))
 
   // Dir paths that are collapsed, and file paths whose diff is open. Reactive
   // collections so one toggle re-renders only the affected rows.
@@ -56,25 +61,36 @@
   })
 </script>
 
-{#snippet counts(a: number, r: number)}
-  <span class="counts mono">
+{#snippet nums(a: number, r: number)}
+  <span class="nums">
     {#if a > 0}<span class="add">+{a}</span>{/if}
     {#if r > 0}<span class="del">−{r}</span>{/if}
   </span>
 {/snippet}
 
+<!-- A diffstat gauge: bar length scaled to the busiest file, split green/red by
+     the add/remove ratio. `frac` is this row's share of the max churn. -->
+{#snippet gauge(a: number, r: number, frac: number)}
+  {@const t = Math.max(1, a + r)}
+  <span class="gauge" style="--frac:{frac}">
+    <span class="fill">
+      <span class="g" style="flex:{a / t}"></span>
+      <span class="d" style="flex:{r / t}"></span>
+    </span>
+  </span>
+{/snippet}
+
 {#snippet chev(down: boolean)}
-  <svg class="chev" class:down width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
+  <svg class="chev" class:down width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
 {/snippet}
 
 {#snippet row(n: TreeNode, depth: number)}
   {#if n.kind === 'dir'}
     <button class="drow" style="--d:{depth}" onclick={() => toggleDir(n.path)}>
       {@render chev(!collapsed.has(n.path))}
-      <svg class="fic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
-      <span class="nm dir">{n.name}</span>
+      <span class="nm dir">{n.name}<span class="slash">/</span></span>
       <span class="sp"></span>
-      {@render counts(n.added, n.removed)}
+      {@render nums(n.added, n.removed)}
     </button>
     {#if !collapsed.has(n.path)}
       {#each n.children as c (c.kind === 'dir' ? c.path : c.file.path)}
@@ -83,11 +99,13 @@
     {/if}
   {:else}
     {@const f = n.file}
+    {@const t = f.added + f.removed}
     <button class="frow" class:open={open.has(f.path)} style="--d:{depth}" onclick={() => toggleFile(f.path)}>
       {@render chev(open.has(f.path))}
       <span class="nm">{f.name}</span>
       <span class="sp"></span>
-      {@render counts(f.added, f.removed)}
+      {@render nums(f.added, f.removed)}
+      {@render gauge(f.added, f.removed, t / maxChurn)}
     </button>
     {#if open.has(f.path)}
       <div class="diffs" style="--d:{depth}">
@@ -106,11 +124,19 @@
 {#if files.length}
   <div class="tchanges">
     <div class="chead">
-      <span class="eyebrow">Changed files</span>
-      <span class="n mono">{files.length}</span>
-      {@render counts(added, removed)}
+      <span class="inv"><span class="prompt">❯</span> diff&nbsp;<span class="stat">--stat</span></span>
+      <span class="fc">{files.length} file{files.length === 1 ? '' : 's'}</span>
       <span class="sp"></span>
-      <button class="tbtn" onclick={collapseAll} disabled={allCollapsed}>Collapse all</button>
+      <span class="tally">
+        {@render nums(added, removed)}
+        {#if total > 0}
+          <span class="total" title="{added} added, {removed} removed">
+            <span class="g" style="flex:{added / total}"></span>
+            <span class="d" style="flex:{removed / total}"></span>
+          </span>
+        {/if}
+      </span>
+      <button class="tbtn" onclick={collapseAll} disabled={allCollapsed} aria-label="Collapse all folders">Collapse</button>
     </div>
     <div class="tree">
       {#each tree as n (n.kind === 'dir' ? n.path : n.file.path)}
@@ -122,63 +148,122 @@
 
 <style>
   .tchanges {
-    margin: 4px 0 2px;
+    margin: 5px 0 2px;
     border: 1px solid var(--border);
     border-radius: var(--r-sm);
     background: var(--bg-raised);
     overflow: hidden;
+    font-family: var(--mono);
   }
+
+  /* Header reads like a stat command banner: the invocation, the file count, and
+     a total add/remove gauge that anchors the whole card. */
   .chead {
     display: flex;
     align-items: center;
-    gap: 9px;
-    padding: 8px 11px;
+    gap: 10px;
+    padding: 9px 12px;
     border-bottom: 1px solid var(--border);
   }
-  .eyebrow {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--text-3);
-  }
-  .n {
+  .inv {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 2px;
     font-size: 12px;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--text-4);
+  }
+  .inv .prompt {
     color: var(--text-3);
+    font-weight: 600;
+    margin-right: 4px;
+  }
+  .inv .stat {
+    color: var(--text-2);
+  }
+  .fc {
+    font-size: 11.5px;
+    color: var(--text-4);
+  }
+  .tally {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .total {
+    display: flex;
+    width: 108px;
+    height: 5px;
+    border-radius: 3px;
+    overflow: hidden;
+    background: var(--panel-2);
+  }
+  .total .g,
+  .tree .g {
+    background: color-mix(in oklab, #6fae90 82%, transparent);
+  }
+  .total .d,
+  .tree .d {
+    background: color-mix(in oklab, #c98a83 82%, transparent);
   }
   .tbtn {
     flex: none;
     height: 24px;
-    padding: 0 9px;
-    border-radius: var(--r-sm);
+    padding: 0 10px;
+    border: 1px solid var(--border-2);
+    border-radius: 100px;
     color: var(--text-4);
-    font-size: 11.5px;
-    font-weight: 500;
+    font-size: 11px;
+    letter-spacing: 0.02em;
   }
   .tbtn:hover {
     color: var(--text-2);
-    background: var(--panel);
+    border-color: var(--text-4);
   }
   .tbtn:disabled {
-    opacity: 0.35;
+    opacity: 0.3;
+    border-color: var(--border);
   }
+
   .tree {
     display: flex;
     flex-direction: column;
-    padding: 5px 6px 6px;
+    padding: 6px 8px 8px;
   }
+
+  /* A row is a light stat line, not a boxed item. Indent guides (a hairline per
+     depth level, drawn behind the content) make nesting read without a folder
+     icon on every row. */
   .drow,
   .frow {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 8px;
     width: 100%;
     text-align: left;
-    padding: 5px 7px;
-    padding-left: calc(7px + var(--d) * 16px);
+    padding: 5px 8px 5px calc(8px + var(--d) * 17px);
     border-radius: var(--r-sm);
-    font-size: 13px;
+    font-size: 12.5px;
     color: var(--text-2);
+  }
+  .drow::before,
+  .frow::before {
+    content: '';
+    position: absolute;
+    left: 12px;
+    top: 0;
+    bottom: 0;
+    width: calc(var(--d) * 17px);
+    background: repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent 16px,
+      var(--border-2) 16px,
+      var(--border-2) 17px
+    );
+    pointer-events: none;
   }
   .drow:hover,
   .frow:hover,
@@ -193,12 +278,6 @@
   }
   .chev.down {
     transform: rotate(90deg);
-  }
-  .fic {
-    flex: none;
-    color: var(--text-4);
-  }
-  .drow:hover .fic {
     color: var(--text-3);
   }
   .nm {
@@ -206,22 +285,27 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 100%;
+    max-width: 62%;
   }
   .nm.dir {
-    font-family: var(--mono);
-    font-size: 12px;
-    color: var(--text-2);
+    color: var(--text-3);
+  }
+  .drow:hover .nm.dir {
+    color: var(--text);
+  }
+  .slash {
+    color: var(--text-4);
   }
   .sp {
     flex: 1;
-    min-width: 8px;
+    min-width: 10px;
   }
-  .counts {
+  .nums {
     flex: none;
     display: flex;
-    gap: 7px;
+    gap: 8px;
     font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
   }
   .add {
     color: #6fae90;
@@ -229,10 +313,49 @@
   .del {
     color: #c98a83;
   }
+
+  /* The signature: a fixed-track gauge whose fill length is this file's share of
+     the busiest file, split green/red by the add/remove ratio. The longest bar
+     is the file that changed most. */
+  .gauge {
+    flex: none;
+    width: 60px;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--panel-2);
+    overflow: hidden;
+  }
+  .gauge .fill {
+    display: flex;
+    height: 100%;
+    width: calc(max(0.08, var(--frac)) * 100%);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
   .diffs {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    padding: 2px 6px 8px calc(7px + var(--d) * 16px + 18px);
+    padding: 3px 6px 9px calc(8px + var(--d) * 17px + 17px);
+  }
+
+  @media (max-width: 560px) {
+    .nm {
+      max-width: 52%;
+    }
+    /* Narrow: the per-row gauges, the total gauge and the file count all drop, so
+       the header stays one clean line — invocation, tally, Collapse. */
+    .gauge,
+    .total,
+    .fc {
+      display: none;
+    }
+  }
+  .inv {
+    white-space: nowrap;
+  }
+  .chead {
+    flex-wrap: nowrap;
   }
 </style>
