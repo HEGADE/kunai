@@ -73,6 +73,9 @@
   let modeOpen = $state(false)
   let modelOpen = $state(false)
   let effortOpen = $state(false)
+  let accountOpen = $state(false)
+  // Claude accounts available on this session's machine (first is the default).
+  const accounts = $derived(app.machines.find((m) => m.id === app.activeMachineId)?.stats?.clis ?? [])
 
   // Scrolling: open at the latest message, follow the stream while pinned to the
   // bottom, and surface a jump-to-bottom button once the user scrolls up.
@@ -511,6 +514,25 @@
             </div>
           {/if}
         </div>
+        {#if accounts.length > 1}
+          <div class="modewrap">
+            <button class="mode" onclick={() => (accountOpen = !accountOpen)} title="Claude account (restarts the session)">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.6" /><path d="M5 21v-1a6 6 0 016-6h2a6 6 0 016 6v1" /></svg>
+              {chat.cli || accounts[0]}
+            </button>
+            {#if accountOpen}
+              <button class="mode-scrim" onclick={() => (accountOpen = false)} aria-label="Close"></button>
+              <div class="mode-pop">
+                <div class="pop-note">Switches the account and resumes here. The new account re-reads the conversation once.</div>
+                {#each accounts as a (a)}
+                  <button class:active={(chat.cli || accounts[0]) === a} onclick={() => { if ((chat.cli || accounts[0]) !== a) app.switchAccount(a); accountOpen = false }}>
+                    <span class="ml">{a}</span>
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
         <span class="spacer"></span>
         <Context
           tokens={chat.contextTokens}

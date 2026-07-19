@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -356,6 +357,79 @@ func (s *Server) handleAccountRemove(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, s.saveCLIs(kept))
+}
+
+// handleSetAccount switches a live session to a different account, keeping its
+// conversation. Claude ties a conversation's memory to the account's config dir,
+// so the transcript is copied into the target account's projects folder first,
+// then the session is respawned under that account with --resume. The resumed
+// process authenticates and bills as the new account; its first turn re-reads the
+// whole context uncached (the accepted cost of the switch). The id is unchanged.
+func (s *Server) handleSetAccount(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sess, ok := s.mgr.Get(id)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "session not found")
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	target := s.resolveCLI(req.Name)
+	if strings.EqualFold(target.Name, sess.Meta().CLI) {
+		writeJSON(w, http.StatusOK, sess.Meta()) // already on it
+		return
+	}
+	// Copy the transcript into the target account's folder so the resumed process
+	// loads the full context under the new login. cid is the CLI-assigned id once a
+	// turn has happened; before that the transcript (if any) lives under the handle.
+	cid := sess.ClaudeSessionID()
+	if cid == "" {
+		cid = id
+	}
+	if src := s.transcriptForID(cid); src != "" {
+		slug := filepath.Base(filepath.Dir(src))
+		dst := filepath.Join(claudeRoot(target.configDir()), slug, cid+".jsonl")
+		if err := copyFile(src, dst); err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not move the conversation to that account: "+err.Error())
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	restarted, err := s.mgr.RestartWithAccount(ctx, id, target.Name, target.Bin, target.effectiveEnv(), loadTranscriptTurns)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.armSession(restarted)
+	writeJSON(w, http.StatusOK, restarted.Meta())
+}
+
+// copyFile copies src to dst, creating dst's parent folder. Used to move a
+// session's transcript into another account's config dir on an account switch.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return err
+	}
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // loginSweepLoop kills abandoned login flows on an interval.

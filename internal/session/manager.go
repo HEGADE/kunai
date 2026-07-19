@@ -224,12 +224,38 @@ func (m *Manager) removeIf(id string, s *Session) {
 	m.mu.Unlock()
 }
 
+// acctOverride swaps the account (name/bin/env) a session runs on across a
+// respawn. The caller is responsible for making the transcript reachable under
+// the new account's config dir first (see the account-switch handler).
+type acctOverride struct {
+	name string
+	bin  string
+	env  map[string]string
+}
+
 // RestartWithEffort relaunches a live session at a new reasoning effort by
 // closing it and re-creating it with --resume (effort is a spawn-time CLI flag,
 // so it cannot change on the running process). The conversation is preserved via
 // the transcript: seedFn loads it back into the replay buffer. The new session
 // keeps the same id (resume forces id == claude session id).
 func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seedFn func(configDir, cid string) []SeedTurn) (*Session, error) {
+	return m.restart(ctx, id, effort, nil, seedFn)
+}
+
+// RestartWithAccount relaunches a live session on a different Claude account,
+// keeping its conversation. Effort and everything else carry over; only the
+// account (name/bin/env) changes, so the resumed process authenticates and bills
+// as the new account. The transcript must already be present under the new
+// account's config dir (the handler copies it before calling this).
+func (m *Manager) RestartWithAccount(ctx context.Context, id, name, bin string, env map[string]string, seedFn func(configDir, cid string) []SeedTurn) (*Session, error) {
+	return m.restart(ctx, id, "", &acctOverride{name: name, bin: bin, env: env}, seedFn)
+}
+
+// restart is the shared respawn: close the live process and re-create it with
+// --resume so the conversation is preserved via the transcript. effort != ""
+// changes the reasoning effort; acct != nil changes the account. Anything not
+// overridden carries over from the old session.
+func (m *Manager) restart(ctx context.Context, id, effort string, acct *acctOverride, seedFn func(configDir, cid string) []SeedTurn) (*Session, error) {
 	m.mu.Lock()
 	old, ok := m.sessions[id]
 	m.mu.Unlock()
@@ -242,17 +268,24 @@ func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seed
 	overhead := old.Overhead()       // and the measured overhead, so the meter stays right if it compacts
 	// The account (bin/env) is set once at create and never mutated, so read it
 	// directly to carry it across the respawn; an effort change must not drop a
-	// work session back onto the default account. dir is where its transcript lives.
+	// work session back onto the default account.
 	cliName, cliBin, cliEnv := old.cliName, old.cliBin, old.cliEnv
-	dir := cliEnv["CLAUDE_CONFIG_DIR"]
+	if acct != nil {
+		cliName, cliBin, cliEnv = acct.name, acct.bin, acct.env
+	}
+	eff := meta.Effort
+	if effort != "" {
+		eff = effort
+	}
+	dir := cliEnv["CLAUDE_CONFIG_DIR"] // where the resumed process reads its transcript
 
 	old.Close()
 	<-old.Done()
 	m.removeIf(id, old) // synchronous, so the recreate below won't collide
 
-	// Effort is a spawn-time flag, so the process must be respawned either way.
-	// Three cases, distinguished by whether the CLI has assigned a session id
-	// (only after the first turn) and whether a transcript exists on disk:
+	// The process must be respawned. Three cases, distinguished by whether the CLI
+	// has assigned a session id (only after the first turn) and whether a
+	// transcript exists on disk:
 	//   - prompted this run: resume by the live CLI session id.
 	//   - resumed from history but not yet prompted: no live id yet, but a
 	//     transcript exists under the handle id, so resume that (a fresh
@@ -261,7 +294,7 @@ func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seed
 	//   - brand-new session, no turns and no transcript: respawn fresh under the
 	//     same handle id.
 	opts := CreateOptions{
-		Cwd: meta.Cwd, Title: meta.Title, Model: meta.Model, Effort: effort, ContextTokens: ctxTokens, Overhead: overhead,
+		Cwd: meta.Cwd, Title: meta.Title, Model: meta.Model, Effort: eff, ContextTokens: ctxTokens, Overhead: overhead,
 		CLIName: cliName, Bin: cliBin, Env: cliEnv,
 	}
 	if cid != "" {

@@ -26,6 +26,7 @@ type AppEvent struct {
 	State   string     `json:"state,omitempty"`
 	Mode    string     `json:"mode,omitempty"`   // permission mode
 	Effort  string     `json:"effort,omitempty"` // reasoning effort (hello)
+	CLI     string     `json:"cli,omitempty"`    // which Claude account this session runs on (hello)
 	HighSeq uint64     `json:"high_seq,omitempty"`
 	Pending []AppEvent `json:"pending,omitempty"` // unresolved permission asks
 	Queued  []AppEvent `json:"queued,omitempty"`  // prompts waiting for the current turn

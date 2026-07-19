@@ -73,6 +73,16 @@ export function setEffort(base: string, id: string, effort: string): Promise<Met
   }).then((r) => json<Meta>(r))
 }
 
+// setAccount switches a live session to a different Claude account, keeping its
+// conversation (the server copies the transcript to the new account and resumes).
+export function setAccount(base: string, id: string, name: string): Promise<Meta> {
+  return fetch(at(base, `/api/sessions/${id}/account`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  }).then((r) => json<Meta>(r))
+}
+
 export function browse(base: string, path: string): Promise<Listing> {
   const q = path ? `?path=${encodeURIComponent(path)}` : ''
   return fetch(at(base, `/api/browse${q}`)).then((r) => json<Listing>(r))

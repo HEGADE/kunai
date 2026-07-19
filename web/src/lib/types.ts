@@ -179,6 +179,7 @@ export interface AppEvent {
   state?: SessionState
   mode?: string
   effort?: string
+  cli?: string // which Claude account this session runs on
   high_seq?: number
   // hello: transcript byte offset older-than-seed history begins before (reverse
   // scroll cursor); 0/absent means nothing older to page in.

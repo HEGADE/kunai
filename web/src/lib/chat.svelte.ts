@@ -81,6 +81,7 @@ export class ChatConnection {
   // always sends a concrete model/effort, but keep the guard below so an empty
   // field can never blank the label back to the generic "Model"/"Effort".
   effort = $state(DEFAULT_EFFORT)
+  cli = $state('') // which Claude account this session runs on
   cwd = $state('')
   model = $state(DEFAULT_MODEL)
   title = $state('')
@@ -200,6 +201,7 @@ export class ChatConnection {
         if (ev.state) this.sessionState = ev.state
         if (ev.mode) this.mode = ev.mode as PermissionMode
         if (ev.effort) this.effort = ev.effort
+        if (ev.cli) this.cli = ev.cli
         if (ev.context_tokens != null) this.contextTokens = ev.context_tokens
         for (const p of ev.pending ?? []) this.addPending(p)
         for (const q of ev.queued ?? []) this.addQueued(q)

@@ -664,6 +664,7 @@ func (s *Session) Attach(afterSeq uint64) (hello AppEvent, backlog []AppEvent, s
 		State:         s.state,
 		Mode:          s.mode,
 		Effort:        s.effort,
+		CLI:           s.cliName,
 		HighSeq:       s.seq,
 		ContextTokens: s.contextTokens,
 		HistBefore:    s.histBefore,

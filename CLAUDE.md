@@ -120,7 +120,14 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   and tags every `HistoryEntry.CLI`; the client sends that `cli` back on reopen and
   `handleCreateSession` seeds from that account's dir. `transcriptPath` and the
   loaders take the config dir; `RestartWithEffort` preserves the account across the
-  respawn so an effort change never drops a work session to the default.
+  respawn so an effort change never drops a work session to the default. A session
+  shows and can switch its account live: hello carries `CLI`, the composer has an
+  account pill (shown when the machine has >1 account), and
+  `POST /api/sessions/{id}/account` copies the transcript into the target account's
+  projects folder and calls `RestartWithAccount` (the shared `restart` core with an
+  account override) to resume under it. Claude ties a conversation's memory to the
+  account's config dir, so the copy is what lets the other account continue with
+  full context; its first turn re-reads everything uncached (the accepted cost).
 - `internal/server/accountlogin.go`: adding an account **from the app**, no
   terminal. `claude auth login --claudeai` is a full-screen TUI (nothing prints on
   a plain pipe; the OAuth URL only appears under a real terminal), and its
