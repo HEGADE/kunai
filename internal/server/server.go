@@ -73,6 +73,7 @@ type Server struct {
 	clisMu      sync.RWMutex        // guards clis, which the Accounts settings edit live
 	usage       *usageCache         // the default account's subscription quota windows
 	sessionMeta *sessionMetaStore   // per-session pins and renames (nil without a data dir)
+	login       *loginManager       // in-app account login flows (nil without a data dir)
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -107,6 +108,9 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	s.sched = schedule.New(filepath.Join(cfg.DataDir, "schedule.json"), s.fireJob)
 	if cfg.DataDir != "" {
 		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))
+		// New accounts log in with the same binary as the default profile, into a
+		// fresh config dir under the data dir.
+		s.login = newLoginManager(s.resolveCLI("").Bin, cfg.DataDir)
 	}
 	return s
 }
@@ -156,6 +160,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/thermal", s.handleThermal)
 	mux.HandleFunc("GET /api/clis", s.handleCLIs)
 	mux.HandleFunc("POST /api/clis", s.handleCLIs)
+	mux.HandleFunc("GET /api/accounts", s.handleAccounts)
+	mux.HandleFunc("DELETE /api/accounts/{name}", s.handleAccountRemove)
+	mux.HandleFunc("POST /api/accounts/login/start", s.handleAccountLoginStart)
+	mux.HandleFunc("POST /api/accounts/login/finish", s.handleAccountLoginFinish)
+	mux.HandleFunc("POST /api/accounts/login/cancel", s.handleAccountLoginCancel)
 	mux.HandleFunc("GET /api/schedule", s.handleScheduleList)
 	mux.HandleFunc("POST /api/schedule", s.handleScheduleCreate)
 	mux.HandleFunc("PUT /api/schedule/{id}", s.handleScheduleReplace)
@@ -181,6 +190,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.guardian.run(ctx)  // stop everything if the host overheats or runs too long
 	go s.resumeLoops(ctx)   // restart any loop that was running when we last died
 	go s.usagePollLoop(ctx) // feed real window reset times to the scheduler, so reset jobs fire
+	go s.loginSweepLoop(ctx) // kill abandoned account-login flows so they don't linger
 	go func() {
 		<-ctx.Done()
 		_ = s.awake.Set(false) // release the keep-awake hold on graceful shutdown

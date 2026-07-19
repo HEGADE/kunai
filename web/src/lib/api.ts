@@ -1,4 +1,4 @@
-import type { Attachment, CLIProfile, HistoryEntry, Job, Listing, MachineInfo, Meta, OlderTurns, Stats, ThermalConfig, Usage } from './types'
+import type { AccountInfo, Attachment, CLIProfile, HistoryEntry, Job, Listing, MachineInfo, Meta, OlderTurns, Stats, ThermalConfig, Usage } from './types'
 
 // Every call takes a `base` origin so the client can reach any machine directly
 // over the tailnet. base === '' means the current origin (the hub), so the hub's
@@ -76,6 +76,43 @@ export function setEffort(base: string, id: string, effort: string): Promise<Met
 export function browse(base: string, path: string): Promise<Listing> {
   const q = path ? `?path=${encodeURIComponent(path)}` : ''
   return fetch(at(base, `/api/browse${q}`)).then((r) => json<Listing>(r))
+}
+
+// --- Claude accounts (per machine) ---
+
+export function fetchAccounts(base: string): Promise<AccountInfo[]> {
+  return fetch(at(base, '/api/accounts')).then((r) => json<AccountInfo[]>(r))
+}
+
+// startAccountLogin spawns `claude auth login` for a new account and returns the
+// OAuth URL to open plus a flow id to finish with.
+export function startAccountLogin(base: string, name: string): Promise<{ login_id: string; url: string }> {
+  return fetch(at(base, '/api/accounts/login/start'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  }).then((r) => json(r))
+}
+
+// finishAccountLogin submits the pasted code, completing and saving the account.
+export function finishAccountLogin(base: string, loginId: string, code: string): Promise<{ name: string }> {
+  return fetch(at(base, '/api/accounts/login/finish'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login_id: loginId, code }),
+  }).then((r) => json(r))
+}
+
+export function cancelAccountLogin(base: string, loginId: string): Promise<void> {
+  return fetch(at(base, '/api/accounts/login/cancel'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login_id: loginId }),
+  }).then(() => undefined)
+}
+
+export function removeAccount(base: string, name: string): Promise<void> {
+  return fetch(at(base, `/api/accounts/${encodeURIComponent(name)}`), { method: 'DELETE' }).then(() => undefined)
 }
 
 // fetchOlderTurns pages in the transcript turns just older than `before` (a byte

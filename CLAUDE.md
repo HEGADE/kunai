@@ -121,6 +121,22 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   `handleCreateSession` seeds from that account's dir. `transcriptPath` and the
   loaders take the config dir; `RestartWithEffort` preserves the account across the
   respawn so an effort change never drops a work session to the default.
+- `internal/server/accountlogin.go`: adding an account **from the app**, no
+  terminal. `claude auth login --claudeai` is a full-screen TUI (nothing prints on
+  a plain pipe; the OAuth URL only appears under a real terminal), and its
+  subscription flow is a paste-code exchange (`redirect_uri=platform.claude.com/oauth/code/callback`,
+  then "Paste code here"), NOT a localhost callback: so the driver runs it under a
+  PTY (`creack/pty`) in a fresh config dir (`<dataDir>/accounts/<slug>`), scrapes
+  the one URL out (`oauthURL`, matched only once terminated so a mid-read buffer
+  can't truncate it), streams the one pasted code in, and verifies with
+  `auth status --json` before saving the profile to `clis.json`. `login/start`
+  returns the URL, `login/finish` the code; abandoned flows are swept on a TTL.
+  The client surface is `Accounts.svelte` (a dedicated view off the sidebar, NOT in
+  Settings): lists accounts with signed-in status and a two-step add flow (name ->
+  open link + paste code). Nothing but the URL out and the code in ever crosses
+  kunai: the user authenticates directly with Anthropic in their browser and the
+  CLI writes its own login into the account's dir. The E2E test that spawns a real
+  login is gated on `KUNAI_E2E`.
 - `internal/server/usage.go`: the account's subscription quota, the same two
   numbers `claude`'s `/usage` prints, on the dashboard. A `rate_limit_info` frame
   only carries a window's reset time and whether a turn was rejected, so the "how

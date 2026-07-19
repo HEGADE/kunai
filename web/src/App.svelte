@@ -7,6 +7,7 @@
   import Home from './components/Home.svelte'
   import NewSession from './components/NewSession.svelte'
   import Settings from './components/Settings.svelte'
+  import Accounts from './components/Accounts.svelte'
   import AllSessions from './components/AllSessions.svelte'
 
   onMount(() => {
@@ -40,6 +41,9 @@
 {/if}
 {#if app.showSettings}
   <Settings />
+{/if}
+{#if app.showAccounts}
+  <Accounts />
 {/if}
 {#if app.showAllSessions}
   <AllSessions />

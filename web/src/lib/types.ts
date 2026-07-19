@@ -331,3 +331,9 @@ export interface Listing {
   entries: DirEntry[]
 }
 
+// One Claude account on a machine, for the Accounts screen.
+export interface AccountInfo {
+  name: string
+  default: boolean
+  ready: boolean
+}
