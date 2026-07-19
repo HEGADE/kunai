@@ -39,6 +39,16 @@ export const tabKey = (machineId: string, id: string) => `${machineId}:${id}`
 // parsed) so reopening one is instant. Small, because each holds a live socket.
 const WARM_TABS = 5
 
+// Waiting for a machine to come back after an update: how often to look, and how
+// long before saying it never did. A single check cannot answer this honestly.
+// macOS runs kunai under launchd, whose default ThrottleInterval holds a respawn
+// for ten seconds, so a healthy Mac is still down when a short fixed window
+// expires and would be accused of never returning. Polling keeps a good restart
+// fast (it clears the moment stats report the new build) and makes the failure
+// verdict patient.
+const RESTART_POLL_MS = 2_000
+const RESTART_WAIT_MS = 45_000
+
 class AppStore {
   machines = $state<Machine[]>([this.selfSeed()])
   sessions = $state<TaggedMeta[]>([])
@@ -364,38 +374,45 @@ class AppStore {
         return
       }
     }
-    // Download done; what is left is the swap + restart, so the fallback window
-    // starts here rather than racing a slow download.
+    // Download done; what is left is the swap and the restart.
     this.updateProgress = { ...this.updateProgress, [machineId]: 1 }
-    setTimeout(() => this.refresh(), 4000)
-    setTimeout(async () => {
-      // The verdict: a restart either came back on a new version (banner clears
-      // by itself) or it did not, and silence here is a lie. If the machine
-      // comes back later after all, the next refresh clears the banner anyway.
+    await this.awaitRestart(machineId, before)
+    clearFlags()
+  }
+
+  // awaitRestart watches a machine come back after an update and says what
+  // happened, because silence is a lie either way. It polls rather than deciding
+  // once: a machine that returns quickly clears the banner as soon as its stats
+  // report the new build, and only a machine that is still missing at the
+  // deadline gets a verdict.
+  private async awaitRestart(machineId: string, before?: string) {
+    const deadline = Date.now() + RESTART_WAIT_MS
+    for (;;) {
+      await new Promise((r) => setTimeout(r, RESTART_POLL_MS))
       await this.refresh()
-      clearFlags()
       const m = this.machines.find((x) => x.id === machineId)
       const v = m?.online ? m.stats?.kunai_version : undefined
-      // The machine's kunai is down, so the fix happens on the machine, not
-      // here. Its OS is known from the last stats, so name the exact command.
+      // Back on a new build: the "Update available" badge clears itself, so
+      // there is nothing left to say.
+      if (v && v !== before) return
+      if (Date.now() < deadline) continue
+
+      // Out of patience. Whatever is wrong is on the machine, not here, and its
+      // OS is known from the last stats we saw, so name the exact command.
       const restartHint =
         m?.stats?.os === 'darwin'
           ? 'on the machine, run: launchctl kickstart -k gui/$UID/com.kunai.agent · log: ~/.kunai/kunai.log'
           : m?.stats?.os === 'linux'
             ? 'on the machine, run: systemctl --user restart kunai · log: journalctl --user -u kunai'
             : "check the machine's service and log"
-      if (!v) {
-        this.updateError = {
-          ...this.updateError,
-          [machineId]: `not back after restart; ${restartHint}`,
-        }
-      } else if (before && v === before) {
-        this.updateError = {
-          ...this.updateError,
-          [machineId]: `restarted but still on ${v}; the service runs a different binary, rerun install.sh on the machine`,
-        }
+      this.updateError = {
+        ...this.updateError,
+        [machineId]: v
+          ? `restarted but still on ${v}; the service runs a different binary, rerun install.sh on the machine`
+          : `not back after ${Math.round(RESTART_WAIT_MS / 1000)}s; ${restartHint}`,
       }
-    }, 12000)
+      return
+    }
   }
 
   // --- navigation ---
