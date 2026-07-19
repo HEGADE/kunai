@@ -555,27 +555,30 @@ func copyFile(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return err
 	}
-	// Write to a temp file and rename in, so an interrupted copy of a large
+	// Stage into a temp file and rename it in, so an interrupted copy of a large
 	// transcript never leaves a truncated file the resume would load as empty.
 	tmp := dst + ".tmp"
-	out, err := os.Create(tmp)
-	if err != nil {
-		return err
-	}
-	// Prefer a copy-on-write clone: on a filesystem that supports it (btrfs, XFS
-	// with reflink, bcachefs) an 80MB transcript is staged instantly and costs no
-	// extra disk until one side diverges. The clone is a separate inode, so the
-	// two accounts' transcripts stay independent exactly as a byte copy would
-	// leave them. ext4 and friends refuse it, and then we copy in 1MB chunks
-	// rather than io.Copy's 32KB default: same bytes, ~30x fewer syscalls.
-	if err := reflinkFile(in, out); err != nil {
-		if _, err := in.Seek(0, io.SeekStart); err != nil {
-			out.Close()
-			os.Remove(tmp)
+	// A stale temp from a killed run would block the clone, which needs to create
+	// its destination.
+	os.Remove(tmp)
+
+	// Prefer a copy-on-write clone: where the filesystem supports it (btrfs, XFS
+	// with reflink, and APFS on every modern Mac) an 80MB transcript is staged
+	// instantly and costs no extra disk until one side diverges, and the clone is
+	// a separate inode so the two accounts stay independent exactly as a byte copy
+	// would leave them. ext4 refuses, and then we copy in 1MB chunks rather than
+	// io.Copy's 32KB default: same bytes, ~30x fewer syscalls.
+	if err := cloneFile(src, tmp); err != nil {
+		out, err := os.Create(tmp)
+		if err != nil {
 			return err
 		}
 		if _, err := io.CopyBuffer(out, in, make([]byte, 1<<20)); err != nil {
 			out.Close()
+			os.Remove(tmp)
+			return err
+		}
+		if err := out.Close(); err != nil {
 			os.Remove(tmp)
 			return err
 		}
@@ -584,17 +587,14 @@ func copyFile(src, dst string) error {
 	// real conversation was a transcript arriving truncated, so the staged copy
 	// must be at least as long as the source was when we opened it (a live
 	// transcript may have grown meanwhile, which is fine; shrinking never is).
-	if fi, err := out.Stat(); err != nil || (siErr == nil && fi.Size() < si.Size()) {
-		out.Close()
-		os.Remove(tmp)
-		if err != nil {
-			return err
-		}
-		return fmt.Errorf("staged transcript is short: got %d bytes, source had %d", fi.Size(), si.Size())
-	}
-	if err := out.Close(); err != nil {
+	fi, err := os.Stat(tmp)
+	if err != nil {
 		os.Remove(tmp)
 		return err
+	}
+	if siErr == nil && fi.Size() < si.Size() {
+		os.Remove(tmp)
+		return fmt.Errorf("staged transcript is short: got %d bytes, source had %d", fi.Size(), si.Size())
 	}
 	return os.Rename(tmp, dst)
 }

@@ -263,18 +263,8 @@ func TestCopyFileContentMatchesOnEitherPath(t *testing.T) {
 		t.Fatalf("copied content differs: %d bytes, want %d", len(got), len(body))
 	}
 
-	// Report which path this filesystem actually took, so the run is honest about
-	// what it proved here.
-	in, _ := os.Open(src)
-	defer in.Close()
-	probe := filepath.Join(dir, "probe")
-	out, _ := os.Create(probe)
-	defer out.Close()
-	if err := reflinkFile(in, out); err != nil {
-		t.Logf("filesystem does not support reflink (%v): exercised the copy fallback", err)
-	} else {
-		t.Log("filesystem supports reflink: exercised the clone path")
-	}
+	// Which of the two paths ran depends on the filesystem; TestCloneFileWhenSupported
+	// reports that and checks the clone's own properties.
 }
 
 // A clone or copy of an empty source is still a valid, empty destination rather
