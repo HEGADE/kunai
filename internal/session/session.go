@@ -59,6 +59,7 @@ type Session struct {
 	contextTokens   int64   // context-window occupancy from the latest result (or seeded on resume)
 	overhead        int64   // fixed resident cost (system prompt, tools, memory, skills) a compaction's postTokens omits
 	pendingPost     int64   // a just-compacted conversation size, awaiting the next usage to measure overhead
+	histBefore      int64   // transcript byte offset older-than-seed history begins before; 0 = none. Reverse-scroll cursor.
 	lastCostUSD     float64 // running session total from the CLI, to difference per turn
 	buf             *ring
 	subs            map[*Subscriber]struct{}
@@ -165,27 +166,41 @@ type SeedTurn struct {
 
 // Seed pre-populates the replay buffer with transcript history so a resumed
 // session opens with its past conversation visible. Call before clients attach.
+// SeedEvent converts one seed turn into the app event a client renders, the same
+// wire shape a live turn takes, so replayed history and paged-in older history
+// (the reverse-scroll endpoint) build identical items. overhead is added to a
+// compaction's post size for the meter.
+func SeedEvent(t SeedTurn, overhead int64) AppEvent {
+	switch t.Role {
+	case "user":
+		return AppEvent{T: EvUser, Text: t.Text, Attachments: t.Attachments}
+	case "tool_result":
+		return AppEvent{T: EvToolResult, ToolUseID: t.ToolUseID, Content: t.Text, IsError: t.IsError}
+	case "compact":
+		return AppEvent{T: EvCompact, Trigger: t.Trigger, PreTokens: t.PreTokens, PostTokens: t.PostTokens, ContextTokens: t.PostTokens + overhead}
+	case "loop":
+		// LoopSeam, not LoopRunning: this lap is history recovered from a
+		// transcript. The loop it belonged to died with the process that ran it,
+		// and a resumed session must not show a live meter for it.
+		return AppEvent{T: EvLoop, Loop: &LoopStatus{State: LoopSeam, Iteration: t.Iteration, MaxIters: t.MaxIters}}
+	default:
+		return AppEvent{T: EvAssistant, Blocks: t.Blocks}
+	}
+}
+
+// Overhead exposes the measured context overhead, so the history endpoint can
+// convert paged-in compaction turns with the same meter basis a live seed uses.
+func (s *Session) SeedOverhead() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.overhead
+}
+
 func (s *Session) Seed(turns []SeedTurn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, t := range turns {
-		var ev AppEvent
-		switch t.Role {
-		case "user":
-			ev = AppEvent{T: EvUser, Text: t.Text, Attachments: t.Attachments}
-		case "tool_result":
-			ev = AppEvent{T: EvToolResult, ToolUseID: t.ToolUseID, Content: t.Text, IsError: t.IsError}
-		case "compact":
-			ev = AppEvent{T: EvCompact, Trigger: t.Trigger, PreTokens: t.PreTokens, PostTokens: t.PostTokens, ContextTokens: t.PostTokens + s.overhead}
-		case "loop":
-			// LoopSeam, not LoopRunning: this lap is history recovered from a
-			// transcript. The loop it belonged to died with the process that ran it,
-			// and a resumed session must not show a live meter for it.
-			ev = AppEvent{T: EvLoop, Loop: &LoopStatus{State: LoopSeam, Iteration: t.Iteration, MaxIters: t.MaxIters}}
-		default:
-			ev = AppEvent{T: EvAssistant, Blocks: t.Blocks}
-		}
-		s.emitLocked(s.sequenceLocked(ev))
+		s.emitLocked(s.sequenceLocked(SeedEvent(t, s.overhead)))
 	}
 }
 
@@ -651,6 +666,7 @@ func (s *Session) Attach(afterSeq uint64) (hello AppEvent, backlog []AppEvent, s
 		Effort:        s.effort,
 		HighSeq:       s.seq,
 		ContextTokens: s.contextTokens,
+		HistBefore:    s.histBefore,
 		Loop:          s.loopStatusLocked(),
 		Pending:       pending,
 		Queued:        queued,

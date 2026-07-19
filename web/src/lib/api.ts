@@ -1,4 +1,4 @@
-import type { Attachment, CLIProfile, HistoryEntry, Job, Listing, MachineInfo, Meta, Stats, ThermalConfig, Usage } from './types'
+import type { Attachment, CLIProfile, HistoryEntry, Job, Listing, MachineInfo, Meta, OlderTurns, Stats, ThermalConfig, Usage } from './types'
 
 // Every call takes a `base` origin so the client can reach any machine directly
 // over the tailnet. base === '' means the current origin (the hub), so the hub's
@@ -76,6 +76,13 @@ export function setEffort(base: string, id: string, effort: string): Promise<Met
 export function browse(base: string, path: string): Promise<Listing> {
   const q = path ? `?path=${encodeURIComponent(path)}` : ''
   return fetch(at(base, `/api/browse${q}`)).then((r) => json<Listing>(r))
+}
+
+// fetchOlderTurns pages in the transcript turns just older than `before` (a byte
+// offset), for reverse infinite scroll. Returns them as app events plus the next
+// older cursor (0 = start of transcript reached).
+export function fetchOlderTurns(base: string, id: string, before: number): Promise<OlderTurns> {
+  return fetch(at(base, `/api/sessions/${id}/history?before=${before}`)).then((r) => json<OlderTurns>(r))
 }
 
 export function uploadFile(base: string, file: File): Promise<Attachment> {

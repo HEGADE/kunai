@@ -60,6 +60,10 @@ type CreateOptions struct {
 	// resumed session next compacts: a compaction's postTokens omits this, and it
 	// cannot be recovered from the compaction frame alone. See loadTranscriptContextTokens.
 	Overhead int64
+	// HistBefore is the transcript byte offset where the seeded tail began. Older
+	// history lives in [0, HistBefore); the client pages it in on reverse scroll.
+	// 0 means the whole transcript was seeded (nothing older to fetch).
+	HistBefore int64
 	// Mode is the permission mode to spawn in; empty means DefaultPermissionMode.
 	Mode string
 	// CLI names which Claude CLI (account) this session runs on. CLIName is for
@@ -120,6 +124,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	s.cliEnv = opts.Env
 	s.contextTokens = opts.ContextTokens
 	s.overhead = opts.Overhead
+	s.histBefore = opts.HistBefore
 	if len(opts.Seed) > 0 {
 		s.Seed(opts.Seed)
 	}

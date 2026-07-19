@@ -96,11 +96,30 @@
   }
 
   // Reveal older turns when the user scrolls near the top of the mounted window.
-  // Anchor by the distance from the bottom: the turns inserted above then slide
-  // in without moving whatever the user is currently reading.
+  // Anchor by the distance from the bottom: turns inserted above then slide in
+  // without moving whatever the user is currently reading. Two sources feed it:
+  // more already-loaded turns from the seed, then, once those run out, older turns
+  // paged from disk (reverse infinite scroll) so scrollback reaches the session's
+  // start even though resume only seeds the tail.
   let revealing = false
   async function maybeReveal() {
-    if (revealing || !scroller || firstVisible === 0 || scroller.scrollTop > REVEAL_AT) return
+    if (revealing || !scroller || scroller.scrollTop > REVEAL_AT) return
+    if (firstVisible === 0) {
+      // Top of the loaded turns: pull an older page from disk if there is one.
+      if (!chat.hasMoreHistory || chat.loadingOlder) return
+      revealing = true
+      const fromBottom = scroller.scrollHeight - scroller.scrollTop
+      const before = allTurns.length
+      await chat.loadOlder() // prepends older items; allTurns grows at the front
+      await tick()
+      // Mount a step of the freshly-paged turns right away (the rest reveal on
+      // further scroll), anchored by distance-from-bottom so the read point holds.
+      firstVisible = Math.max(0, allTurns.length - before - STEP)
+      await tick()
+      scroller.scrollTop = scroller.scrollHeight - fromBottom
+      revealing = false
+      return
+    }
     revealing = true
     const fromBottom = scroller.scrollHeight - scroller.scrollTop
     firstVisible = Math.max(0, firstVisible - STEP)

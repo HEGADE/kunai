@@ -155,10 +155,18 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   line start, so resume time stays constant as a session grows. Parsing a 69MB
   transcript in full took ~1.8s of synchronous handler time (two scans) and was
   the whole "resume is slow" delay; the client only mounts the trailing window
-  anyway, so the tail is all a reopen shows. The trade, accepted: scrollback on a
-  resumed session ends at the cap, and the overhead measurement only sees
-  compactions inside the tail (an older one re-measures live at the next
-  compaction).
+  anyway, so the tail is all a reopen shows. Scrollback past the tail is **paged
+  in from disk on reverse scroll**, not lost: hello carries `hist_before` (the
+  byte offset older history begins before, from `loadTranscriptSeed`), and
+  `GET /api/sessions/{id}/history?before=<n>` (`handleOlderTurns`) returns the
+  previous `histChunkBytes` slice parsed into the same app events a live seed
+  emits (`session.SeedEvent`, shared so paged and seeded turns render identically),
+  plus the next older cursor (0 = start reached). `ChatConnection.loadOlder`
+  prepends them and `Chat.svelte`'s `maybeReveal` triggers it at the top of the
+  window; byte-offset pages tile `[0, hist_before)` with no gap or overlap against
+  the seed (`TestReverseScrollPagesEveryOlderTurn`). The one remaining trade: the
+  overhead measurement only sees compactions inside the tail (an older one
+  re-measures live at the next compaction).
 - The changed-files review is **client-side and per-query**, not a server endpoint:
   `web/src/components/TurnChanges.svelte` renders what each query changed straight
   from that turn's Edit/Write/MultiEdit tool inputs (`fileEditsOf` in `toolMeta.ts`).

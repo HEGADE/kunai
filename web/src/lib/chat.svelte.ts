@@ -1,3 +1,4 @@
+import { fetchOlderTurns } from './api'
 import { DEFAULT_MODEL, DEFAULT_EFFORT } from './models'
 import type {
   AppEvent,
@@ -93,6 +94,15 @@ export class ChatConnection {
   // Latest usage-window status from the CLI; drives the in-chat "schedule after
   // reset". limited is true when the last turn was rejected for quota.
   rateLimit = $state<{ window: string; resetsAt: number; limited: boolean } | null>(null)
+
+  // Reverse scroll: the transcript byte offset older-than-seed history begins
+  // before (from hello). >0 means there are older turns on disk to page in when
+  // the log is scrolled to the top. loadingOlder guards against overlapping pages.
+  histBefore = $state(0)
+  loadingOlder = $state(false)
+  get hasMoreHistory(): boolean {
+    return this.histBefore > 0
+  }
 
   private ws?: WebSocket
   private lastSeq = 0
@@ -195,6 +205,7 @@ export class ChatConnection {
         for (const q of ev.queued ?? []) this.addQueued(q)
         if (ev.projects?.length) this.projects = ev.projects
         if (ev.loop) this.loop = ev.loop
+        this.histBefore = ev.hist_before ?? 0
         this.highSeq = ev.high_seq ?? 0
         if (this.highSeq === 0) this.ready = true // nothing to replay
         break
@@ -349,6 +360,67 @@ export class ChatConnection {
     // Backlog fully drained: the initial history is now all present, so the view
     // can mount it in one pass and pin to the bottom.
     if (!this.ready && this.highSeq > 0 && this.lastSeq >= this.highSeq) this.ready = true
+  }
+
+  // itemFromEvent maps a seeded/paged history event to a log item, mirroring the
+  // live cases in apply() so paged-in older turns render identically. A
+  // tool_result is applied to the results map by the caller, not returned here.
+  private itemFromEvent(ev: AppEvent): Item | null {
+    switch (ev.t) {
+      case 'user':
+        return { role: 'user', text: ev.text ?? '', attachments: ev.attachments }
+      case 'assistant':
+        return { role: 'assistant', blocks: ev.blocks ?? [] }
+      case 'project':
+        return ev.project ? { role: 'project', project: ev.project } : null
+      case 'loop':
+        return ev.loop ? { role: 'loop', loop: ev.loop } : null
+      case 'compact':
+        return {
+          role: 'compact',
+          preTokens: ev.pre_tokens ?? 0,
+          postTokens: ev.post_tokens ?? ev.context_tokens ?? 0,
+          trigger: ev.trigger ?? 'manual',
+        }
+      default:
+        return null
+    }
+  }
+
+  // loadOlder pages in the turns just older than what is loaded (reverse scroll):
+  // it fetches the previous transcript slice, prepends it older-first, and advances
+  // the cursor. Returns how many items were prepended so the view can hold its
+  // scroll position across the growth.
+  async loadOlder(): Promise<number> {
+    if (this.histBefore <= 0 || this.loadingOlder) return 0
+    this.loadingOlder = true
+    try {
+      const res = await fetchOlderTurns(this.base, this.id, this.histBefore)
+      const older: Item[] = []
+      for (const ev of res.events) {
+        if (ev.t === 'tool_result') {
+          if (ev.tool_use_id)
+            this.toolResults = {
+              ...this.toolResults,
+              [ev.tool_use_id]: {
+                content: ev.content ?? '',
+                isError: ev.is_error ?? false,
+                truncated: ev.truncated ?? false,
+              },
+            }
+          continue
+        }
+        const it = this.itemFromEvent(ev)
+        if (it) older.push(it)
+      }
+      this.items = [...older, ...this.items]
+      this.histBefore = res.older ?? 0
+      return older.length
+    } catch {
+      return 0
+    } finally {
+      this.loadingOlder = false
+    }
   }
 
   // Deduped by id: hello carries the queue and the replayed backlog repeats it.

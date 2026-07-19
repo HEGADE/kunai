@@ -143,6 +143,13 @@ export interface LoopConfig {
   max_usd: number
 }
 
+// OlderTurns is one reverse-scroll page: turns older than the requested cursor as
+// app events, plus the next older cursor (0 = start of transcript reached).
+export interface OlderTurns {
+  events: AppEvent[]
+  older: number
+}
+
 export interface AppEvent {
   seq: number
   t:
@@ -173,6 +180,9 @@ export interface AppEvent {
   mode?: string
   effort?: string
   high_seq?: number
+  // hello: transcript byte offset older-than-seed history begins before (reverse
+  // scroll cursor); 0/absent means nothing older to page in.
+  hist_before?: number
   pending?: AppEvent[]
   queued?: AppEvent[]
   // hello: every codebase this session has context for

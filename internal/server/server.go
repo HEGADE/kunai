@@ -134,6 +134,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleCloseSession)
 	mux.HandleFunc("PATCH /api/sessions/{id}", s.handleUpdateSessionMeta)
 	mux.HandleFunc("POST /api/sessions/{id}/effort", s.handleSetEffort)
+	mux.HandleFunc("GET /api/sessions/{id}/history", s.handleOlderTurns)
 	mux.HandleFunc("GET /api/browse", s.handleBrowse)
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("DELETE /api/history/{id}", s.handleDeleteHistory)
@@ -254,7 +255,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// the chosen account's config dir, so a work session seeds from its own
 		// transcript, not the default account's.
 		dir := cli.configDir()
-		opts.Seed = loadTranscriptTurns(dir, req.Resume)
+		opts.Seed, opts.HistBefore = loadTranscriptSeed(dir, req.Resume)
 		opts.ContextTokens, opts.Overhead = loadTranscriptContextTokens(dir, req.Resume)
 	}
 	sess, err := s.mgr.Create(ctx, opts)

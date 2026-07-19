@@ -323,51 +323,112 @@ func transcriptPath(configDir, id string) string {
 // the session's birth.
 const seedTailBytes = 4 << 20
 
+// histChunkBytes is how much of the transcript one reverse-scroll page reads.
+// Sized to yield a comfortable batch of turns without a large response.
+const histChunkBytes = 512 << 10
+
 // transcriptTail returns the last seedTailBytes of the file aligned to a line
-// start (the whole file when smaller), or nil if it cannot be read.
-func transcriptTail(path string) []byte {
+// start (the whole file when smaller) and the byte offset where that tail begins.
+// Older history lives in [0, start); start is 0 when the whole file was read (no
+// older history). Returns nil on read error.
+func transcriptTail(path string) (tail []byte, start int64) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil
+		return nil, 0
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		return nil
+		return nil, 0
 	}
 	if st.Size() > seedTailBytes {
-		if _, err := f.Seek(st.Size()-seedTailBytes, io.SeekStart); err != nil {
-			return nil
+		off := st.Size() - seedTailBytes
+		if _, err := f.Seek(off, io.SeekStart); err != nil {
+			return nil, 0
 		}
 		b, err := io.ReadAll(f)
 		if err != nil {
-			return nil
+			return nil, 0
 		}
-		// Drop the partial first line the seek landed in.
+		// Drop the partial first line the seek landed in; older history begins at
+		// the first complete line boundary.
 		if i := bytes.IndexByte(b, '\n'); i >= 0 {
-			return b[i+1:]
+			return b[i+1:], off + int64(i) + 1
 		}
-		return nil
+		return nil, 0
 	}
 	b, err := io.ReadAll(f)
 	if err != nil {
-		return nil
+		return nil, 0
 	}
-	return b
+	return b, 0
 }
 
+// loadTranscriptSlice reads one older page: the ~histChunkBytes ending just before
+// `before`, aligned to a line start. Returns the raw bytes and the offset of the
+// next (older) page, 0 when the start of the file is reached.
+func loadTranscriptSlice(path string, before int64) (data []byte, older int64) {
+	if before <= 0 {
+		return nil, 0
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, 0
+	}
+	defer f.Close()
+	start := before - histChunkBytes
+	if start < 0 {
+		start = 0
+	}
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return nil, 0
+	}
+	buf := make([]byte, before-start)
+	if _, err := io.ReadFull(f, buf); err != nil {
+		return nil, 0
+	}
+	if start > 0 {
+		// Align to a line boundary; the older cursor is that boundary.
+		if i := bytes.IndexByte(buf, '\n'); i >= 0 {
+			return buf[i+1:], start + int64(i) + 1
+		}
+		return nil, 0
+	}
+	return buf, 0
+}
+
+// loadTranscriptTurns parses the resume tail into turns (see loadTranscriptSeed);
+// kept as a plain []SeedTurn so it can pass straight as a seedFn.
 func loadTranscriptTurns(configDir, id string) []session.SeedTurn {
+	turns, _ := loadTranscriptSeed(configDir, id)
+	return turns
+}
+
+// loadTranscriptSeed parses the resume tail into turns and returns the byte offset
+// where older history begins (0 = none), which becomes the session's reverse-scroll
+// cursor.
+func loadTranscriptSeed(configDir, id string) ([]session.SeedTurn, int64) {
 	path := transcriptPath(configDir, id)
 	if path == "" {
-		return nil
+		return nil, 0
 	}
-	tail := transcriptTail(path)
+	tail, start := transcriptTail(path)
 	if tail == nil {
-		return nil
+		return nil, 0
 	}
+	turns := parseSeedTurns(tail)
+	if len(turns) > maxSeedTurns {
+		turns = turns[len(turns)-maxSeedTurns:]
+	}
+	return turns, start
+}
 
+// parseSeedTurns turns raw transcript bytes (a tail or an older page) into
+// displayable seed turns. Shared by resume seeding and the reverse-scroll page so
+// both render identically.
+func parseSeedTurns(data []byte) []session.SeedTurn {
 	var turns []session.SeedTurn
-	sc := bufio.NewScanner(bytes.NewReader(tail))
+	sc := bufio.NewScanner(bytes.NewReader(data))
 	sc.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
 	for sc.Scan() {
 		var v struct {
@@ -443,10 +504,56 @@ func loadTranscriptTurns(configDir, id string) []session.SeedTurn {
 			}
 		}
 	}
-	if len(turns) > maxSeedTurns {
-		turns = turns[len(turns)-maxSeedTurns:]
-	}
 	return turns
+}
+
+// handleOlderTurns serves one reverse-scroll page: the turns just older than the
+// `before` byte offset the client holds (from hello's hist_before, then each
+// page's `older`). Returns the turns as the same app events the live seed emits,
+// plus the next older cursor (0 = start of transcript reached). Reading a bounded
+// byte slice keeps every page fast regardless of transcript size.
+func (s *Server) handleOlderTurns(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sess, ok := s.mgr.Get(id)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "session not found")
+		return
+	}
+	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+	path := s.transcriptForID(id)
+	if path == "" || before <= 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"events": []session.AppEvent{}, "older": 0})
+		return
+	}
+	data, older := loadTranscriptSlice(path, before)
+	turns := parseSeedTurns(data)
+	overhead := sess.SeedOverhead()
+	events := make([]session.AppEvent, 0, len(turns))
+	for _, t := range turns {
+		events = append(events, session.SeedEvent(t, overhead))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events, "older": older})
+}
+
+// transcriptForID finds a session's transcript across every account's projects (an
+// id is globally unique, so at most one matches), for the reverse-scroll endpoint.
+func (s *Server) transcriptForID(id string) string {
+	if id == "" || strings.ContainsAny(id, `/\.`) {
+		return ""
+	}
+	for _, ar := range s.accountRoots() {
+		dirs, err := os.ReadDir(ar.root)
+		if err != nil {
+			continue
+		}
+		for _, d := range dirs {
+			p := filepath.Join(ar.root, d.Name(), id+".jsonl")
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+	}
+	return ""
 }
 
 // assistantSeedBlocks converts transcript assistant content into app blocks
@@ -512,7 +619,7 @@ func loadTranscriptContextTokens(configDir, id string) (tokens, overhead int64) 
 	// is always in the tail. The overhead measurement only sees compactions inside
 	// the tail; an older one is re-measured live at the next compaction, which is
 	// the accepted cost of a constant-time resume.
-	tail := transcriptTail(path)
+	tail, _ := transcriptTail(path)
 	if tail == nil {
 		return 0, 0
 	}

@@ -29,6 +29,9 @@ type AppEvent struct {
 	HighSeq uint64     `json:"high_seq,omitempty"`
 	Pending []AppEvent `json:"pending,omitempty"` // unresolved permission asks
 	Queued  []AppEvent `json:"queued,omitempty"`  // prompts waiting for the current turn
+	// "hello": transcript byte offset where older-than-seed history begins. The
+	// client pages it in on reverse scroll; 0 means nothing older to fetch.
+	HistBefore int64 `json:"hist_before,omitempty"`
 
 	// "hello": every codebase this session has been given context for.
 	Projects []project.Info `json:"projects,omitempty"`

@@ -50,6 +50,60 @@ func msgIndex(s string) (int, error) {
 	return i, err
 }
 
+// Reverse scroll pages the older-than-seed turns from disk. The pages must tile
+// [0, histBefore) with no gap and no overlap against the seeded tail, and the
+// cursor must reach 0, so scrolling up reconstructs the whole transcript exactly
+// once and in order.
+func TestReverseScrollPagesEveryOlderTurn(t *testing.T) {
+	cfg := t.TempDir()
+	pad := strings.Repeat("y", 48*1024)
+	n := (seedTailBytes / (48 * 1024)) + (histChunkBytes/(48*1024))*3 + 20
+	var lines []string
+	for i := 0; i < n; i++ {
+		lines = append(lines, fmt.Sprintf(`{"type":"user","message":{"role":"user","content":"msg-%d %s"}}`, i, pad))
+	}
+	writeTranscriptLines(t, cfg, "sess", lines...)
+	path := transcriptPath(cfg, "sess")
+
+	seed, before := loadTranscriptSeed(cfg, "sess")
+	if before <= 0 {
+		t.Fatalf("expected a tail boundary >0 (older history exists), got %d", before)
+	}
+
+	// Collect indices by paging backward, then the seed on top.
+	var got []int
+	for before > 0 {
+		data, older := loadTranscriptSlice(path, before)
+		page := parseSeedTurns(data)
+		if len(page) == 0 && older == before {
+			t.Fatalf("no progress at cursor %d", before)
+		}
+		var idx []int
+		for _, tr := range page {
+			i, err := msgIndex(tr.Text)
+			if err != nil {
+				t.Fatalf("corrupt turn: %.40q", tr.Text)
+			}
+			idx = append(idx, i)
+		}
+		got = append(idx, got...) // pages come newest-first as we walk back
+		before = older
+	}
+	for _, tr := range seed {
+		i, _ := msgIndex(tr.Text)
+		got = append(got, i)
+	}
+
+	if len(got) != n {
+		t.Fatalf("reconstructed %d turns, want all %d (gap or overlap)", len(got), n)
+	}
+	for i := 0; i < n; i++ {
+		if got[i] != i {
+			t.Fatalf("turn %d = msg-%d, want msg-%d (out of order or missing)", i, got[i], i)
+		}
+	}
+}
+
 func writeTranscriptLines(t *testing.T, configDir, id string, lines ...string) {
 	t.Helper()
 	dir := filepath.Join(configDir, "projects", "-proj")
