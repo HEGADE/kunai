@@ -608,20 +608,35 @@ class AppStore {
     if (!t) return
     try {
       await apiSetEffort(this.baseForMachine(t.machineId), t.id, effort)
-      // The server respawns the session under the same id and its seqs reset, so
-      // the tab's connection is rebuilt rather than reused.
-      const key = tabKey(t.machineId, t.id)
-      this.conns.get(key)?.destroy()
-      const c = new ChatConnection(this.baseForMachine(t.machineId), t.id)
-      c.effort = effort // reflect the new effort at once; hello confirms it
-      this.conns.set(key, c)
-      this.connsVersion++
+      await this.swapConnection(t, (c) => {
+        c.effort = effort // reflect the new effort at once; hello confirms it
+      })
       this.refresh()
     } catch (e) {
       this.listError = (e as Error).message
     }
   }
 
+
+  // swapConnection rebuilds a tab's connection after the server respawned the
+  // session under the same id (an effort change, an account switch), whose seqs
+  // reset so the live socket cannot simply carry on.
+  //
+  // Swapping an empty replacement in straight away made the conversation blank
+  // and then repopulate, which reads as a flicker. Freeze the outgoing
+  // connection instead: destroy stops its socket and its reconnects but leaves
+  // its rendered turns untouched, so the view keeps showing them while the
+  // replacement fills in the background. Only once that one has its backlog do
+  // they trade places, and the change lands in a single paint.
+  private async swapConnection(t: Tab, apply: (c: ChatConnection) => void) {
+    const key = tabKey(t.machineId, t.id)
+    this.conns.get(key)?.destroy()
+    const next = new ChatConnection(this.baseForMachine(t.machineId), t.id)
+    apply(next)
+    await next.whenReady()
+    this.conns.set(key, next)
+    this.connsVersion++
+  }
 
   // switchAccount moves the active session to a different Claude account, keeping
   // its conversation (the server copies the transcript and resumes). Like an
@@ -632,12 +647,9 @@ class AppStore {
     if (!t) return
     try {
       await apiSetAccount(this.baseForMachine(t.machineId), t.id, name)
-      const key = tabKey(t.machineId, t.id)
-      this.conns.get(key)?.destroy()
-      const c = new ChatConnection(this.baseForMachine(t.machineId), t.id)
-      c.cli = name // reflect the new account at once; hello confirms it
-      this.conns.set(key, c)
-      this.connsVersion++
+      await this.swapConnection(t, (c) => {
+        c.cli = name // reflect the new account at once; hello confirms it
+      })
       this.refresh()
     } catch (e) {
       this.listError = (e as Error).message

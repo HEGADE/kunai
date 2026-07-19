@@ -72,6 +72,8 @@ export class ChatConnection {
   // long conversation appears in one paint at the bottom instead of streaming in
   // from the top. Stays true across reconnects (they only replay a small gap).
   ready = $state(false)
+  // Resolvers waiting on the initial backlog (see whenReady).
+  private readyWaiters: (() => void)[] = []
   sessionState = $state<SessionState>('idle')
   // Sessions start in auto (see session.DefaultPermissionMode); seed it so the
   // composer doesn't flash "Ask" before the hello frame confirms it.
@@ -209,7 +211,7 @@ export class ChatConnection {
         if (ev.loop) this.loop = ev.loop
         this.histBefore = ev.hist_before ?? 0
         this.highSeq = ev.high_seq ?? 0
-        if (this.highSeq === 0) this.ready = true // nothing to replay
+        if (this.highSeq === 0) this.markReady() // nothing to replay
         break
       case 'user':
         this.items = [...this.items, { role: 'user', text: ev.text ?? '', attachments: ev.attachments }]
@@ -361,7 +363,7 @@ export class ChatConnection {
 
     // Backlog fully drained: the initial history is now all present, so the view
     // can mount it in one pass and pin to the bottom.
-    if (!this.ready && this.highSeq > 0 && this.lastSeq >= this.highSeq) this.ready = true
+    if (!this.ready && this.highSeq > 0 && this.lastSeq >= this.highSeq) this.markReady()
   }
 
   // itemFromEvent maps a seeded/paged history event to a log item, mirroring the
@@ -508,8 +510,41 @@ export class ChatConnection {
     this.send({ t: 'set_model', model })
   }
 
+  private markReady() {
+    this.ready = true
+    this.releaseReadyWaiters()
+  }
+
+  private releaseReadyWaiters() {
+    const waiting = this.readyWaiters
+    this.readyWaiters = []
+    for (const w of waiting) w()
+  }
+
+  // whenReady resolves once the initial backlog has arrived, or after ms if it
+  // never does. Swapping a session's connection waits on this so the outgoing
+  // one can stay on screen until the incoming one can replace it without a blank
+  // frame. Bounded, because a session that never comes back must not pin the
+  // view to a dead connection forever.
+  whenReady(ms = 8000): Promise<void> {
+    if (this.ready) return Promise.resolve()
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = () => {
+        if (settled) return
+        settled = true
+        resolve()
+      }
+      this.readyWaiters.push(finish)
+      setTimeout(finish, ms)
+    })
+  }
+
   destroy() {
     this.closed = true
+    // A destroyed connection will never become ready; free anyone waiting on it
+    // rather than making them sit out the timeout.
+    this.releaseReadyWaiters()
     clearTimeout(this.reconnectTimer)
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', this.revalidate)
