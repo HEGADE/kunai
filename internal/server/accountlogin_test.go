@@ -200,3 +200,98 @@ func TestCopyFileFailureLeavesDestinationIntact(t *testing.T) {
 		t.Fatal("a temp file was left behind")
 	}
 }
+
+// A staged transcript must be an INDEPENDENT file, whichever path copyFile took
+// (a CoW clone on btrfs/XFS, a byte copy on ext4). This is the property that
+// makes reflink a safe substitute for copying and a hard link an unsafe one:
+// appending to one account's transcript must never change the other's.
+func TestCopyFileProducesIndependentFile(t *testing.T) {
+	dir := t.TempDir()
+	src, dst := filepath.Join(dir, "src.jsonl"), filepath.Join(dir, "dst.jsonl")
+	const original = "turn-one\nturn-two\n"
+	if err := os.WriteFile(src, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(src, dst); err != nil {
+		t.Fatalf("copy: %v", err)
+	}
+
+	// Append to the destination, as the CLI would after a switch.
+	f, err := os.OpenFile(dst, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("turn-three-on-the-new-account\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	got, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("source changed when the copy was appended to (hard link?): %q", got)
+	}
+	// And the destination kept both.
+	d, _ := os.ReadFile(dst)
+	if len(d) <= len(original) {
+		t.Fatalf("destination lost its appended turn: %q", d)
+	}
+}
+
+// Whether or not this filesystem supports cloning, copyFile must produce byte
+// identical content. On ext4 reflinkFile fails and the buffered copy runs; on
+// btrfs/XFS the clone runs. Both are exercised by whatever fs the tests land on,
+// and the assertion is the same.
+func TestCopyFileContentMatchesOnEitherPath(t *testing.T) {
+	dir := t.TempDir()
+	src, dst := filepath.Join(dir, "big.jsonl"), filepath.Join(dir, "out.jsonl")
+	// Larger than the 1MB copy buffer so the chunked path loops.
+	body := strings.Repeat("{\"type\":\"user\",\"cwd\":\"/x\"}\n", 80000)
+	if err := os.WriteFile(src, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(src, dst); err != nil {
+		t.Fatalf("copy: %v", err)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != body {
+		t.Fatalf("copied content differs: %d bytes, want %d", len(got), len(body))
+	}
+
+	// Report which path this filesystem actually took, so the run is honest about
+	// what it proved here.
+	in, _ := os.Open(src)
+	defer in.Close()
+	probe := filepath.Join(dir, "probe")
+	out, _ := os.Create(probe)
+	defer out.Close()
+	if err := reflinkFile(in, out); err != nil {
+		t.Logf("filesystem does not support reflink (%v): exercised the copy fallback", err)
+	} else {
+		t.Log("filesystem supports reflink: exercised the clone path")
+	}
+}
+
+// A clone or copy of an empty source is still a valid, empty destination rather
+// than an error, and must not leave a temp file behind.
+func TestCopyFileEmptySource(t *testing.T) {
+	dir := t.TempDir()
+	src, dst := filepath.Join(dir, "empty.jsonl"), filepath.Join(dir, "out.jsonl")
+	if err := os.WriteFile(src, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(src, dst); err != nil {
+		t.Fatalf("copy: %v", err)
+	}
+	if fi, err := os.Stat(dst); err != nil || fi.Size() != 0 {
+		t.Fatalf("stat dst: %v size=%v", err, fi)
+	}
+	if _, err := os.Stat(dst + ".tmp"); err == nil {
+		t.Fatal("temp file left behind")
+	}
+}

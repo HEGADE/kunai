@@ -143,8 +143,8 @@ func (m *loginManager) finish(id, code string) (CLIProfile, error) {
 		return CLIProfile{}, fmt.Errorf("the login timed out; try again")
 	}
 
-	if !authOK(m.bin, f.dir) {
-		return CLIProfile{}, fmt.Errorf("that code didn't complete the login; try again")
+	if ok, why := authStatus(m.bin, f.dir); !ok {
+		return CLIProfile{}, fmt.Errorf("the code was accepted but the account is not signed in: %s", why)
 	}
 	return CLIProfile{Name: f.name, Bin: m.bin, Dir: f.dir}, nil
 }
@@ -266,10 +266,11 @@ func forgetAuthStatus() {
 	authStatusCache.mu.Unlock()
 }
 
-// authOK reports whether the account in dir is signed in, via `auth status --json`.
-// An empty dir means the default account (~/.claude): leave CLAUDE_CONFIG_DIR
-// unset rather than blanking it, which the CLI would not read as "default".
-func authOK(bin, dir string) bool {
+// authStatus reports whether the account in dir is signed in, via
+// `auth status --json`, plus the reason when it is not. An empty dir means the
+// default account (~/.claude): leave CLAUDE_CONFIG_DIR unset rather than
+// blanking it, which the CLI would not read as "default".
+func authStatus(bin, dir string) (bool, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "auth", "status", "--json")
@@ -277,20 +278,53 @@ func authOK(bin, dir string) bool {
 	if dir != "" {
 		cmd.Env = append(cmd.Env, "CLAUDE_CONFIG_DIR="+dir)
 	}
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
 	out, err := cmd.Output()
 	if err != nil {
-		return false
+		// The reason matters and used to be thrown away: on macOS the login lives
+		// in the Keychain (the CLI namespaces the entry per config dir), so a
+		// refused or locked Keychain fails here and the user only saw "that code
+		// didn't complete the login". Surface what the CLI actually said.
+		if d := strings.TrimSpace(errb.String()); d != "" {
+			return false, firstLine(d)
+		}
+		return false, err.Error()
 	}
 	var st struct {
 		LoggedIn      bool   `json:"loggedIn"`
 		Authenticated bool   `json:"authenticated"`
 		Status        string `json:"status"`
+		Error         string `json:"error"`
 	}
 	if json.Unmarshal(out, &st) != nil {
-		return false
+		return false, "could not read the CLI's auth status output"
 	}
-	return st.LoggedIn || st.Authenticated ||
-		strings.EqualFold(st.Status, "authenticated") || strings.EqualFold(st.Status, "logged_in")
+	if st.LoggedIn || st.Authenticated ||
+		strings.EqualFold(st.Status, "authenticated") || strings.EqualFold(st.Status, "logged_in") {
+		return true, ""
+	}
+	switch {
+	case st.Error != "":
+		return false, st.Error
+	case st.Status != "":
+		return false, "the CLI reports status " + st.Status
+	}
+	return false, "the CLI reports the account is not signed in"
+}
+
+// firstLine trims a multi-line CLI complaint down to something a toast can show.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return s
+}
+
+// authOK is authStatus without the reason, for callers that only branch on it.
+func authOK(bin, dir string) bool {
+	ok, _ := authStatus(bin, dir)
+	return ok
 }
 
 // --- HTTP ---
@@ -512,7 +546,8 @@ func copyFile(src, dst string) error {
 	// transcript. When src and dst are the same file the content is already in
 	// place, so there is nothing to do. (This was a real data-loss bug: a switch
 	// whose source lookup resolved to the target account's own copy wiped it.)
-	if si, err := in.Stat(); err == nil {
+	si, siErr := in.Stat()
+	if siErr == nil {
 		if di, err := os.Stat(dst); err == nil && os.SameFile(si, di) {
 			return nil
 		}
@@ -527,12 +562,35 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	// Transcripts run to tens of MB, so copy in 1 MB chunks rather than io.Copy's
-	// 32 KB default: same bytes, ~30x fewer syscalls on a large conversation.
-	if _, err := io.CopyBuffer(out, in, make([]byte, 1<<20)); err != nil {
+	// Prefer a copy-on-write clone: on a filesystem that supports it (btrfs, XFS
+	// with reflink, bcachefs) an 80MB transcript is staged instantly and costs no
+	// extra disk until one side diverges. The clone is a separate inode, so the
+	// two accounts' transcripts stay independent exactly as a byte copy would
+	// leave them. ext4 and friends refuse it, and then we copy in 1MB chunks
+	// rather than io.Copy's 32KB default: same bytes, ~30x fewer syscalls.
+	if err := reflinkFile(in, out); err != nil {
+		if _, err := in.Seek(0, io.SeekStart); err != nil {
+			out.Close()
+			os.Remove(tmp)
+			return err
+		}
+		if _, err := io.CopyBuffer(out, in, make([]byte, 1<<20)); err != nil {
+			out.Close()
+			os.Remove(tmp)
+			return err
+		}
+	}
+	// Whichever path ran, refuse to publish a short file. The failure that cost a
+	// real conversation was a transcript arriving truncated, so the staged copy
+	// must be at least as long as the source was when we opened it (a live
+	// transcript may have grown meanwhile, which is fine; shrinking never is).
+	if fi, err := out.Stat(); err != nil || (siErr == nil && fi.Size() < si.Size()) {
 		out.Close()
 		os.Remove(tmp)
-		return err
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("staged transcript is short: got %d bytes, source had %d", fi.Size(), si.Size())
 	}
 	if err := out.Close(); err != nil {
 		os.Remove(tmp)
