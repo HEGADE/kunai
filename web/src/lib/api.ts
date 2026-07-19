@@ -149,10 +149,13 @@ export function stats(base: string): Promise<Stats> {
   return fetch(at(base, '/api/stats')).then((r) => json<Stats>(r))
 }
 
-// usage reads the machine's default Claude account's quota windows (5-hour and
-// weekly). The server caches it, so calling this per dashboard paint is fine.
-export function usage(base: string): Promise<Usage> {
-  return fetch(at(base, '/api/usage')).then((r) => json<Usage>(r))
+// usage reads one Claude account's quota windows (5-hour and weekly). An empty
+// cli means the machine's default account. Quota is per account, so a machine
+// running several logins is asked once per account. The server caches each for a
+// minute, so calling this per dashboard paint is fine.
+export function usage(base: string, cli = ''): Promise<Usage> {
+  const q = cli ? `?cli=${encodeURIComponent(cli)}` : ''
+  return fetch(at(base, `/api/usage${q}`)).then((r) => json<Usage>(r))
 }
 
 // setKeepAwake toggles a machine's opt-in keep-awake (prevents idle sleep so a

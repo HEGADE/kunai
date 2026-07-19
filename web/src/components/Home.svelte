@@ -78,15 +78,20 @@
   const selId = $derived(sel?.id ?? '')
   const selUrl = $derived(sel?.url ?? '')
   const selOnline = $derived(sel?.online ?? false)
-  let use = $state<Usage | null>(null)
+  // Quota is per account: a machine can run more than one Claude login and each
+  // has its own windows, so one meter could only ever describe one of them.
+  // `clis` is sent only when there is a real choice, so a single-account machine
+  // keeps exactly one unlabelled meter as before. '' means the default account.
+  const accounts = $derived<string[]>(st?.clis?.length ? st.clis : [''])
+  let uses = $state<Record<string, Usage | null>>({})
+  // Why an account has no numbers, when it has none. Without this a failed read
+  // just deleted the rows, which reads as "still loading" forever.
+  let usageErrs = $state<Record<string, string>>({})
   // Whether this machine's quota has come back yet, either way. It gates the
   // skeleton, so the skeleton shows once per machine and never again: a refresh
   // updates the numbers in place rather than blinking the rows away and back.
   let usageLoaded = $state(false)
-  // Why there are no numbers, when there are none. Without this a failed read
-  // just deleted the rows, which reads as "still loading" forever.
-  let usageErr = $state('')
-  // Only a real machine switch clears the meter. A transient poll blip (a
+  // Only a real machine switch clears the meters. A transient poll blip (a
   // dropped fetch that flips a machine offline for one tick) must NOT blank
   // numbers that were right a second ago: that blanking collapsed the quota
   // rows to zero height and shoved the whole sidebar list ("dancing").
@@ -94,37 +99,44 @@
   $effect(() => {
     const url = selUrl,
       online = selOnline,
-      id = selId
+      id = selId,
+      names = accounts
     if (id !== usageFor) {
       usageFor = id
-      use = null
+      uses = {}
+      usageErrs = {}
       usageLoaded = false
-      usageErr = ''
     }
     if (!online) {
       usageLoaded = true // an offline machine has no quota to wait for; keep the last-good numbers
       return
     }
     let done = false
+    // Each account is asked separately, and one being logged out must not blank
+    // the others: settle them independently rather than failing the batch.
     const load = () =>
-      usage(url)
-        .then((u) => {
-          if (done) return
-          usageLoaded = true
-          // Keep the last good numbers if a later poll comes back empty: a blip
-          // should not blank a meter that was right a minute ago.
-          if (u?.session || u?.weekly) {
-            use = u
-            usageErr = ''
-          } else {
-            usageErr = u?.unavailable || 'unavailable'
-          }
-        })
-        .catch((e) => {
-          if (done) return
-          usageLoaded = true
-          usageErr = String(e?.message || e)
-        })
+      Promise.all(
+        names.map((cli) =>
+          usage(url, cli)
+            .then((u) => {
+              if (done) return
+              // Keep the last good numbers if a later poll comes back empty: a
+              // blip should not blank a meter that was right a minute ago.
+              if (u?.session || u?.weekly) {
+                uses[cli] = u
+                usageErrs[cli] = ''
+              } else {
+                usageErrs[cli] = u?.unavailable || 'unavailable'
+              }
+            })
+            .catch((e) => {
+              if (done) return
+              usageErrs[cli] = String(e?.message || e)
+            }),
+        ),
+      ).then(() => {
+        if (!done) usageLoaded = true
+      })
     load()
     // The server caches for a minute; match it rather than poll faster than the
     // number can move.
@@ -134,10 +146,6 @@
       clearInterval(t)
     }
   })
-  // A quota window is only worth a meter when we know its fill. `unavailable`
-  // (logged out, offline, token expired) shows nothing rather than a zeroed bar.
-  const session = $derived(use?.session ?? null)
-  const weekly = $derived(use?.weekly ?? null)
   // The rolling window only carries a reset time once it has usage in it. An idle
   // 5-hour window (0% used) reports no reset, which is not "unknown" — nothing has
   // started the clock — so say that plainly instead of raising a false alarm.
@@ -229,44 +237,58 @@
           </div>
         {/each}
       </div>
-    {:else if usageErr && !session && !weekly}
-      <div class="quota">
-        {#each ['Session', 'Weekly'] as k (k)}
-          <div class="q skel">
-            <span class="q-k">{k}</span>
-            <div class="q-track"></div>
-            <span class="q-pct mono">—</span>
-            <span class="q-when mono">{usageErr === 'unavailable' ? 'no quota reported' : 'unavailable'}</span>
-          </div>
-        {/each}
-      </div>
-    {:else if session || weekly}
-      <div class="quota">
-        {#if session}
-          <div class="q">
-            <span class="q-k">Session</span>
-            <div class="q-track">
-              <i class:hot={session.percent >= 80} style="width:{Math.max(1.5, Math.min(100, session.percent))}%"></i>
+    {:else}
+      <!-- One group per account. With a single account this is exactly the old
+           two rows; with several, each is named, because "switch when one runs
+           out" is only a choice you can make if you can see both. -->
+      {#each accounts as cli (cli)}
+        {@const u = uses[cli] ?? null}
+        {@const session = u?.session ?? null}
+        {@const weekly = u?.weekly ?? null}
+        {@const err = usageErrs[cli] ?? ''}
+        <div class="quota">
+          {#if accounts.length > 1}
+            <div class="q-acct mono" class:spent={(session?.percent ?? 0) >= 100 || (weekly?.percent ?? 0) >= 100}>
+              {cli}
             </div>
-            <span class="q-pct mono" class:hot={session.percent >= 80}
-              >{Math.round(session.percent)}<small>%</small></span
-            >
-            <span class="q-when mono">{resetsIn(session)}</span>
-          </div>
-        {/if}
-        {#if weekly}
-          <div class="q">
-            <span class="q-k">Weekly</span>
-            <div class="q-track">
-              <i class:hot={weekly.percent >= 80} style="width:{Math.max(1.5, Math.min(100, weekly.percent))}%"></i>
-            </div>
-            <span class="q-pct mono" class:hot={weekly.percent >= 80}
-              >{Math.round(weekly.percent)}<small>%</small></span
-            >
-            <span class="q-when mono">{resetsIn(weekly)}</span>
-          </div>
-        {/if}
-      </div>
+          {/if}
+          {#if err && !session && !weekly}
+            {#each ['Session', 'Weekly'] as k (k)}
+              <div class="q skel">
+                <span class="q-k">{k}</span>
+                <div class="q-track"></div>
+                <span class="q-pct mono">—</span>
+                <span class="q-when mono">{err === 'unavailable' ? 'no quota reported' : 'unavailable'}</span>
+              </div>
+            {/each}
+          {:else}
+            {#if session}
+              <div class="q">
+                <span class="q-k">Session</span>
+                <div class="q-track">
+                  <i class:hot={session.percent >= 80} style="width:{Math.max(1.5, Math.min(100, session.percent))}%"></i>
+                </div>
+                <span class="q-pct mono" class:hot={session.percent >= 80}
+                  >{Math.round(session.percent)}<small>%</small></span
+                >
+                <span class="q-when mono">{resetsIn(session)}</span>
+              </div>
+            {/if}
+            {#if weekly}
+              <div class="q">
+                <span class="q-k">Weekly</span>
+                <div class="q-track">
+                  <i class:hot={weekly.percent >= 80} style="width:{Math.max(1.5, Math.min(100, weekly.percent))}%"></i>
+                </div>
+                <span class="q-pct mono" class:hot={weekly.percent >= 80}
+                  >{Math.round(weekly.percent)}<small>%</small></span
+                >
+                <span class="q-when mono">{resetsIn(weekly)}</span>
+              </div>
+            {/if}
+          {/if}
+        </div>
+      {/each}
     {/if}
 
     <!-- The machine, by exception. A vital that is fine is not news, so it stays
@@ -472,6 +494,21 @@
   /* Quota: the page's one piece of weight. Reuses the track/fill and mono
      numerals the context meter already uses, so a budget reads the same
      everywhere in kunai. */
+  /* The account a group of meters belongs to. Mono and quiet: it labels data
+     rather than competing with it, and only appears when there is more than one
+     account to tell apart. */
+  .q-acct {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-4);
+    margin-bottom: -3px;
+  }
+  /* A spent account is the one fact worth raising your voice for: it is why you
+     would switch a session to the other one. */
+  .q-acct.spent {
+    color: var(--text-2);
+  }
   .quota {
     display: flex;
     flex-direction: column;

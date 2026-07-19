@@ -2,9 +2,15 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -234,4 +240,259 @@ func swapRun(fn func(context.Context, string, []string, string, ...string) ([]by
 	old := usageRun
 	usageRun = fn
 	return func() { usageRun = old }
+}
+
+// --- per-account usage ---
+
+// The whole point of multi-account is choosing where a session runs, so each
+// account's quota must be its own. One shared cache slot would make the second
+// account serve the first's numbers and evict it on every poll.
+func TestGetCachesPerAccount(t *testing.T) {
+	byDir := map[string]string{
+		"/personal": "Current session: 10% used\nCurrent week (all models): 20% used\n",
+		"/work":     "Current session: 80% used\nCurrent week (all models): 90% used\n",
+	}
+	runs := map[string]int{}
+	defer swapRun(func(ctx context.Context, bin string, env []string, dir string, args ...string) ([]byte, error) {
+		cfg := ""
+		for _, e := range env {
+			if strings.HasPrefix(e, "CLAUDE_CONFIG_DIR=") {
+				cfg = strings.TrimPrefix(e, "CLAUDE_CONFIG_DIR=")
+			}
+		}
+		runs[cfg]++
+		return []byte(byDir[cfg]), nil
+	})()
+
+	u := newUsageCache()
+	personal := CLIProfile{Name: "Claude", Bin: "claude", Dir: "/personal"}
+	work := CLIProfile{Name: "Work", Bin: "claude", Dir: "/work"}
+
+	// Read each twice: both must keep their own numbers and shell the CLI once.
+	for i := 0; i < 2; i++ {
+		got, err := u.get(context.Background(), personal, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Session.Percent != 10 {
+			t.Fatalf("personal session = %v, want 10 (served another account's numbers?)", got.Session.Percent)
+		}
+		got, err = u.get(context.Background(), work, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Session.Percent != 80 {
+			t.Fatalf("work session = %v, want 80", got.Session.Percent)
+		}
+	}
+	if runs["/personal"] != 1 || runs["/work"] != 1 {
+		t.Errorf("CLI runs = %v, want exactly one per account", runs)
+	}
+}
+
+// A failure for one account must not blank out another's good answer.
+func TestOneAccountFailingLeavesTheOtherIntact(t *testing.T) {
+	defer swapRun(func(ctx context.Context, bin string, env []string, dir string, args ...string) ([]byte, error) {
+		for _, e := range env {
+			if e == "CLAUDE_CONFIG_DIR=/broken" {
+				return nil, fmt.Errorf("logged out")
+			}
+		}
+		return []byte(usageOut), nil
+	})()
+
+	u := newUsageCache()
+	good := CLIProfile{Name: "Good", Bin: "claude", Dir: "/good"}
+	broken := CLIProfile{Name: "Broken", Bin: "claude", Dir: "/broken"}
+
+	if _, err := u.get(context.Background(), good, t.TempDir()); err != nil {
+		t.Fatalf("good account: %v", err)
+	}
+	if _, err := u.get(context.Background(), broken, t.TempDir()); err == nil {
+		t.Fatal("broken account should report an error")
+	}
+	got, err := u.get(context.Background(), good, t.TempDir())
+	if err != nil || got == nil {
+		t.Fatalf("good account after the other failed: %v", err)
+	}
+}
+
+// Profiles differing only by label share a login, so they must share an entry
+// rather than each paying for its own CLI run.
+func TestSameConfigDirSharesOneEntry(t *testing.T) {
+	runs := 0
+	defer swapRun(func(ctx context.Context, bin string, env []string, dir string, args ...string) ([]byte, error) {
+		runs++
+		return []byte(usageOut), nil
+	})()
+
+	u := newUsageCache()
+	a := CLIProfile{Name: "Personal", Bin: "claude", Dir: "/same"}
+	b := CLIProfile{Name: "Renamed", Bin: "claude", Dir: "/same"}
+	if _, err := u.get(context.Background(), a, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.get(context.Background(), b, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 1 {
+		t.Errorf("shelled the CLI %d times for one login, want 1", runs)
+	}
+}
+
+// Concurrent reads of different accounts must not deadlock or serialise behind
+// one lock; concurrent reads of ONE account must still collapse to a single run.
+func TestConcurrentGetsAcrossAccounts(t *testing.T) {
+	var mu sync.Mutex
+	runs := map[string]int{}
+	defer swapRun(func(ctx context.Context, bin string, env []string, dir string, args ...string) ([]byte, error) {
+		cfg := ""
+		for _, e := range env {
+			if strings.HasPrefix(e, "CLAUDE_CONFIG_DIR=") {
+				cfg = strings.TrimPrefix(e, "CLAUDE_CONFIG_DIR=")
+			}
+		}
+		mu.Lock()
+		runs[cfg]++
+		mu.Unlock()
+		return []byte(usageOut), nil
+	})()
+
+	u := newUsageCache()
+	profiles := []CLIProfile{
+		{Name: "A", Bin: "claude", Dir: "/a"},
+		{Name: "B", Bin: "claude", Dir: "/b"},
+		{Name: "C", Bin: "claude", Dir: "/c"},
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 24; i++ {
+		wg.Add(1)
+		go func(p CLIProfile) {
+			defer wg.Done()
+			if _, err := u.get(context.Background(), p, "/tmp"); err != nil {
+				t.Error(err)
+			}
+		}(profiles[i%len(profiles)])
+	}
+	wg.Wait()
+	for _, p := range profiles {
+		if runs[p.Dir] != 1 {
+			t.Errorf("account %s shelled %d times, want 1", p.Name, runs[p.Dir])
+		}
+	}
+}
+
+// The default account keeps working with no parameter, which is what a
+// single-account machine and any older client send.
+func TestHandleUsageDefaultsToTheDefaultAccount(t *testing.T) {
+	var gotCfg string
+	defer swapRun(func(ctx context.Context, bin string, env []string, dir string, args ...string) ([]byte, error) {
+		gotCfg = ""
+		for _, e := range env {
+			if strings.HasPrefix(e, "CLAUDE_CONFIG_DIR=") {
+				gotCfg = strings.TrimPrefix(e, "CLAUDE_CONFIG_DIR=")
+			}
+		}
+		return []byte(usageOut), nil
+	})()
+
+	s := usageTestServer(t)
+	got := doUsage(t, s, "")
+	if gotCfg != "" {
+		t.Errorf("ran against %q, want the default account (no CLAUDE_CONFIG_DIR)", gotCfg)
+	}
+	if got.CLI != "Claude" {
+		t.Errorf("cli = %q, want Claude", got.CLI)
+	}
+}
+
+// ?cli=<name> must poll that account, and label the answer as that account.
+func TestHandleUsageSelectsTheNamedAccount(t *testing.T) {
+	var gotCfg string
+	defer swapRun(func(ctx context.Context, bin string, env []string, dir string, args ...string) ([]byte, error) {
+		for _, e := range env {
+			if strings.HasPrefix(e, "CLAUDE_CONFIG_DIR=") {
+				gotCfg = strings.TrimPrefix(e, "CLAUDE_CONFIG_DIR=")
+			}
+		}
+		return []byte(usageOut), nil
+	})()
+
+	s := usageTestServer(t)
+	got := doUsage(t, s, "Work")
+	if gotCfg != "/work" {
+		t.Errorf("ran against %q, want /work", gotCfg)
+	}
+	if got.CLI != "Work" {
+		t.Errorf("cli = %q, want Work", got.CLI)
+	}
+}
+
+// An unknown account falls back to the default rather than erroring, matching
+// resolveCLI everywhere else: a client must always get a usable answer.
+func TestHandleUsageUnknownAccountFallsBackToDefault(t *testing.T) {
+	defer swapRun(func(ctx context.Context, bin string, env []string, dir string, args ...string) ([]byte, error) {
+		return []byte(usageOut), nil
+	})()
+	s := usageTestServer(t)
+	if got := doUsage(t, s, "nope"); got.CLI != "Claude" {
+		t.Errorf("cli = %q, want the default Claude", got.CLI)
+	}
+}
+
+// A logged-out or API-key account is reported as unavailable with the account
+// named, never as a 500: the dashboard shows an absent tile, not an error page.
+func TestHandleUsageUnavailableNamesTheAccount(t *testing.T) {
+	defer swapRun(func(ctx context.Context, bin string, env []string, dir string, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("not logged in")
+	})()
+	s := usageTestServer(t)
+
+	rec := httptest.NewRecorder()
+	s.handleUsage(rec, httptest.NewRequest("GET", "/api/usage?cli=Work", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["unavailable"] == nil {
+		t.Fatalf("body = %v, want an unavailable reason", body)
+	}
+	if body["cli"] != "Work" {
+		t.Errorf("cli = %v, want Work", body["cli"])
+	}
+}
+
+// usageTestServer is a two-account machine: the default plus a work account.
+func usageTestServer(t *testing.T) *Server {
+	t.Helper()
+	return &Server{
+		cfg:   Config{DataDir: t.TempDir()},
+		usage: newUsageCache(),
+		clis: []CLIProfile{
+			{Name: "Claude", Bin: "claude"},
+			{Name: "Work", Bin: "claude", Dir: "/work"},
+		},
+	}
+}
+
+// doUsage calls the handler and decodes a successful Usage body.
+func doUsage(t *testing.T, s *Server, cli string) Usage {
+	t.Helper()
+	url := "/api/usage"
+	if cli != "" {
+		url += "?cli=" + cli
+	}
+	rec := httptest.NewRecorder()
+	s.handleUsage(rec, httptest.NewRequest("GET", url, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var u Usage
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
+		t.Fatalf("decode %s: %v", rec.Body.String(), err)
+	}
+	return u
 }

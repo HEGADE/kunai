@@ -52,6 +52,9 @@ type Usage struct {
 	Session   *UsageWindow `json:"session,omitempty"` // rolling 5-hour
 	Weekly    *UsageWindow `json:"weekly,omitempty"`  // rolling 7-day
 	FetchedAt int64        `json:"fetched_at"`        // unix seconds
+	// CLI names the account these numbers belong to, so a client showing more
+	// than one cannot mislabel them. Stamped per response, not cached.
+	CLI string `json:"cli,omitempty"`
 }
 
 // usageRun shells the CLI. Injectable for the same reason guardian.go routes
@@ -168,14 +171,47 @@ func dropTranscript(configDir, cwd, id string) {
 
 // usageCache serves the dashboard without shelling the CLI on every paint, and
 // serialises the poll so a slow CLI start can never pile up.
+//
+// Entries are per account. A quota belongs to the login in a config dir, so a
+// single shared slot would make two accounts serve each other's numbers and evict
+// one another on every poll. Each entry carries its own lock, so a slow poll for
+// one account never blocks the dashboard reading another.
 type usageCache struct {
+	mu      sync.Mutex
+	entries map[string]*usageEntry
+}
+
+// usageEntry is one account's cached answer.
+type usageEntry struct {
 	mu  sync.Mutex
 	at  time.Time
 	val *Usage
 	err error
 }
 
-func newUsageCache() *usageCache { return &usageCache{} }
+func newUsageCache() *usageCache { return &usageCache{entries: map[string]*usageEntry{}} }
+
+// usageKey identifies the account a quota belongs to. The subscription follows
+// the login in the config dir rather than the label, so two profiles pointing at
+// one dir correctly share an entry, and renaming a profile does not strand its
+// cached answer.
+func usageKey(p CLIProfile) string { return p.Bin + "\x00" + p.configDir() }
+
+// entryFor returns the account's cache slot, creating it on first use.
+func (u *usageCache) entryFor(p CLIProfile) *usageEntry {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.entries == nil {
+		u.entries = map[string]*usageEntry{}
+	}
+	key := usageKey(p)
+	e, ok := u.entries[key]
+	if !ok {
+		e = &usageEntry{}
+		u.entries[key] = e
+	}
+	return e
+}
 
 // fetch shells `claude -p /usage` as the given account and reads the answer.
 // cwd is kunai's own data dir: somewhere stable that is ours, so the transcript
@@ -206,18 +242,19 @@ func (u *usageCache) fetch(ctx context.Context, p CLIProfile, cwd string) (*Usag
 // is held only briefly (usageFailTTL) so a blip clears itself, while still not
 // re-shelling the CLI on every paint.
 func (u *usageCache) get(ctx context.Context, p CLIProfile, cwd string) (*Usage, error) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
+	e := u.entryFor(p)
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	ttl := usageTTL
-	if u.err != nil {
+	if e.err != nil {
 		ttl = usageFailTTL
 	}
-	if time.Since(u.at) < ttl {
-		return u.val, u.err
+	if time.Since(e.at) < ttl {
+		return e.val, e.err
 	}
-	u.val, u.err = u.fetch(ctx, p, cwd)
-	u.at = time.Now()
-	return u.val, u.err
+	e.val, e.err = u.fetch(ctx, p, cwd)
+	e.at = time.Now()
+	return e.val, e.err
 }
 
 // usagePollLoop keeps the scheduler's window reset times fresh from /usage, the
@@ -266,16 +303,28 @@ func (s *Server) feedSchedulerResets(ctx context.Context) {
 	}
 }
 
-// handleUsage serves the default account's quota windows. Quota is per-account
-// and the dashboard shows one machine's default account, so this deliberately
-// takes no account parameter.
+// handleUsage serves one account's quota windows. ?cli=<name> picks the account;
+// an omitted or unknown name means the machine's default, which is what a
+// single-account machine and any older client ask for. Quota is per-account, and
+// a machine can now run several, so "which account is this" has to be a parameter
+// rather than an assumption: switching a session to the work account is only a
+// real choice if you can see whether the work account has room.
 func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
-	usage, err := s.usage.get(r.Context(), s.resolveCLI(""), s.cfg.DataDir)
-	if err != nil {
+	p := s.resolveCLI(r.URL.Query().Get("cli"))
+	usage, err := s.usage.get(r.Context(), p, s.cfg.DataDir)
+	if err != nil || usage == nil {
 		// Nothing the client can act on: the account may be logged out, on an
 		// API key, or the CLI may be missing. Say "no usage", not "500".
-		writeJSON(w, http.StatusOK, map[string]any{"unavailable": err.Error()})
+		msg := "no usage reported"
+		if err != nil {
+			msg = err.Error()
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"unavailable": msg, "cli": p.Name})
 		return
 	}
-	writeJSON(w, http.StatusOK, usage)
+	// Stamp the account on a copy: the cached value is shared, and two profiles
+	// may point at one config dir under different names.
+	out := *usage
+	out.CLI = p.Name
+	writeJSON(w, http.StatusOK, out)
 }

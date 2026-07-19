@@ -42,15 +42,17 @@ export interface UsageWindow {
   resets_at?: number // unix seconds; absent = unknown
 }
 
-// The default account's quota. A missing window means the CLI did not report
-// that limit, which reads as absent rather than as an empty meter.
-// `unavailable` is the normal not-an-error state: logged out, on an API key, or
-// no CLI to ask.
+// One account's quota. A missing window means the CLI did not report that limit,
+// which reads as absent rather than as an empty meter. `unavailable` is the
+// normal not-an-error state: logged out, on an API key, or no CLI to ask. `cli`
+// names the account the numbers belong to, so a machine showing several cannot
+// mislabel them.
 export interface Usage {
   session?: UsageWindow // rolling 5-hour
   weekly?: UsageWindow // rolling 7-day
   fetched_at?: number
   unavailable?: string
+  cli?: string
 }
 
 // A named Claude account (CLI) a machine can run sessions on.
