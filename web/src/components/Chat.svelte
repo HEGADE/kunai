@@ -453,86 +453,84 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3 3 0 014.24 4.24l-9.2 9.19a1 1 0 01-1.41-1.41l8.49-8.49" /></svg>
         </button>
         <input type="file" multiple bind:this={fileInput} onchange={onFiles} hidden />
-        <div class="modewrap">
-          <button class="mode" class:on={chat.mode !== 'default'} onclick={() => (modeOpen = !modeOpen)}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4.5 13.5h5L11 22l8.5-11.5h-5z" /></svg>
-            {modeLabels[chat.mode] ?? chat.mode}
-          </button>
-          {#if modeOpen}
-            <button class="mode-scrim" onclick={() => (modeOpen = false)} aria-label="Close"></button>
-            <div class="mode-pop">
-              {#each modes as m (m.id)}
-                <button
-                  class:active={chat.mode === m.id}
-                  onclick={() => { chat.setMode(m.id); modeOpen = false }}
-                >
-                  <span class="ml">{m.label}</span>
-                  <span class="mh">{m.hint}</span>
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-        <div class="modewrap">
-          <button class="mode" onclick={() => (modelOpen = !modelOpen)} title="Model">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.8L20 9.7l-5.1 1.6L12 17l-2.9-5.7L4 9.7l6.1-1.9z" /></svg>
-            {modelLabel(chat.model)}
-          </button>
-          {#if modelOpen}
-            <button class="mode-scrim" onclick={() => (modelOpen = false)} aria-label="Close"></button>
-            <div class="mode-pop">
-              {#each MODELS as m (m.id)}
-                <button
-                  class:active={modelLabel(chat.model) === m.label}
-                  onclick={() => { chat.setModel(m.id); modelOpen = false }}
-                >
-                  <span class="ml">{m.label}</span>
-                  {#if m.hint}<span class="mh">{m.hint}</span>{/if}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-        <div class="modewrap">
-          <button class="mode" onclick={() => (effortOpen = !effortOpen)} title="Reasoning effort (restarts the session)">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="3" y="13" width="4" height="8" rx="1" /><rect x="10" y="8" width="4" height="13" rx="1" /><rect x="17" y="3" width="4" height="18" rx="1" /></svg>
-            {effortLabel(chat.effort)}
-          </button>
-          {#if effortOpen}
-            <button class="mode-scrim" onclick={() => (effortOpen = false)} aria-label="Close"></button>
-            <div class="mode-pop">
-              <div class="pop-note">Restarts the session (resumes the conversation).</div>
-              {#each EFFORTS as e (e.id)}
-                <button
-                  class:active={chat.effort === e.id}
-                  onclick={() => { if (chat.effort !== e.id) app.restartWithEffort(e.id); effortOpen = false }}
-                >
-                  <span class="ml">{e.label}</span>
-                  {#if e.hint}<span class="mh">{e.hint}</span>{/if}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-        {#if accounts.length > 1}
+        <div class="controls">
           <div class="modewrap">
-            <button class="mode" onclick={() => (accountOpen = !accountOpen)} title="Claude account (restarts the session)">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.6" /><path d="M5 21v-1a6 6 0 016-6h2a6 6 0 016 6v1" /></svg>
-              {chat.cli || accounts[0]}
+            <button class="seg" class:on={chat.mode !== 'default'} class:open={modeOpen} onclick={() => (modeOpen = !modeOpen)} title="Permission mode">
+              {modeLabels[chat.mode] ?? chat.mode}
             </button>
-            {#if accountOpen}
-              <button class="mode-scrim" onclick={() => (accountOpen = false)} aria-label="Close"></button>
+            {#if modeOpen}
+              <button class="mode-scrim" onclick={() => (modeOpen = false)} aria-label="Close"></button>
               <div class="mode-pop">
-                <div class="pop-note">Switches the account and resumes here. The new account re-reads the conversation once.</div>
-                {#each accounts as a (a)}
-                  <button class:active={(chat.cli || accounts[0]) === a} onclick={() => { if ((chat.cli || accounts[0]) !== a) app.switchAccount(a); accountOpen = false }}>
-                    <span class="ml">{a}</span>
+                {#each modes as m (m.id)}
+                  <button
+                    class:active={chat.mode === m.id}
+                    onclick={() => { chat.setMode(m.id); modeOpen = false }}
+                  >
+                    <span class="ml">{m.label}</span>
+                    <span class="mh">{m.hint}</span>
                   </button>
                 {/each}
               </div>
             {/if}
           </div>
-        {/if}
+          <div class="modewrap">
+            <button class="seg" class:open={modelOpen} onclick={() => (modelOpen = !modelOpen)} title="Model">
+              {modelLabel(chat.model)}
+            </button>
+            {#if modelOpen}
+              <button class="mode-scrim" onclick={() => (modelOpen = false)} aria-label="Close"></button>
+              <div class="mode-pop">
+                {#each MODELS as m (m.id)}
+                  <button
+                    class:active={modelLabel(chat.model) === m.label}
+                    onclick={() => { chat.setModel(m.id); modelOpen = false }}
+                  >
+                    <span class="ml">{m.label}</span>
+                    {#if m.hint}<span class="mh">{m.hint}</span>{/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+          <div class="modewrap">
+            <button class="seg" class:open={effortOpen} onclick={() => (effortOpen = !effortOpen)} title="Reasoning effort (restarts the session)">
+              {effortLabel(chat.effort)}
+            </button>
+            {#if effortOpen}
+              <button class="mode-scrim" onclick={() => (effortOpen = false)} aria-label="Close"></button>
+              <div class="mode-pop">
+                <div class="pop-note">Restarts the session (resumes the conversation).</div>
+                {#each EFFORTS as e (e.id)}
+                  <button
+                    class:active={chat.effort === e.id}
+                    onclick={() => { if (chat.effort !== e.id) app.restartWithEffort(e.id); effortOpen = false }}
+                  >
+                    <span class="ml">{e.label}</span>
+                    {#if e.hint}<span class="mh">{e.hint}</span>{/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+          {#if accounts.length > 1}
+            <div class="modewrap">
+              <button class="seg" class:open={accountOpen} onclick={() => (accountOpen = !accountOpen)} title="Claude account (restarts the session)">
+                {chat.cli || accounts[0]}
+              </button>
+              {#if accountOpen}
+                <button class="mode-scrim" onclick={() => (accountOpen = false)} aria-label="Close"></button>
+                <div class="mode-pop">
+                  <div class="pop-note">Switches the account and resumes here. The new account re-reads the conversation once.</div>
+                  {#each accounts as a (a)}
+                    <button class:active={(chat.cli || accounts[0]) === a} onclick={() => { if ((chat.cli || accounts[0]) !== a) app.switchAccount(a); accountOpen = false }}>
+                      <span class="ml">{a}</span>
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </div>
         <span class="spacer"></span>
         <Context
           tokens={chat.contextTokens}
@@ -977,30 +975,47 @@
     color: var(--text);
     background: var(--panel-2);
   }
-  .modewrap {
-    position: relative;
-    margin-left: 2px;
-  }
-  .mode {
+  /* The session controls (mode / model / effort / account) read as one quiet
+     strip of session state, not four competing capsules: text-only segments
+     divided by hairlines, with the pill affordance appearing only on hover or
+     while a segment's menu is open. */
+  .controls {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    height: 32px;
-    padding: 0 12px;
-    border-radius: 100px;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    color: var(--text-2);
+    margin-left: 4px;
+  }
+  .modewrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+  .controls > .modewrap + .modewrap::before {
+    content: '';
+    width: 1px;
+    height: 13px;
+    margin: 0 3px;
+    background: var(--border-2);
+  }
+  .seg {
+    display: inline-flex;
+    align-items: center;
+    height: 30px;
+    padding: 0 9px;
+    border-radius: 8px;
+    color: var(--text-3);
     font-size: 12.5px;
     font-weight: 500;
+    white-space: nowrap;
+    transition: color 0.12s, background 0.12s;
   }
-  .mode:hover {
+  .seg:hover,
+  .seg.open {
     color: var(--text);
-    border-color: var(--border-2);
+    background: var(--panel-2);
   }
-  .mode.on {
+  .seg.on {
     color: var(--text);
-    border-color: var(--border-2);
+    font-weight: 550;
   }
   .mode-scrim {
     position: fixed;
