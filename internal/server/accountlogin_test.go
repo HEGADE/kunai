@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -81,5 +82,121 @@ func TestCopyFileNormal(t *testing.T) {
 	// The source must be untouched.
 	if s, _ := os.ReadFile(src); string(s) != want {
 		t.Fatalf("source changed: %q", s)
+	}
+}
+
+// writeTranscriptAt drops a transcript for cid in an account's projects folder.
+func writeTranscriptAt(t *testing.T, configDir, slug, cid, body string) string {
+	t.Helper()
+	dir := filepath.Join(configDir, "projects", slug)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, cid+".jsonl")
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// The regression that lost a real 80MB conversation: a session running on the
+// work account is switched to the default one, and BOTH accounts already hold a
+// copy of the transcript (the default's is stale from an earlier switch). The
+// source must be the account the session is on now, so the live work transcript
+// wins; sourcing it from the default account instead copied a stale file over the
+// good one, and when the paths coincided it truncated it to zero.
+func TestSwitchSourcesTranscriptFromCurrentAccount(t *testing.T) {
+	work, personal := t.TempDir(), t.TempDir()
+	const cid, slug = "sess-1", "-home-me-proj"
+	const live = "turn1\nturn2\nturn3-done-on-work\n"
+	writeTranscriptAt(t, work, slug, cid, live)
+	writeTranscriptAt(t, personal, slug, cid, "stale\n") // an older copy, must be overwritten
+
+	dst, err := stageTranscriptForSwitch(work, personal, cid, func() string {
+		t.Fatal("fallback must not run: the current account has the transcript")
+		return ""
+	})
+	if err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != live {
+		t.Fatalf("target got %q, want the live work transcript %q", got, live)
+	}
+	// The source must survive the switch untouched.
+	if s, _ := os.ReadFile(filepath.Join(work, "projects", slug, cid+".jsonl")); string(s) != live {
+		t.Fatalf("source transcript damaged: %q", s)
+	}
+}
+
+// Switching when the source resolves to the target's own file (the same account,
+// or a lookup that landed on the target) must leave the transcript intact. This
+// is the exact shape that truncated a live conversation to 0 bytes.
+func TestSwitchToSameAccountPreservesTranscript(t *testing.T) {
+	dir := t.TempDir()
+	const cid, slug = "sess-2", "-home-me-proj"
+	const body = "the whole conversation\n"
+	writeTranscriptAt(t, dir, slug, cid, body)
+
+	if _, err := stageTranscriptForSwitch(dir, dir, cid, nil); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "projects", slug, cid+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != body {
+		t.Fatalf("transcript truncated by a self-directed switch: got %q, want %q", got, body)
+	}
+}
+
+// With no copy in the current account, the cross-account fallback supplies the
+// source (an id assigned before anything was flushed to the new account's dir).
+func TestSwitchUsesFallbackWhenCurrentAccountHasNoCopy(t *testing.T) {
+	other, target := t.TempDir(), t.TempDir()
+	empty := t.TempDir()
+	const cid, slug = "sess-3", "-home-me-proj"
+	const body = "found via fallback\n"
+	src := writeTranscriptAt(t, other, slug, cid, body)
+
+	dst, err := stageTranscriptForSwitch(empty, target, cid, func() string { return src })
+	if err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if got, _ := os.ReadFile(dst); string(got) != body {
+		t.Fatalf("got %q, want %q", got, body)
+	}
+}
+
+// Nothing anywhere is not an error: a brand-new session has no transcript yet and
+// the switch must still proceed to the respawn.
+func TestSwitchWithNoTranscriptIsNotAnError(t *testing.T) {
+	dst, err := stageTranscriptForSwitch(t.TempDir(), t.TempDir(), "nope", nil)
+	if err != nil || dst != "" {
+		t.Fatalf("got (%q, %v), want (\"\", nil)", dst, err)
+	}
+}
+
+// A failed copy must leave the destination as it was rather than a truncated
+// stub, which a resume would load as an empty conversation. copyFile writes to a
+// temp file and renames, so an unreadable source can never clobber the target.
+func TestCopyFileFailureLeavesDestinationIntact(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "dst.jsonl")
+	const keep = "existing conversation\n"
+	if err := os.WriteFile(dst, []byte(keep), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(filepath.Join(dir, "missing.jsonl"), dst); err == nil {
+		t.Fatal("copy from a missing source should fail")
+	}
+	if got, _ := os.ReadFile(dst); string(got) != keep {
+		t.Fatalf("destination damaged by a failed copy: %q", got)
+	}
+	if _, err := os.Stat(dst + ".tmp"); err == nil {
+		t.Fatal("a temp file was left behind")
 	}
 }

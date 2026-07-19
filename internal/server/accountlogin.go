@@ -225,6 +225,47 @@ func drain(r *os.File) (int64, error) {
 	}
 }
 
+// authStatusCache memoises signed-in checks briefly. Each check shells the CLI
+// (~1s) and the Accounts screen asks for every account every time it opens, so a
+// short TTL makes reopening instant instead of paying the spawn again. The
+// pre-switch guard deliberately does NOT read this cache: a switch is rare and
+// deliberate, and there the fresh answer is worth the second.
+var authStatusCache = struct {
+	mu sync.Mutex
+	m  map[string]authStatusEntry
+}{m: map[string]authStatusEntry{}}
+
+type authStatusEntry struct {
+	ok bool
+	at time.Time
+}
+
+const authStatusTTL = 30 * time.Second
+
+// authOKCached is authOK behind the TTL cache, for listing only.
+func authOKCached(bin, dir string) bool {
+	key := bin + "\x00" + dir
+	authStatusCache.mu.Lock()
+	e, hit := authStatusCache.m[key]
+	authStatusCache.mu.Unlock()
+	if hit && time.Since(e.at) < authStatusTTL {
+		return e.ok
+	}
+	ok := authOK(bin, dir)
+	authStatusCache.mu.Lock()
+	authStatusCache.m[key] = authStatusEntry{ok: ok, at: time.Now()}
+	authStatusCache.mu.Unlock()
+	return ok
+}
+
+// forgetAuthStatus drops the cache after anything that changes who is signed in,
+// so a fresh login or a removal shows up at once rather than after the TTL.
+func forgetAuthStatus() {
+	authStatusCache.mu.Lock()
+	clear(authStatusCache.m)
+	authStatusCache.mu.Unlock()
+}
+
 // authOK reports whether the account in dir is signed in, via `auth status --json`.
 // An empty dir means the default account (~/.claude): leave CLAUDE_CONFIG_DIR
 // unset rather than blanking it, which the CLI would not read as "default".
@@ -297,6 +338,7 @@ func (s *Server) handleAccountLoginFinish(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.saveCLIs(append(s.cliList(), profile))
+	forgetAuthStatus() // a brand-new login must show as signed in at once
 	writeJSON(w, http.StatusOK, map[string]string{"name": profile.Name})
 }
 
@@ -341,7 +383,7 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(i int, c CLIProfile) {
 			defer wg.Done()
-			out[i].Ready = authOK(c.Bin, c.configDir()) // distinct index: no shared write
+			out[i].Ready = authOKCached(c.Bin, c.configDir()) // distinct index: no shared write
 		}(i, c)
 	}
 	wg.Wait()
@@ -364,6 +406,7 @@ func (s *Server) handleAccountRemove(w http.ResponseWriter, r *http.Request) {
 			kept = append(kept, c)
 		}
 	}
+	forgetAuthStatus()
 	writeJSON(w, http.StatusOK, s.saveCLIs(kept))
 }
 
@@ -410,24 +453,12 @@ func (s *Server) handleSetAccount(w http.ResponseWriter, r *http.Request) {
 	if cid == "" {
 		cid = id
 	}
-	// Source the transcript from the account the session is running on now, not a
-	// blind first-match scan: transcriptForID walks the default account first, so a
-	// switch away from a non-default account would pick the default's own (stale or
-	// empty) copy as the source and copy it over the target, losing the real
-	// conversation. Fall back to the global scan only if the current account's dir
-	// has no copy (an id assigned but not yet flushed there).
 	cur := s.resolveCLI(sess.Meta().CLI)
-	src := transcriptPath(cur.configDir(), cid)
-	if src == "" {
-		src = s.transcriptForID(cid)
-	}
-	if src != "" {
-		slug := filepath.Base(filepath.Dir(src))
-		dst := filepath.Join(claudeRoot(target.configDir()), slug, cid+".jsonl")
-		if err := copyFile(src, dst); err != nil {
-			writeErr(w, http.StatusInternalServerError, "could not move the conversation to that account: "+err.Error())
-			return
-		}
+	if _, err := stageTranscriptForSwitch(cur.configDir(), target.configDir(), cid, func() string {
+		return s.transcriptForID(cid)
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not move the conversation to that account: "+err.Error())
+		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
@@ -441,6 +472,34 @@ func (s *Server) handleSetAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 // copyFile copies src to dst, creating dst's parent folder. Used to move a
+// stageTranscriptForSwitch puts cid's transcript in the target account's projects
+// folder so the resumed process loads the whole conversation under the new login.
+//
+// The source MUST come from the account the session is running on now (curDir).
+// Resolving it with a cross-account scan instead was a data-loss bug: that scan
+// walks the default account first, so switching away from a non-default account
+// picked the default's own stale (or empty) copy as the "source" and wrote it
+// over the target, and when the two resolved to the same path the copy truncated
+// the real transcript to nothing. srcFallback is the cross-account lookup, used
+// only when the current account has no copy (an id assigned but not yet flushed
+// there). Returns the destination written, or "" when there was nothing to copy.
+func stageTranscriptForSwitch(curDir, targetDir, cid string, srcFallback func() string) (string, error) {
+	src := transcriptPath(curDir, cid)
+	if src == "" && srcFallback != nil {
+		src = srcFallback()
+	}
+	if src == "" {
+		return "", nil
+	}
+	// The project-slug folder is derived from the cwd, so mirroring the source's
+	// folder name puts the copy where the target's CLI will look for it.
+	dst := filepath.Join(claudeRoot(targetDir), filepath.Base(filepath.Dir(src)), cid+".jsonl")
+	if err := copyFile(src, dst); err != nil {
+		return "", err
+	}
+	return dst, nil
+}
+
 // session's transcript into another account's config dir on an account switch.
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
@@ -468,7 +527,9 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	// Transcripts run to tens of MB, so copy in 1 MB chunks rather than io.Copy's
+	// 32 KB default: same bytes, ~30x fewer syscalls on a large conversation.
+	if _, err := io.CopyBuffer(out, in, make([]byte, 1<<20)); err != nil {
 		out.Close()
 		os.Remove(tmp)
 		return err
