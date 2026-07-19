@@ -205,10 +205,33 @@ export function setCLIs(base: string, clis: CLIProfile[]): Promise<CLIProfile[]>
 }
 
 // updateMachine tells a machine to self-update: it downloads the latest release
-// binary, verifies it, swaps it in, and restarts. The server exits mid-response
-// as it restarts, so a dropped connection here is expected, not a failure.
-export function updateMachine(base: string): Promise<void> {
-  return fetch(at(base, '/api/update'), { method: 'POST' }).then((r) => json<unknown>(r)).then(() => undefined)
+// binary, verifies it, swaps it in, and restarts. The response streams NDJSON:
+// {done,total} lines while the download runs (total is -1 when unknown), then a
+// final {status} or {error}. The server exits mid-response as it restarts, so a
+// dropped connection here is expected, not a failure.
+export async function updateMachine(
+  base: string,
+  onProgress?: (done: number, total: number) => void,
+): Promise<void> {
+  const res = await fetch(at(base, '/api/update'), { method: 'POST' })
+  if (!res.ok || !res.body) return json<unknown>(res).then(() => undefined)
+  const reader = res.body.getReader()
+  const dec = new TextDecoder()
+  let buf = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += dec.decode(value, { stream: true })
+    let nl
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim()
+      buf = buf.slice(nl + 1)
+      if (!line) continue
+      const msg = JSON.parse(line) as { done?: number; total?: number; error?: string }
+      if (msg.error) throw new Error(msg.error)
+      if (msg.done !== undefined) onProgress?.(msg.done, msg.total ?? -1)
+    }
+  }
 }
 
 // --- scheduler (per-machine: jobs live on the machine that runs them) ---
