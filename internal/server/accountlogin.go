@@ -384,6 +384,17 @@ func (s *Server) handleSetAccount(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, sess.Meta()) // already on it
 		return
 	}
+	// Pre-flight: confirm the target account is actually signed in before touching
+	// the live session. The restart below closes the running process first, so a
+	// switch to a signed-out account would drop the session (the conversation
+	// survives on disk, but the live tab would not) and only fail afterwards, since
+	// the respawn is async. Checking here refuses cleanly and leaves the current
+	// session running untouched. This shells `auth status` once (~1s), the price of
+	// a deliberate switch, not a per-turn cost.
+	if !authOK(target.Bin, target.configDir()) {
+		writeErr(w, http.StatusConflict, "The "+target.Name+" account is signed out. Add it again from Accounts, then switch.")
+		return
+	}
 	// Copy the transcript into the target account's folder so the resumed process
 	// loads the full context under the new login. cid is the CLI-assigned id once a
 	// turn has happened; before that the transcript (if any) lives under the handle.
