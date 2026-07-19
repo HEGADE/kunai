@@ -52,17 +52,13 @@
   <div class="footer">
     {#if meta}<span class="dur mono">{meta}</span>{/if}
     {#if reply}
-      <button
-        class="ibtn"
-        class:done={copied}
-        onclick={copyReply}
-        aria-label={copied ? 'Copied' : 'Copy reply'}
-        title={copied ? 'Copied' : 'Copy reply'}
-      >
+      <button class="copy" class:done={copied} onclick={copyReply} title="Copy this reply as markdown">
         {#if copied}
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+          Copied
         {:else}
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 012-2h8" /></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 012-2h8" /></svg>
+          Copy
         {/if}
       </button>
     {/if}
@@ -121,9 +117,28 @@
   .ibtn:hover {
     color: var(--text-2);
   }
-  /* Confirmation is the icon becoming a tick, not a toast: the answer is that it
-     worked, and it is already under your thumb. */
-  .ibtn.done {
+  /* Copy is something you reach for, not something you consult, so unlike the
+     info dot beside it it carries its word and a real hit area. Quiet enough to
+     belong to the footer, legible enough to find without hunting. */
+  .copy {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 9px;
+    border-radius: 7px;
+    color: var(--text-3);
+    font-size: 11.5px;
+    font-weight: 500;
+    transition: color 0.12s, background 0.12s;
+  }
+  .copy:hover {
+    color: var(--text);
+    background: var(--panel-2);
+  }
+  /* Confirmation happens in place: the button says what it did rather than
+     throwing a toast at a screen you are already looking at. */
+  .copy.done {
     color: var(--text);
   }
   .scrim {
