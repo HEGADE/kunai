@@ -15,8 +15,6 @@ Self-hosted, no relay, nothing between you and your own hardware.
 <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-52525b?style=flat-square" />
 </p>
 
-<img src="docs/screenshot.png" alt="Kunai showing an assistant reply with a highlighted code block, a Bash tool call with its output, and a per-query changed-files card" width="880" />
-
 </div>
 
 You are on the bus. You open the app, pick your desk machine, and ask it to fix
