@@ -340,3 +340,31 @@ export interface AccountInfo {
   default: boolean
   ready: boolean
 }
+
+// A channel is a way to reach kunai other than this app: Telegram today, Slack
+// next. Mirrors internal/server/channels.go, so a new channel is a new entry
+// rather than a new screen.
+export interface ChannelPerson {
+  id: string
+  name?: string
+  username?: string
+}
+
+export interface ChannelRequest {
+  code: string
+  name?: string
+  username?: string
+  asked_at: number
+}
+
+export interface ChannelInfo {
+  id: string
+  name: string
+  available: boolean // false for a channel that is listed but not built yet
+  connected: boolean
+  has_secret: boolean // a token is stored; the token itself is never sent back
+  people: ChannelPerson[]
+  waiting: ChannelRequest[]
+  detail: boolean // send tool inputs and outputs, off by default
+  help?: string
+}

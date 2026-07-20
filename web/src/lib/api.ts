@@ -1,4 +1,4 @@
-import type { AccountInfo, Attachment, CLIProfile, HistoryEntry, Job, Listing, MachineInfo, Meta, OlderTurns, Stats, ThermalConfig, Usage } from './types'
+import type { AccountInfo, ChannelInfo, Attachment, CLIProfile, HistoryEntry, Job, Listing, MachineInfo, Meta, OlderTurns, Stats, ThermalConfig, Usage } from './types'
 
 // Every call takes a `base` origin so the client can reach any machine directly
 // over the tailnet. base === '' means the current origin (the hub), so the hub's
@@ -277,4 +277,44 @@ export function removeMachine(base: string, id: string): Promise<void> {
 
 export function discoverMachines(base: string): Promise<MachineInfo[]> {
   return fetch(at(base, '/api/machines/discover')).then((r) => json<MachineInfo[]>(r))
+}
+
+// --- channels (Telegram, and whatever comes next) ---
+
+export function listChannels(base: string): Promise<ChannelInfo[]> {
+  return fetch(at(base, '/api/channels')).then((r) => json<ChannelInfo[]>(r))
+}
+
+// saveChannel stores a channel's secret and its redaction choice. An empty
+// token disconnects it, which is how a channel is turned off from the app.
+export function saveChannel(
+  base: string,
+  id: string,
+  patch: { token?: string; detail?: boolean },
+): Promise<ChannelInfo> {
+  return fetch(at(base, `/api/channels/${id}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).then((r) => json<ChannelInfo>(r))
+}
+
+// answerChannelRequest approves or refuses someone's pairing code.
+export function answerChannelRequest(
+  base: string,
+  id: string,
+  code: string,
+  approve: boolean,
+): Promise<ChannelInfo> {
+  return fetch(at(base, `/api/channels/${id}/requests/${code}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ approve }),
+  }).then((r) => json<ChannelInfo>(r))
+}
+
+export function revokeChannelPerson(base: string, id: string, person: string): Promise<ChannelInfo> {
+  return fetch(at(base, `/api/channels/${id}/people/${person}`), { method: 'DELETE' }).then((r) =>
+    json<ChannelInfo>(r),
+  )
 }

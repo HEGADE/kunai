@@ -30,39 +30,79 @@ const pollBackoff = 5 * time.Second
 
 // Bot connects a Telegram chat to kunai's sessions.
 type Bot struct {
-	cfg Config
-	api *Client
 	mgr Sessions
-	st  *state
+	st  *Store
 
 	mu       sync.Mutex
+	api      *Client
+	token    string
 	watchers map[int64]context.CancelFunc // chat id -> stop its event pump
 }
 
-// New builds a bot. Call Run to start it.
-func New(cfg Config, mgr Sessions) *Bot {
-	return &Bot{
-		cfg:      cfg,
-		api:      NewClient(cfg.Token),
-		mgr:      mgr,
-		st:       loadState(cfg.DataDir),
-		watchers: map[int64]context.CancelFunc{},
+// New builds a bot over a store. Call Run to start it.
+func New(st *Store, mgr Sessions) *Bot {
+	return &Bot{mgr: mgr, st: st, watchers: map[int64]context.CancelFunc{}}
+}
+
+// idleCheck is how often a bot with no token looks again. The token arrives from
+// the app rather than a restart, so the loop waits for one instead of exiting.
+const idleCheck = 5 * time.Second
+
+// client returns a client for the current token, rebuilding it when the token
+// changes under us (someone saved a new one in the app).
+func (b *Bot) client() (*Client, string) {
+	tok := b.st.token()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if tok != b.token || b.api == nil {
+		b.api, b.token = NewClient(tok), tok
 	}
+	return b.api, tok
+}
+
+// mustAPI returns the current client, rebuilding it if the token changed.
+func (b *Bot) mustAPI() *Client {
+	api, _ := b.client()
+	return api
+}
+
+// policy is the current redaction policy, read fresh so a change in the app
+// takes effect on the next message rather than the next restart.
+func (b *Bot) policy() Policy {
+	if b.st.detail() {
+		return Policy{ToolInputs: true, ToolOutputs: true}
+	}
+	return StrictPolicy()
 }
 
 // Run polls for updates until ctx is cancelled. It is the only long-lived
 // goroutine the bot owns; everything else hangs off a chat.
 func (b *Bot) Run(ctx context.Context) {
-	log.Printf("telegram: bot started (%d allowed user(s))", len(b.cfg.Allowed))
 	// Re-attach chats that were driving a session before the restart, so a
 	// reboot does not silently strand a conversation.
 	b.resumeWatchers(ctx)
 
+	announced := ""
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		updates, err := b.api.GetUpdates(ctx, b.st.offset())
+		api, tok := b.client()
+		if tok == "" {
+			// No token yet. It is set in the app, so wait for one rather than
+			// making someone restart kunai after saving it.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(idleCheck):
+			}
+			continue
+		}
+		if tok != announced {
+			log.Print("telegram: connected")
+			announced = tok
+		}
+		updates, err := api.GetUpdates(ctx, b.st.offset())
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -98,20 +138,33 @@ func (b *Bot) handle(ctx context.Context, u Update) {
 	}
 }
 
-// authorized reports whether the sender may drive kunai, and tells them when
-// they may not. Silence would look like a broken bot; the refusal names no
-// detail about the machine.
+// authorized reports whether the sender may drive kunai. A stranger is not
+// simply refused: they get a pairing code to read out, which the owner approves
+// in the app. That is the whole enrolment flow, and it means nobody has to go
+// hunting for their numeric user id in a log.
 func (b *Bot) authorized(ctx context.Context, chatID int64, from *User) bool {
-	if from != nil && b.cfg.permits(from.ID) {
+	if from == nil {
+		return false
+	}
+	if b.st.Allows(from.ID) {
 		return true
 	}
-	id := int64(0)
-	if from != nil {
-		id = from.ID
-	}
-	log.Printf("telegram: refused user %d in chat %d", id, chatID)
-	b.say(ctx, chatID, "Not authorised. Add your Telegram user id to kunai's allow list.")
+	code := b.st.Ask(from.ID, displayName(from), from.Username)
+	log.Printf("telegram: pairing requested by %d (code %s)", from.ID, code)
+	b.say(ctx, chatID, "Not connected yet.\n\nYour code is "+code+
+		"\n\nApprove it in kunai, under Channels. It expires in an hour.")
 	return false
+}
+
+// displayName is what the owner sees when approving, so a name beats a number.
+func displayName(u *User) string {
+	if u.FirstName != "" {
+		return u.FirstName
+	}
+	if u.Username != "" {
+		return "@" + u.Username
+	}
+	return ""
 }
 
 func (b *Bot) handleMessage(ctx context.Context, m *Message) {
@@ -153,17 +206,17 @@ func (b *Bot) handleCallback(ctx context.Context, q *CallbackQuery) {
 		chatID = q.Message.Chat.ID
 	}
 	if !b.authorized(ctx, chatID, q.From) {
-		_ = b.api.AnswerCallback(ctx, q.ID, "Not authorised")
+		_ = b.mustAPI().AnswerCallback(ctx, q.ID, "Not authorised")
 		return
 	}
 	action, requestID, ok := ParseCallback(q.Data)
 	if !ok {
-		_ = b.api.AnswerCallback(ctx, q.ID, "")
+		_ = b.mustAPI().AnswerCallback(ctx, q.ID, "")
 		return
 	}
 	sess, found := b.current(chatID)
 	if !found {
-		_ = b.api.AnswerCallback(ctx, q.ID, "That session is gone")
+		_ = b.mustAPI().AnswerCallback(ctx, q.ID, "That session is gone")
 		return
 	}
 	behavior := "allow"
@@ -172,14 +225,14 @@ func (b *Bot) handleCallback(ctx context.Context, q *CallbackQuery) {
 		behavior, answer = "deny", "Denied"
 	}
 	if err := sess.ResolvePermission(requestID, behavior, false, nil); err != nil {
-		_ = b.api.AnswerCallback(ctx, q.ID, "Could not answer")
+		_ = b.mustAPI().AnswerCallback(ctx, q.ID, "Could not answer")
 		return
 	}
-	_ = b.api.AnswerCallback(ctx, q.ID, answer)
+	_ = b.mustAPI().AnswerCallback(ctx, q.ID, answer)
 	// Replace the buttons with the outcome, so the message reads as settled
 	// rather than still waiting.
 	if q.Message != nil {
-		_ = b.api.Edit(ctx, chatID, q.Message.MessageID, answer+".", nil)
+		_ = b.mustAPI().Edit(ctx, chatID, q.Message.MessageID, answer+".", nil)
 	}
 }
 
@@ -266,7 +319,7 @@ func (b *Bot) prompt(ctx context.Context, chatID int64, text string) {
 			b.say(ctx, chatID, "Could not send it: "+err.Error())
 			return
 		}
-		_ = b.api.SendChatAction(ctx, chatID, "typing")
+		_ = b.mustAPI().SendChatAction(ctx, chatID, "typing")
 	})
 }
 
@@ -344,7 +397,7 @@ func (b *Bot) watch(parent context.Context, chatID int64, sess *session.Session)
 
 	go func() {
 		defer sess.Detach(sub)
-		reply := newStream(b.api, chatID)
+		reply := newStream(b.mustAPI(), chatID)
 		for {
 			select {
 			case <-ctx.Done():
@@ -373,7 +426,7 @@ func (b *Bot) dispatchEvent(ctx context.Context, chatID int64, reply *stream, ev
 		reply.Reset()
 	}
 
-	out, ok := RenderEvent(ev, b.cfg.Policy)
+	out, ok := RenderEvent(ev, b.policy())
 	if !ok {
 		return
 	}
@@ -417,7 +470,7 @@ func (b *Bot) sayWith(ctx context.Context, chatID int64, text string, kb *Inline
 	// something failed must not be cancelled by the same failure.
 	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 	defer cancel()
-	if _, err := b.api.Send(sendCtx, chatID, text, opts); err != nil && !errors.Is(err, context.Canceled) {
+	if _, err := b.mustAPI().Send(sendCtx, chatID, text, opts); err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("telegram: send to %d failed: %v", chatID, err)
 	}
 }

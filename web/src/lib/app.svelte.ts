@@ -86,6 +86,7 @@ class AppStore {
   showNew = $state(false)
   showSettings = $state(false)
   showAccounts = $state(false)
+  showChannels = $state(false)
   showAllSessions = $state(false)
   listError = $state('')
   // Sidebar machine filter: 'all' or a machine id. Lets you focus one machine.
@@ -506,10 +507,20 @@ class AppStore {
   openAccounts() {
     this.showNew = false
     this.showSettings = false
+    this.showChannels = false
     this.showAccounts = true
   }
   closeAccounts() {
     this.showAccounts = false
+  }
+  openChannels() {
+    this.showNew = false
+    this.showSettings = false
+    this.showAccounts = false
+    this.showChannels = true
+  }
+  closeChannels() {
+    this.showChannels = false
   }
   openAllSessions() {
     this.showNew = false

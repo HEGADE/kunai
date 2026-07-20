@@ -25,6 +25,7 @@ import (
 	"github.com/hegade/kunai/internal/push"
 	"github.com/hegade/kunai/internal/schedule"
 	"github.com/hegade/kunai/internal/session"
+	"github.com/hegade/kunai/internal/telegram"
 	"github.com/hegade/kunai/internal/webui"
 )
 
@@ -63,6 +64,9 @@ type Config struct {
 
 // Server wires the manager, config, and embedded PWA into an http.Handler.
 type Server struct {
+	// telegram is the Telegram channel state (token, who may use it, pending
+	// pairings). Nil until startTelegram runs.
+	telegram    *telegram.Store
 	cfg         Config
 	mgr         *session.Manager
 	pwa         fs.FS
@@ -166,6 +170,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/thermal", s.handleThermal)
 	mux.HandleFunc("GET /api/clis", s.handleCLIs)
 	mux.HandleFunc("POST /api/clis", s.handleCLIs)
+	mux.HandleFunc("GET /api/channels", s.handleChannels)
+	mux.HandleFunc("POST /api/channels/{id}", s.handleChannelUpdate)
+	mux.HandleFunc("POST /api/channels/{id}/requests/{code}", s.handleChannelApprove)
+	mux.HandleFunc("DELETE /api/channels/{id}/people/{person}", s.handleChannelRevoke)
 	mux.HandleFunc("GET /api/accounts", s.handleAccounts)
 	mux.HandleFunc("DELETE /api/accounts/{name}", s.handleAccountRemove)
 	mux.HandleFunc("POST /api/accounts/login/start", s.handleAccountLoginStart)

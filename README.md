@@ -37,7 +37,7 @@ it carries none of your conversation.
 [What you get](#what-you-get) ·
 [How it works](#how-it-works) ·
 [Claude accounts](#claude-accounts) ·
-[Telegram bot](#telegram-bot-optional) ·
+[Channels](#channels) ·
 [Working while you are away](#working-while-you-are-away) ·
 [Configuration](#configuration) ·
 [Security](#security) ·
@@ -186,21 +186,21 @@ Accounts live in `~/.kunai/clis.json`. You can edit that by hand if you want a
 different binary per account or extra environment variables, and Settings has a
 manual editor for pointing at a config folder you already signed into elsewhere.
 
-## Telegram bot (optional)
+## Channels
 
-Kunai can also be driven from a Telegram chat, which needs no Tailscale on the
-device you are holding and no app install. The bot long-polls Telegram outbound,
-so kunai still exposes nothing and still needs no inbound hole.
+Kunai can be reached from somewhere other than this app. Telegram works today,
+Slack is next, and both live under Channels in the sidebar.
 
-```sh
-kunai -telegram-token 123456:ABC... -telegram-allow 11111111
-```
+A channel needs no Tailscale on the device in your hand and no app install. The
+bot long-polls Telegram outbound, so kunai still exposes nothing and still needs
+no inbound hole.
 
-Both are also environment variables (`KUNAI_TELEGRAM_TOKEN`,
-`KUNAI_TELEGRAM_ALLOW`). The allow list is Telegram user ids, comma separated,
-and it has no default: with none set the bot refuses everyone and says so at
-startup. Treat it as seriously as SSH, because a chat with this bot can run
-commands on this machine.
+**Connecting one.** Create a bot with @BotFather, open Channels, and paste its
+token. Then message your bot. It answers with a six character code, the code
+appears in Channels, and you approve it there. Nobody has to go hunting for a
+numeric user id, and access is granted deliberately rather than by editing a
+list. Codes expire after an hour, and you can revoke anyone later from the same
+screen.
 
 In the chat:
 
@@ -217,14 +217,18 @@ Anything that is not a command is sent as a prompt. Replies stream into a single
 message as they are written, and a tool that needs approval arrives with Approve
 and Deny buttons.
 
-**What Telegram is allowed to see.** Telegram is a third party, so by default it
+**What a channel is allowed to see.** Telegram is a third party, so by default it
 carries the conversation and the controls and nothing else. A tool call is
 announced by name and file path ("Edit internal/server/usage.go"), never by its
 contents, and tool output is not sent at all. That keeps the accidental spills
 out of a chat log you do not control: the config file an agent reads, the token a
 test echoes, an env dump in a debug command. Open the app to see any of it in
-full. `-telegram-detail` turns that off and sends tool inputs and outputs too,
-which is occasionally convenient and worth a moment's thought first.
+full. There is a switch in Channels to send tool inputs and outputs too, which is
+occasionally convenient and worth a moment's thought first.
+
+A token can also be seeded from `-telegram-token` and `-telegram-allow` for a
+scripted install, but the app is the easier route and takes effect without a
+restart.
 
 ## Working while you are away
 
