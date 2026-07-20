@@ -37,6 +37,7 @@ it carries none of your conversation.
 [What you get](#what-you-get) ·
 [How it works](#how-it-works) ·
 [Claude accounts](#claude-accounts) ·
+[Telegram bot](#telegram-bot-optional) ·
 [Working while you are away](#working-while-you-are-away) ·
 [Configuration](#configuration) ·
 [Security](#security) ·
@@ -185,6 +186,46 @@ Accounts live in `~/.kunai/clis.json`. You can edit that by hand if you want a
 different binary per account or extra environment variables, and Settings has a
 manual editor for pointing at a config folder you already signed into elsewhere.
 
+## Telegram bot (optional)
+
+Kunai can also be driven from a Telegram chat, which needs no Tailscale on the
+device you are holding and no app install. The bot long-polls Telegram outbound,
+so kunai still exposes nothing and still needs no inbound hole.
+
+```sh
+kunai -telegram-token 123456:ABC... -telegram-allow 11111111
+```
+
+Both are also environment variables (`KUNAI_TELEGRAM_TOKEN`,
+`KUNAI_TELEGRAM_ALLOW`). The allow list is Telegram user ids, comma separated,
+and it has no default: with none set the bot refuses everyone and says so at
+startup. Treat it as seriously as SSH, because a chat with this bot can run
+commands on this machine.
+
+In the chat:
+
+```
+/new <path>   start a session in a directory
+/sessions     list running sessions
+/use <id>     point this chat at a session
+/status       what the current session is doing
+/stop         interrupt the running turn
+/end          close the session
+```
+
+Anything that is not a command is sent as a prompt. Replies stream into a single
+message as they are written, and a tool that needs approval arrives with Approve
+and Deny buttons.
+
+**What Telegram is allowed to see.** Telegram is a third party, so by default it
+carries the conversation and the controls and nothing else. A tool call is
+announced by name and file path ("Edit internal/server/usage.go"), never by its
+contents, and tool output is not sent at all. That keeps the accidental spills
+out of a chat log you do not control: the config file an agent reads, the token a
+test echoes, an env dump in a debug command. Open the app to see any of it in
+full. `-telegram-detail` turns that off and sends tool inputs and outputs too,
+which is occasionally convenient and worth a moment's thought first.
+
 ## Working while you are away
 
 A loop re-feeds one task every time a turn ends, which is Ralph's technique, so
@@ -262,6 +303,9 @@ Every option takes a flag or an environment variable.
 | `-hub-url`    | `KUNAI_HUB_URL`    |                  | Hub origin to forward push to, set this on peers   |
 | `-model`      | `KUNAI_MODEL`      |                  | Default model for new sessions                     |
 | `-push-email` | `KUNAI_PUSH_EMAIL` |                  | VAPID contact address for Web Push                 |
+| `-telegram-token` | `KUNAI_TELEGRAM_TOKEN` |          | Telegram bot token (empty disables the bot)        |
+| `-telegram-allow` | `KUNAI_TELEGRAM_ALLOW` |          | Telegram user ids allowed to drive kunai           |
+| `-telegram-detail` | `KUNAI_TELEGRAM_DETAIL` | `false` | Send tool inputs and outputs to Telegram          |
 
 Thermal guard flags, all off or inert by default:
 

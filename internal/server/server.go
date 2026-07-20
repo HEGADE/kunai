@@ -54,21 +54,26 @@ type Config struct {
 	ThermalMaxHours float64 // wall-clock cap on an unattended awake hold (0 = none)
 	ThermalHardC    float64 // Phase 2 poweroff ceiling (0 = never)
 	ThermalAction   string  // "sleep" (default) or "poweroff"
+	// Telegram bot. Empty token means no bot, which is the default: it is an
+	// opt-in second interface, and it reaches a third party.
+	TelegramToken   string
+	TelegramAllowed []int64 // Telegram user ids permitted to drive kunai
+	TelegramDetail  bool    // let tool inputs and outputs leave the machine
 }
 
 // Server wires the manager, config, and embedded PWA into an http.Handler.
 type Server struct {
-	cfg        Config
-	mgr        *session.Manager
-	pwa        fs.FS
-	push       *push.Manager // optional; nil disables Web Push
-	uploadsDir string
-	machines   *machineStore
-	disco      discoveryCache
-	awake      awake.Keeper        // opt-in keep-awake while locked/idle
-	lid        lidKeeper           // opt-in, privileged: keep working with the lid shut
-	sched      *schedule.Scheduler // runs prompts at a time / after quota reset
-	guardian   *guardian           // whole-machine thermal safety net
+	cfg         Config
+	mgr         *session.Manager
+	pwa         fs.FS
+	push        *push.Manager // optional; nil disables Web Push
+	uploadsDir  string
+	machines    *machineStore
+	disco       discoveryCache
+	awake       awake.Keeper        // opt-in keep-awake while locked/idle
+	lid         lidKeeper           // opt-in, privileged: keep working with the lid shut
+	sched       *schedule.Scheduler // runs prompts at a time / after quota reset
+	guardian    *guardian           // whole-machine thermal safety net
 	clis        []CLIProfile        // named Claude CLIs (accounts) a session can run on
 	clisMu      sync.RWMutex        // guards clis, which the Accounts settings edit live
 	usage       *usageCache         // the default account's subscription quota windows
@@ -188,10 +193,11 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.push != nil || s.cfg.HubURL != "" {
 		s.guardian.notify = s.pushNotifier()
 	}
-	go s.guardian.run(ctx)  // stop everything if the host overheats or runs too long
-	go s.resumeLoops(ctx)   // restart any loop that was running when we last died
-	go s.usagePollLoop(ctx) // feed real window reset times to the scheduler, so reset jobs fire
+	go s.guardian.run(ctx)   // stop everything if the host overheats or runs too long
+	go s.resumeLoops(ctx)    // restart any loop that was running when we last died
+	go s.usagePollLoop(ctx)  // feed real window reset times to the scheduler, so reset jobs fire
 	go s.loginSweepLoop(ctx) // kill abandoned account-login flows so they don't linger
+	s.startTelegram(ctx)     // opt-in: drive a session from a Telegram chat
 	go func() {
 		<-ctx.Done()
 		_ = s.awake.Set(false) // release the keep-awake hold on graceful shutdown

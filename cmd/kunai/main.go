@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/hegade/kunai/internal/push"
 	"github.com/hegade/kunai/internal/server"
@@ -34,8 +35,13 @@ func main() {
 	flag.Float64Var(&cfg.ThermalMaxHours, "thermal-max-hours", envFloat("KUNAI_THERMAL_MAX_HOURS", 0), "stop unattended work after this many hours awake (0 = no cap)")
 	flag.Float64Var(&cfg.ThermalHardC, "thermal-hard-c", envFloat("KUNAI_THERMAL_HARD_C", 0), "power-off ceiling in Celsius, used only with -thermal-action=poweroff (0 = never)")
 	flag.StringVar(&cfg.ThermalAction, "thermal-action", envOr("KUNAI_THERMAL_ACTION", "sleep"), "what a hard trip does: sleep (stop and cool) or poweroff (needs the install-time privilege)")
+	tgToken := flag.String("telegram-token", os.Getenv("KUNAI_TELEGRAM_TOKEN"), "Telegram bot token (empty disables the bot)")
+	tgAllowed := flag.String("telegram-allow", os.Getenv("KUNAI_TELEGRAM_ALLOW"), "comma-separated Telegram user ids allowed to drive kunai")
+	flag.BoolVar(&cfg.TelegramDetail, "telegram-detail", envBool("KUNAI_TELEGRAM_DETAIL", false), "send tool inputs and outputs to Telegram (file contents and command output leave the machine)")
 	flag.Parse()
 	cfg.DataDir = *dataDir
+	cfg.TelegramToken = *tgToken
+	cfg.TelegramAllowed = parseIDs(*tgAllowed)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -72,6 +78,25 @@ func defaultDataDir() string {
 		return filepath.Join(home, ".kunai")
 	}
 	return ".kunai"
+}
+
+// parseIDs reads the comma-separated Telegram user ids from a flag. Anything
+// unparseable is dropped rather than guessed at: an id that does not survive
+// this becomes a user who cannot use the bot, which is the safe direction.
+func parseIDs(s string) []int64 {
+	var out []int64
+	for _, f := range strings.Split(s, ",") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if id, err := strconv.ParseInt(f, 10, 64); err == nil {
+			out = append(out, id)
+		} else {
+			log.Printf("telegram: ignoring unreadable user id %q", f)
+		}
+	}
+	return out
 }
 
 func envOr(key, def string) string {
