@@ -4,8 +4,11 @@
 
 # Kunai
 
-**Claude Code on every machine you own, driven from your phone.**
-Self-hosted, no relay, nothing between you and your own hardware.
+**Turns any machine you own into a Claude Code server.**
+
+Sessions live on your hardware instead of in a terminal, so they keep working
+after you close the app. One installable phone app drives every machine and every
+Claude account you have, directly over your own Tailscale network.
 
 <p>
 <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-52525b?style=flat-square" />
@@ -21,12 +24,11 @@ You are on the bus. You open the app, pick your desk machine, and ask it to fix
 the test that was failing when you left. Then you lock your phone. It buzzes when
 the turn is done and tells you what it cost.
 
-That is the whole idea. Kunai is one Go binary you install on each machine you
-work on, and one installable web app that drives all of them over your Tailscale
-network. Your Linux box and your Mac show up side by side and you choose which
-one a session runs on. Nothing is proxied through a server in the middle, so your
-code never leaves your own machines. The only thing that ever crosses the tailnet
-boundary is a push notification, and it carries no session content.
+That is the whole idea. You install one Go binary on each machine you work on,
+and your Linux box and your Mac then sit side by side in the same app. Nothing is
+proxied through a server in the middle, so your code never leaves hardware you
+own. The only thing that crosses the tailnet boundary is a push notification, and
+it carries none of your conversation.
 
 ---
 
