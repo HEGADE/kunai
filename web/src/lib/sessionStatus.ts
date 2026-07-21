@@ -48,15 +48,20 @@ export function sessionStatus(input: StatusInput): SessionStatus {
 //
 // A footer is an artifact of one turn, while a session's state is about right
 // now, and conflating them put "Running" under a reply that had already been
-// written. Two rules follow. "Running" is never shown here: the streaming
-// indicator below the log already says it, and on a finished-looking reply it
-// reads as a lie. And "Done" is claimed only once the turn really ended, which
-// is exactly when its duration and cost arrive, so the badge can never promise
-// more than the numbers beside it.
+// written. So "Running" is never shown here: the streaming indicator below the
+// log already says it, and on a finished-looking reply it would read as a lie.
 //
-// The rest are worth saying whether or not the turn ended, because they are the
-// reason it has not: a session parked on a question, a failed turn, a dropped
-// socket.
+// `ended` means the session is not actively working this turn, which is the
+// honest test for "Done" and the one that survives a reopen. The earlier version
+// keyed off whether the turn had a duration number, but a turn seeded from a
+// transcript has no duration (the CLI never writes result frames to disk), so a
+// reopened session showed no badge at all while the sidebar said Done. A turn is
+// done when nothing is running on it, whether or not we happen to have its
+// numbers.
+//
+// Asking, error and offline show whether or not the turn ended, because they are
+// the reason it has not: a session parked on a question, a failed turn, a
+// dropped socket.
 export function turnStatus(session: SessionStatus, ended: boolean): SessionStatus | null {
   if (session.kind === 'running') return null
   if (session.kind === 'done') return ended ? session : null

@@ -669,10 +669,15 @@ jumping to the end.
   belongs to the **session**, and conflating them shipped "Running" under a
   reply that was already written: `turnStatus` is the guard. It never shows
   `Running` (the streaming indicator below the log already says that, and on a
-  finished-looking reply it reads as a lie), and it claims `Done` only once the
-  turn's duration and cost have arrived, so the badge can never promise more
-  than the numbers beside it. `Asking`/`Error`/`Offline` show regardless,
-  because they are the reason the turn has not ended.
+  finished-looking reply it reads as a lie). `Done` shows when the session is
+  not actively working the turn (`ended = !live`), NOT when the turn has a
+  duration: a turn seeded from a transcript has no duration (the CLI never
+  writes result frames to disk), so keying off the number left every reopened
+  session with no badge while the sidebar said Done. `Asking`/`Error`/`Offline`
+  show regardless, because they are the reason the turn has not ended. The
+  numbers (`5m 5s · 417k new · $3.96`) are a separate matter and genuinely
+  absent on a reopened turn: they live only in the live `result` stream, never
+  in the transcript, so a seeded turn shows the badge and Copy but no stats.
 - A turn's tokens are shown split (new vs cached) with an info button, never as one
   total: a long turn re-reads its context on every tool call, so the total runs to
   millions and reads as nonsense next to the price.

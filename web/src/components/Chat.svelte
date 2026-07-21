@@ -369,7 +369,7 @@
                   {/each}
                   <TurnFooter
                     {turn}
-                    status={isNewest ? turnStatus(status, turn.durationMs != null) : null}
+                    status={isNewest ? turnStatus(status, !live) : null}
                   />
                 {/if}
               </div>
