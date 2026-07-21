@@ -138,3 +138,39 @@ func TestTypistStopsWithContext(t *testing.T) {
 		t.Fatalf("heartbeat outlived its context: %d actions, was %d", got, settled)
 	}
 }
+
+// The keep-alive rides the typing heartbeat, because "a turn is running" is one
+// fact and two tickers saying it would be two things to keep in step.
+func TestTypistDrivesTheKeepAlive(t *testing.T) {
+	f := newFakeActor()
+	ty := newTypist(f, 42)
+	ty.every = time.Millisecond
+	ty.refresh = time.Millisecond
+	beats := make(chan struct{}, 16)
+	ty.keepAlive = func(context.Context) {
+		select {
+		case beats <- struct{}{}:
+		default:
+		}
+	}
+	defer ty.Stop()
+
+	ty.Start(context.Background())
+	for i := 0; i < 2; i++ {
+		select {
+		case <-beats:
+		case <-time.After(2 * time.Second):
+			t.Fatal("the keep-alive never ran, so a long turn shows nothing until it ends")
+		}
+	}
+}
+
+// A typist with no keep-alive set must not panic: not every caller wants one.
+func TestTypistWithoutAKeepAliveIsFine(t *testing.T) {
+	f := newFakeActor()
+	ty := newTypist(f, 42)
+	ty.every = time.Millisecond
+	defer ty.Stop()
+	ty.Start(context.Background())
+	f.waitFor(t, 2)
+}

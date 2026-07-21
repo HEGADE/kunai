@@ -25,18 +25,31 @@ type actor interface {
 	SendChatAction(ctx context.Context, chatID int64, action string) error
 }
 
+// draftRefresh is how often the streamed draft is re-asserted while a turn runs.
+// Comfortably under Telegram's ~30s draft life, so a model that spends a minute
+// thinking never leaves the chat looking empty.
+const draftRefresh = 20 * time.Second
+
 // typist keeps one chat's typing status up until the turn ends.
+//
+// It also drives the draft keep-alive, because that is the same fact about the
+// world ("a turn is running") on the same heartbeat, and two tickers saying it
+// separately would be two things to keep in step. What the keep-alive actually
+// does is none of this file's business: it is a callback.
 type typist struct {
 	api    actor
 	chatID int64
 	every  time.Duration
+	// keepAlive, if set, is called every draftRefresh while a turn runs.
+	keepAlive func(context.Context)
+	refresh   time.Duration
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
 }
 
 func newTypist(api actor, chatID int64) *typist {
-	return &typist{api: api, chatID: chatID, every: typingEvery}
+	return &typist{api: api, chatID: chatID, every: typingEvery, refresh: draftRefresh}
 }
 
 // Start shows the indicator and keeps showing it until Stop. Starting an
@@ -53,13 +66,19 @@ func (t *typist) Start(parent context.Context) {
 	every := t.every
 	t.mu.Unlock()
 
+	keep, refresh := t.keepAlive, t.refresh
 	go func() {
 		tick := time.NewTicker(every)
 		defer tick.Stop()
+		last := time.Time{} // zero, so the first beat refreshes at once
 		for {
 			// A dropped beat is not worth reporting: the indicator is a
 			// courtesy, and the next tick retries it anyway.
 			_ = t.api.SendChatAction(ctx, t.chatID, "typing")
+			if keep != nil && time.Since(last) >= refresh {
+				keep(ctx)
+				last = time.Now()
+			}
 			select {
 			case <-ctx.Done():
 				return

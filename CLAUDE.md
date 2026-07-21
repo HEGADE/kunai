@@ -557,6 +557,20 @@ a placeholder), so the shape matters more than the one implementation.
   A refused *draft* only loses a preview so it degrades and returns, but a
   refused *final send* would lose the whole reply, so `post` retries plain
   within the same call. `Reset` re-arms neither.
+- **A downgrade needs a refusal, not a hiccup** (`unsupported`, `giveUp`). A
+  capability is off for the life of the chat, so only a flat 4xx from Telegram
+  may cost one: a transport timeout and a 429 both say nothing about what the
+  chat supports. Degrading on any error is what made streaming "weird and slow"
+  on a flaky route, since one timeout dropped rich and the next dropped
+  drafting, leaving the chat on 1500ms edits for good. Every downgrade is
+  logged, because otherwise the only symptom is a reply that quietly got worse.
+- **The draft is kept alive while a turn runs** (`stream.Refresh`, driven by the
+  typing heartbeat at `draftRefresh`). A draft dies after ~30s and a model can
+  think for longer than that without emitting a token, so without this a long
+  answer showed nothing at all until it landed. With no text yet it sends an
+  **empty** draft, which is Telegram's native "Thinking..." placeholder, so the
+  wait before the first word reads as a wait rather than as silence. It stops
+  once the real message is posted, and a placeholder never counts as `shown`.
 - **A broken route is survived, and the token never reaches the log.**
   `transport.go` exists because of a real fifteen-minute outage: IPv6 to
   api.telegram.org completed 3 TCP handshakes in 10, while IPv4 to the same host

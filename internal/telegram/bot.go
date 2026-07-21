@@ -455,6 +455,11 @@ func (b *Bot) watch(parent context.Context, chatID int64, sess *session.Session)
 		defer sess.Detach(sub)
 		reply := newStream(b.mustAPI(), chatID)
 		typing := newTypist(b.mustAPI(), chatID)
+		// A draft expires in about thirty seconds, and a turn can think for
+		// longer than that without writing a word. The heartbeat that keeps the
+		// typing bubble up keeps the preview alive too, so a long answer shows
+		// something while it is being written instead of only once it lands.
+		typing.keepAlive = reply.Refresh
 		defer typing.Stop()
 		for {
 			select {

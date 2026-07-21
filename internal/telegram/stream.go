@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -24,11 +25,15 @@ import (
 //
 // A draft is a preview, not a message: Telegram shows it for about thirty
 // seconds and then it is gone. That is why Flush still posts the finished reply
-// for real, and it is also the one place drafting reads worse than editing. If a
-// turn writes some prose and then spends a minute in tool calls, the preview
-// expires and that prose is off screen until the turn ends. The alternative was
-// a keep-alive timer per chat, which is a lot of machinery for a gap the tool
-// lines and the typing indicator already fill.
+// for real, and it is why Refresh exists. A model can easily spend longer than
+// thirty seconds thinking or inside a tool call without emitting a token, and
+// without a heartbeat the preview expires and the chat sits blank until the turn
+// ends: the reported symptom was a long answer appearing only once it finished.
+//
+// Degrading is per capability and only ever on a flat refusal from Telegram. A
+// timeout or a 429 says nothing about what this chat supports, and treating one
+// as a refusal drops the chat to the slowest path permanently, on a hiccup.
+// See giveUp.
 
 // draftEvery and editEvery are how often a growing reply is pushed out. They
 // differ by an order of magnitude on purpose: a draft is the endpoint Telegram
@@ -179,20 +184,34 @@ func (s *stream) draft(ctx context.Context, draftID int64, text string) error {
 
 	if rich {
 		if err := s.api.DraftRich(ctx, s.chatID, draftID, text); err != nil {
-			s.mu.Lock()
-			s.rich = false
-			s.mu.Unlock()
+			s.giveUp(&s.rich, "rich messages", err)
 			return err
 		}
 		return nil
 	}
 	if err := s.api.Draft(ctx, s.chatID, draftID, text); err != nil {
-		s.mu.Lock()
-		s.drafting = false
-		s.mu.Unlock()
+		s.giveUp(&s.drafting, "drafting", err)
 		return err
 	}
 	return nil
+}
+
+// giveUp turns a capability off, but only for a reason that will still be true
+// next time. A downgrade lasts for the life of the chat, so a timeout on a bad
+// route or a 429 for pushing too fast must not cause one: those would drop every
+// chat to the slowest path on the first hiccup and never let it back. It is
+// logged, because otherwise the only symptom is a reply that quietly got worse.
+func (s *stream) giveUp(flag *bool, what string, err error) {
+	if !unsupported(err) {
+		return
+	}
+	s.mu.Lock()
+	already := !*flag
+	*flag = false
+	s.mu.Unlock()
+	if !already {
+		log.Printf("telegram: %s unavailable in chat %d, falling back: %v", what, s.chatID, err)
+	}
 }
 
 // post lands the message that stays in the chat.
@@ -211,11 +230,39 @@ func (s *stream) post(ctx context.Context, text string) (int64, error) {
 		if err == nil {
 			return id, nil
 		}
-		s.mu.Lock()
-		s.rich = false
-		s.mu.Unlock()
+		s.giveUp(&s.rich, "rich messages", err)
 	}
 	return s.api.Send(ctx, s.chatID, text, nil)
+}
+
+// Refresh re-asserts the draft so it does not expire mid-turn.
+//
+// This is the fix for a long answer showing nothing until it lands. A draft
+// lives about thirty seconds, and the model can easily spend longer than that
+// thinking or in a tool call without emitting a single token, so the preview
+// expires and the chat goes blank until the turn ends. A heartbeat keeps it up.
+// With nothing written yet it sends an empty draft, which is Telegram's own
+// "Thinking..." placeholder, so the wait before the first word is shown as a
+// wait rather than as silence.
+func (s *stream) Refresh(ctx context.Context) {
+	s.mu.Lock()
+	drafting, id := s.drafting, s.messageID
+	text := strings.TrimSpace(s.buf.String())
+	draftID := s.draftID
+	s.mu.Unlock()
+
+	// Once the reply is a real message there is no draft left to keep alive.
+	if !drafting || id != 0 {
+		return
+	}
+	if err := s.draft(ctx, draftID, text); err == nil {
+		s.mu.Lock()
+		s.lastPush = s.clock()
+		if text != "" {
+			s.sentText, s.shown = text, true
+		}
+		s.mu.Unlock()
+	}
 }
 
 // Reset starts a new reply for the next turn, so replies do not accumulate into

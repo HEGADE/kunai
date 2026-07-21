@@ -133,7 +133,7 @@ func TestDraftsAreRichToo(t *testing.T) {
 // call. Flush runs once per turn, so a refusal that was not retried would lose
 // the answer outright.
 func TestRichRefusalOnTheFinalSendStillDeliversTheReply(t *testing.T) {
-	f := &fakeSender{richSendErr: errors.New("bad request: rich messages unavailable")}
+	f := &fakeSender{richSendErr: refusal("rich messages are not available in this chat")}
 	s := noDrafts(newStream(f, 1))
 	s.clock = time.Now
 
@@ -153,7 +153,7 @@ func TestRichRefusalOnTheFinalSendStillDeliversTheReply(t *testing.T) {
 // A refused rich draft gives up rich, not drafting: the next fragment should
 // still stream, just as plain text.
 func TestRichDraftRefusalKeepsDrafting(t *testing.T) {
-	f := &fakeSender{richDraftErr: errors.New("nope")}
+	f := &fakeSender{richDraftErr: refusal("no rich here")}
 	s := newStream(f, 1)
 	now := time.Now()
 	s.clock = func() time.Time { return now }
@@ -177,7 +177,7 @@ func TestRichDraftRefusalKeepsDrafting(t *testing.T) {
 // everything should walk down the ladder once and stay at the bottom, rather
 // than paying for the same two refusals on every turn it ever has.
 func TestCapabilitiesStayOffAcrossTurns(t *testing.T) {
-	f := &fakeSender{richDraftErr: errors.New("no"), richSendErr: errors.New("no"), draftErr: errors.New("no")}
+	f := &fakeSender{richDraftErr: refusal("no"), richSendErr: refusal("no"), draftErr: refusal("no")}
 	s := newStream(f, 1)
 	now := time.Now()
 	s.clock = func() time.Time { return now }
@@ -315,7 +315,7 @@ func TestStreamPostsAShortReplyThatOnlyEverDrafted(t *testing.T) {
 // sendMessageDraft is a private-chat method. Rather than sniff the chat type,
 // the first refusal turns drafting off and the reply carries on as edits.
 func TestStreamFallsBackToEditsWhenDraftsAreRefused(t *testing.T) {
-	f := &fakeSender{draftErr: errors.New("bad request: method unavailable")}
+	f := &fakeSender{draftErr: refusal("method is unavailable")}
 	s := noRich(newStream(f, 1))
 	now := time.Now()
 	s.clock = func() time.Time { return now }
@@ -456,4 +456,123 @@ func lastOf(edits, sends []string) string {
 		return sends[len(sends)-1]
 	}
 	return ""
+}
+
+// refusal is a flat rejection from Telegram: the only thing that may cost a
+// chat a capability for good.
+func refusal(desc string) error {
+	return &APIError{Method: "sendRichMessage", Code: 400, Description: desc}
+}
+
+// --- degrading only for the right reasons ---
+
+// The bug behind "streaming got weird and slow": every error downgraded the
+// chat, so on a flaky route to Telegram a timeout dropped rich, the next one
+// dropped drafting, and the chat was stuck on 1500ms edits for good. A timeout
+// says nothing about what the chat supports.
+func TestTimeoutDoesNotCostACapability(t *testing.T) {
+	f := &fakeSender{richDraftErr: context.DeadlineExceeded}
+	s := newStream(f, 1)
+	s.clock = time.Now
+
+	s.Append(context.Background(), "hello")
+
+	if !s.rich {
+		t.Error("a timeout turned rich off, so one bad moment degrades the chat forever")
+	}
+	if !s.drafting {
+		t.Error("a timeout turned drafting off")
+	}
+}
+
+// A 429 means "slower", not "never". Telegram sends it the same way it sends a
+// refusal, so it has to be told apart explicitly.
+func TestRateLimitDoesNotCostACapability(t *testing.T) {
+	f := &fakeSender{richDraftErr: &APIError{Code: 429, Description: "Too Many Requests", RetryAfter: 3}}
+	s := newStream(f, 1)
+	s.clock = time.Now
+
+	s.Append(context.Background(), "hello")
+
+	if !s.rich {
+		t.Error("a rate limit turned rich off; pushing too fast is not a capability problem")
+	}
+}
+
+func TestUnsupportedTellsRefusalsFromHiccups(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"flat refusal", &APIError{Code: 400, Description: "method not found"}, true},
+		{"not found", &APIError{Code: 404}, true},
+		{"rate limit", &APIError{Code: 429, RetryAfter: 5}, false},
+		{"rate limit without a code", &APIError{RetryAfter: 5}, false},
+		{"server wobble", &APIError{Code: 500}, false},
+		{"timeout", context.DeadlineExceeded, false},
+		{"plain transport error", errors.New("connection reset"), false},
+	}
+	for _, c := range cases {
+		if got := unsupported(c.err); got != c.want {
+			t.Errorf("%s: unsupported = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// --- keeping the preview alive ---
+
+// The other half of the report: a long answer showed nothing until it finished.
+// A draft expires in about thirty seconds and the model can think for longer
+// than that without writing a word, so the preview has to be re-asserted.
+func TestRefreshKeepsTheDraftAlive(t *testing.T) {
+	f := &fakeSender{}
+	s := newStream(f, 1)
+	s.clock = time.Now
+
+	s.Append(context.Background(), "half an answer")
+	before := len(f.drafts)
+	s.Refresh(context.Background())
+
+	if len(f.drafts) != before+1 {
+		t.Fatalf("refresh did not re-assert the draft: %v", f.drafts)
+	}
+	if got := f.drafts[len(f.drafts)-1].text; got != "half an answer" {
+		t.Errorf("refreshed with %q, want the text so far", got)
+	}
+}
+
+// Before the first token there is nothing to show, and an empty draft is
+// Telegram's own "Thinking..." placeholder. That is the honest thing to display
+// while the model is thinking, rather than an empty chat.
+func TestRefreshShowsThinkingBeforeAnyText(t *testing.T) {
+	f := &fakeSender{}
+	s := newStream(f, 1)
+	s.clock = time.Now
+
+	s.Refresh(context.Background())
+
+	if len(f.drafts) != 1 || f.drafts[0].text != "" {
+		t.Fatalf("want one empty draft as a thinking placeholder, got %v", f.drafts)
+	}
+	if s.Active() {
+		t.Error("a thinking placeholder is not a reply, so it must not count as shown")
+	}
+}
+
+// Once the reply is a real message the draft is over, and refreshing would post
+// a stray preview after the answer had already landed.
+func TestRefreshStopsOnceTheReplyIsPosted(t *testing.T) {
+	f := &fakeSender{}
+	s := newStream(f, 1)
+	s.clock = time.Now
+
+	s.Append(context.Background(), "done")
+	_ = s.Flush(context.Background())
+	before := len(f.drafts)
+	s.Refresh(context.Background())
+
+	if len(f.drafts) != before {
+		t.Errorf("refreshed a draft after the message was posted: %v", f.drafts)
+	}
 }

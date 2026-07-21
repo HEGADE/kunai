@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -89,7 +90,11 @@ func (c *Client) call(ctx context.Context, method string, params any, out any) e
 	if !r.OK {
 		// Telegram reports its own failures in a 200 body, so the status code
 		// alone would call a rejected request a success.
-		return &APIError{Method: method, Code: r.ErrorCode, Description: r.Description}
+		e := &APIError{Method: method, Code: r.ErrorCode, Description: r.Description}
+		if r.Parameters != nil {
+			e.RetryAfter = r.Parameters.RetryAfter
+		}
+		return e
 	}
 	if out == nil {
 		return nil
@@ -103,10 +108,34 @@ type APIError struct {
 	Method      string
 	Code        int
 	Description string
+	// RetryAfter is the cool-off Telegram asks for on a 429, in seconds. It is
+	// the difference between "you are going too fast" and "you cannot do this",
+	// which is a distinction a streaming reply has to get right.
+	RetryAfter int
 }
 
 func (e *APIError) Error() string {
 	return fmt.Sprintf("telegram %s: %d %s", e.Method, e.Code, e.Description)
+}
+
+// unsupported reports whether an error means "this chat cannot do that", as
+// opposed to "that did not work just now".
+//
+// The distinction is the whole safety of degrading a capability, because a
+// downgrade is permanent for the chat. A timeout on a flaky route, or a 429 for
+// pushing too fast, says nothing about whether rich messages or drafts work
+// here; treating either as a refusal drops the chat to the slowest path for
+// good, on a hiccup. Only a flat rejection from Telegram counts, and 429 is
+// explicitly excluded even though it arrives the same way.
+func unsupported(err error) bool {
+	var api *APIError
+	if !errors.As(err, &api) {
+		return false // a transport failure: the request never got an answer
+	}
+	if api.Code == http.StatusTooManyRequests || api.RetryAfter > 0 {
+		return false
+	}
+	return api.Code >= 400 && api.Code < 500
 }
 
 // GetUpdates long-polls for updates after offset. It returns as soon as
