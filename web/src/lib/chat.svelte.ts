@@ -330,10 +330,6 @@ export class ChatConnection {
         break
       case 'state':
         if (ev.state) this.sessionState = ev.state
-        // A new turn clears the last error. Without this the line is sticky for
-        // the life of the connection, so one transient failure would leave the
-        // session reading as errored long after it recovered.
-        if (ev.state === 'running') this.errorLine = ''
         break
       case 'mode':
         // The server changes this too, not just the picker: a loop borrows

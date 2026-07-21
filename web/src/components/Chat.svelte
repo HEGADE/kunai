@@ -22,7 +22,6 @@
   import ScheduleAfter from './ScheduleAfter.svelte'
   import ToolGroup from './ToolGroup.svelte'
   import TurnFooter from './TurnFooter.svelte'
-  import { sessionStatus, turnStatus } from '../lib/sessionStatus'
   import TurnChanges from './TurnChanges.svelte'
 
   let { chat }: { chat: ChatConnection } = $props()
@@ -248,15 +247,6 @@
   ] as const
 
   const running = $derived(chat.sessionState === 'running')
-  // The session's live state, resolved exactly as the sidebar resolves it, so
-  // the badge at the end of a turn and the one on its row always agree.
-  const status = $derived(
-    sessionStatus({
-      state: chat.sessionState,
-      online: chat.status === 'online',
-      errored: chat.errorLine !== '',
-    }),
-  )
 
   function hasBody(blocks: { type: string; text?: string }[]): boolean {
     return blocks.some(
@@ -326,8 +316,7 @@
       {/if}
       <div class="log">
         {#each turns as turn, ti (firstVisible + ti)}
-          {@const isNewest = firstVisible + ti === allTurns.length - 1}
-          {@const live = isNewest && (running || !!chat.streaming || !!chat.thinking)}
+          {@const live = firstVisible + ti === allTurns.length - 1 && (running || !!chat.streaming || !!chat.thinking)}
           {#if turn.project}
             <div class="turn"><ProjectCard project={turn.project} /></div>
           {/if}
@@ -367,10 +356,7 @@
                   {#each turn.answer as b, j (j)}
                     <BlockView block={b} {chat} />
                   {/each}
-                  <TurnFooter
-                    {turn}
-                    status={isNewest ? turnStatus(status, !live) : null}
-                  />
+                  <TurnFooter {turn} />
                 {/if}
               </div>
             </div>

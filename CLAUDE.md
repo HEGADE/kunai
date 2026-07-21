@@ -624,29 +624,13 @@ jumping to the end.
 
 - The chat header and composer float on the canvas with no full-width divider or
   band; the field's own edge defines it.
-- Sessions in the sidebar are single-line rows: a chat-bubble icon, the title
+- Sessions in the sidebar are single-line rows: a chat-bubble icon and the title,
   with a right-edge fade instead of a hard ellipsis (no path, time, or machine
-  chip), and a **status badge** on the right (`StatusBadge.svelte`, shared with the
-  chat's turn footer). The badge replaced the presence
-  dot rather than joining it: two indicators for one fact is noise, and at four
-  concurrent sessions a coloured dot was never enough to act on. The words are
-  the point, so the states read `Asking / Running / Done / Error / Offline`. The
-  wire `starting` state is deliberately NOT surfaced: it does not clear until the
-  CLI emits its first frame, which for a resumed session never happens until you
-  prompt it, so a session sitting there with its whole history on screen and
-  nothing to do would report "Starting" forever. `kindOf` folds it into `done`,
-  because by the time a row is on screen the session is ready to use.
-  Labels are short and the name's fade clears the badge, because they share a
-  288px row and the **name is what you scan for**: a long title must still be
-  readable with a badge beside it. "Asking" over "Needs you" for width, and
-  because it is the honest word for a question you may answer with a no.
-  Every badge is a **tint**, never a fill, which keeps the status colours inside
-  the existing amber/green/alert palette; `Needs you` is the only one allowed to
-  shout (a stronger tint plus weight), because it is the only one you must act
-  on. `web/src/lib/sessionStatus.ts` is the single resolver: the sidebar badge
-  and the tab strip's dot both call it, so they cannot disagree, and a new state
-  is added in one file. Offline outranks everything, because a stale "Running"
-  from a dropped socket is worse than admitting we cannot see.
+  chip). Active sessions get a small presence dot on the icon. (A text status
+  badge per row was tried and reverted: the wire `state` is unreliable for a
+  resumed session — it reads `starting` until the first prompt and never carries
+  a turn's numbers on reopen — so any label built on it kept lying. Left out
+  until the server exposes a state a badge can trust.)
 - Open sessions live in a tab strip above the chat (`Tabs.svelte`), terminal-style.
   Each tab keeps its own `ChatConnection` alive, not just the active one, so
   switching is instant and every tab's dot reports that session's real state: a
@@ -661,23 +645,10 @@ jumping to the end.
 - Mono is the data voice, and it is what makes the chrome legible at a glance: the
   context meter (`Context.svelte`), the token split, the project card, and the
   composer's paths all read as data, not prose. Prose explains; mono states.
-- The newest turn's footer carries a status badge, so finishing is something you
-  SEE rather than infer from a row of numbers appearing. Only the newest: an
-  older turn is always done, and saying so on every one of them is noise. Same
-  `StatusBadge` and same `sessionStatus` resolver as the sidebar, so a turn and
-  its row can never disagree. But a footer belongs to a **turn** while a status
-  belongs to the **session**, and conflating them shipped "Running" under a
-  reply that was already written: `turnStatus` is the guard. It never shows
-  `Running` (the streaming indicator below the log already says that, and on a
-  finished-looking reply it reads as a lie). `Done` shows when the session is
-  not actively working the turn (`ended = !live`), NOT when the turn has a
-  duration: a turn seeded from a transcript has no duration (the CLI never
-  writes result frames to disk), so keying off the number left every reopened
-  session with no badge while the sidebar said Done. `Asking`/`Error`/`Offline`
-  show regardless, because they are the reason the turn has not ended. The
-  numbers (`5m 5s · 417k new · $3.96`) are a separate matter and genuinely
-  absent on a reopened turn: they live only in the live `result` stream, never
-  in the transcript, so a seeded turn shows the badge and Copy but no stats.
+- A turn's footer carries the turn's stats (duration, token split, cost) and a
+  Copy button. The numbers come only from the live `result` stream and are never
+  written to the transcript, so a turn seeded on reopen shows Copy but no stats:
+  that is a known limitation, not a bug to keep chasing.
 - A turn's tokens are shown split (new vs cached) with an info button, never as one
   total: a long turn re-reads its context on every tool call, so the total runs to
   millions and reads as nonsense next to the price.
