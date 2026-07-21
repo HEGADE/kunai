@@ -1,9 +1,14 @@
 <script lang="ts">
   import type { Turn } from '../lib/turns'
   import type { Block } from '../lib/types'
+  import type { SessionStatus } from '../lib/sessionStatus'
+  import StatusBadge from './StatusBadge.svelte'
   import { formatDuration, formatTokens, formatCost } from '../lib/format'
 
-  let { turn }: { turn: Turn } = $props()
+  // status is the session's live state, passed only for the newest turn: an
+  // older turn is always "done" and saying so on every one of them would be
+  // noise. On the newest it is the thing you are waiting to see.
+  let { turn, status = null }: { turn: Turn; status?: SessionStatus | null } = $props()
 
   // What the agent wrote this turn, as markdown, for the clipboard. The answer
   // is the trailing text the view leaves visible, which is what you are looking
@@ -48,8 +53,9 @@
 
 <!-- The footer also carries copy, so it appears for a reply that reported no
      numbers rather than leaving that turn with no way to take its text. -->
-{#if meta || reply}
+{#if meta || reply || status}
   <div class="footer">
+    {#if status}<StatusBadge {status} />{/if}
     {#if meta}<span class="dur mono">{meta}</span>{/if}
     {#if reply}
       <button class="copy" class:done={copied} onclick={copyReply} title="Copy this reply as markdown">

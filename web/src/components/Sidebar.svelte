@@ -4,6 +4,7 @@
   import { enablePush, pushState } from '../lib/push'
   import type { TaggedHistoryEntry, TaggedMeta } from '../lib/types'
   import { sessionStatus } from '../lib/sessionStatus'
+  import StatusBadge from './StatusBadge.svelte'
   import Wordmark from './Wordmark.svelte'
   import Home from './Home.svelte'
   import SessionMenu from './SessionMenu.svelte'
@@ -131,7 +132,7 @@
     <button class="hit" onclick={() => app.open(m.machineId, m.id)}>
       <span class="ic">{@render bubble()}</span>
       <span class="name">{shortName(m)}</span>
-      <span class="badge" data-kind={st.kind}>{st.label}</span>
+      <StatusBadge status={st} />
     </button>
     <SessionMenu machineId={m.machineId} id={m.id} title={shortName(m)} pinned={m.pinned} kind="live" />
   </div>
@@ -516,57 +517,6 @@
   .row:hover .ic,
   .row.current .ic {
     color: var(--text-3);
-  }
-  /* The status a session is in, as words rather than as a dot you have to
-     decode. It replaces the old presence dot: two indicators for one fact is
-     noise, and at four sessions the dot was never enough to act on. */
-  .badge {
-    flex: none;
-    margin-left: auto;
-    padding: 1px 5px;
-    border-radius: 5px;
-    font-size: 10px;
-    font-weight: 500;
-    letter-spacing: 0.02em;
-    line-height: 1.5;
-    white-space: nowrap;
-    color: var(--text-3);
-    background: var(--panel-3);
-  }
-  /* Tinted, not filled, so a row of them reads as a column of states rather
-     than a row of alerts. "Needs you" is the exception: it is the only one you
-     have to act on, so it is the only one allowed to shout. */
-  .badge[data-kind='done'] {
-    color: var(--live);
-    background: color-mix(in srgb, var(--live) 16%, transparent);
-  }
-  .badge[data-kind='running'] {
-    color: var(--busy);
-    background: color-mix(in srgb, var(--busy) 16%, transparent);
-    animation: soften 1.8s ease-in-out infinite;
-  }
-  .badge[data-kind='needs'] {
-    color: var(--busy);
-    background: color-mix(in srgb, var(--busy) 34%, transparent);
-    font-weight: 600;
-  }
-  .badge[data-kind='error'] {
-    color: var(--alert);
-    background: color-mix(in srgb, var(--alert) 16%, transparent);
-  }
-  .badge[data-kind='offline'] {
-    color: var(--text-3);
-    background: var(--panel-3);
-  }
-  @keyframes soften {
-    50% {
-      opacity: 0.55;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .badge[data-kind='running'] {
-      animation: none;
-    }
   }
   .name {
     flex: 1;
