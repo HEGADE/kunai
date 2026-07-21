@@ -83,9 +83,31 @@ func noRich(s *stream) *stream { s.rich = false; return s }
 // noDrafts puts a stream on the edit path, which is what a group chat gets.
 func noDrafts(s *stream) *stream { s.drafting = false; return s }
 
+// content returns the drafts that carried text, ignoring the empty one sent to
+// retire the draft after the reply is posted.
+func (f *fakeSender) content() []draftCall {
+	var out []draftCall
+	for _, d := range f.drafts {
+		if d.text != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// cleared reports whether the draft was retired with an empty push.
+func (f *fakeSender) cleared() bool {
+	for _, d := range f.drafts {
+		if d.text == "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (f *fakeSender) draftTexts() []string {
 	out := make([]string, 0, len(f.drafts))
-	for _, d := range f.drafts {
+	for _, d := range f.content() {
 		out = append(out, d.text)
 	}
 	return out
@@ -125,10 +147,10 @@ func TestDraftsAreRichToo(t *testing.T) {
 	s.Append(context.Background(), "and more")
 	_ = s.Flush(context.Background())
 
-	if len(f.drafts) != 2 {
+	if len(f.content()) != 2 {
 		t.Fatalf("want 2 drafts, got %v", f.drafts)
 	}
-	for i, d := range f.drafts {
+	for i, d := range f.content() {
 		if !d.rich {
 			t.Errorf("draft %d went out as plain text", i)
 		}
@@ -174,7 +196,7 @@ func TestRichDraftRefusalKeepsDrafting(t *testing.T) {
 	now = now.Add(draftEvery + time.Millisecond)
 	s.Append(context.Background(), "second")
 
-	if len(f.drafts) != 1 || f.drafts[0].rich {
+	if len(f.content()) != 1 || f.content()[0].rich {
 		t.Fatalf("want one plain draft after the refusal, got %v", f.drafts)
 	}
 }
@@ -262,18 +284,19 @@ func TestStreamUsesOneDraftIDPerTurn(t *testing.T) {
 	s.Append(context.Background(), "second turn")
 	_ = s.Flush(context.Background())
 
-	if len(f.drafts) != 3 {
+	c := f.content()
+	if len(c) != 3 {
 		t.Fatalf("want 3 drafts, got %v", f.drafts)
 	}
-	if f.drafts[0].id != f.drafts[1].id {
+	if c[0].id != c[1].id {
 		t.Errorf("one turn used two draft ids (%d, %d), so it will not animate",
-			f.drafts[0].id, f.drafts[1].id)
+			c[0].id, c[1].id)
 	}
-	if f.drafts[2].id == f.drafts[0].id {
+	if c[2].id == c[0].id {
 		t.Errorf("the second turn reused draft id %d, so it grows out of the first",
-			f.drafts[2].id)
+			c[2].id)
 	}
-	if f.drafts[0].id == 0 {
+	if c[0].id == 0 {
 		t.Error("draft id must be non-zero; Telegram rejects 0")
 	}
 }
@@ -289,8 +312,8 @@ func TestStreamThrottlesDrafts(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		s.Append(context.Background(), "word ") // clock never advances
 	}
-	if len(f.drafts) != 1 {
-		t.Errorf("made %d drafts inside one window, want the first only", len(f.drafts))
+	if len(f.content()) != 1 {
+		t.Errorf("made %d drafts inside one window, want the first only", len(f.content()))
 	}
 }
 
@@ -668,5 +691,47 @@ func TestFinalSendWaitsOutAThrottle(t *testing.T) {
 	}
 	if len(f.sends) != 1 || f.sends[0] != "the answer" {
 		t.Fatalf("the reply was lost: %v", f.sends)
+	}
+}
+
+// The reported bug: a block of empty space sat under the last message and stayed
+// there, and only leaving the chat and coming back cleared it. That is a draft
+// left live after the reply was posted, because a draft occupies the chat until
+// something replaces it and is not part of the message list a re-entry rebuilds.
+func TestDraftIsRetiredOnceTheReplyIsPosted(t *testing.T) {
+	f := &fakeSender{}
+	s := newStream(f, 1)
+	now := time.Now()
+	s.clock = func() time.Time { return now }
+
+	s.Append(context.Background(), "half ")
+	now = now.Add(draftEvery + time.Millisecond)
+	s.Append(context.Background(), "an answer")
+	_ = s.Flush(context.Background())
+
+	if !f.cleared() {
+		t.Fatalf("the draft was left live, so the chat keeps its space: %v", f.drafts)
+	}
+	last := f.drafts[len(f.drafts)-1]
+	if last.text != "" {
+		t.Errorf("the clearing push must come last, got %v", f.drafts)
+	}
+	if last.id != f.content()[0].id {
+		t.Errorf("cleared draft id %d, want the one that was streamed (%d)", last.id, f.content()[0].id)
+	}
+}
+
+// A turn that never drafted has nothing to retire, and a stray empty push would
+// plant a draft rather than clear one.
+func TestNoClearingPushWhenNothingWasDrafted(t *testing.T) {
+	f := &fakeSender{}
+	s := noRich(noDrafts(newStream(f, 1)))
+	s.clock = time.Now
+
+	s.Append(context.Background(), "posted straight away")
+	_ = s.Flush(context.Background())
+
+	if len(f.drafts) != 0 {
+		t.Errorf("sent a draft for a stream that never drafted: %v", f.drafts)
 	}
 }

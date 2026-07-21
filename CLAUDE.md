@@ -536,6 +536,15 @@ a placeholder), so the shape matters more than the one implementation.
   reply**; everything the bot says itself stays plain, because those lines carry
   paths and tool names that a Markdown parser would mangle (`foo_bar_baz`).
   Rich also raises the cap from 4096 to 32768 runes (`clampRich`).
+- **A draft must be retired, not just outlived** (`clearDraft`). A draft occupies
+  the chat until something replaces it, so posting the finished reply on top of a
+  live one leaves a block of empty space under the last message that **stays**.
+  Leaving the chat and coming back hides it, because that rebuilds the view from
+  the message list and a draft is not in it: that asymmetry is the tell, and it
+  is what distinguished this from a rendering glitch. Empty text is the only
+  retirement the Bot API offers, since MTProto's `clear_draft` flag is not
+  exposed on `sendMessage`/`sendRichMessage`. Only sent when this reply actually
+  drafted, or the empty push would plant a draft instead of clearing one.
 - **A reply streams as a draft, and falls back to edits.** `sendMessageDraft`
   (Bot API 9.3, opened to all bots in 9.5) is the endpoint Telegram built for
   this and animates text the way its own assistant does; `editMessageText` works

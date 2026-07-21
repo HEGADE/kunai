@@ -24,12 +24,19 @@ import (
 // turns drafting off for that chat for good and the reply carries on as edits.
 // One wasted call, once, and no capability check to keep in sync with Telegram.
 //
-// A draft is a preview, not a message: Telegram shows it for about thirty
-// seconds and then it is gone. That is why Flush still posts the finished reply
-// for real, and it is why Refresh exists. A model can easily spend longer than
-// thirty seconds thinking or inside a tool call without emitting a token, and
-// without a heartbeat the preview expires and the chat sits blank until the turn
-// ends: the reported symptom was a long answer appearing only once it finished.
+// A draft is a preview, not a message, and it has two awkward properties that
+// both had to be learned from the symptom rather than the documentation.
+//
+// It goes stale if left alone, so a model that thinks for longer than about
+// thirty seconds without emitting a token leaves the chat blank until the turn
+// ends. Refresh, on the typing heartbeat, is what keeps it up.
+//
+// And it does NOT clean itself up. A draft occupies the chat until something
+// replaces it, so posting the finished reply on top of a live draft leaves a
+// block of empty space under the last message that stays there. Leaving the chat
+// and returning hides it, because that rebuilds the view from the message list
+// and a draft is not in it, which is exactly how the bug presented. clearDraft
+// retires it once the real message has landed.
 //
 // Degrading is per capability and only ever on a flat refusal from Telegram. A
 // timeout or a 429 says nothing about what this chat supports, and treating one
@@ -75,6 +82,7 @@ type stream struct {
 	lastPush  time.Time
 	sentText  string
 	shown     bool      // the user has seen something, as a draft or as a message
+	drafted   bool      // a draft is live for this reply and must be cleared
 	coolUntil time.Time // honouring a 429; nothing goes out before this
 }
 
@@ -183,7 +191,7 @@ func (s *stream) push(ctx context.Context, final bool) error {
 			return err
 		}
 		s.mu.Lock()
-		s.sentText, s.lastPush, s.shown = text, s.clock(), true
+		s.sentText, s.lastPush, s.shown, s.drafted = text, s.clock(), true, true
 		s.mu.Unlock()
 		return nil
 	}
@@ -195,6 +203,7 @@ func (s *stream) push(ctx context.Context, final bool) error {
 		if err != nil {
 			return err
 		}
+		s.clearDraft(ctx, draftID)
 		s.mu.Lock()
 		s.messageID, s.sentText, s.lastPush, s.shown = newID, text, s.clock(), true
 		s.mu.Unlock()
@@ -295,6 +304,28 @@ func (s *stream) post(ctx context.Context, text string) (int64, error) {
 	return s.api.Send(ctx, s.chatID, text, nil)
 }
 
+// clearDraft ends the draft once the real message has been posted.
+//
+// A draft is not only an animation: it occupies the chat until something
+// replaces it, so leaving one behind reserves a block of empty space under the
+// last message that stays there indefinitely. It only looks fine if you leave
+// the chat and come back, because that rebuilds the view from the message list,
+// which a draft is not part of.
+//
+// Empty text is how a draft is retired from the Bot API: the MTProto clear_draft
+// flag is not exposed on the methods a bot can call. Failure is ignored, since
+// the reply itself has already landed and a stale draft is cosmetic.
+func (s *stream) clearDraft(ctx context.Context, draftID int64) {
+	s.mu.Lock()
+	live := s.drafted
+	s.drafted = false
+	s.mu.Unlock()
+	if !live {
+		return
+	}
+	_ = s.api.Draft(ctx, s.chatID, draftID, "")
+}
+
 // Refresh re-asserts the draft so it does not expire mid-turn.
 //
 // This is the fix for a long answer showing nothing until it lands. A draft
@@ -341,7 +372,7 @@ func (s *stream) Refresh(ctx context.Context) {
 func (s *stream) Reset() {
 	s.mu.Lock()
 	s.buf.Reset()
-	s.messageID, s.sentText, s.shown = 0, "", false
+	s.messageID, s.sentText, s.shown, s.drafted = 0, "", false, false
 	s.lastPush = time.Time{}
 	s.draftID++
 	s.mu.Unlock()
