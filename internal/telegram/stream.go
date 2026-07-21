@@ -24,19 +24,20 @@ import (
 // turns drafting off for that chat for good and the reply carries on as edits.
 // One wasted call, once, and no capability check to keep in sync with Telegram.
 //
-// A draft is a preview, not a message, and it has two awkward properties that
-// both had to be learned from the symptom rather than the documentation.
+// A draft is a preview, not a message. It goes stale if left alone, so a model
+// that thinks for longer than about thirty seconds without emitting a token
+// leaves the chat blank until the turn ends. Refresh, on the typing heartbeat,
+// keeps it up.
 //
-// It goes stale if left alone, so a model that thinks for longer than about
-// thirty seconds without emitting a token leaves the chat blank until the turn
-// ends. Refresh, on the typing heartbeat, is what keeps it up.
-//
-// And it does NOT clean itself up. A draft occupies the chat until something
-// replaces it, so posting the finished reply on top of a live draft leaves a
-// block of empty space under the last message that stays there. Leaving the chat
-// and returning hides it, because that rebuilds the view from the message list
-// and a draft is not in it, which is exactly how the bug presented. clearDraft
-// retires it once the real message has landed.
+// An EMPTY draft is never sent, and that rule was learned expensively. It looked
+// like a free "Thinking..." placeholder and was two bugs at once: a rich draft
+// rejects empty text ("rich message must be non-empty"), and giveUp read that
+// 400 as a capability refusal, so every chat silently lost rich formatting
+// seconds into its first turn. The plain endpoint meanwhile ACCEPTS an empty
+// draft, and an empty draft is reserved space in the chat that nothing replaces:
+// that was the block of blank space under the last message, which only vanished
+// on re-entering the chat because that rebuilds the view from the message list,
+// where a draft does not appear.
 //
 // Degrading is per capability and only ever on a flat refusal from Telegram. A
 // timeout or a 429 says nothing about what this chat supports, and treating one
@@ -82,7 +83,6 @@ type stream struct {
 	lastPush  time.Time
 	sentText  string
 	shown     bool      // the user has seen something, as a draft or as a message
-	drafted   bool      // a draft is live for this reply and must be cleared
 	coolUntil time.Time // honouring a 429; nothing goes out before this
 }
 
@@ -191,7 +191,7 @@ func (s *stream) push(ctx context.Context, final bool) error {
 			return err
 		}
 		s.mu.Lock()
-		s.sentText, s.lastPush, s.shown, s.drafted = text, s.clock(), true, true
+		s.sentText, s.lastPush, s.shown = text, s.clock(), true
 		s.mu.Unlock()
 		return nil
 	}
@@ -203,7 +203,6 @@ func (s *stream) push(ctx context.Context, final bool) error {
 		if err != nil {
 			return err
 		}
-		s.clearDraft(ctx, draftID)
 		s.mu.Lock()
 		s.messageID, s.sentText, s.lastPush, s.shown = newID, text, s.clock(), true
 		s.mu.Unlock()
@@ -304,59 +303,36 @@ func (s *stream) post(ctx context.Context, text string) (int64, error) {
 	return s.api.Send(ctx, s.chatID, text, nil)
 }
 
-// clearDraft ends the draft once the real message has been posted.
+// Refresh re-asserts the draft so it does not go stale mid-turn.
 //
-// A draft is not only an animation: it occupies the chat until something
-// replaces it, so leaving one behind reserves a block of empty space under the
-// last message that stays there indefinitely. It only looks fine if you leave
-// the chat and come back, because that rebuilds the view from the message list,
-// which a draft is not part of.
+// This is what stops a long answer showing nothing until it lands: a model can
+// spend a minute thinking or inside a tool call without emitting a token, and an
+// untouched draft does not survive that.
 //
-// Empty text is how a draft is retired from the Bot API: the MTProto clear_draft
-// flag is not exposed on the methods a bot can call. Failure is ignored, since
-// the reply itself has already landed and a stale draft is cosmetic.
-func (s *stream) clearDraft(ctx context.Context, draftID int64) {
-	s.mu.Lock()
-	live := s.drafted
-	s.drafted = false
-	s.mu.Unlock()
-	if !live {
-		return
-	}
-	_ = s.api.Draft(ctx, s.chatID, draftID, "")
-}
-
-// Refresh re-asserts the draft so it does not expire mid-turn.
-//
-// This is the fix for a long answer showing nothing until it lands. A draft
-// lives about thirty seconds, and the model can easily spend longer than that
-// thinking or in a tool call without emitting a single token, so the preview
-// expires and the chat goes blank until the turn ends. A heartbeat keeps it up.
-// With nothing written yet it sends an empty draft, which is Telegram's own
-// "Thinking..." placeholder, so the wait before the first word is shown as a
-// wait rather than as silence.
+// It never sends an EMPTY draft, and that restraint is the whole point of this
+// comment. Doing so looked like a free "Thinking..." placeholder and was two
+// bugs at once. A rich draft rejects empty text outright ("rich message must be
+// non-empty"), and that 400 reads as a capability refusal, so every chat lost
+// rich formatting seconds into its first turn. Worse, the plain endpoint
+// ACCEPTS an empty draft, and an empty draft is a block of reserved space in the
+// chat that nothing ever replaces: that was the mystery gap under the last
+// message. A draft is only ever worth sending when there is something in it.
 func (s *stream) Refresh(ctx context.Context) {
 	s.mu.Lock()
 	drafting, id := s.drafting, s.messageID
 	text := strings.TrimSpace(s.buf.String())
 	draftID := s.draftID
-	s.mu.Unlock()
-
-	// Once the reply is a real message there is no draft left to keep alive.
-	// A keep-alive is also the least urgent thing there is, so it never spends
-	// a request while Telegram has asked us to wait.
-	s.mu.Lock()
 	cooling := s.coolingLocked()
 	s.mu.Unlock()
-	if !drafting || id != 0 || cooling {
+
+	// Nothing written yet, the reply is already a real message, or Telegram has
+	// asked for quiet. A keep-alive is the least urgent request there is.
+	if text == "" || !drafting || id != 0 || cooling {
 		return
 	}
 	if err := s.draft(ctx, draftID, text); err == nil {
 		s.mu.Lock()
-		s.lastPush = s.clock()
-		if text != "" {
-			s.sentText, s.shown = text, true
-		}
+		s.sentText, s.shown, s.lastPush = text, true, s.clock()
 		s.mu.Unlock()
 	}
 }
@@ -372,7 +348,7 @@ func (s *stream) Refresh(ctx context.Context) {
 func (s *stream) Reset() {
 	s.mu.Lock()
 	s.buf.Reset()
-	s.messageID, s.sentText, s.shown, s.drafted = 0, "", false, false
+	s.messageID, s.sentText, s.shown = 0, "", false
 	s.lastPush = time.Time{}
 	s.draftID++
 	s.mu.Unlock()
