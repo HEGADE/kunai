@@ -536,17 +536,15 @@ a placeholder), so the shape matters more than the one implementation.
   reply**; everything the bot says itself stays plain, because those lines carry
   paths and tool names that a Markdown parser would mangle (`foo_bar_baz`).
   Rich also raises the cap from 4096 to 32768 runes (`clampRich`).
-- **An empty draft is never sent**, and the rule cost two shipped bugs. It looked
-  like a free "Thinking..." placeholder. But a **rich** draft rejects empty text
-  (`400 rich message must be non-empty`) and `giveUp` read that as a capability
-  refusal, so every chat silently lost rich formatting seconds into its first
-  turn: the log line `rich messages unavailable in chat N` was the tell. And the
-  **plain** endpoint accepts an empty draft, which is reserved space in the chat
-  that nothing replaces: that was the block of blank space under the last
-  message, which vanished on re-entering the chat only because that rebuilds the
-  view from the message list, where a draft does not appear. There is no way to
-  retire a draft from the Bot API (MTProto's `clear_draft` is not exposed), so
-  the rule is simply never to create one that is not wanted.
+- **A draft must be retired, not just outlived** (`clearDraft`). A draft occupies
+  the chat until something replaces it, so posting the finished reply on top of a
+  live one leaves a block of empty space under the last message that **stays**.
+  Leaving the chat and coming back hides it, because that rebuilds the view from
+  the message list and a draft is not in it: that asymmetry is the tell, and it
+  is what distinguished this from a rendering glitch. Empty text is the only
+  retirement the Bot API offers, since MTProto's `clear_draft` flag is not
+  exposed on `sendMessage`/`sendRichMessage`. Only sent when this reply actually
+  drafted, or the empty push would plant a draft instead of clearing one.
 - **A reply streams as a draft, and falls back to edits.** `sendMessageDraft`
   (Bot API 9.3, opened to all bots in 9.5) is the endpoint Telegram built for
   this and animates text the way its own assistant does; `editMessageText` works
@@ -575,9 +573,6 @@ a placeholder), so the shape matters more than the one implementation.
   on a flaky route, since one timeout dropped rich and the next dropped
   drafting, leaving the chat on 1500ms edits for good. Every downgrade is
   logged, because otherwise the only symptom is a reply that quietly got worse.
-  The corollary bit hard once: a 400 caused by **our own malformed request** is
-  indistinguishable from "unsupported here", so a bad request permanently
-  disables a capability. Validate before sending rather than learning from a 400.
 - **`retry_after` is obeyed, not just noticed** (`backOff`, `coolUntil`). A 429
   carries a wait, and Telegram's edge caches the penalty window, so retrying
   early **resets** it and the wait gets longer: ignoring it turns one throttled

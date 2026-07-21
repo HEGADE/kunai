@@ -83,8 +83,8 @@ func noRich(s *stream) *stream { s.rich = false; return s }
 // noDrafts puts a stream on the edit path, which is what a group chat gets.
 func noDrafts(s *stream) *stream { s.drafting = false; return s }
 
-// content returns the drafts that carried text. Nothing should ever send an
-// empty one, so this doubles as a guard: see TestNoEmptyDraftIsEverSent.
+// content returns the drafts that carried text, ignoring the empty one sent to
+// retire the draft after the reply is posted.
 func (f *fakeSender) content() []draftCall {
 	var out []draftCall
 	for _, d := range f.drafts {
@@ -93,6 +93,16 @@ func (f *fakeSender) content() []draftCall {
 		}
 	}
 	return out
+}
+
+// cleared reports whether the draft was retired with an empty push.
+func (f *fakeSender) cleared() bool {
+	for _, d := range f.drafts {
+		if d.text == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakeSender) draftTexts() []string {
@@ -561,6 +571,24 @@ func TestRefreshKeepsTheDraftAlive(t *testing.T) {
 	}
 }
 
+// Before the first token there is nothing to show, and an empty draft is
+// Telegram's own "Thinking..." placeholder. That is the honest thing to display
+// while the model is thinking, rather than an empty chat.
+func TestRefreshShowsThinkingBeforeAnyText(t *testing.T) {
+	f := &fakeSender{}
+	s := newStream(f, 1)
+	s.clock = time.Now
+
+	s.Refresh(context.Background())
+
+	if len(f.drafts) != 1 || f.drafts[0].text != "" {
+		t.Fatalf("want one empty draft as a thinking placeholder, got %v", f.drafts)
+	}
+	if s.Active() {
+		t.Error("a thinking placeholder is not a reply, so it must not count as shown")
+	}
+}
+
 // Once the reply is a real message the draft is over, and refreshing would post
 // a stray preview after the answer had already landed.
 func TestRefreshStopsOnceTheReplyIsPosted(t *testing.T) {
@@ -666,42 +694,44 @@ func TestFinalSendWaitsOutAThrottle(t *testing.T) {
 	}
 }
 
-// An empty draft is never sent, and this is the test that would have caught the
-// worst of it. A rich draft rejects empty text with a 400, which giveUp reads as
-// "this chat cannot do rich messages", so a placeholder cost every chat its
-// formatting seconds into the first turn.
-func TestNoEmptyDraftIsEverSent(t *testing.T) {
+// The reported bug: a block of empty space sat under the last message and stayed
+// there, and only leaving the chat and coming back cleared it. That is a draft
+// left live after the reply was posted, because a draft occupies the chat until
+// something replaces it and is not part of the message list a re-entry rebuilds.
+func TestDraftIsRetiredOnceTheReplyIsPosted(t *testing.T) {
 	f := &fakeSender{}
 	s := newStream(f, 1)
-	s.clock = time.Now
+	now := time.Now()
+	s.clock = func() time.Time { return now }
 
-	s.Refresh(context.Background()) // before a single token has arrived
-	s.Append(context.Background(), "text")
+	s.Append(context.Background(), "half ")
+	now = now.Add(draftEvery + time.Millisecond)
+	s.Append(context.Background(), "an answer")
 	_ = s.Flush(context.Background())
 
-	for _, d := range f.drafts {
-		if d.text == "" {
-			t.Fatalf("sent an empty draft: %v", f.drafts)
-		}
+	if !f.cleared() {
+		t.Fatalf("the draft was left live, so the chat keeps its space: %v", f.drafts)
 	}
-	if !s.rich {
-		t.Error("rich was lost, which is what an empty rich draft causes")
+	last := f.drafts[len(f.drafts)-1]
+	if last.text != "" {
+		t.Errorf("the clearing push must come last, got %v", f.drafts)
+	}
+	if last.id != f.content()[0].id {
+		t.Errorf("cleared draft id %d, want the one that was streamed (%d)", last.id, f.content()[0].id)
 	}
 }
 
-// The keep-alive before any text has arrived must do nothing at all, rather than
-// reserve space in the chat for a draft with nothing in it.
-func TestRefreshDoesNothingBeforeAnyText(t *testing.T) {
+// A turn that never drafted has nothing to retire, and a stray empty push would
+// plant a draft rather than clear one.
+func TestNoClearingPushWhenNothingWasDrafted(t *testing.T) {
 	f := &fakeSender{}
-	s := newStream(f, 1)
+	s := noRich(noDrafts(newStream(f, 1)))
 	s.clock = time.Now
 
-	s.Refresh(context.Background())
+	s.Append(context.Background(), "posted straight away")
+	_ = s.Flush(context.Background())
 
 	if len(f.drafts) != 0 {
-		t.Fatalf("planted a draft with no content: %v", f.drafts)
-	}
-	if s.Active() {
-		t.Error("a stream that has shown nothing must not read as active")
+		t.Errorf("sent a draft for a stream that never drafted: %v", f.drafts)
 	}
 }
