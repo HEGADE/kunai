@@ -525,6 +525,22 @@ a placeholder), so the shape matters more than the one implementation.
   "not known". Telling someone to `/new` there would throw the conversation away.
   Callback data is capped at 64 bytes by Telegram, so an id that will not fit
   drops the button and keeps the command (`resumeKeyboard`).
+- **A reply streams as a draft, and falls back to edits.** `sendMessageDraft`
+  (Bot API 9.3, opened to all bots in 9.5) is the endpoint Telegram built for
+  this and animates text the way its own assistant does; `editMessageText` works
+  everywhere but is rate-limited hard enough that rewriting faster than about
+  once a second gets the bot throttled mid-answer (hence `draftEvery` 400ms vs
+  `editEvery` 1500ms). `stream.go` drafts by default and decides by **trying**:
+  a draft is a private-chat method, so rather than sniff the chat type, the first
+  refusal turns drafting off for that chat and the reply carries on as edits.
+  That flag is per chat, not per turn, so a group costs one failed call ever, and
+  `Reset` deliberately does not re-arm it. Two consequences of the API shape are
+  load-bearing: a draft is an **ephemeral ~30s preview**, so `Flush` must still
+  post the finished reply as a real message (a short reply whose flush text
+  matches the draft is the case that would otherwise vanish), and equal
+  `draft_id`s **animate into each other**, so it is one non-zero id per reply,
+  incremented on `Reset`. The accepted cost: prose written before a long tool
+  call scrolls off when its preview expires and returns when the turn ends.
 - **The typing indicator is a heartbeat, not a call.** Telegram's chat action
   expires after five seconds and is cleared the moment the bot sends anything,
   and a turn here runs for minutes while posting tool lines. `typing.go` re-asserts

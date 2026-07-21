@@ -156,6 +156,23 @@ func (c *Client) AnswerCallback(ctx context.Context, id, text string) error {
 	}, nil)
 }
 
+// Draft streams a partial message, which is how a reply animates in as it is
+// written instead of arriving in edited chunks.
+//
+// Three things about it decide how it has to be used, and all three are the
+// API's, not ours. The draft is **ephemeral**: Telegram shows it for about
+// thirty seconds and then it is gone, so a finished reply must still be sent as
+// a real message to persist. Successive calls with the same draftID **animate**,
+// so one id per reply and it must be non-zero. And it is a **private-chat**
+// method, so a bot used in a group has to fall back to editing a real message.
+func (c *Client) Draft(ctx context.Context, chatID, draftID int64, text string) error {
+	return c.call(ctx, "sendMessageDraft", map[string]any{
+		"chat_id":  chatID,
+		"draft_id": draftID,
+		"text":     clampText(text),
+	}, nil)
+}
+
 // SendChatAction shows "typing" while a turn runs, so a slow reply does not
 // look like a dead bot.
 func (c *Client) SendChatAction(ctx context.Context, chatID int64, action string) error {
