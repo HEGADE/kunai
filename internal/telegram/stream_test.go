@@ -30,11 +30,17 @@ type fakeSender struct {
 	nextID    int64
 
 	draftErr     error // plain sendMessageDraft fails
+	sendErrOnce  error // first sendMessage fails with this, then it works
 	richDraftErr error // sendRichMessageDraft fails
 	richSendErr  error // sendRichMessage fails
 }
 
 func (f *fakeSender) Send(_ context.Context, _ int64, text string, _ *SendOptions) (int64, error) {
+	if f.sendErrOnce != nil {
+		err := f.sendErrOnce
+		f.sendErrOnce = nil
+		return 0, err
+	}
 	f.sends = append(f.sends, text)
 	f.nextID++
 	return f.nextID, nil
@@ -574,5 +580,93 @@ func TestRefreshStopsOnceTheReplyIsPosted(t *testing.T) {
 
 	if len(f.drafts) != before {
 		t.Errorf("refreshed a draft after the message was posted: %v", f.drafts)
+	}
+}
+
+// --- honouring retry_after ---
+
+// throttle is Telegram asking us to wait, which is not a refusal.
+func throttle(seconds int) error {
+	return &APIError{Method: "sendRichMessageDraft", Code: 429,
+		Description: "Too Many Requests: retry after", RetryAfter: seconds}
+}
+
+// The bug other bots filed against themselves: retry_after was parsed and then
+// ignored, so a throttled push became a throttled turn. Telegram's edge caches
+// the penalty, so retrying early makes the wait longer, not shorter.
+func TestRateLimitStopsFurtherPushes(t *testing.T) {
+	f := &fakeSender{richDraftErr: throttle(5)}
+	s := newStream(f, 1)
+	now := time.Now()
+	s.clock = func() time.Time { return now }
+
+	s.Append(context.Background(), "one ") // trips the 429
+	f.richDraftErr = nil                   // the endpoint would work again now
+
+	// Well past the push interval, but inside the penalty window.
+	now = now.Add(2 * time.Second)
+	s.Append(context.Background(), "two ")
+	if len(f.drafts) != 0 {
+		t.Fatalf("pushed during the cool-off: %v", f.drafts)
+	}
+
+	// Once it lapses, streaming resumes on its own.
+	now = now.Add(4 * time.Second)
+	s.Append(context.Background(), "three")
+	if len(f.drafts) != 1 {
+		t.Fatalf("did not resume after the cool-off: %v", f.drafts)
+	}
+}
+
+// The keep-alive is the least urgent request there is, so it must not spend one
+// while Telegram has asked for quiet.
+func TestRefreshRespectsTheCoolOff(t *testing.T) {
+	f := &fakeSender{richDraftErr: throttle(5)}
+	s := newStream(f, 1)
+	now := time.Now()
+	s.clock = func() time.Time { return now }
+
+	s.Append(context.Background(), "text")
+	f.richDraftErr = nil
+	now = now.Add(time.Second)
+	s.Refresh(context.Background())
+
+	if len(f.drafts) != 0 {
+		t.Errorf("keep-alive ignored the cool-off: %v", f.drafts)
+	}
+}
+
+// A 429 is not a capability problem, so it must not cost the chat its
+// formatting or its streaming on top of the wait.
+func TestRateLimitKeepsCapabilities(t *testing.T) {
+	f := &fakeSender{richDraftErr: throttle(2)}
+	s := newStream(f, 1)
+	s.clock = time.Now
+
+	s.Append(context.Background(), "hello")
+	if !s.rich || !s.drafting {
+		t.Errorf("a 429 cost a capability: rich=%v drafting=%v", s.rich, s.drafting)
+	}
+}
+
+// The finished reply is the one thing that must not be dropped, so a throttle on
+// the final send is waited out rather than surrendered to.
+func TestFinalSendWaitsOutAThrottle(t *testing.T) {
+	f := &fakeSender{}
+	s := noRich(noDrafts(newStream(f, 1)))
+	s.clock = time.Now
+	f.sendErrOnce = throttle(1)
+
+	// The first push is the one that posts, so the throttle lands there; the
+	// timer has to cover it.
+	start := time.Now()
+	s.Append(context.Background(), "the answer")
+	_ = s.Flush(context.Background())
+
+	if time.Since(start) < 900*time.Millisecond {
+		t.Error("retried immediately, which resets Telegram's penalty window")
+	}
+	if len(f.sends) != 1 || f.sends[0] != "the answer" {
+		t.Fatalf("the reply was lost: %v", f.sends)
 	}
 }

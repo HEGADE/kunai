@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strings"
 	"sync"
@@ -73,7 +74,8 @@ type stream struct {
 	messageID int64 // the posted message, once there is one
 	lastPush  time.Time
 	sentText  string
-	shown     bool // the user has seen something, as a draft or as a message
+	shown     bool      // the user has seen something, as a draft or as a message
+	coolUntil time.Time // honouring a 429; nothing goes out before this
 }
 
 func newStream(api sender, chatID int64) *stream {
@@ -89,11 +91,49 @@ func (s *stream) Append(ctx context.Context, text string) {
 	}
 	s.mu.Lock()
 	s.buf.WriteString(text)
-	due := s.clock().Sub(s.lastPush) >= s.intervalLocked()
+	due := s.clock().Sub(s.lastPush) >= s.intervalLocked() && !s.coolingLocked()
 	s.mu.Unlock()
 	if due {
 		_ = s.push(ctx, false)
 	}
+}
+
+// coolingLocked reports whether a 429 is still being served out. Caller holds
+// the lock.
+func (s *stream) coolingLocked() bool { return s.clock().Before(s.coolUntil) }
+
+// maxFinalWait bounds how long posting the finished reply will sit out a
+// throttle. Long enough to clear an ordinary penalty window, short enough that
+// nobody is left staring at a chat for a reply that is not coming.
+const maxFinalWait = 30 * time.Second
+
+// retryAfter pulls Telegram's requested wait out of an error.
+func retryAfter(err error) (time.Duration, bool) {
+	var api *APIError
+	if !errors.As(err, &api) || api.RetryAfter <= 0 {
+		return 0, false
+	}
+	return time.Duration(api.RetryAfter) * time.Second, true
+}
+
+// backOff records the wait Telegram asked for.
+//
+// retry_after has to be obeyed, not merely noticed. Telegram's edge caches the
+// penalty window, so retrying early resets it and the wait gets longer: a
+// streaming reply that ignores it turns one throttled push into a throttled
+// turn. This was the shape of a real bug in other bots before it was one here.
+func (s *stream) backOff(err error) {
+	wait, ok := retryAfter(err)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	until := s.clock().Add(wait)
+	if until.After(s.coolUntil) {
+		s.coolUntil = until
+	}
+	s.mu.Unlock()
+	log.Printf("telegram: rate limited in chat %d, holding %s", s.chatID, wait)
 }
 
 // Flush lands the reply for good, regardless of the push interval. A draft is
@@ -184,12 +224,14 @@ func (s *stream) draft(ctx context.Context, draftID int64, text string) error {
 
 	if rich {
 		if err := s.api.DraftRich(ctx, s.chatID, draftID, text); err != nil {
+			s.backOff(err)
 			s.giveUp(&s.rich, "rich messages", err)
 			return err
 		}
 		return nil
 	}
 	if err := s.api.Draft(ctx, s.chatID, draftID, text); err != nil {
+		s.backOff(err)
 		s.giveUp(&s.drafting, "drafting", err)
 		return err
 	}
@@ -230,7 +272,25 @@ func (s *stream) post(ctx context.Context, text string) (int64, error) {
 		if err == nil {
 			return id, nil
 		}
+		s.backOff(err)
 		s.giveUp(&s.rich, "rich messages", err)
+	}
+	id, err := s.api.Send(ctx, s.chatID, text, nil)
+	if err == nil {
+		return id, nil
+	}
+	// The reply itself is the one thing that must not be dropped, so a throttle
+	// here is waited out rather than surrendered to. Bounded, because a turn
+	// that ended twenty minutes ago is not worth posting.
+	wait, ok := retryAfter(err)
+	if !ok || wait > maxFinalWait {
+		return 0, err
+	}
+	s.backOff(err)
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case <-time.After(wait):
 	}
 	return s.api.Send(ctx, s.chatID, text, nil)
 }
@@ -252,7 +312,12 @@ func (s *stream) Refresh(ctx context.Context) {
 	s.mu.Unlock()
 
 	// Once the reply is a real message there is no draft left to keep alive.
-	if !drafting || id != 0 {
+	// A keep-alive is also the least urgent thing there is, so it never spends
+	// a request while Telegram has asked us to wait.
+	s.mu.Lock()
+	cooling := s.coolingLocked()
+	s.mu.Unlock()
+	if !drafting || id != 0 || cooling {
 		return
 	}
 	if err := s.draft(ctx, draftID, text); err == nil {

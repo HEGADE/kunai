@@ -564,6 +564,16 @@ a placeholder), so the shape matters more than the one implementation.
   on a flaky route, since one timeout dropped rich and the next dropped
   drafting, leaving the chat on 1500ms edits for good. Every downgrade is
   logged, because otherwise the only symptom is a reply that quietly got worse.
+- **`retry_after` is obeyed, not just noticed** (`backOff`, `coolUntil`). A 429
+  carries a wait, and Telegram's edge caches the penalty window, so retrying
+  early **resets** it and the wait gets longer: ignoring it turns one throttled
+  push into a throttled turn. This was a real bug in other bots (agno #7360)
+  before it was one here. Streaming pushes and the keep-alive both hold until
+  the window lapses. The **finished reply is the exception**: it is the one
+  thing that must not be dropped, so `post` waits the throttle out (bounded by
+  `maxFinalWait`) and sends anyway. Note the 30 req/s ceiling is per bot token
+  and shared across every method, drafts and `sendChatAction` included, so the
+  budget is per machine, not per chat.
 - **The draft is kept alive while a turn runs** (`stream.Refresh`, driven by the
   typing heartbeat at `draftRefresh`). A draft dies after ~30s and a model can
   think for longer than that without emitting a token, so without this a long
