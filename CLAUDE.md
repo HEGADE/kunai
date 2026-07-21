@@ -626,7 +626,8 @@ jumping to the end.
   band; the field's own edge defines it.
 - Sessions in the sidebar are single-line rows: a chat-bubble icon, the title
   with a right-edge fade instead of a hard ellipsis (no path, time, or machine
-  chip), and a **status badge** on the right. The badge replaced the presence
+  chip), and a **status badge** on the right (`StatusBadge.svelte`, shared with the
+  chat's turn footer). The badge replaced the presence
   dot rather than joining it: two indicators for one fact is noise, and at four
   concurrent sessions a coloured dot was never enough to act on. The words are
   the point, so the states read `Asking / Running / Done / Error / Offline`.
@@ -655,6 +656,11 @@ jumping to the end.
 - Mono is the data voice, and it is what makes the chrome legible at a glance: the
   context meter (`Context.svelte`), the token split, the project card, and the
   composer's paths all read as data, not prose. Prose explains; mono states.
+- The newest turn's footer carries the session's status badge, so finishing is
+  something you SEE rather than infer from a row of numbers appearing. Only the
+  newest: an older turn is always done, and saying so on every one of them is
+  noise. Same `StatusBadge` and same `sessionStatus` resolver as the sidebar, so
+  a turn and its row can never disagree.
 - A turn's tokens are shown split (new vs cached) with an info button, never as one
   total: a long turn re-reads its context on every tool call, so the total runs to
   millions and reads as nonsense next to the price.
