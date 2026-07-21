@@ -7,28 +7,44 @@ import (
 	"time"
 )
 
-// A reply has to arrive two different ways and both have to be right: as an
-// animated draft where Telegram supports it, and as an edited message where it
-// does not. The fallback is not a rare path, it is every group chat.
+// A reply has to arrive several different ways and all of them have to be
+// right: as a rich message that keeps the model's Markdown, as an animated
+// draft, and as an edited plain message where neither is available. The
+// fallbacks are not rare paths, they are every group chat and every older
+// Telegram deployment.
 
 // draftCall is one streamed fragment, with the id that decides whether Telegram
-// animates it into the previous one or starts a new bubble.
+// animates it into the previous one, and which endpoint carried it.
 type draftCall struct {
 	id   int64
 	text string
+	rich bool
 }
 
 // fakeSender records what a stream would have sent.
 type fakeSender struct {
-	sends    []string
-	edits    []string
-	drafts   []draftCall
-	nextID   int64
-	draftErr error // what sendMessageDraft returns; nil means it works
+	sends     []string // plain sendMessage
+	richSends []string // sendRichMessage
+	edits     []string
+	drafts    []draftCall
+	nextID    int64
+
+	draftErr     error // plain sendMessageDraft fails
+	richDraftErr error // sendRichMessageDraft fails
+	richSendErr  error // sendRichMessage fails
 }
 
 func (f *fakeSender) Send(_ context.Context, _ int64, text string, _ *SendOptions) (int64, error) {
 	f.sends = append(f.sends, text)
+	f.nextID++
+	return f.nextID, nil
+}
+
+func (f *fakeSender) SendRich(_ context.Context, _ int64, md string, _ *SendOptions) (int64, error) {
+	if f.richSendErr != nil {
+		return 0, f.richSendErr
+	}
+	f.richSends = append(f.richSends, md)
 	f.nextID++
 	return f.nextID, nil
 }
@@ -46,11 +62,20 @@ func (f *fakeSender) Draft(_ context.Context, _, id int64, text string) error {
 	return nil
 }
 
-// noDrafts puts a stream on the fallback path, which is what a group chat gets.
-func noDrafts(s *stream) *stream {
-	s.drafting = false
-	return s
+func (f *fakeSender) DraftRich(_ context.Context, _, id int64, md string) error {
+	if f.richDraftErr != nil {
+		return f.richDraftErr
+	}
+	f.drafts = append(f.drafts, draftCall{id: id, text: md, rich: true})
+	return nil
 }
+
+// noRich puts a stream on the plain-text path, which is what a chat that cannot
+// take rich messages gets.
+func noRich(s *stream) *stream { s.rich = false; return s }
+
+// noDrafts puts a stream on the edit path, which is what a group chat gets.
+func noDrafts(s *stream) *stream { s.drafting = false; return s }
 
 func (f *fakeSender) draftTexts() []string {
 	out := make([]string, 0, len(f.drafts))
@@ -58,6 +83,132 @@ func (f *fakeSender) draftTexts() []string {
 		out = append(out, d.text)
 	}
 	return out
+}
+
+// --- formatting ---
+
+// The reported bug: the model writes Markdown and it arrived as literal
+// asterisks and backticks, because the reply was posted as plain text.
+func TestReplyIsSentAsRichMarkdown(t *testing.T) {
+	const md = "- **Machine:** `linux-1`\n\n```go\nfmt.Println()\n```"
+	f := &fakeSender{}
+	s := newStream(f, 1)
+	s.clock = time.Now
+
+	s.Append(context.Background(), md)
+	_ = s.Flush(context.Background())
+
+	if len(f.richSends) != 1 || f.richSends[0] != md {
+		t.Fatalf("the reply was not sent as a rich message: rich=%v plain=%v", f.richSends, f.sends)
+	}
+	if len(f.sends) != 0 {
+		t.Errorf("also sent it as plain text: %v", f.sends)
+	}
+}
+
+// The streamed preview has to be rich too, or the answer reformats itself the
+// moment the turn ends.
+func TestDraftsAreRichToo(t *testing.T) {
+	f := &fakeSender{}
+	s := newStream(f, 1)
+	now := time.Now()
+	s.clock = func() time.Time { return now }
+
+	s.Append(context.Background(), "**bold** ")
+	now = now.Add(draftEvery + time.Millisecond)
+	s.Append(context.Background(), "and more")
+	_ = s.Flush(context.Background())
+
+	if len(f.drafts) != 2 {
+		t.Fatalf("want 2 drafts, got %v", f.drafts)
+	}
+	for i, d := range f.drafts {
+		if !d.rich {
+			t.Errorf("draft %d went out as plain text", i)
+		}
+	}
+}
+
+// A chat that will not take rich messages must still get the reply, in the same
+// call. Flush runs once per turn, so a refusal that was not retried would lose
+// the answer outright.
+func TestRichRefusalOnTheFinalSendStillDeliversTheReply(t *testing.T) {
+	f := &fakeSender{richSendErr: errors.New("bad request: rich messages unavailable")}
+	s := noDrafts(newStream(f, 1))
+	s.clock = time.Now
+
+	s.Append(context.Background(), "the answer")
+	if err := s.Flush(context.Background()); err != nil {
+		t.Fatalf("flush failed instead of falling back: %v", err)
+	}
+
+	if len(f.sends) != 1 || f.sends[0] != "the answer" {
+		t.Fatalf("the reply was lost: plain=%v rich=%v", f.sends, f.richSends)
+	}
+	if s.rich {
+		t.Error("a refused rich message left rich on, so every turn pays for it again")
+	}
+}
+
+// A refused rich draft gives up rich, not drafting: the next fragment should
+// still stream, just as plain text.
+func TestRichDraftRefusalKeepsDrafting(t *testing.T) {
+	f := &fakeSender{richDraftErr: errors.New("nope")}
+	s := newStream(f, 1)
+	now := time.Now()
+	s.clock = func() time.Time { return now }
+
+	s.Append(context.Background(), "first ")
+	if s.rich {
+		t.Fatal("a refused rich draft must turn rich off")
+	}
+	if !s.drafting {
+		t.Fatal("a refused rich draft must not turn drafting off as well")
+	}
+	now = now.Add(draftEvery + time.Millisecond)
+	s.Append(context.Background(), "second")
+
+	if len(f.drafts) != 1 || f.drafts[0].rich {
+		t.Fatalf("want one plain draft after the refusal, got %v", f.drafts)
+	}
+}
+
+// Both capabilities are facts about the chat, not the turn. A chat that refuses
+// everything should walk down the ladder once and stay at the bottom, rather
+// than paying for the same two refusals on every turn it ever has.
+func TestCapabilitiesStayOffAcrossTurns(t *testing.T) {
+	f := &fakeSender{richDraftErr: errors.New("no"), richSendErr: errors.New("no"), draftErr: errors.New("no")}
+	s := newStream(f, 1)
+	now := time.Now()
+	s.clock = func() time.Time { return now }
+
+	// Each fragment costs one rung: the rich draft, then the plain draft.
+	s.Append(context.Background(), "first ")
+	now = now.Add(draftEvery + time.Millisecond)
+	s.Append(context.Background(), "turn")
+	if s.rich || s.drafting {
+		t.Fatalf("expected both off after two refusals, rich=%v drafting=%v", s.rich, s.drafting)
+	}
+	_ = s.Flush(context.Background())
+	s.Reset()
+
+	if s.rich {
+		t.Error("Reset re-armed rich on a chat that refused it")
+	}
+	if s.drafting {
+		t.Error("Reset re-armed drafting on a chat that refused it")
+	}
+
+	// A second turn must not re-try either endpoint.
+	before := len(f.drafts)
+	s.Append(context.Background(), "second turn")
+	_ = s.Flush(context.Background())
+	if len(f.drafts) != before {
+		t.Errorf("tried drafting again on a chat that cannot: %v", f.drafts)
+	}
+	if len(f.richSends) != 0 {
+		t.Errorf("tried a rich send again: %v", f.richSends)
+	}
 }
 
 // --- the draft path ---
@@ -81,8 +232,8 @@ func TestStreamDraftsThenPostsTheRealMessage(t *testing.T) {
 	if got := f.draftTexts(); len(got) != 2 || got[1] != "Fixing the test." {
 		t.Fatalf("drafts = %v, want the reply growing", got)
 	}
-	if len(f.sends) != 1 || f.sends[0] != "Fixing the test." {
-		t.Fatalf("want the finished reply posted once, sends = %v", f.sends)
+	if len(f.richSends) != 1 || f.richSends[0] != "Fixing the test." {
+		t.Fatalf("want the finished reply posted once, got %v", f.richSends)
 	}
 	if len(f.edits) != 0 {
 		t.Errorf("drafting should need no edits, got %v", f.edits)
@@ -149,22 +300,23 @@ func TestStreamPostsAShortReplyThatOnlyEverDrafted(t *testing.T) {
 	s.Append(context.Background(), "done")
 	_ = s.Flush(context.Background())
 
-	if len(f.sends) != 1 || f.sends[0] != "done" {
-		t.Fatalf("the reply was never posted for real: sends = %v", f.sends)
+	if len(f.richSends) != 1 || f.richSends[0] != "done" {
+		t.Fatalf("the reply was never posted for real: %v", f.richSends)
 	}
 	_ = s.Flush(context.Background()) // a second flush has nothing new to say
-	if len(f.sends) != 1 || len(f.edits) != 0 {
-		t.Errorf("re-sent an unchanged reply: sends = %v, edits = %v", f.sends, f.edits)
+	if len(f.richSends) != 1 || len(f.sends) != 0 || len(f.edits) != 0 {
+		t.Errorf("re-sent an unchanged reply: rich=%v plain=%v edits=%v",
+			f.richSends, f.sends, f.edits)
 	}
 }
 
-// --- falling back ---
+// --- falling back to edits ---
 
 // sendMessageDraft is a private-chat method. Rather than sniff the chat type,
 // the first refusal turns drafting off and the reply carries on as edits.
 func TestStreamFallsBackToEditsWhenDraftsAreRefused(t *testing.T) {
 	f := &fakeSender{draftErr: errors.New("bad request: method unavailable")}
-	s := newStream(f, 1)
+	s := noRich(newStream(f, 1))
 	now := time.Now()
 	s.clock = func() time.Time { return now }
 
@@ -184,34 +336,13 @@ func TestStreamFallsBackToEditsWhenDraftsAreRefused(t *testing.T) {
 	}
 }
 
-// Drafting is a fact about the chat, not the turn. Re-learning it every turn
-// would mean a wasted failing call every turn for the life of a group chat.
-func TestStreamStaysFallenBackAcrossTurns(t *testing.T) {
-	f := &fakeSender{draftErr: errors.New("nope")}
-	s := newStream(f, 1)
-	s.clock = time.Now
-
-	s.Append(context.Background(), "first turn")
-	_ = s.Flush(context.Background())
-	s.Reset()
-	if s.drafting {
-		t.Fatal("Reset re-armed drafting on a chat that cannot take it")
-	}
-	s.Append(context.Background(), "second turn")
-	_ = s.Flush(context.Background())
-
-	if len(f.drafts) != 0 {
-		t.Errorf("kept trying drafts: %v", f.drafts)
-	}
-}
-
 // --- the edit path ---
 
 // A reply arrives in fragments but should read as one message, so the first
 // fragment posts and the rest edit.
 func TestStreamPostsOnceThenEdits(t *testing.T) {
 	f := &fakeSender{}
-	s := noDrafts(newStream(f, 1))
+	s := noRich(noDrafts(newStream(f, 1)))
 	now := time.Now()
 	s.clock = func() time.Time { return now }
 
@@ -234,7 +365,7 @@ func TestStreamPostsOnceThenEdits(t *testing.T) {
 // become a request.
 func TestStreamThrottlesWithinTheEditWindow(t *testing.T) {
 	f := &fakeSender{}
-	s := noDrafts(newStream(f, 1))
+	s := noRich(noDrafts(newStream(f, 1)))
 	now := time.Now()
 	s.clock = func() time.Time { return now }
 
@@ -258,8 +389,8 @@ func TestStreamSendsNothingWhenThereIsNoText(t *testing.T) {
 	if err := s.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.sends)+len(f.edits)+len(f.drafts) != 0 {
-		t.Errorf("sent something for an empty reply: %v %v %v", f.sends, f.edits, f.drafts)
+	if len(f.sends)+len(f.richSends)+len(f.edits)+len(f.drafts) != 0 {
+		t.Errorf("sent something for an empty reply")
 	}
 	if s.Active() {
 		t.Error("a stream with nothing in it should not count as active")
@@ -270,7 +401,7 @@ func TestStreamSendsNothingWhenThereIsNoText(t *testing.T) {
 // every time a flush follows a push with no new text.
 func TestStreamSkipsUnchangedEdits(t *testing.T) {
 	f := &fakeSender{}
-	s := noDrafts(newStream(f, 1))
+	s := noRich(noDrafts(newStream(f, 1)))
 	now := time.Now()
 	s.clock = func() time.Time { return now }
 
@@ -286,7 +417,7 @@ func TestStreamSkipsUnchangedEdits(t *testing.T) {
 // that grows past Telegram's limit.
 func TestStreamResetStartsANewMessage(t *testing.T) {
 	f := &fakeSender{}
-	s := noDrafts(newStream(f, 1))
+	s := noRich(noDrafts(newStream(f, 1)))
 	s.clock = time.Now
 
 	s.Append(context.Background(), "first turn")

@@ -46,6 +46,8 @@ type sender interface {
 	Send(ctx context.Context, chatID int64, text string, opts *SendOptions) (int64, error)
 	Edit(ctx context.Context, chatID, messageID int64, text string, opts *SendOptions) error
 	Draft(ctx context.Context, chatID, draftID int64, text string) error
+	SendRich(ctx context.Context, chatID int64, markdown string, opts *SendOptions) (int64, error)
+	DraftRich(ctx context.Context, chatID, draftID int64, markdown string) error
 }
 
 // stream is one reply being written into a single chat.
@@ -59,6 +61,7 @@ type stream struct {
 
 	mu       sync.Mutex
 	buf      strings.Builder
+	rich     bool  // rich messages still work here, so the reply keeps its Markdown
 	drafting bool  // Telegram's streaming endpoint still works for this chat
 	draftID  int64 // one per reply; must be non-zero, and equal ids animate
 
@@ -69,7 +72,7 @@ type stream struct {
 }
 
 func newStream(api sender, chatID int64) *stream {
-	return &stream{api: api, chatID: chatID, clock: time.Now, drafting: true, draftID: 1}
+	return &stream{api: api, chatID: chatID, clock: time.Now, rich: true, drafting: true, draftID: 1}
 }
 
 // Append adds text and pushes it out if enough time has passed since the last
@@ -131,12 +134,7 @@ func (s *stream) push(ctx context.Context, final bool) error {
 	}
 
 	if drafting && !final {
-		if err := s.api.Draft(ctx, s.chatID, draftID, text); err != nil {
-			// This chat cannot take drafts (a group, or an older Bot API on the
-			// far end). Stop trying, and let the next push post a message.
-			s.mu.Lock()
-			s.drafting = false
-			s.mu.Unlock()
+		if err := s.draft(ctx, draftID, text); err != nil {
 			return err
 		}
 		s.mu.Lock()
@@ -148,7 +146,7 @@ func (s *stream) push(ctx context.Context, final bool) error {
 	// Post the first fragment, or the finished reply. Everything shown as a
 	// draft was ephemeral, so this is what actually stays in the chat.
 	if id == 0 {
-		newID, err := s.api.Send(ctx, s.chatID, text, nil)
+		newID, err := s.post(ctx, text)
 		if err != nil {
 			return err
 		}
@@ -157,6 +155,8 @@ func (s *stream) push(ctx context.Context, final bool) error {
 		s.mu.Unlock()
 		return nil
 	}
+	// An edit only happens on the fallback path, where the message was posted
+	// as plain text in the first place.
 	if err := s.api.Edit(ctx, s.chatID, id, text, nil); err != nil {
 		return err
 	}
@@ -166,14 +166,66 @@ func (s *stream) push(ctx context.Context, final bool) error {
 	return nil
 }
 
+// draft streams one fragment, giving up one capability per failure.
+//
+// A failed draft is only a lost preview, so it degrades and returns rather than
+// retrying: rich first, because a rich draft failing is more likely to be about
+// rich than about drafting, then plain drafting, then nothing (the next push
+// posts a message instead).
+func (s *stream) draft(ctx context.Context, draftID int64, text string) error {
+	s.mu.Lock()
+	rich := s.rich
+	s.mu.Unlock()
+
+	if rich {
+		if err := s.api.DraftRich(ctx, s.chatID, draftID, text); err != nil {
+			s.mu.Lock()
+			s.rich = false
+			s.mu.Unlock()
+			return err
+		}
+		return nil
+	}
+	if err := s.api.Draft(ctx, s.chatID, draftID, text); err != nil {
+		s.mu.Lock()
+		s.drafting = false
+		s.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
+// post lands the message that stays in the chat.
+//
+// Unlike a draft this one cannot be allowed to fail quietly: Flush runs once per
+// turn, so a rejected rich message would lose the reply outright. It falls back
+// to plain text within the same call, which costs a wasted request once and
+// never a lost answer.
+func (s *stream) post(ctx context.Context, text string) (int64, error) {
+	s.mu.Lock()
+	rich := s.rich
+	s.mu.Unlock()
+
+	if rich {
+		id, err := s.api.SendRich(ctx, s.chatID, text, nil)
+		if err == nil {
+			return id, nil
+		}
+		s.mu.Lock()
+		s.rich = false
+		s.mu.Unlock()
+	}
+	return s.api.Send(ctx, s.chatID, text, nil)
+}
+
 // Reset starts a new reply for the next turn, so replies do not accumulate into
 // one ever-growing bubble across a conversation. The draft id moves on with it:
 // Telegram animates between updates sharing an id, so reusing one would make a
 // new answer morph out of the last one.
 //
-// Whether drafting still works is deliberately NOT reset. That is a fact about
-// the chat, not about the turn, and re-learning it every turn would mean a
-// failed call every turn for the life of a group chat.
+// Whether drafting and rich messages still work is deliberately NOT reset. Both
+// are facts about the chat, not about the turn, and re-learning them every turn
+// would mean a failed call every turn for the life of that chat.
 func (s *stream) Reset() {
 	s.mu.Lock()
 	s.buf.Reset()

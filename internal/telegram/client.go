@@ -179,6 +179,48 @@ func (c *Client) AnswerCallback(ctx context.Context, id, text string) error {
 	}, nil)
 }
 
+// Rich messages (Bot API 10.1) are how a reply keeps its formatting.
+//
+// The model writes Markdown, and sending that as plain text is why a heading
+// arrived as literal ** and a code fence as three backticks. The older
+// alternatives are both bad for this: MarkdownV2 rejects the entire message over
+// a single unescaped character, of which model output is full, and HTML means
+// writing a Markdown-to-HTML converter that then has to be kept honest against
+// partial text mid-stream. A rich message takes GitHub Flavored Markdown
+// directly, which is the dialect already in hand, and renders headings, lists,
+// tables and fenced code natively.
+//
+// Both calls are used only for the model's own reply. Everything the bot says
+// itself stays plain text: those lines carry file paths and tool names, and
+// running them through a Markdown parser would italicise a path with
+// underscores in it for no gain.
+
+// SendRich posts the reply with its formatting intact.
+func (c *Client) SendRich(ctx context.Context, chatID int64, markdown string, opts *SendOptions) (int64, error) {
+	params := map[string]any{
+		"chat_id":      chatID,
+		"rich_message": InputRichMessage{Markdown: clampRich(markdown)},
+	}
+	if opts != nil && opts.Keyboard != nil {
+		params["reply_markup"] = opts.Keyboard
+	}
+	var out sentMessage
+	if err := c.call(ctx, "sendRichMessage", params, &out); err != nil {
+		return 0, err
+	}
+	return out.MessageID, nil
+}
+
+// DraftRich streams a partial rich message, the formatted twin of Draft. The
+// same rules apply: ephemeral, and equal draft ids animate.
+func (c *Client) DraftRich(ctx context.Context, chatID, draftID int64, markdown string) error {
+	return c.call(ctx, "sendRichMessageDraft", map[string]any{
+		"chat_id":      chatID,
+		"draft_id":     draftID,
+		"rich_message": InputRichMessage{Markdown: clampRich(markdown)},
+	}, nil)
+}
+
 // Draft streams a partial message, which is how a reply animates in as it is
 // written instead of arriving in edited chunks.
 //
@@ -208,6 +250,22 @@ func (c *Client) SendChatAction(ctx context.Context, chatID int64, action string
 // maxMessageRunes is Telegram's per-message ceiling. Going over is a hard
 // rejection, so text is cut here rather than losing the whole message.
 const maxMessageRunes = 4096
+
+// maxRichRunes is the ceiling on a rich message, which is far higher than a
+// plain one: a long answer that would have been truncated now arrives whole.
+const maxRichRunes = 32768
+
+// clampRich trims a rich message to what Telegram will accept. Same rune-safe
+// cut as clampText, against the rich limit.
+func clampRich(s string) string {
+	const notice = "\n\n… (truncated)"
+	r := []rune(s)
+	if len(r) <= maxRichRunes {
+		return s
+	}
+	keep := maxRichRunes - len([]rune(notice))
+	return strings.TrimRight(string(r[:keep]), " \n") + notice
+}
 
 // clampText trims a message to what Telegram will accept, on a rune boundary so
 // a multi-byte character is never sliced in half, and says that it did.

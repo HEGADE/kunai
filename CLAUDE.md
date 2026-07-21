@@ -525,6 +525,17 @@ a placeholder), so the shape matters more than the one implementation.
   "not known". Telling someone to `/new` there would throw the conversation away.
   Callback data is capped at 64 bytes by Telegram, so an id that will not fit
   drops the button and keeps the command (`resumeKeyboard`).
+- **The reply is a rich message, so Markdown renders.** The model writes
+  Markdown and plain text is why a heading arrived as literal `**` and a fence
+  as three backticks. Rich messages (Bot API 10.1) take **GitHub Flavored
+  Markdown directly** (`InputRichMessage.markdown`, exactly one of markdown or
+  html), which is the dialect already in hand, so there is no converter to keep
+  honest against half-streamed text. The rejected alternatives: MarkdownV2 fails
+  the whole message on one unescaped character, of which model output is full,
+  and HTML would mean writing that converter. Rich applies **only to the model's
+  reply**; everything the bot says itself stays plain, because those lines carry
+  paths and tool names that a Markdown parser would mangle (`foo_bar_baz`).
+  Rich also raises the cap from 4096 to 32768 runes (`clampRich`).
 - **A reply streams as a draft, and falls back to edits.** `sendMessageDraft`
   (Bot API 9.3, opened to all bots in 9.5) is the endpoint Telegram built for
   this and animates text the way its own assistant does; `editMessageText` works
@@ -541,6 +552,11 @@ a placeholder), so the shape matters more than the one implementation.
   `draft_id`s **animate into each other**, so it is one non-zero id per reply,
   incremented on `Reset`. The accepted cost: prose written before a long tool
   call scrolls off when its preview expires and returns when the turn ends.
+  Rich and drafting are **two independent capability flags**, degraded one rung
+  at a time (rich draft -> plain draft -> edits), each remembered per chat.
+  A refused *draft* only loses a preview so it degrades and returns, but a
+  refused *final send* would lose the whole reply, so `post` retries plain
+  within the same call. `Reset` re-arms neither.
 - **A broken route is survived, and the token never reaches the log.**
   `transport.go` exists because of a real fifteen-minute outage: IPv6 to
   api.telegram.org completed 3 TCP handshakes in 10, while IPv4 to the same host

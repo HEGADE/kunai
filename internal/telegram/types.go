@@ -58,6 +58,14 @@ type CallbackQuery struct {
 	Data    string   `json:"data,omitempty"`
 }
 
+// InputRichMessage is a rich message's body (Bot API 10.1). Exactly one of Html
+// or Markdown may be set; we always use Markdown, because that is already what
+// the model writes.
+type InputRichMessage struct {
+	Markdown string `json:"markdown,omitempty"`
+	Html     string `json:"html,omitempty"`
+}
+
 // InlineKeyboard is the button grid attached to a message: rows of buttons.
 type InlineKeyboard struct {
 	Rows [][]InlineButton `json:"inline_keyboard"`
