@@ -630,11 +630,12 @@ jumping to the end.
   chat's turn footer). The badge replaced the presence
   dot rather than joining it: two indicators for one fact is noise, and at four
   concurrent sessions a coloured dot was never enough to act on. The words are
-  the point, so the states read
-  `Asking / Running / Starting / Done / Error / Offline`. `starting` is its own
-  state and must never be folded into `running`: a session you have just opened
-  and never prompted is booting, not working, and saying "Running" about it is
-  simply false.
+  the point, so the states read `Asking / Running / Done / Error / Offline`. The
+  wire `starting` state is deliberately NOT surfaced: it does not clear until the
+  CLI emits its first frame, which for a resumed session never happens until you
+  prompt it, so a session sitting there with its whole history on screen and
+  nothing to do would report "Starting" forever. `kindOf` folds it into `done`,
+  because by the time a row is on screen the session is ready to use.
   Labels are short and the name's fade clears the badge, because they share a
   288px row and the **name is what you scan for**: a long title must still be
   readable with a badge beside it. "Asking" over "Needs you" for width, and

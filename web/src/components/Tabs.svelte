@@ -109,9 +109,6 @@
   .dot[data-k='running'] {
     background: var(--busy);
   }
-  .dot[data-k='starting'] {
-    background: var(--text-3);
-  }
   .dot[data-k='offline'],
   .dot[data-k='error'] {
     background: var(--alert);
