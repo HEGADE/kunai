@@ -3,6 +3,7 @@
   import { createSession } from '../lib/api'
   import { enablePush, pushState } from '../lib/push'
   import type { TaggedHistoryEntry, TaggedMeta } from '../lib/types'
+  import { groupSessions } from '../lib/grouping'
   import Wordmark from './Wordmark.svelte'
   import Home from './Home.svelte'
   import SessionMenu from './SessionMenu.svelte'
@@ -50,6 +51,13 @@
   // "View all sessions" (a full, searchable, paginated view).
   const RECENT_MAX = 8
   const recentDisplay = $derived(recentUnpinned.slice(0, RECENT_MAX))
+  // Sessions sit under the codebase they belong to: the directory they started
+  // in, or a workspace name once that directory stops describing them. Pinned
+  // stays flat, because a pin is a priority list and grouping it would bury the
+  // thing you pinned. A single group needs no heading, so a one-project machine
+  // looks exactly as it did before.
+  const activeGroups = $derived(groupSessions(activeUnpinned))
+  const recentGroups = $derived(groupSessions(recentDisplay))
   function activeCount(mid: string): number {
     return app.sessions.filter((m) => m.machineId === mid).length
   }
@@ -120,7 +128,25 @@
       </span>
       <span class="name">{shortName(m)}</span>
     </button>
-    <SessionMenu machineId={m.machineId} id={m.id} title={shortName(m)} pinned={m.pinned} kind="live" />
+    <SessionMenu
+      machineId={m.machineId}
+      id={m.id}
+      title={shortName(m)}
+      pinned={m.pinned}
+      workspace={m.workspace ?? ''}
+      projects={m.projects ?? 0}
+      kind="live"
+    />
+  </div>
+{/snippet}
+
+{#snippet groupHead(label: string, named: boolean)}
+  <!-- Mono, because a project or workspace name is data rather than prose. A
+       named workspace gets a leading mark so you can tell at a glance which
+       headings you chose and which were derived from a directory. -->
+  <div class="grp mono" class:named title={named ? 'Workspace' : 'Project directory'}>
+    {#if named}<span class="wsmark" aria-hidden="true"></span>{/if}
+    <span class="glabel">{label}</span>
   </div>
 {/snippet}
 
@@ -130,7 +156,14 @@
       <span class="ic">{@render bubble()}</span>
       <span class="name">{resuming === h.id ? 'Resuming…' : h.title}</span>
     </button>
-    <SessionMenu machineId={h.machineId} id={h.id} title={h.title} pinned={h.pinned} kind="recent" />
+    <SessionMenu
+      machineId={h.machineId}
+      id={h.id}
+      title={h.title}
+      pinned={h.pinned}
+      workspace={h.workspace ?? ''}
+      kind="recent"
+    />
   </div>
 {/snippet}
 
@@ -206,15 +239,25 @@
 
     {#if activeUnpinned.length > 0}
       <div class="sec">Active</div>
-      {#each activeUnpinned as m (m.machineId + ':' + m.id)}
-        {@render activeRow(m)}
+      {#each activeGroups as g (g.key)}
+        {#if activeGroups.length > 1}
+          {@render groupHead(g.label, g.named)}
+        {/if}
+        {#each g.items as m (m.machineId + ':' + m.id)}
+          {@render activeRow(m)}
+        {/each}
       {/each}
     {/if}
 
     {#if recentDisplay.length > 0}
       <div class="sec">Recent</div>
-      {#each recentDisplay as h (h.machineId + ':' + h.id)}
-        {@render recentRow(h)}
+      {#each recentGroups as g (g.key)}
+        {#if recentGroups.length > 1}
+          {@render groupHead(g.label, g.named)}
+        {/if}
+        {#each g.items as h (h.machineId + ':' + h.id)}
+          {@render recentRow(h)}
+        {/each}
       {/each}
     {/if}
 
@@ -465,6 +508,37 @@
     text-transform: uppercase;
     color: var(--text-4);
     padding: 12px 6px 8px;
+  }
+  /* A project or workspace heading sits under a section heading, so it is
+     quieter than one: sentence case, not uppercase, and indented to the row
+     text so the sessions below read as belonging to it. */
+  .grp {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-4);
+    padding: 9px 10px 3px;
+    min-width: 0;
+  }
+  .glabel {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    unicode-bidi: plaintext;
+  }
+  /* Named workspaces read a shade stronger than a derived directory: you chose
+     them, so they are the heading you are actually looking for. */
+  .grp.named {
+    color: var(--text-3);
+  }
+  .wsmark {
+    flex: none;
+    width: 4px;
+    height: 4px;
+    border-radius: 1px;
+    background: currentColor;
+    opacity: 0.7;
   }
   .note {
     color: var(--text-3);

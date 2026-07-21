@@ -20,6 +20,12 @@ import (
 type sessionMeta struct {
 	Name   string `json:"name,omitempty"`   // rename; overrides the derived title
 	Pinned bool   `json:"pinned,omitempty"` // sticks to the top of the sidebar
+	// Workspace is what the sidebar groups this session under, replacing the
+	// directory it was started in. It lives here rather than on the session
+	// because the grouping has to outlive the process: a session named into a
+	// workspace while running must still be in that workspace tomorrow, when it
+	// is a transcript in Recent and its project list is no longer in memory.
+	Workspace string `json:"workspace,omitempty"`
 }
 
 type sessionMetaStore struct {
@@ -73,7 +79,7 @@ func (s *sessionMetaStore) pinnedIDs() map[string]bool {
 // update applies a partial change: a nil field is left as-is. Once a session has
 // neither a name nor a pin its entry is dropped, so the file only ever holds
 // sessions the user actually customized.
-func (s *sessionMetaStore) update(id string, name *string, pinned *bool) sessionMeta {
+func (s *sessionMetaStore) update(id string, name *string, pinned *bool, workspace *string) sessionMeta {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m := s.data[id]
@@ -83,7 +89,10 @@ func (s *sessionMetaStore) update(id string, name *string, pinned *bool) session
 	if pinned != nil {
 		m.Pinned = *pinned
 	}
-	if m.Name == "" && !m.Pinned {
+	if workspace != nil {
+		m.Workspace = strings.TrimSpace(*workspace)
+	}
+	if m.Name == "" && !m.Pinned && m.Workspace == "" {
 		delete(s.data, id)
 	} else {
 		s.data[id] = m
@@ -126,6 +135,7 @@ func mergeMeta(metas []session.Meta, over map[string]sessionMeta) {
 				metas[i].Title = o.Name
 			}
 			metas[i].Pinned = o.Pinned
+			metas[i].Workspace = o.Workspace
 		}
 	}
 }
@@ -142,15 +152,16 @@ func (s *Server) handleUpdateSessionMeta(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req struct {
-		Name   *string `json:"name"`
-		Pinned *bool   `json:"pinned"`
+		Name      *string `json:"name"`
+		Pinned    *bool   `json:"pinned"`
+		Workspace *string `json:"workspace"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	m := s.sessionMeta.update(r.PathValue("id"), req.Name, req.Pinned)
-	writeJSON(w, http.StatusOK, sessionMeta{Name: m.Name, Pinned: m.Pinned})
+	m := s.sessionMeta.update(r.PathValue("id"), req.Name, req.Pinned, req.Workspace)
+	writeJSON(w, http.StatusOK, m)
 }
 
 // handleDeleteHistory permanently removes a past session: its transcript file on

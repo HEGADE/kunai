@@ -10,17 +10,28 @@
     id,
     title,
     pinned = false,
+    workspace = '',
+    projects = 0,
     kind,
   }: {
     machineId: string
     id: string
     title: string
     pinned?: boolean
+    // The group this session sits under, if it has been named, and how many
+    // codebases it holds. More than one is what turns "which folder is this"
+    // into a question worth answering by hand.
+    workspace?: string
+    projects?: number
     kind: 'live' | 'recent'
   } = $props()
 
   let open = $state(false)
-  let mode = $state<'menu' | 'rename' | 'confirm'>('menu')
+  let mode = $state<'menu' | 'edit' | 'confirm'>('menu')
+  // Renaming the session and naming its workspace are the same interaction over
+  // a different field, so they share one editor rather than two near-identical
+  // ones. `field` is which of them is being edited.
+  let field = $state<'title' | 'workspace'>('title')
   let name = $state('')
   let err = $state('')
   let busy = $state(false)
@@ -45,20 +56,28 @@
     }
   }
 
-  function startRename() {
-    name = title
-    mode = 'rename'
+  // A workspace is worth offering once a session holds more than one codebase,
+  // or once it already has a name to correct.
+  const canName = $derived(projects > 1 || !!workspace)
+
+  function startEdit(which: 'title' | 'workspace') {
+    field = which
+    name = which === 'title' ? title : workspace
+    err = ''
+    mode = 'edit'
     // Focus and select once the input is in the DOM.
     queueMicrotask(() => {
       input?.focus()
       input?.select()
     })
   }
-  async function saveRename() {
+  async function saveEdit() {
     if (busy) return
     busy = true
+    err = ''
     try {
-      await app.renameSession(machineId, id, name)
+      if (field === 'title') await app.renameSession(machineId, id, name)
+      else await app.setWorkspace(machineId, id, name)
       close()
     } catch (e) {
       err = (e as Error).message
@@ -89,7 +108,7 @@
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Enter') {
       e.preventDefault()
-      saveRename()
+      saveEdit()
     } else if (e.key === 'Escape') {
       e.preventDefault()
       close()
@@ -117,10 +136,16 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5" /><path d="M9 3h6l-1 7 3 3H7l3-3-1-7z" /></svg>
           {pinned ? 'Unpin' : 'Pin'}
         </button>
-        <button class="item" role="menuitem" onclick={(e) => { e.stopPropagation(); startRename() }}>
+        <button class="item" role="menuitem" onclick={(e) => { e.stopPropagation(); startEdit('title') }}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z" /></svg>
           Rename
         </button>
+        {#if canName}
+          <button class="item" role="menuitem" onclick={(e) => { e.stopPropagation(); startEdit('workspace') }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
+            {workspace ? 'Rename workspace' : 'Name workspace'}
+          </button>
+        {/if}
         {#if kind === 'live'}
           <button class="item" role="menuitem" onclick={(e) => { e.stopPropagation(); doClose() }}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
@@ -132,12 +157,22 @@
             Delete
           </button>
         {/if}
-      {:else if mode === 'rename'}
+      {:else if mode === 'edit'}
         <div class="rename">
-          <input bind:this={input} bind:value={name} onkeydown={onKey} onclick={(e) => e.stopPropagation()} placeholder="Session name" spellcheck="false" />
+          {#if field === 'workspace'}
+            <p class="hint">Groups this session in the sidebar. Sessions sharing a name group together; clear it to go back to the folder.</p>
+          {/if}
+          <input
+            bind:this={input}
+            bind:value={name}
+            onkeydown={onKey}
+            onclick={(e) => e.stopPropagation()}
+            placeholder={field === 'workspace' ? 'Workspace name' : 'Session name'}
+            spellcheck="false"
+          />
           <div class="ren-row">
             <button class="mini" onclick={(e) => { e.stopPropagation(); close() }}>Cancel</button>
-            <button class="mini save" disabled={busy} onclick={(e) => { e.stopPropagation(); saveRename() }}>Save</button>
+            <button class="mini save" disabled={busy} onclick={(e) => { e.stopPropagation(); saveEdit() }}>Save</button>
           </div>
           {#if err}<p class="err">{err}</p>{/if}
         </div>
@@ -288,6 +323,12 @@
   }
   .mini:disabled {
     opacity: 0.5;
+  }
+  .hint {
+    color: var(--text-3);
+    font-size: 11.5px;
+    line-height: 1.45;
+    padding: 0 2px 7px;
   }
   .err {
     margin: 0;

@@ -40,13 +40,14 @@ export function closeSession(base: string, id: string): Promise<void> {
   return fetch(at(base, `/api/sessions/${id}`), { method: 'DELETE' }).then(() => undefined)
 }
 
-// updateSessionMeta renames and/or pins a session by id. Both fields are
-// optional; the server leaves an omitted one unchanged. The id is shared by a
-// live session and its resumable transcript, so this works in either list.
+// updateSessionMeta renames, pins, and/or sets the workspace of a session by id.
+// Every field is optional; the server leaves an omitted one unchanged. The id is
+// shared by a live session and its resumable transcript, so this works in either
+// list, and a workspace named now still groups the session once it is history.
 export function updateSessionMeta(
   base: string,
   id: string,
-  patch: { name?: string; pinned?: boolean },
+  patch: { name?: string; pinned?: boolean; workspace?: string },
 ): Promise<void> {
   return fetch(at(base, `/api/sessions/${id}`), {
     method: 'PATCH',

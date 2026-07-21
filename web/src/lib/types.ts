@@ -111,6 +111,13 @@ export interface Meta {
   state: SessionState
   created_at: string
   pinned?: boolean // user override, merged from the server's session-metadata store
+  // What the sidebar groups this session under instead of its directory. A user
+  // override, merged in by the server like `pinned`.
+  workspace?: string
+  // How many codebases this session has context for. More than one is what makes
+  // it a workspace worth naming. Absent for a past session: a closed session's
+  // project list went with the process.
+  projects?: number
 }
 
 export interface Block {
@@ -298,6 +305,7 @@ export interface HistoryEntry {
   cli?: string // the Claude account this session belongs to (reopen on it)
   mtime: string
   pinned?: boolean // user override, merged from the server's session-metadata store
+  workspace?: string // user-set group; a closed session has no project list to infer one
 }
 
 // --- multi-machine ---

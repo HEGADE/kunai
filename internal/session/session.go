@@ -767,12 +767,25 @@ type Meta struct {
 	// store; the session itself never sets it (a live session doesn't know it is
 	// pinned). Kept here so the live list and the Recent list carry the same flag.
 	Pinned bool `json:"pinned,omitempty"`
+	// Workspace is what the sidebar groups this session under instead of its
+	// directory. Like Pinned it is merged in by the server from the override
+	// store, not set by the session.
+	Workspace string `json:"workspace,omitempty"`
+	// Projects counts the codebases this session has context for. One is an
+	// ordinary session; more than one is what makes it a workspace, and is the
+	// signal the client uses to offer naming it. The session does know this, so
+	// unlike Pinned and Workspace it is filled in here.
+	Projects int `json:"projects,omitempty"`
 }
 
 func (s *Session) Meta() Meta {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return Meta{ID: s.ID, Cwd: s.Cwd, Model: s.model, Effort: s.effort, CLI: s.cliName, Title: s.title, State: s.state, CreatedAt: s.CreatedAt}
+	return Meta{
+		ID: s.ID, Cwd: s.Cwd, Model: s.model, Effort: s.effort, CLI: s.cliName,
+		Title: s.title, State: s.state, CreatedAt: s.CreatedAt,
+		Projects: len(s.projects),
+	}
 }
 
 // ClaudeSessionID returns the CLI-assigned session id (available after init),

@@ -19,7 +19,7 @@ func TestSessionMetaStoreUpdateAndClear(t *testing.T) {
 
 	name := "My session"
 	pin := true
-	st.update("abc", &name, &pin)
+	st.update("abc", &name, &pin, nil)
 	if got := st.get("abc"); got.Name != "My session" || !got.Pinned {
 		t.Fatalf("after update: got %+v", got)
 	}
@@ -31,7 +31,7 @@ func TestSessionMetaStoreUpdateAndClear(t *testing.T) {
 
 	// A partial update leaves the untouched field alone.
 	unpin := false
-	st.update("abc", nil, &unpin)
+	st.update("abc", nil, &unpin, nil)
 	if got := st.get("abc"); got.Name != "My session" || got.Pinned {
 		t.Fatalf("after unpin: got %+v", got)
 	}
@@ -39,7 +39,7 @@ func TestSessionMetaStoreUpdateAndClear(t *testing.T) {
 	// Clearing the name with no pin left drops the entry entirely, so the file
 	// only holds customized sessions.
 	empty := ""
-	st.update("abc", &empty, nil)
+	st.update("abc", &empty, nil, nil)
 	if got := st.get("abc"); got.Name != "" || got.Pinned {
 		t.Fatalf("after clear: expected empty, got %+v", got)
 	}
@@ -182,4 +182,65 @@ func statusOf(res *http.Response) int {
 		return 0
 	}
 	return res.StatusCode
+}
+
+// A workspace name is what the sidebar groups a session under, so it has to
+// outlive the process: named while running, still grouped once it is a
+// transcript in Recent.
+func TestWorkspaceSurvivesReload(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessionmeta.json")
+
+	ws := "Kunai + docs"
+	newSessionMetaStore(path).update("abc", nil, nil, &ws)
+
+	if got := newSessionMetaStore(path).get("abc").Workspace; got != ws {
+		t.Fatalf("workspace = %q after reload, want %q", got, ws)
+	}
+}
+
+// The three overrides are independent: naming a workspace must not disturb a
+// rename or a pin the session already had.
+func TestWorkspaceIsIndependentOfNameAndPin(t *testing.T) {
+	st := newSessionMetaStore(filepath.Join(t.TempDir(), "m.json"))
+	name, pin, ws := "My session", true, "Platform"
+
+	st.update("abc", &name, &pin, nil)
+	st.update("abc", nil, nil, &ws)
+
+	got := st.get("abc")
+	if got.Name != name || !got.Pinned || got.Workspace != ws {
+		t.Fatalf("got %+v, want all three kept", got)
+	}
+}
+
+// Clearing the workspace drops the entry only when nothing else is set, so the
+// file keeps only sessions the user actually customized.
+func TestClearingWorkspaceDropsAnOtherwiseEmptyEntry(t *testing.T) {
+	st := newSessionMetaStore(filepath.Join(t.TempDir(), "m.json"))
+	ws, blank := "Platform", ""
+
+	st.update("abc", nil, nil, &ws)
+	st.update("abc", nil, nil, &blank)
+
+	if got := st.get("abc"); got != (sessionMeta{}) {
+		t.Fatalf("entry survived as %+v, want it dropped", got)
+	}
+}
+
+// The live list carries the workspace so the sidebar can group without asking
+// each session separately.
+func TestMergeMetaCarriesWorkspace(t *testing.T) {
+	metas := []session.Meta{{ID: "abc", Title: "derived"}, {ID: "other", Title: "untouched"}}
+	mergeMeta(metas, map[string]sessionMeta{"abc": {Workspace: "Platform", Pinned: true}})
+
+	if metas[0].Workspace != "Platform" {
+		t.Errorf("workspace = %q, want Platform", metas[0].Workspace)
+	}
+	if metas[0].Title != "derived" {
+		t.Errorf("naming a workspace changed the title to %q", metas[0].Title)
+	}
+	if metas[1].Workspace != "" {
+		t.Errorf("a session with no override got workspace %q", metas[1].Workspace)
+	}
 }

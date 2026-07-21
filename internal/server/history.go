@@ -26,6 +26,12 @@ type HistoryEntry struct {
 	CLI    string    `json:"cli,omitempty"` // the account this session belongs to
 	Mtime  time.Time `json:"mtime"`
 	Pinned bool      `json:"pinned,omitempty"` // user override, merged from the metadata store
+	// Workspace groups this past session in the sidebar instead of its
+	// directory. Only a name the user set survives here: a closed session's
+	// project list is gone with the process, so an unnamed multi-project session
+	// falls back to its directory once it is history. Naming it is what makes the
+	// grouping outlast the run.
+	Workspace string `json:"workspace,omitempty"`
 }
 
 // claudeRoot is the transcripts folder for a Claude config dir. An empty configDir
@@ -64,6 +70,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 				entries[i].Title = o.Name
 			}
 			entries[i].Pinned = o.Pinned
+			entries[i].Workspace = o.Workspace
 		}
 	}
 	writeJSON(w, http.StatusOK, entries)

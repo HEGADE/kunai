@@ -579,6 +579,20 @@ class AppStore {
     this.refresh({ history: true })
   }
 
+  // setWorkspace groups a session under a name of your choosing instead of the
+  // directory it started in, which is what you want once it holds more than one
+  // codebase. An empty name clears it, dropping the session back under its
+  // directory. Keyed by the shared id, so the grouping outlives the process.
+  async setWorkspace(machineId: string, id: string, workspace: string) {
+    const trimmed = workspace.trim()
+    await updateSessionMeta(this.baseForMachine(machineId), id, { workspace: trimmed })
+    const apply = <T extends { machineId: string; id: string }>(x: T) =>
+      x.machineId === machineId && x.id === id ? { ...x, workspace: trimmed } : x
+    this.sessions = this.sessions.map(apply)
+    this.history = this.history.map(apply)
+    this.refresh({ history: true })
+  }
+
   // setPinned pins or unpins a session so it sticks to the top of the sidebar.
   async setPinned(machineId: string, id: string, pinned: boolean) {
     await updateSessionMeta(this.baseForMachine(machineId), id, { pinned })

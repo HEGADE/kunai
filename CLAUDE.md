@@ -624,6 +624,24 @@ jumping to the end.
 
 - The chat header and composer float on the canvas with no full-width divider or
   band; the field's own edge defines it.
+- Sessions are grouped in the sidebar by the codebase they belong to
+  (`web/src/lib/grouping.ts`, pure and testable). Two kinds of heading, and the
+  difference is who chose the name: a **project** group is derived from the
+  directory the session started in, so every session has one for free; a
+  **workspace** group is named by hand, which is what you reach for once a
+  session holds more than one codebase and the directory it happened to start in
+  stops describing it. A named heading wins over the derived one, sessions
+  sharing a name group together, and clearing the name drops them back under
+  their folder. Pinned stays flat (a pin is a priority list; grouping it would
+  bury the thing you pinned), and a single group renders no heading at all, so a
+  one-project machine looks exactly as it did before.
+- The workspace name lives in `sessionMetaStore` beside the rename and the pin,
+  keyed by session id, because the grouping has to **outlive the process**: a
+  session named while running must still be in that workspace tomorrow when it is
+  a transcript in Recent. That is also its one limit: a closed session's project
+  list died with it, so `Meta.Projects` (the count that marks a session as worth
+  naming) is live-only, and an *unnamed* multi-project session falls back to its
+  directory once closed. Naming it is what makes the grouping permanent.
 - Sessions in the sidebar are single-line rows: a chat-bubble icon and the title,
   with a right-edge fade instead of a hard ellipsis (no path, time, or machine
   chip). Active sessions get a small presence dot on the icon. (A text status
