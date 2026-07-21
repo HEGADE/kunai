@@ -44,6 +44,12 @@
     color: var(--alert);
     background: color-mix(in srgb, var(--alert) 16%, transparent);
   }
+  /* Booting: the session exists but has not been asked to do anything yet, so
+     it is stated plainly rather than dressed up as work in progress. */
+  .badge[data-kind='starting'] {
+    color: var(--text-2);
+    background: var(--panel-3);
+  }
   .badge[data-kind='offline'] {
     color: var(--text-3);
     background: var(--panel-3);

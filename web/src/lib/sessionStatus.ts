@@ -10,7 +10,7 @@ import type { SessionState } from './types'
 // StatusKind is the vocabulary. It is deliberately not SessionState: the wire
 // states say what the CLI is doing, while these say what it means for you, and
 // two of them (offline, error) have no wire state at all.
-export type StatusKind = 'needs' | 'running' | 'error' | 'offline' | 'done'
+export type StatusKind = 'needs' | 'running' | 'starting' | 'error' | 'offline' | 'done'
 
 export interface SessionStatus {
   kind: StatusKind
@@ -34,6 +34,7 @@ export interface StatusInput {
 const LABELS: Record<StatusKind, string> = {
   needs: 'Asking',
   running: 'Running',
+  starting: 'Starting',
   error: 'Error',
   offline: 'Offline',
   done: 'Done',
@@ -58,7 +59,7 @@ export function sessionStatus(input: StatusInput): SessionStatus {
 // reason it has not: a session parked on a question, a failed turn, a dropped
 // socket.
 export function turnStatus(session: SessionStatus, ended: boolean): SessionStatus | null {
-  if (session.kind === 'running') return null
+  if (session.kind === 'running' || session.kind === 'starting') return null
   if (session.kind === 'done') return ended ? session : null
   return session
 }
@@ -74,6 +75,10 @@ function kindOf({ state, online, errored }: StatusInput): StatusKind {
   if (online === false) return 'offline'
   if (state === 'awaiting_permission') return 'needs'
   if (errored) return 'error'
-  if (state === 'running' || state === 'starting') return 'running'
+  // Booting is not working. Folding starting into running told you the agent
+  // was busy on a session that had only just been opened and had never been
+  // given anything to do.
+  if (state === 'starting') return 'starting'
+  if (state === 'running') return 'running'
   return 'done'
 }
