@@ -629,7 +629,11 @@ jumping to the end.
   chip), and a **status badge** on the right. The badge replaced the presence
   dot rather than joining it: two indicators for one fact is noise, and at four
   concurrent sessions a coloured dot was never enough to act on. The words are
-  the point, so the states read `Needs you / Running / Done / Error / Offline`.
+  the point, so the states read `Asking / Running / Done / Error / Offline`.
+  Labels are short and the name's fade clears the badge, because they share a
+  288px row and the **name is what you scan for**: a long title must still be
+  readable with a badge beside it. "Asking" over "Needs you" for width, and
+  because it is the honest word for a question you may answer with a no.
   Every badge is a **tint**, never a fill, which keeps the status colours inside
   the existing amber/green/alert palette; `Needs you` is the only one allowed to
   shout (a stronger tint plus weight), because it is the only one you must act

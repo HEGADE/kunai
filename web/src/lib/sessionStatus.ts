@@ -27,8 +27,12 @@ export interface StatusInput {
   errored?: boolean
 }
 
+// Labels are short because they share a 288px row with a session name, and the
+// name is what you are actually scanning for. "Asking" rather than "Needs you"
+// for the same reason, and because it is the honest word: the session is asking
+// you something, which you may well answer with a no.
 const LABELS: Record<StatusKind, string> = {
-  needs: 'Needs you',
+  needs: 'Asking',
   running: 'Running',
   error: 'Error',
   offline: 'Offline',

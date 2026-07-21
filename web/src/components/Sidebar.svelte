@@ -523,9 +523,9 @@
   .badge {
     flex: none;
     margin-left: auto;
-    padding: 1px 6px;
+    padding: 1px 5px;
     border-radius: 5px;
-    font-size: 10.5px;
+    font-size: 10px;
     font-weight: 500;
     letter-spacing: 0.02em;
     line-height: 1.5;
@@ -575,8 +575,8 @@
     color: var(--text-2);
     white-space: nowrap;
     overflow: hidden;
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
-    mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent);
   }
   .row:hover .name,
   .row.current .name {
