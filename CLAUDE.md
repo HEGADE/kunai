@@ -541,6 +541,22 @@ a placeholder), so the shape matters more than the one implementation.
   `draft_id`s **animate into each other**, so it is one non-zero id per reply,
   incremented on `Reset`. The accepted cost: prose written before a long tool
   call scrolls off when its preview expires and returns when the turn ends.
+- **A broken route is survived, and the token never reaches the log.**
+  `transport.go` exists because of a real fifteen-minute outage: IPv6 to
+  api.telegram.org completed 3 TCP handshakes in 10, while IPv4 to the same host
+  and IPv6 to other hosts were both 10 for 10 (the v6 route left the country and
+  came back at 270ms; ICMP crossed it happily, so `ping6` said all was well).
+  What made an intermittent fault permanent was **connection reuse**: Go races
+  the families, keeps the winner, and pins every later request to it, so winning
+  once on v6 meant every poll after rode the bad path and burned the full 65s
+  timeout. The fix is therefore NOT at the dial. On a transport failure (never
+  on an `ok:false` refusal, which is a real round trip) the client drops its
+  pooled connections and pins new ones to IPv4 for `familyPin`; a failed v4 dial
+  releases the pin at once, so an IPv6-only network still works. The bot has its
+  own `http.Transport` so closing idle connections cannot reach the rest of
+  kunai's HTTP. Separately, the token is **in the request URL**, so a raw
+  transport error puts full control of the bot into journalctl: `redact` strips
+  it while keeping the wrapped error, so `errors.Is` still sees the deadline.
 - **The typing indicator is a heartbeat, not a call.** Telegram's chat action
   expires after five seconds and is cleared the moment the bot sends anything,
   and a turn here runs for minutes while posting tool lines. `typing.go` re-asserts

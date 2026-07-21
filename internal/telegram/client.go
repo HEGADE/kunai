@@ -25,15 +25,32 @@ const longPollSeconds = 50
 type Client struct {
 	token string
 	http  *http.Client
+	tr    *http.Transport
+	dial  *familyDialer
 }
 
 // NewClient returns a client for the given bot token. The timeout has to clear
 // the long poll, or every getUpdates would cancel itself.
 func NewClient(token string) *Client {
+	tr, dial := newTransport()
 	return &Client{
 		token: token,
-		http:  &http.Client{Timeout: (longPollSeconds + 15) * time.Second},
+		tr:    tr,
+		dial:  dial,
+		http:  &http.Client{Timeout: (longPollSeconds + 15) * time.Second, Transport: tr},
 	}
+}
+
+// brokenRoute is what to do when a request never reached Telegram: throw the
+// pooled connection away and put new ones on IPv4 for a while.
+//
+// Both halves matter. Without the first, Go keeps reusing the connection it
+// already chose, so one bad route stays bad for as long as that connection
+// lives. Without the second, the next race can simply pick the bad family
+// again. See transport.go for the measurements behind it.
+func (c *Client) brokenRoute() {
+	c.tr.CloseIdleConnections()
+	c.dial.pin()
 }
 
 // call posts params to a Bot API method and decodes result into out (which may
@@ -52,12 +69,18 @@ func (c *Client) call(ctx context.Context, method string, params any, out any) e
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		// The request never got an answer. That is a route problem, not a
+		// refusal: Telegram's own refusals arrive as a 200 with ok:false.
+		c.brokenRoute()
+		return redact(err, c.token)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return err
+		// Headers arrived and then the body did not, which is the same broken
+		// route wearing a different hat.
+		c.brokenRoute()
+		return redact(err, c.token)
 	}
 	var r apiResponse
 	if err := json.Unmarshal(raw, &r); err != nil {
