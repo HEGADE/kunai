@@ -319,7 +319,10 @@ func (b *Bot) prompt(ctx context.Context, chatID int64, text string) {
 			b.say(ctx, chatID, "Could not send it: "+err.Error())
 			return
 		}
-		_ = b.mustAPI().SendChatAction(ctx, chatID, "typing")
+		// The typing indicator is not raised here. It follows the session's
+		// state, so a turn started from the app shows in the chat too, and a
+		// prompt that only queued behind a running turn does not claim to have
+		// started one.
 	})
 }
 
@@ -398,6 +401,8 @@ func (b *Bot) watch(parent context.Context, chatID int64, sess *session.Session)
 	go func() {
 		defer sess.Detach(sub)
 		reply := newStream(b.mustAPI(), chatID)
+		typing := newTypist(b.mustAPI(), chatID)
+		defer typing.Stop()
 		for {
 			select {
 			case <-ctx.Done():
@@ -407,7 +412,7 @@ func (b *Bot) watch(parent context.Context, chatID int64, sess *session.Session)
 					b.say(ctx, chatID, "That session ended.")
 					return
 				}
-				b.dispatchEvent(ctx, chatID, reply, ev)
+				b.dispatchEvent(ctx, chatID, reply, typing, ev)
 			}
 		}
 	}()
@@ -415,13 +420,25 @@ func (b *Bot) watch(parent context.Context, chatID int64, sess *session.Session)
 
 // dispatchEvent turns one session event into chat output. Assistant prose grows
 // the current reply message; everything else is its own message.
-func (b *Bot) dispatchEvent(ctx context.Context, chatID int64, reply *stream, ev session.AppEvent) {
+func (b *Bot) dispatchEvent(ctx context.Context, chatID int64, reply *stream, typing *typist, ev session.AppEvent) {
 	switch ev.T {
 	case session.EvDelta:
 		reply.Append(ctx, ev.Text)
 		return
+	case session.EvState:
+		// The indicator tracks the session, not the chat: it comes up while a
+		// turn runs and drops the moment the session goes idle or stops to ask
+		// permission, which is exactly when it would be a lie.
+		if ev.State == session.StateRunning {
+			typing.Start(ctx)
+		} else {
+			typing.Stop()
+		}
+		return
 	case session.EvResult:
-		// The turn is over: land the reply before reporting how it went.
+		// The turn is over: stop pretending to type, then land the reply before
+		// reporting how it went.
+		typing.Stop()
 		_ = reply.Flush(ctx)
 		reply.Reset()
 	}
