@@ -44,6 +44,25 @@ export function sessionStatus(input: StatusInput): SessionStatus {
   return { kind, label: LABELS[kind] }
 }
 
+// turnStatus is what belongs at the end of a turn, or null for nothing at all.
+//
+// A footer is an artifact of one turn, while a session's state is about right
+// now, and conflating them put "Running" under a reply that had already been
+// written. Two rules follow. "Running" is never shown here: the streaming
+// indicator below the log already says it, and on a finished-looking reply it
+// reads as a lie. And "Done" is claimed only once the turn really ended, which
+// is exactly when its duration and cost arrive, so the badge can never promise
+// more than the numbers beside it.
+//
+// The rest are worth saying whether or not the turn ended, because they are the
+// reason it has not: a session parked on a question, a failed turn, a dropped
+// socket.
+export function turnStatus(session: SessionStatus, ended: boolean): SessionStatus | null {
+  if (session.kind === 'running') return null
+  if (session.kind === 'done') return ended ? session : null
+  return session
+}
+
 // kindOf resolves the one thing worth saying about a session, in the order you
 // would want to hear it.
 //

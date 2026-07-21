@@ -22,7 +22,7 @@
   import ScheduleAfter from './ScheduleAfter.svelte'
   import ToolGroup from './ToolGroup.svelte'
   import TurnFooter from './TurnFooter.svelte'
-  import { sessionStatus } from '../lib/sessionStatus'
+  import { sessionStatus, turnStatus } from '../lib/sessionStatus'
   import TurnChanges from './TurnChanges.svelte'
 
   let { chat }: { chat: ChatConnection } = $props()
@@ -367,7 +367,10 @@
                   {#each turn.answer as b, j (j)}
                     <BlockView block={b} {chat} />
                   {/each}
-                  <TurnFooter {turn} status={isNewest ? status : null} />
+                  <TurnFooter
+                    {turn}
+                    status={isNewest ? turnStatus(status, turn.durationMs != null) : null}
+                  />
                 {/if}
               </div>
             </div>

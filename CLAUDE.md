@@ -656,11 +656,18 @@ jumping to the end.
 - Mono is the data voice, and it is what makes the chrome legible at a glance: the
   context meter (`Context.svelte`), the token split, the project card, and the
   composer's paths all read as data, not prose. Prose explains; mono states.
-- The newest turn's footer carries the session's status badge, so finishing is
-  something you SEE rather than infer from a row of numbers appearing. Only the
-  newest: an older turn is always done, and saying so on every one of them is
-  noise. Same `StatusBadge` and same `sessionStatus` resolver as the sidebar, so
-  a turn and its row can never disagree.
+- The newest turn's footer carries a status badge, so finishing is something you
+  SEE rather than infer from a row of numbers appearing. Only the newest: an
+  older turn is always done, and saying so on every one of them is noise. Same
+  `StatusBadge` and same `sessionStatus` resolver as the sidebar, so a turn and
+  its row can never disagree. But a footer belongs to a **turn** while a status
+  belongs to the **session**, and conflating them shipped "Running" under a
+  reply that was already written: `turnStatus` is the guard. It never shows
+  `Running` (the streaming indicator below the log already says that, and on a
+  finished-looking reply it reads as a lie), and it claims `Done` only once the
+  turn's duration and cost have arrived, so the badge can never promise more
+  than the numbers beside it. `Asking`/`Error`/`Offline` show regardless,
+  because they are the reason the turn has not ended.
 - A turn's tokens are shown split (new vs cached) with an info button, never as one
   total: a long turn re-reads its context on every tool call, so the total runs to
   millions and reads as nonsense next to the price.
