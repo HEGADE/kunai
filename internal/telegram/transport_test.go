@@ -177,7 +177,9 @@ func TestAPIRefusalDoesNotTripTheBreaker(t *testing.T) {
 // The token is in the request URL, so an unredacted transport error puts full
 // control of the bot into journalctl and into every pasted log.
 func TestTransportErrorDoesNotLeakTheToken(t *testing.T) {
-	const token = "8717728449:AAFakeTokenValueForTheTest"
+	// Shaped like a bot token but belonging to no bot: a real id here would tie
+	// the repo to somebody's actual bot for no reason.
+	const token = "1234567890:AAFakeTokenValueForTheTestOnly"
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
