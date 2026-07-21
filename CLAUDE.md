@@ -624,9 +624,19 @@ jumping to the end.
 
 - The chat header and composer float on the canvas with no full-width divider or
   band; the field's own edge defines it.
-- Sessions in the sidebar are single-line rows: a chat-bubble icon and the title,
+- Sessions in the sidebar are single-line rows: a chat-bubble icon, the title
   with a right-edge fade instead of a hard ellipsis (no path, time, or machine
-  chip). Active sessions get a small presence dot on the icon.
+  chip), and a **status badge** on the right. The badge replaced the presence
+  dot rather than joining it: two indicators for one fact is noise, and at four
+  concurrent sessions a coloured dot was never enough to act on. The words are
+  the point, so the states read `Needs you / Running / Done / Error / Offline`.
+  Every badge is a **tint**, never a fill, which keeps the status colours inside
+  the existing amber/green/alert palette; `Needs you` is the only one allowed to
+  shout (a stronger tint plus weight), because it is the only one you must act
+  on. `web/src/lib/sessionStatus.ts` is the single resolver: the sidebar badge
+  and the tab strip's dot both call it, so they cannot disagree, and a new state
+  is added in one file. Offline outranks everything, because a stale "Running"
+  from a dropped socket is worse than admitting we cannot see.
 - Open sessions live in a tab strip above the chat (`Tabs.svelte`), terminal-style.
   Each tab keeps its own `ChatConnection` alive, not just the active one, so
   switching is instant and every tab's dot reports that session's real state: a

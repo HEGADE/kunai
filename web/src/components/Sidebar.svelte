@@ -3,9 +3,23 @@
   import { createSession } from '../lib/api'
   import { enablePush, pushState } from '../lib/push'
   import type { TaggedHistoryEntry, TaggedMeta } from '../lib/types'
+  import { sessionStatus } from '../lib/sessionStatus'
   import Wordmark from './Wordmark.svelte'
   import Home from './Home.svelte'
   import SessionMenu from './SessionMenu.svelte'
+
+  // A row prefers its live connection, which knows about a dropped socket and a
+  // failed turn, and falls back to the polled metadata for sessions that are not
+  // open as tabs. Both go through the same resolver so the two never disagree.
+  function statusFor(m: TaggedMeta) {
+    const c = app.connFor({ machineId: m.machineId, id: m.id })
+    if (!c) return sessionStatus({ state: m.state })
+    return sessionStatus({
+      state: c.sessionState,
+      online: c.status === 'online',
+      errored: c.errorLine !== '',
+    })
+  }
 
   let notif = $state(pushState())
   let notifHint = $state('')
@@ -112,13 +126,12 @@
 {/snippet}
 
 {#snippet activeRow(m: TaggedMeta)}
+  {@const st = statusFor(m)}
   <div class="row" class:current={app.activeId === m.id && app.activeMachineId === m.machineId}>
     <button class="hit" onclick={() => app.open(m.machineId, m.id)}>
-      <span class="ic">
-        {@render bubble()}
-        <span class="live" data-state={m.state}></span>
-      </span>
+      <span class="ic">{@render bubble()}</span>
       <span class="name">{shortName(m)}</span>
+      <span class="badge" data-kind={st.kind}>{st.label}</span>
     </button>
     <SessionMenu machineId={m.machineId} id={m.id} title={shortName(m)} pinned={m.pinned} kind="live" />
   </div>
@@ -504,37 +517,55 @@
   .row.current .ic {
     color: var(--text-3);
   }
-  /* Small presence dot on the icon for live sessions. */
-  .live {
-    position: absolute;
-    right: -3px;
-    top: -3px;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    border: 2px solid var(--bg);
-    background: var(--text-4);
+  /* The status a session is in, as words rather than as a dot you have to
+     decode. It replaces the old presence dot: two indicators for one fact is
+     noise, and at four sessions the dot was never enough to act on. */
+  .badge {
+    flex: none;
+    margin-left: auto;
+    padding: 1px 6px;
+    border-radius: 5px;
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    line-height: 1.5;
+    white-space: nowrap;
+    color: var(--text-3);
+    background: var(--panel-3);
   }
-  .row:hover .live {
-    border-color: var(--panel);
+  /* Tinted, not filled, so a row of them reads as a column of states rather
+     than a row of alerts. "Needs you" is the exception: it is the only one you
+     have to act on, so it is the only one allowed to shout. */
+  .badge[data-kind='done'] {
+    color: var(--live);
+    background: color-mix(in srgb, var(--live) 16%, transparent);
   }
-  .row.current .live {
-    border-color: var(--panel-2);
+  .badge[data-kind='running'] {
+    color: var(--busy);
+    background: color-mix(in srgb, var(--busy) 16%, transparent);
+    animation: soften 1.8s ease-in-out infinite;
   }
-  .live[data-state='idle'] {
-    background: var(--live);
+  .badge[data-kind='needs'] {
+    color: var(--busy);
+    background: color-mix(in srgb, var(--busy) 34%, transparent);
+    font-weight: 600;
   }
-  .live[data-state='starting'],
-  .live[data-state='running'] {
-    background: var(--busy);
-    animation: soften 1.6s ease-in-out infinite;
+  .badge[data-kind='error'] {
+    color: var(--alert);
+    background: color-mix(in srgb, var(--alert) 16%, transparent);
   }
-  .live[data-state='awaiting_permission'] {
-    background: var(--busy);
+  .badge[data-kind='offline'] {
+    color: var(--text-3);
+    background: var(--panel-3);
   }
   @keyframes soften {
     50% {
-      opacity: 0.4;
+      opacity: 0.55;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .badge[data-kind='running'] {
+      animation: none;
     }
   }
   .name {

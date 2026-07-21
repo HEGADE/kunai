@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app, tabKey, type Tab } from '../lib/app.svelte'
+  import { sessionStatus, type StatusKind } from '../lib/sessionStatus'
 
   // A tab is not an inert shell like a terminal's: it is an agent that keeps
   // working while you look elsewhere. So each tab carries its session's live
@@ -12,15 +13,16 @@
     return m?.title || m?.cwd.split('/').slice(-1)[0] || 'session'
   }
 
-  // Same status vocabulary as the chat header: green idle, amber working, red
-  // offline — plus "needs you", the one state worth interrupting for.
-  function state(t: Tab): string {
+  // The same resolver the sidebar uses, so a tab's dot and its row's badge can
+  // never disagree about what a session is doing.
+  function state(t: Tab): StatusKind {
     const c = app.connFor(t)
-    if (!c) return 'idle'
-    if (c.status !== 'online') return 'offline'
-    if (c.sessionState === 'awaiting_permission') return 'needs'
-    if (c.sessionState === 'running' || c.sessionState === 'starting') return 'busy'
-    return 'live'
+    if (!c) return 'done'
+    return sessionStatus({
+      state: c.sessionState,
+      online: c.status === 'online',
+      errored: c.errorLine !== '',
+    }).kind
   }
 </script>
 
@@ -101,13 +103,14 @@
     border-radius: 50%;
     background: var(--text-4);
   }
-  .dot[data-k='live'] {
+  .dot[data-k='done'] {
     background: var(--live);
   }
-  .dot[data-k='busy'] {
+  .dot[data-k='running'] {
     background: var(--busy);
   }
-  .dot[data-k='offline'] {
+  .dot[data-k='offline'],
+  .dot[data-k='error'] {
     background: var(--alert);
   }
   /* "Needs you" is the one state worth pulling your eye across the strip. */
