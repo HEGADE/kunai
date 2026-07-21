@@ -485,6 +485,53 @@ Behavioral invariants that were bugs before (do not regress):
   Scheduled jobs deliberately keep `acceptEdits`: auto can still stop for a risky
   action, which for an unattended run means stalling forever.
 
+## Channels
+
+A **channel** is a way to reach kunai that is not the PWA. Telegram is the first;
+the UI and the server both assume there will be more (Slack is already listed as
+a placeholder), so the shape matters more than the one implementation.
+
+- `internal/telegram`: the bot. It **long-polls outbound**, so kunai still exposes
+  nothing to the internet and needs no inbound hole, which is the point: the phone
+  does not need Tailscale running to drive a session. `client.go` is the API
+  (`ok:false` is an error, text clamped to 4096 runes), `commands.go` the command
+  and callback vocabulary, `store.go` the persisted token/allow-list/bindings,
+  `bot.go` the poll loop and one event pump per chat.
+- **Pairing, not a numeric allow list.** A stranger who messages the bot gets a
+  short code (`pairCode`, ambiguous glyphs excluded) which the owner approves in
+  Channels. Codes expire in an hour. An empty allow list means nobody: a chat with
+  this bot is a shell on the machine, so the safe direction is closed.
+- **`render.go` owns what may leave the machine.** Telegram is a third party and
+  everything sent through it lands in a log nobody here controls, so the default
+  (`StrictPolicy`) sends a tool's name and shape, never file contents or command
+  output. The risk being guarded is not really your source, it is the incidental
+  spill: a config file the agent read, a token a test echoed. `Detail` turns it on
+  deliberately and is off by default.
+- **The channel never creates a session itself.** `internal/server/channelsessions.go`
+  is the adapter and the only place a chat-born session is made, so it goes through
+  `armSession` (notifications, rate-limit handling), the configured model/effort,
+  the right Claude account, and the same transcript seeding a reopen in the app
+  uses. The `telegram.Sessions` interface is deliberately narrow (Start, Resume,
+  Recent, Get, List, Close) rather than passing `session.CreateOptions` through:
+  a chat does not choose a model, and the next channel implements one thing
+  instead of rediscovering how a session is born. Before this, a session started
+  from Telegram silently skipped `armSession` and could not be resumed at all.
+- **Closing a session is not losing it, and the chat must say so.** The transcript
+  is on disk, so every exit (`/end`, or the session being closed in the app, which
+  is the common case) answers with `resumeOffer`: a `/resume <id>` line that
+  survives scrollback and a one-tap button carrying the id. The chat's binding is
+  deliberately **kept** when its session dies, because it is the only record of
+  which conversation that chat was having; `current()` reports "not live", never
+  "not known". Telling someone to `/new` there would throw the conversation away.
+  Callback data is capped at 64 bytes by Telegram, so an id that will not fit
+  drops the button and keeps the command (`resumeKeyboard`).
+- **The typing indicator is a heartbeat, not a call.** Telegram's chat action
+  expires after five seconds and is cleared the moment the bot sends anything,
+  and a turn here runs for minutes while posting tool lines. `typing.go` re-asserts
+  it every 4s, driven by the **session's state** rather than by the prompt path,
+  so a turn started in the app shows in the chat too and the bubble drops the
+  instant the session stops to ask permission (where it would be a lie).
+
 ## UI conventions
 
 Dark near-monochrome theme; tokens in `web/src/app.css`. No gradients, glows, or

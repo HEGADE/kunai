@@ -7,6 +7,7 @@ import "strings"
 const (
 	CallbackApprove = "ok"
 	CallbackDeny    = "no"
+	CallbackResume  = "rs" // bring a closed session back; the arg is its id
 )
 
 // Command names the bot understands.
@@ -16,10 +17,20 @@ const (
 	CmdNew      = "new"
 	CmdSessions = "sessions"
 	CmdUse      = "use"
+	CmdResume   = "resume"
 	CmdStatus   = "status"
 	CmdStop     = "stop"
 	CmdEnd      = "end"
 )
+
+// callbackData builds the payload for an inline button. Telegram caps it at 64
+// bytes, which a two-letter action plus a session id or a request id fits inside
+// with room to spare; anything longer would be silently rejected by the API, so
+// the cap is asserted in a test rather than trusted.
+func callbackData(action, arg string) string { return action + ":" + arg }
+
+// maxCallbackBytes is Telegram's ceiling on callback_data.
+const maxCallbackBytes = 64
 
 // Command is a parsed line from a chat. Name is empty for ordinary text, which
 // is the common case: anything that is not a command is a prompt.
@@ -53,15 +64,15 @@ func ParseCommand(text string) Command {
 }
 
 // ParseCallback splits inline button data into its action and the id it acts on.
-// Unknown or malformed data reports false rather than guessing, since the only
-// buttons in play answer a permission prompt.
+// Unknown or malformed data reports false rather than guessing: a button from an
+// older build must be refused, not misread as a different action.
 func ParseCallback(data string) (action, id string, ok bool) {
 	action, id, found := strings.Cut(data, ":")
 	if !found || id == "" {
 		return "", "", false
 	}
 	switch action {
-	case CallbackApprove, CallbackDeny:
+	case CallbackApprove, CallbackDeny, CallbackResume:
 		return action, id, true
 	}
 	return "", "", false
@@ -74,12 +85,17 @@ const HelpText = `kunai
 
 Send any message to prompt the current session.
 
-/new <path>   start a session in a directory
-/sessions     list running sessions
-/use <id>     switch this chat to a session
-/status       what the current session is doing
-/stop         interrupt the running turn
-/end          close the current session
+/new <path>    start a session in a directory
+/sessions      list running sessions
+/use <id>      switch this chat to a session
+/resume <id>   bring a closed session back, with its conversation
+/resume        list sessions you can bring back
+/status        what the current session is doing
+/stop          interrupt the running turn
+/end           close the current session
+
+Closing a session never loses it. Ending one here, or in the app, leaves you a
+/resume command you can send later.
 
 File contents and command output stay on the machine. Open the kunai app to see
 them in full.`

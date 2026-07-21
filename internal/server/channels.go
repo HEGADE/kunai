@@ -168,5 +168,5 @@ func (s *Server) startTelegram(ctx context.Context) {
 	if s.cfg.TelegramDetail {
 		s.telegram.SetDetail(true)
 	}
-	go telegram.New(s.telegram, s.mgr).Run(ctx)
+	go telegram.New(s.telegram, channelSessions{srv: s}).Run(ctx)
 }

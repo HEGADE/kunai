@@ -254,16 +254,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Model == "" {
-		req.Model = s.cfg.DefaultModel
-	}
-	if req.Model == "" {
-		req.Model = defaultModel
+		req.Model = s.model()
 	}
 	if req.Effort == "" {
-		req.Effort = s.cfg.DefaultEffort
-	}
-	if req.Effort == "" {
-		req.Effort = defaultEffort
+		req.Effort = s.effort()
 	}
 	// Session start blocks on the CLI init handshake; give it room.
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)

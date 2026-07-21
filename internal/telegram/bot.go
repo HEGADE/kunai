@@ -12,17 +12,6 @@ import (
 	"github.com/hegade/kunai/internal/session"
 )
 
-// Sessions is the bot's view of kunai's session manager: the few things driving
-// a conversation from a chat actually needs. An interface rather than the
-// concrete *session.Manager so the bot's logic can be tested without spawning a
-// real claude process.
-type Sessions interface {
-	Create(ctx context.Context, opts session.CreateOptions) (*session.Session, error)
-	Get(id string) (*session.Session, bool)
-	List() []session.Meta
-	Close(id string)
-}
-
 // pollBackoff is how long to wait after a failed poll. Telegram being briefly
 // unreachable is ordinary (a laptop changing networks), so it retries quietly
 // rather than giving up on the bot for the life of the process.
@@ -182,6 +171,8 @@ func (b *Bot) handleMessage(ctx context.Context, m *Message) {
 		b.listSessions(ctx, m.Chat.ID)
 	case CmdUse:
 		b.useSession(ctx, m.Chat.ID, cmd.Arg)
+	case CmdResume:
+		b.resumeSession(ctx, m.Chat.ID, cmd.Arg)
 	case CmdStatus:
 		b.status(ctx, m.Chat.ID)
 	case CmdStop:
@@ -199,7 +190,10 @@ func (b *Bot) handleMessage(ctx context.Context, m *Message) {
 	}
 }
 
-// handleCallback answers a permission prompt from an inline button.
+// handleCallback dispatches a tap on an inline button. Every action settles the
+// message it came from, so a button never sits there looking unanswered, and
+// each one is its own method: adding a button should not mean editing a branch
+// that also answers permission prompts.
 func (b *Bot) handleCallback(ctx context.Context, q *CallbackQuery) {
 	var chatID int64
 	if q.Message != nil {
@@ -209,18 +203,29 @@ func (b *Bot) handleCallback(ctx context.Context, q *CallbackQuery) {
 		_ = b.mustAPI().AnswerCallback(ctx, q.ID, "Not authorised")
 		return
 	}
-	action, requestID, ok := ParseCallback(q.Data)
+	action, arg, ok := ParseCallback(q.Data)
 	if !ok {
+		// A button from an older build, or one we no longer understand. Answer
+		// it anyway: Telegram spins it forever otherwise.
 		_ = b.mustAPI().AnswerCallback(ctx, q.ID, "")
 		return
 	}
+	switch action {
+	case CallbackApprove, CallbackDeny:
+		b.answerPermission(ctx, chatID, q, action, arg)
+	case CallbackResume:
+		b.resumeFromButton(ctx, chatID, q, arg)
+	}
+}
+
+// answerPermission resolves a can_use_tool ask from the Approve/Deny buttons.
+func (b *Bot) answerPermission(ctx context.Context, chatID int64, q *CallbackQuery, action, requestID string) {
 	sess, found := b.current(chatID)
 	if !found {
 		_ = b.mustAPI().AnswerCallback(ctx, q.ID, "That session is gone")
 		return
 	}
-	behavior := "allow"
-	answer := "Approved"
+	behavior, answer := "allow", "Approved"
 	if action == CallbackDeny {
 		behavior, answer = "deny", "Denied"
 	}
@@ -236,6 +241,13 @@ func (b *Bot) handleCallback(ctx context.Context, q *CallbackQuery) {
 	}
 }
 
+// resumeFromButton is the one-tap version of /resume, including on a message
+// from days ago: the button carries the id, so old offers keep working.
+func (b *Bot) resumeFromButton(ctx context.Context, chatID int64, q *CallbackQuery, id string) {
+	_ = b.mustAPI().AnswerCallback(ctx, q.ID, "Resuming")
+	b.resumeSession(ctx, chatID, id)
+}
+
 // --- commands ---
 
 func (b *Bot) newSession(ctx context.Context, chatID int64, dir string) {
@@ -243,18 +255,49 @@ func (b *Bot) newSession(ctx context.Context, chatID int64, dir string) {
 		b.say(ctx, chatID, "Give it a directory: /new /path/to/project")
 		return
 	}
-	// Session start blocks on the CLI handshake, so it gets its own budget
-	// rather than inheriting the poll loop's.
-	startCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+	startCtx, cancel := b.startBudget(ctx)
 	defer cancel()
 
-	sess, err := b.mgr.Create(startCtx, session.CreateOptions{Cwd: dir})
+	sess, err := b.mgr.Start(startCtx, dir)
 	if err != nil {
 		b.say(ctx, chatID, "Could not start it: "+err.Error())
 		return
 	}
 	b.bind(ctx, chatID, sess)
 	b.say(ctx, chatID, "Started in "+dir+". Send a message to prompt it.")
+}
+
+// resumeSession brings a closed session back, with its conversation. A bare
+// /resume lists what there is to bring back rather than failing: on a phone,
+// remembering a session id is not a reasonable thing to ask.
+func (b *Bot) resumeSession(ctx context.Context, chatID int64, id string) {
+	if id == "" {
+		out := resumeList(b.mgr.Recent(recentToOffer), time.Now())
+		b.sayWith(ctx, chatID, out.Text, out.Keyboard)
+		return
+	}
+	startCtx, cancel := b.startBudget(ctx)
+	defer cancel()
+
+	sess, err := b.mgr.Resume(startCtx, id)
+	if err != nil {
+		b.say(ctx, chatID, "Could not resume it: "+err.Error())
+		return
+	}
+	b.bind(ctx, chatID, sess)
+	m := sess.Meta()
+	b.say(ctx, chatID, "Back in "+m.Cwd+", where you left off. Send a message to carry on.")
+}
+
+// recentToOffer bounds a bare /resume. A phone screen holds a handful; the app
+// is where the whole history lives.
+const recentToOffer = 8
+
+// startBudget gives a session start its own deadline. It must not inherit the
+// poll loop's context: the CLI handshake outlives a single poll, and a start
+// cancelled halfway leaves nothing to attach to.
+func (b *Bot) startBudget(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
 }
 
 func (b *Bot) listSessions(ctx context.Context, chatID int64) {
@@ -306,8 +349,10 @@ func (b *Bot) endSession(ctx context.Context, chatID int64) {
 	}
 	b.stopWatching(chatID)
 	b.mgr.Close(id)
-	b.st.unbind(chatID)
-	b.say(ctx, chatID, "Closed.")
+	// The binding is kept, not dropped: it is what lets the next message in this
+	// chat offer the session back instead of pretending it never existed.
+	out := resumeOffer("Closed. The conversation is kept, so you can pick it up later.", id)
+	b.sayWith(ctx, chatID, out.Text, out.Keyboard)
 }
 
 func (b *Bot) prompt(ctx context.Context, chatID int64, text string) {
@@ -327,28 +372,35 @@ func (b *Bot) prompt(ctx context.Context, chatID int64, text string) {
 }
 
 // withSession runs fn against the chat's session, or explains why it cannot.
+//
+// "Cannot" has two shapes and they deserve different answers. A chat that never
+// had a session needs to start one. A chat whose session was closed (here, or in
+// the app, which is the common case) has a conversation sitting on disk, and
+// telling it to start a fresh one would throw that away.
 func (b *Bot) withSession(ctx context.Context, chatID int64, fn func(*session.Session)) {
-	sess, ok := b.current(chatID)
-	if !ok {
-		b.say(ctx, chatID, "No session yet. Start one with /new <path>.")
+	if sess, ok := b.current(chatID); ok {
+		fn(sess)
 		return
 	}
-	fn(sess)
+	if id := b.st.boundTo(chatID); id != "" {
+		out := resumeOffer("That session is closed. Bring it back:", id)
+		b.sayWith(ctx, chatID, out.Text, out.Keyboard)
+		return
+	}
+	b.say(ctx, chatID, "No session yet. Start one with /new <path>, or /resume to pick up an old one.")
 }
 
-// current resolves the chat's bound session, clearing the binding when the
-// session is gone so the chat is not stuck pointing at a corpse.
+// current resolves the chat's bound session if it is still running.
+//
+// A dead binding is deliberately left in place rather than cleared: it is the
+// only record of which conversation this chat was having, and that is exactly
+// what makes it resumable. current() reports "not live", not "not known".
 func (b *Bot) current(chatID int64) (*session.Session, bool) {
 	id := b.st.boundTo(chatID)
 	if id == "" {
 		return nil, false
 	}
-	sess, ok := b.mgr.Get(id)
-	if !ok {
-		b.st.unbind(chatID)
-		return nil, false
-	}
-	return sess, true
+	return b.mgr.Get(id)
 }
 
 // --- event pump ---
@@ -398,6 +450,7 @@ func (b *Bot) watch(parent context.Context, chatID int64, sess *session.Session)
 	hello, _, sub := sess.Attach(^uint64(0))
 	_ = hello
 
+	sessionID := sess.Meta().ID
 	go func() {
 		defer sess.Detach(sub)
 		reply := newStream(b.mustAPI(), chatID)
@@ -409,7 +462,13 @@ func (b *Bot) watch(parent context.Context, chatID int64, sess *session.Session)
 				return
 			case ev, open := <-sub.Events():
 				if !open {
-					b.say(ctx, chatID, "That session ended.")
+					// The session ended, usually because it was closed in the
+					// app. Say so with the way back, or the chat is left holding
+					// a conversation it cannot reach.
+					if b.st.boundTo(chatID) == sessionID {
+						out := resumeOffer("That session ended. Bring it back:", sessionID)
+						b.sayWith(ctx, chatID, out.Text, out.Keyboard)
+					}
 					return
 				}
 				b.dispatchEvent(ctx, chatID, reply, typing, ev)

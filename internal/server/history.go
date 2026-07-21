@@ -49,21 +49,15 @@ const historyMaxLimit = 1000 // ceiling for the "all sessions" view
 // that are currently live. `?limit=N` overrides the default (0 or negative uses
 // the default; values above the ceiling are clamped).
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
-	live := map[string]bool{}
-	for _, m := range s.mgr.List() {
-		live[m.ID] = true
-	}
 	limit := historyLimit
 	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
 		limit = min(v, historyMaxLimit)
 	}
-	var keep map[string]bool
 	var over map[string]sessionMeta
 	if s.sessionMeta != nil {
-		keep = s.sessionMeta.pinnedIDs() // a pinned session survives the newest-N clamp
 		over = s.sessionMeta.all()
 	}
-	entries := scanHistory(live, limit, s.accountRoots(), keep)
+	entries := s.pastSessions(limit)
 	for i := range entries {
 		if o, ok := over[entries[i].ID]; ok {
 			if o.Name != "" {
