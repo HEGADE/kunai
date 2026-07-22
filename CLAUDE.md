@@ -312,6 +312,21 @@ reaches directly. Server pieces (all additive):
   `tailscale status --json`, probes each online peer's `/api/stats` on the Kunai
   port, and keeps the ones that answer as Kunai (cached, folded into `/api/machines`
   so peers "appear on their own"). Finds the CLI on PATH or the macOS app bundle.
+  The cache is **sticky with a last-seen window** (`peerTTL`), and that is
+  load-bearing: a scan returns nil both when `tailscale status` itself fails
+  (timeout, missing CLI) and when a peer's probe blips for one round, and the old
+  cache *overwrote its whole result set with that nil*, so a single transient
+  hiccup dropped every live peer from `/api/machines` until the next good scan.
+  The client mirrors the hub's list verbatim, so the machine flickered out of the
+  sidebar and only came back on a hard refresh. Now `scanPeers`/`tailscalePeers`
+  return an `ok` bool that is false ONLY when tailscale could not be queried at
+  all (distinct from a real empty tailnet), `merge` upserts each found peer's
+  last-seen and prunes only peers unseen for the whole `peerTTL`, and a failed
+  scan (`ok=false`) leaves the known peers untouched and does not advance the
+  freshness clock. So a live machine survives a blipped round, and the fleet is
+  warmed at startup (`go s.discover(true)`) so the first client load already sees
+  it. `merge` is a pure method on `discoveryCache` so the stickiness is
+  unit-testable (`discover_test.go`) without shelling tailscale.
 - `internal/server/pushfwd.go`: a peer started with `-hub-url` forwards a generic
   wake-up to the hub's `POST /api/push/relay` (the hub holds the phone's
   subscription). With no `-hub-url`, the machine pushes locally (unchanged).
