@@ -22,6 +22,7 @@
   import ScheduleAfter from './ScheduleAfter.svelte'
   import ToolGroup from './ToolGroup.svelte'
   import Tabs from './Tabs.svelte'
+  import SessionInfo from './SessionInfo.svelte'
   import TurnFooter from './TurnFooter.svelte'
   import TurnChanges from './TurnChanges.svelte'
 
@@ -63,6 +64,7 @@
   let schedOpen = $state(false)
   let addProjOpen = $state(false)
   let loopOpen = $state(false)
+  let infoOpen = $state(false)
 
   function resetRel(unixSec: number): string {
     let s = Math.round(unixSec - Date.now() / 1000)
@@ -257,17 +259,24 @@
 </script>
 
 <div class="screen">
+  <!-- One tidy line: the way out (back/home), the open sessions (Tabs), then the
+       session's actions. Everything you act on, nothing to merely read: the cwd,
+       branch, account and projects moved behind the info button into SessionInfo,
+       so the chrome is a single 40px row. It is the topmost element, so it owns
+       the phone safe-area. -->
   <header>
-    <!-- Row 1: the open sessions (Tabs) on the left, the session's actions on the
-         right, so the actions ride the tab line instead of taking a row of their
-         own. -->
-    <div class="toprow">
-      <Tabs />
-      <!-- The session's actions, one tap each instead of buried in a menu. Each
-           carries a label (desktop) and its own colour so loop and schedule read
-           at a glance; a phone drops to coloured icons. Close is icon-only and
-           alert-red, set apart by a hairline, so a terminal action stands out. -->
-      <div class="actions">
+    <button class="hbtn back" onclick={() => app.back()} aria-label="Back">
+      <svg width="10" height="16" viewBox="0 0 10 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1L2 8l6 7" /></svg>
+    </button>
+    <button class="hbtn home deskonly" onclick={() => app.back()} aria-label="Home" title="Home">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5L12 3l9 7.5" /><path d="M5 9.5V20a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V9.5" /></svg>
+    </button>
+    <Tabs />
+    <!-- The session's actions, one tap each instead of buried in a menu. Each
+         carries a label (desktop) and its own colour so loop and schedule read
+         at a glance; a phone drops to coloured icons. Close is icon-only and
+         alert-red, set apart by a hairline, so a terminal action stands out. -->
+    <div class="actions">
       <button class="abtn add" onclick={() => (addProjOpen = true)} aria-label="Add project" title="Add another project to this session">
         <span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /><path d="M12 11v4M10 13h4" /></svg></span>
         <span class="albl">Add project</span>
@@ -287,30 +296,19 @@
         <span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 1.5" /><path d="M5 3L2 6M22 6l-3-3" /></svg></span>
         <span class="albl">Schedule</span>
       </button>
+      <!-- Where it runs, what branch, which account, the projects: reference, not
+           action, so it hides behind one button instead of taking a row. -->
+      <button class="abtn info" class:on={infoOpen} onclick={() => (infoOpen = !infoOpen)} aria-label="Session details" title="Folder, branch, account, projects">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></svg>
+      </button>
       <span class="asep" aria-hidden="true"></span>
       <button class="abtn close" onclick={() => app.closeSessionActive()} aria-label="Close session" title="Close this session">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v8" /><path d="M18 7.5a8 8 0 11-12 0" /></svg>
       </button>
-      </div>
     </div>
-    <!-- Row 2: where the session runs. The tab owns its name and status, so the
-         header carries what the tab can't: the cwd. -->
-    <div class="pathrow">
-      <button class="hbtn back" onclick={() => app.back()} aria-label="Back">
-        <svg width="10" height="16" viewBox="0 0 10 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1L2 8l6 7" /></svg>
-      </button>
-      <button class="hbtn home deskonly" onclick={() => app.back()} aria-label="Home" title="Home">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5L12 3l9 7.5" /><path d="M5 9.5V20a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V9.5" /></svg>
-      </button>
-      <div class="htitle" title={chat.cwd}>
-        <span class="tpath mono">{chat.cwd}</span>
-        {#if chat.projects.length}
-          <button class="wspace" onclick={() => (addProjOpen = true)} title={chat.projects.map((p) => p.path).join('\n')}>
-            +{chat.projects.length} project{chat.projects.length > 1 ? 's' : ''}
-          </button>
-        {/if}
-      </div>
-    </div>
+    {#if infoOpen}
+      <SessionInfo {chat} onClose={() => (infoOpen = false)} />
+    {/if}
   </header>
 
   <div class="scroll" bind:this={scroller} onscroll={onScroll}>
@@ -597,25 +595,15 @@
       transform: translateY(6px);
     }
   }
+  /* One row: back/home, the tab strip (flexes and scrolls), then the actions.
+     Topmost chrome, so it owns the phone safe-area. */
   header {
     position: relative;
-    background: transparent;
-  }
-  /* Row 1 holds the tabs and the actions on one line; it is the topmost chrome,
-     so it owns the safe area (a phone's status bar). The tab strip flexes to
-     fill and scrolls; the actions stay pinned right. */
-  .toprow {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: calc(var(--safe-top) + 6px) 12px 0 10px;
-  }
-  /* Row 2 is just the path (and the back/home button), short and quiet. */
-  .pathrow {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 12px 6px 10px;
+    padding: calc(var(--safe-top) + 7px) 12px 8px 10px;
+    background: transparent;
   }
   /* The divider the header sits on: a hairline that fades at both ends, so the
      compact chrome reads as a seam over the canvas rather than a hard rule. */
@@ -696,6 +684,19 @@
   .abtn.sched .ic {
     color: #a08ac0;
   }
+  /* The info button is a quiet neutral glyph until opened, when it fills like the
+     others; it holds the session's context (folder, branch, account, projects). */
+  .abtn.info {
+    color: var(--text-3);
+    padding: 0;
+    width: 28px;
+    justify-content: center;
+  }
+  .abtn.info.on {
+    color: var(--text);
+    background: var(--panel);
+    border-color: var(--border);
+  }
   .abtn.close {
     color: var(--alert);
     padding: 0;
@@ -737,27 +738,6 @@
     .asep {
       display: none;
     }
-  }
-  /* Plain left-aligned title — no pill box. */
-  .htitle {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 0 6px;
-  }
-  /* Paths keep their tail visible (rtl trick); plaintext stops the leading
-     slash jumping to the end. */
-  .tpath {
-    font-size: 12px;
-    color: var(--text-4);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    direction: rtl;
-    unicode-bidi: plaintext;
-    text-align: left;
   }
   .scroll {
     flex: 1;

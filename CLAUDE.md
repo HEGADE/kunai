@@ -699,9 +699,14 @@ jumping to the end.
   working while you look at another one, so the strip doubles as a status board
   (amber pulses when a session needs you). Closing a tab only detaches the view;
   ending a session is a separate, explicit action.
-- The tab owns a session's name and status, so the chat header carries what the
-  tab cannot: the cwd, as a muted mono path (rtl-ellipsis). Do not repeat the
-  title or the status dot there.
+- The header is one row and holds only what you **act on**: back/home, the tabs,
+  and the action buttons. A session's *reference* context (cwd, git branch, the
+  account it runs on, the codebases it spans) is not an action, so it lives
+  behind the info button in `SessionInfo.svelte` (a small popover, folder
+  copyable) rather than taking chrome. This retired three scattered bits at once:
+  the cwd row, the `+N projects` pill, and repeating the account. The tab still
+  names the session and shows its status; a fresh session's empty state still
+  shows the cwd on open, so nothing is lost by moving it off the bar.
 - The header's top row is the topmost chrome, so **it** owns `--safe-top` (a
   phone's status bar); the tab strip inside it no longer insets, and nothing
   below re-insets. Whatever is topmost carries the safe area.
