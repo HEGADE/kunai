@@ -4,6 +4,7 @@
   import { fileEditsOf } from '../lib/toolMeta'
   import { buildTree, type TreeNode } from '../lib/fileTree'
   import { langFromPath } from '../lib/highlight'
+  import { iconForFile } from '../lib/langIcons'
   import DiffView from './tools/DiffView.svelte'
   import CodeView from './tools/CodeView.svelte'
 
@@ -84,6 +85,17 @@
   <svg class="chev" class:down width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
 {/snippet}
 
+<!-- The file's brand logo, same as the tool card's chip, so a changed file reads
+     by its language at a glance. Unknown types fall back to a neutral glyph. -->
+{#snippet fileIcon(path: string)}
+  {@const icon = iconForFile(path)}
+  {#if icon}
+    <svg class="li" viewBox="0 0 24 24" width="13" height="13" style="color:{icon.color}" aria-hidden="true"><path fill="currentColor" d={icon.d} /></svg>
+  {:else}
+    <svg class="li gen" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 3v5h5" /><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /></svg>
+  {/if}
+{/snippet}
+
 {#snippet row(n: TreeNode, depth: number)}
   {#if n.kind === 'dir'}
     <button class="drow" style="--d:{depth}" onclick={() => toggleDir(n.path)}>
@@ -102,6 +114,7 @@
     {@const t = f.added + f.removed}
     <button class="frow" class:open={open.has(f.path)} style="--d:{depth}" onclick={() => toggleFile(f.path)}>
       {@render chev(open.has(f.path))}
+      {@render fileIcon(f.path)}
       <span class="nm">{f.name}</span>
       <span class="sp"></span>
       {@render nums(f.added, f.removed)}
@@ -279,6 +292,12 @@
   .chev.down {
     transform: rotate(90deg);
     color: var(--text-3);
+  }
+  .li {
+    flex: none;
+  }
+  .li.gen {
+    color: var(--text-4);
   }
   .nm {
     flex: none;
