@@ -14,14 +14,20 @@
     chat.projects.find((p) => p.path === chat.cwd)?.branch || chat.projects[0]?.branch || '',
   )
 
-  let copied = $state(false)
+  // The kunai session id IS the claude session UUID (sessions spawn with
+  // --session-id and their transcript is <id>.jsonl), so this line resumes the
+  // exact conversation from a terminal on the machine it runs on.
+  const resumeCmd = $derived(`claude --resume ${chat.sessionId}`)
+
+  // Which row last confirmed a copy ('' = none). One timer, one at a time.
+  let copied = $state('')
   let copyTimer: ReturnType<typeof setTimeout> | undefined
-  async function copyPath() {
+  async function copy(key: string, text: string) {
     try {
-      await navigator.clipboard.writeText(chat.cwd)
-      copied = true
+      await navigator.clipboard.writeText(text)
+      copied = key
       clearTimeout(copyTimer)
-      copyTimer = setTimeout(() => (copied = false), 1200)
+      copyTimer = setTimeout(() => (copied = ''), 1200)
     } catch {
       // No clipboard (insecure origin): the row just doesn't confirm.
     }
@@ -32,9 +38,9 @@
 <div class="pop mono" role="dialog" aria-label="Session details">
   <div class="row">
     <span class="k">Folder</span>
-    <button class="v path" onclick={copyPath} title="Copy path">
+    <button class="v path" onclick={() => copy('path', chat.cwd)} title="Copy path">
       <span class="ptxt">{chat.cwd}</span>
-      {#if copied}
+      {#if copied === 'path'}
         <svg class="ok" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
       {:else}
         <svg class="cp" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 012-2h8" /></svg>
@@ -47,6 +53,17 @@
   {#if chat.cli}
     <div class="row"><span class="k">Account</span><span class="v">{chat.cli}</span></div>
   {/if}
+  <div class="row">
+    <span class="k">Resume</span>
+    <button class="v path" onclick={() => copy('resume', resumeCmd)} title="Copy resume command">
+      <span class="ptxt">{resumeCmd}</span>
+      {#if copied === 'resume'}
+        <svg class="ok" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+      {:else}
+        <svg class="cp" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 012-2h8" /></svg>
+      {/if}
+    </button>
+  </div>
   {#if chat.projects.length}
     <div class="hr"></div>
     <div class="row top">
