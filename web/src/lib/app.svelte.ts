@@ -255,10 +255,11 @@ class AppStore {
 
   startPolling() {
     this.loadMachines().then(() => {
-      this.refresh()
+      // Version check rides after refresh: it needs our own stats (hence channel)
+      // loaded first, or it would default to the stable release on a nightly box.
+      this.refresh().then(() => this.loadLatestVersion(true))
       this.drainDeepLink()
     })
-    this.loadLatestVersion(true)
     this.watchVisibility()
     clearInterval(this.poll)
     // One beat, with each thing on the cadence it actually changes at — every
@@ -330,12 +331,16 @@ class AppStore {
   // limit (60/hr); `force` bypasses the throttle for the initial load.
   private lastVersionCheck = 0
   private async loadLatestVersion(force = false) {
+    // Must know our own channel first, or a nightly build would be compared
+    // against the stable `latest` release and offered a cross-channel "update".
+    // stats.channel is absent both before stats load and on the stable channel,
+    // so gate on stats being present, not on the channel value.
+    const self = this.machines.find((m) => m.self)
+    if (!self?.stats) return // retry next tick, once we know what we are
     const now = Date.now()
     if (!force && now - this.lastVersionCheck < 60_000) return
     this.lastVersionCheck = now
-    // Check the channel this install belongs to (nightly has its own release).
-    const channel = this.machines.find((m) => m.self)?.stats?.channel ?? ''
-    const tag = await fetchLatestVersion(channel)
+    const tag = await fetchLatestVersion(self.stats.channel ?? '')
     if (tag) this.latestVersion = tag
   }
 
