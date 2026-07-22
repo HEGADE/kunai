@@ -107,7 +107,7 @@ every push. It installs **beside** a stable install — its own service
 risking the setup you rely on.
 
 ```sh
-KUNAI_CHANNEL=nightly curl -fsSL https://raw.githubusercontent.com/HEGADE/kunai/nightly/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/HEGADE/kunai/nightly/install.sh | KUNAI_CHANNEL=nightly bash
 ```
 
 <sub>Or from a checkout: `git checkout nightly && KUNAI_CHANNEL=nightly ./install.sh`</sub>
