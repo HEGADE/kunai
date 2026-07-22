@@ -164,7 +164,7 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   can also finish with **no paste at all**: if the browser is on this machine it
   hits the CLI's localhost callback directly and the CLI exits. So a single
   `watch` goroutine per flow owns the PTY, waits for the CLI to exit, and
-  `finalize`s the outcome once — registering the account via a callback whether
+  `finalize`s the outcome once, registering the account via a callback whether
   the exit came from a pasted code or the browser completing it. `finish` waits
   on that; a `login/status` poll reads it, so the client closes the dialog
   hands-free in the local-browser case instead of waiting on a paste that never
@@ -677,8 +677,8 @@ jumping to the end.
   with a right-edge fade instead of a hard ellipsis (no path, time, or machine
   chip). Active sessions get a small presence dot on the icon. (A text status
   badge per row was tried and reverted: the wire `state` is unreliable for a
-  resumed session — it reads `starting` until the first prompt and never carries
-  a turn's numbers on reopen — so any label built on it kept lying. Left out
+  resumed session (it reads `starting` until the first prompt and never carries
+  a turn's numbers on reopen), so any label built on it kept lying. Left out
   until the server exposes a state a badge can trust.)
 - Open sessions live in a tab strip above the chat (`Tabs.svelte`), terminal-style.
   Each tab keeps its own `ChatConnection` alive, not just the active one, so
