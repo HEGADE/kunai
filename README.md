@@ -98,6 +98,26 @@ sessions resume from their transcript. If a machine does not come back, the app
 says so and prints the command to revive it rather than leaving you guessing.
 Every machine updates itself, so there is no SSH involved.
 
+### Nightly channel (run it alongside stable)
+
+There is a second, bleeding-edge channel built from the `nightly` branch on
+every push. It installs **beside** a stable install — its own service
+(`kunai-nightly`), its own port (`8444`), and its own data dir
+(`~/.kunai-nightly`) — so you can run both at once and try new features without
+risking the setup you rely on.
+
+```sh
+KUNAI_CHANNEL=nightly curl -fsSL https://raw.githubusercontent.com/HEGADE/kunai/nightly/install.sh | bash
+```
+
+<sub>Or from a checkout: `git checkout nightly && KUNAI_CHANNEL=nightly ./install.sh`</sub>
+
+Open the stable app at `https://<host>.<tailnet>.ts.net:8443` and nightly at
+`:8444`; they share nothing. A nightly install self-updates from the moving
+`nightly` pre-release (checksum-verified, same one-tap flow), so it always
+tracks the newest build. Nothing on the nightly channel is a stable release —
+expect rough edges, and keep your day-to-day work on the stable install.
+
 ## What you get
 
 **A fleet rather than one box.** The same binary runs everywhere and one app
@@ -321,7 +341,9 @@ Thermal guard flags, all off or inert by default:
 | `-thermal-hard-c`    | `KUNAI_THERMAL_HARD_C`    | `0`     | Power-off ceiling, used with `-thermal-action=poweroff`     |
 | `-thermal-action`    | `KUNAI_THERMAL_ACTION`    | `sleep` | What a hard trip does: `sleep` or `poweroff`                |
 
-The installer also reads `KUNAI_PORT` (default `8443`), `KUNAI_HUB_URL`,
+The installer also reads `KUNAI_CHANNEL` (`stable` or `nightly`; nightly installs
+a parallel `kunai-nightly` service on port `8444` and `~/.kunai-nightly`),
+`KUNAI_PORT` (default `8443` stable / `8444` nightly), `KUNAI_HUB_URL`,
 `KUNAI_PUSH_EMAIL`, and `KUNAI_THERMAL_PRIVILEGED`.
 
 ## Security

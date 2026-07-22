@@ -28,6 +28,7 @@ type Stats struct {
 	Cores         int     `json:"cores"`          // logical CPUs
 	ClaudeVersion string  `json:"claude_version"` //
 	KunaiVersion  string  `json:"kunai_version"`  // build revision
+	Channel       string  `json:"channel,omitempty"` // release channel: "nightly", else stable/omitted
 	KunaiUptime   int64   `json:"kunai_uptime_sec"`
 	KeepAwake     bool    `json:"keep_awake"`           // idle-sleep hold currently held
 	KeepAwakeSupp bool    `json:"keep_awake_supported"` // platform can hold it
@@ -81,6 +82,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		Sessions:      len(s.mgr.List()),
 		Cores:         runtime.NumCPU(),
 		KunaiVersion:  kunaiVersion(),
+		Channel:       nightlyChannel(),
 		KunaiUptime:   int64(time.Since(serverStart).Seconds()),
 		KeepAwake:     s.awake.Enabled(),
 		KeepAwakeSupp: s.awake.Supported(),

@@ -5,20 +5,27 @@
 // ethos — no phone-home.
 
 const LATEST_URL = 'https://api.github.com/repos/HEGADE/kunai/releases/latest'
+// The nightly channel is one moving pre-release; its `name` is the build id
+// (e.g. "nightly-ab12cd3"), which changes every push, so a string compare tells
+// a nightly install it is behind.
+const NIGHTLY_URL = 'https://api.github.com/repos/HEGADE/kunai/releases/tags/nightly'
 
-// fetchLatestVersion returns the latest release tag (e.g. "v0.2.0"), or null if
-// GitHub is unreachable / rate-limited (unauthenticated is 60 req/hr, plenty).
-export async function fetchLatestVersion(): Promise<string | null> {
+// fetchLatestVersion returns the newest version string for the given channel:
+// the latest release tag ("v0.2.0") on stable, or the nightly pre-release's
+// build id on nightly. null if GitHub is unreachable / rate-limited.
+export async function fetchLatestVersion(channel = ''): Promise<string | null> {
+  const url = channel === 'nightly' ? NIGHTLY_URL : LATEST_URL
   try {
     // no-store so a just-published release is seen immediately, not served from
     // a cached GitHub response (which is why the banner used to need a refresh).
-    const res = await fetch(LATEST_URL, {
+    const res = await fetch(url, {
       headers: { Accept: 'application/vnd.github+json' },
       cache: 'no-store',
     })
     if (!res.ok) return null
-    const body = (await res.json()) as { tag_name?: string }
-    return body.tag_name ?? null
+    const body = (await res.json()) as { tag_name?: string; name?: string }
+    // Nightly moves the tag, so its `name` (the build id) is the comparable bit.
+    return (channel === 'nightly' ? body.name || body.tag_name : body.tag_name) ?? null
   } catch {
     return null
   }
@@ -39,10 +46,17 @@ function parseSemver(v: string): [number, number, number] | null {
 }
 
 // updateAvailable is true only when we can confidently say `current` is behind
-// `latest` — both parse as X.Y.Z and current < latest. A dev/sha build (which
-// we can't compare) returns false: we never nag on an uncertain comparison.
-export function updateAvailable(current: string | undefined, latest: string | null): boolean {
+// `latest`. On nightly the version is a moving build id, so any difference means
+// a newer build is out (a plain string compare). On stable both must parse as
+// X.Y.Z and current < latest; a dev/sha build (which we can't compare) returns
+// false, so we never nag on an uncertain comparison.
+export function updateAvailable(
+  current: string | undefined,
+  latest: string | null,
+  channel = '',
+): boolean {
   if (!current || !latest) return false
+  if (channel === 'nightly') return current !== latest
   const c = parseSemver(current)
   const l = parseSemver(latest)
   if (!c || !l) return false

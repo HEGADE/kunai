@@ -16,6 +16,7 @@ export interface Stats {
   cores: number
   claude_version: string
   kunai_version: string
+  channel?: string // release channel: "nightly", else stable/omitted
   kunai_uptime_sec: number
   keep_awake: boolean
   keep_awake_supported: boolean

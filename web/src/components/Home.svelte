@@ -18,7 +18,7 @@
       null,
   )
   const st = $derived(sel?.stats ?? null)
-  const outdated = $derived(updateAvailable(st?.kunai_version, app.latestVersion))
+  const outdated = $derived(updateAvailable(st?.kunai_version, app.latestVersion, st?.channel))
   const updating = $derived(sel ? !!app.updating[sel.id] : false)
   const updateErr = $derived(sel ? (app.updateError[sel.id] ?? '') : '')
   const updateProg = $derived(sel ? (app.updateProgress[sel.id] ?? -1) : -1)

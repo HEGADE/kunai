@@ -28,9 +28,34 @@ import (
 
 const updateTimeout = 90 * time.Second
 
-// releaseBase is the latest-release asset directory; a var so tests can point it
-// at a local server.
-var releaseBase = "https://github.com/HEGADE/kunai/releases/latest/download"
+// buildChannel is the release channel this binary belongs to, injected at build
+// time via -ldflags "-X …server.buildChannel=nightly". Empty/"stable" is the
+// normal channel. It decides which release the self-updater pulls from, so a
+// nightly install updates to the newest nightly and a stable install to the
+// newest tagged release — the two coexist on one machine without crossing over.
+var buildChannel = "stable"
+
+// releaseBase is the asset directory the self-updater pulls from, chosen by the
+// build's channel; a var so tests can point it at a local server. The nightly
+// channel is a single moving pre-release tagged "nightly" whose assets CI
+// overwrites on every push, so /releases/download/nightly is always the latest.
+var releaseBase = channelReleaseBase()
+
+func channelReleaseBase() string {
+	if buildChannel == "nightly" {
+		return "https://github.com/HEGADE/kunai/releases/download/nightly"
+	}
+	return "https://github.com/HEGADE/kunai/releases/latest/download"
+}
+
+// nightlyChannel reports "nightly" for a nightly build and "" otherwise, so the
+// client only sees a channel when it is the non-default one.
+func nightlyChannel() string {
+	if buildChannel == "nightly" {
+		return "nightly"
+	}
+	return ""
+}
 
 func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	self, err := os.Executable()

@@ -1,0 +1,64 @@
+name: nightly
+
+# The nightly channel: every push to the `nightly` branch rebuilds all platforms
+# with CHANNEL=nightly and refreshes a single moving pre-release tagged `nightly`.
+# A nightly install self-updates from /releases/download/nightly, so it always
+# tracks the newest build here. Stable (v* tags, release.yml) is untouched.
+
+on:
+  push:
+    branches: [nightly]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# One nightly build at a time; a newer push supersedes an in-flight one.
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Test
+        run: go test ./...
+
+      - name: Version
+        id: ver
+        run: echo "v=nightly-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build web and cross-compile all platforms (nightly channel)
+        run: make release VERSION="${{ steps.ver.outputs.v }}" CHANNEL=nightly
+
+      - name: Checksums
+        run: cd dist && sha256sum kunai-* > checksums.txt && cat checksums.txt
+
+      - name: Refresh the moving nightly pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Recreate the release+tag at this commit so its assets and `name`
+          # (the build id) always reflect the newest nightly. The self-updater
+          # pulls by fixed URL, so a brief gap during recreate is harmless.
+          gh release delete nightly --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          gh release create nightly \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "${{ steps.ver.outputs.v }}" \
+            --prerelease \
+            --notes "Automated nightly build from the \`nightly\` branch. Not a stable release." \
+            dist/kunai-linux-amd64 dist/kunai-linux-arm64 \
+            dist/kunai-darwin-amd64 dist/kunai-darwin-arm64 \
+            dist/checksums.txt dist/install.sh

@@ -3,7 +3,10 @@
 VERSION   ?= $(shell git describe --tags --always 2>/dev/null || echo dev)
 PLATFORMS := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64
 HOST      ?= user@your-hub
-LDFLAGS   := -s -w -X 'github.com/hegade/kunai/internal/server.buildVersion=$(VERSION)'
+# CHANNEL is "stable" for tagged releases and "nightly" for the nightly channel;
+# it decides which release the self-updater pulls from at runtime.
+CHANNEL   ?= stable
+LDFLAGS   := -s -w -X 'github.com/hegade/kunai/internal/server.buildVersion=$(VERSION)' -X 'github.com/hegade/kunai/internal/server.buildChannel=$(CHANNEL)'
 
 .PHONY: build web bin release deploy test clean
 

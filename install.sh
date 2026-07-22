@@ -8,7 +8,11 @@
 # LaunchAgent on macOS), starts it, and prints the URL to open on your devices.
 #
 # Optional environment:
-#   KUNAI_PORT        listen port (default 8443)
+#   KUNAI_CHANNEL     "stable" (default) or "nightly". The nightly channel
+#                     installs a separate "kunai-nightly" service on its own port
+#                     (8444) and data dir (~/.kunai-nightly), so it runs ALONGSIDE
+#                     a stable install and self-updates from the nightly release.
+#   KUNAI_PORT        listen port (default 8443 stable, 8444 nightly)
 #   KUNAI_PUSH_EMAIL  contact email for Web Push (VAPID)
 #   KUNAI_HUB_URL     on a peer machine, the hub origin to forward push wake-ups
 #                     to (e.g. https://hub.tailnet.ts.net:8443)
@@ -58,8 +62,20 @@ ask() {
   case "$a" in y | Y | yes | YES | Yes) return 0 ;; *) return 1 ;; esac
 }
 
-PORT="${KUNAI_PORT:-8443}"
+# Channel: stable is the normal install; nightly is a parallel install with its
+# own name, port, and data dir so both run at once and never share state.
+CHANNEL="${KUNAI_CHANNEL:-stable}"
+NAME="kunai"
+LABEL="com.kunai.agent"
+DEF_PORT=8443
 DATA_DIR="$HOME/.kunai"
+if [ "$CHANNEL" = "nightly" ]; then
+  NAME="kunai-nightly"
+  LABEL="com.kunai.nightly"
+  DEF_PORT=8444
+  DATA_DIR="$HOME/.kunai-nightly"
+fi
+PORT="${KUNAI_PORT:-$DEF_PORT}"
 BIN_DIR="$HOME/.local/bin"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
@@ -203,7 +219,7 @@ if [ -n "$GO" ]; then
   say "building kunai..."
   VERSION="$(cd "$HERE" && git describe --tags --always 2>/dev/null || echo dev)"
   (cd "$HERE" && CGO_ENABLED=0 "$GO" build \
-    -ldflags="-s -w -X 'github.com/hegade/kunai/internal/server.buildVersion=$VERSION'" \
+    -ldflags="-s -w -X 'github.com/hegade/kunai/internal/server.buildVersion=$VERSION' -X 'github.com/hegade/kunai/internal/server.buildChannel=$CHANNEL'" \
     -o "$HERE/kunai" ./cmd/kunai)
   BIN="$HERE/kunai"
 fi
@@ -219,10 +235,14 @@ fi
 # wget only — no gh, git, or Go) and verify its sha256. This is what makes
 # `curl -fsSL .../install.sh | bash` work; re-running it later updates in place.
 if [ -z "$BIN" ]; then
-  REL="https://github.com/HEGADE/kunai/releases/latest/download"
+  if [ "$CHANNEL" = "nightly" ]; then
+    REL="https://github.com/HEGADE/kunai/releases/download/nightly"
+  else
+    REL="https://github.com/HEGADE/kunai/releases/latest/download"
+  fi
   out="$DATA_DIR/kunai-$PLAT"
   mkdir -p "$DATA_DIR"
-  say "${C_DIM}downloading prebuilt kunai ($PLAT) from the latest release...${C_RST}"
+  say "${C_DIM}downloading prebuilt kunai ($PLAT, $CHANNEL) ...${C_RST}"
   if dl_file "$REL/kunai-$PLAT" "$out"; then
     want="$(dl_stdout "$REL/checksums.txt" 2>/dev/null | awk -v f="kunai-$PLAT" '{n=$2; sub(/^\*/,"",n); if (n==f) print $1}' | head -1)"
     got="$(sha256_of "$out")"
@@ -232,7 +252,8 @@ if [ -z "$BIN" ]; then
     chmod +x "$out"; BIN="$out"
   elif command -v gh >/dev/null 2>&1; then
     say "${C_DIM}trying gh...${C_RST}"
-    gh release download -R HEGADE/kunai --pattern "kunai-$PLAT" -O "$out" --clobber \
+    GH_REL=""; [ "$CHANNEL" = "nightly" ] && GH_REL="nightly"
+    gh release download $GH_REL -R HEGADE/kunai --pattern "kunai-$PLAT" -O "$out" --clobber \
       && chmod +x "$out" && BIN="$out"
   fi
 fi
@@ -257,8 +278,8 @@ fi
 # --- install binary ----------------------------------------------------------
 
 mkdir -p "$BIN_DIR" "$DATA_DIR"
-install -m 0755 "$BIN" "$BIN_DIR/kunai.new"
-mv "$BIN_DIR/kunai.new" "$BIN_DIR/kunai"
+install -m 0755 "$BIN" "$BIN_DIR/$NAME.new"
+mv "$BIN_DIR/$NAME.new" "$BIN_DIR/$NAME"
 
 PUSH_ARG=""
 [ -n "${KUNAI_PUSH_EMAIL:-}" ] && PUSH_ARG="-push-email ${KUNAI_PUSH_EMAIL}"
@@ -277,14 +298,14 @@ if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
   UNIT_DIR="$HOME/.config/systemd/user"
   mkdir -p "$UNIT_DIR"
   CLAUDE_DIR="$(dirname "$CLAUDE_BIN")"
-  cat > "$UNIT_DIR/kunai.service" <<EOF
+  cat > "$UNIT_DIR/$NAME.service" <<EOF
 [Unit]
-Description=Kunai - self-hosted client for Claude Code
+Description=Kunai ($CHANNEL) - self-hosted client for Claude Code
 After=network-online.target tailscaled.service
 
 [Service]
 Environment=PATH=$CLAUDE_DIR:/usr/local/bin:/usr/bin:/bin
-ExecStart=$BIN_DIR/kunai -addr $TS_IP:$PORT -tls-cert $CRT -tls-key $KEY -data $DATA_DIR $IDENT_ARGS $PUSH_ARG
+ExecStart=$BIN_DIR/$NAME -addr $TS_IP:$PORT -tls-cert $CRT -tls-key $KEY -data $DATA_DIR $IDENT_ARGS $PUSH_ARG
 Restart=always
 RestartSec=2
 
@@ -295,16 +316,16 @@ EOF
   loginctl enable-linger "$USER" 2>/dev/null || sudo loginctl enable-linger "$USER" 2>/dev/null \
     || say "note: could not enable lingering; the service stops when you log out (sudo loginctl enable-linger $USER)"
   systemctl --user daemon-reload
-  systemctl --user enable --now kunai >/dev/null 2>&1 || systemctl --user restart kunai
+  systemctl --user enable --now "$NAME" >/dev/null 2>&1 || systemctl --user restart "$NAME"
   sleep 2
-  systemctl --user is-active --quiet kunai || {
-    journalctl --user -u kunai -n 10 --no-pager >&2 || true
+  systemctl --user is-active --quiet "$NAME" || {
+    journalctl --user -u "$NAME" -n 10 --no-pager >&2 || true
     fail "service failed to start (see log above)"
   }
 elif [ "$OS" = "darwin" ]; then
   # macOS: a launchd LaunchAgent is the systemd-user equivalent (auto-start,
   # keep-alive, survives reboot).
-  PLIST="$HOME/Library/LaunchAgents/com.kunai.agent.plist"
+  PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
   mkdir -p "$HOME/Library/LaunchAgents"
   CLAUDE_DIR="$(dirname "$CLAUDE_BIN")"
   ARGS=(-addr "$TS_IP:$PORT" -tls-cert "$CRT" -tls-key "$KEY" -data "$DATA_DIR" -public-url "$PUBLIC_URL")
@@ -314,9 +335,9 @@ elif [ "$OS" = "darwin" ]; then
     printf '<?xml version="1.0" encoding="UTF-8"?>\n'
     printf '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
     printf '<plist version="1.0"><dict>\n'
-    printf '  <key>Label</key><string>com.kunai.agent</string>\n'
+    printf '  <key>Label</key><string>%s</string>\n' "$LABEL"
     printf '  <key>ProgramArguments</key><array>\n'
-    printf '    <string>%s</string>\n' "$BIN_DIR/kunai"
+    printf '    <string>%s</string>\n' "$BIN_DIR/$NAME"
     for a in "${ARGS[@]}"; do printf '    <string>%s</string>\n' "$a"; done
     printf '  </array>\n'
     printf '  <key>EnvironmentVariables</key><dict><key>PATH</key><string>%s</string></dict>\n' "$CLAUDE_DIR:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin"
@@ -332,7 +353,7 @@ elif [ "$OS" = "darwin" ]; then
   # Readiness is confirmed by the shared health check below.
 else
   say "no service manager for this platform. Run manually:"
-  say "  $BIN_DIR/kunai -addr $TS_IP:$PORT -tls-cert $CRT -tls-key $KEY -data $DATA_DIR $IDENT_ARGS $PUSH_ARG"
+  say "  $BIN_DIR/$NAME -addr $TS_IP:$PORT -tls-cert $CRT -tls-key $KEY -data $DATA_DIR $IDENT_ARGS $PUSH_ARG"
 fi
 
 # --- thermal safety privileges (opt-in) ---------------------------------------
@@ -400,10 +421,10 @@ if command -v curl >/dev/null 2>&1; then
       say "  iPhone: open it in Safari, then Share > Add to Home Screen."
       say "  ${C_DIM}Update later: re-run this installer (it swaps the binary and restarts the service).${C_RST}"
       if [ "$OS" = "darwin" ]; then
-        say "  ${C_DIM}Manage: launchctl list | grep kunai; logs: $DATA_DIR/kunai.log${C_RST}"
-        say "  ${C_DIM}Stop:   launchctl unload ~/Library/LaunchAgents/com.kunai.agent.plist${C_RST}"
+        say "  ${C_DIM}Manage: launchctl list | grep $NAME; logs: $DATA_DIR/kunai.log${C_RST}"
+        say "  ${C_DIM}Stop:   launchctl unload ~/Library/LaunchAgents/$LABEL.plist${C_RST}"
       else
-        say "  ${C_DIM}Manage: systemctl --user status|restart kunai; logs: journalctl --user -u kunai -f${C_RST}"
+        say "  ${C_DIM}Manage: systemctl --user status|restart $NAME; logs: journalctl --user -u $NAME -f${C_RST}"
       fi
       exit 0
     fi
@@ -412,6 +433,6 @@ if command -v curl >/dev/null 2>&1; then
   if [ "$OS" = "darwin" ]; then
     fail "server did not answer at $URL/api/stats. Check: tail $DATA_DIR/kunai.log"
   fi
-  fail "server did not answer at $URL/api/stats. Check: journalctl --user -u kunai -n 20"
+  fail "server did not answer at $URL/api/stats. Check: journalctl --user -u $NAME -n 20"
 fi
 say "installed. Open $URL"

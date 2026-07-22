@@ -333,7 +333,9 @@ class AppStore {
     const now = Date.now()
     if (!force && now - this.lastVersionCheck < 60_000) return
     this.lastVersionCheck = now
-    const tag = await fetchLatestVersion()
+    // Check the channel this install belongs to (nightly has its own release).
+    const channel = this.machines.find((m) => m.self)?.stats?.channel ?? ''
+    const tag = await fetchLatestVersion(channel)
     if (tag) this.latestVersion = tag
   }
 
