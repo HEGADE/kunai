@@ -689,17 +689,22 @@ jumping to the end.
   resumed session (it reads `starting` until the first prompt and never carries
   a turn's numbers on reopen), so any label built on it kept lying. Left out
   until the server exposes a state a badge can trust.)
-- Open sessions live in a tab strip above the chat (`Tabs.svelte`), terminal-style.
-  Each tab keeps its own `ChatConnection` alive, not just the active one, so
-  switching is instant and every tab's dot reports that session's real state: a
-  tab is an agent that keeps working while you look at another one, so the strip
-  doubles as a status board (amber pulses when a session needs you). Closing a tab
-  only detaches the view; ending a session is a separate, explicit action.
+- Open sessions live in a tab strip (`Tabs.svelte`), terminal-style, rendered as
+  the **left of the header's top row** so the session actions ride the same line
+  to its right (Chat.svelte's `.toprow`); the path sits on a quieter second row
+  (`.pathrow`). Tabs is nested in the header rather than a sibling above it, which
+  is why Chat imports and renders it, not App. Each tab keeps its own
+  `ChatConnection` alive, not just the active one, so switching is instant and
+  every tab's dot reports that session's real state: a tab is an agent that keeps
+  working while you look at another one, so the strip doubles as a status board
+  (amber pulses when a session needs you). Closing a tab only detaches the view;
+  ending a session is a separate, explicit action.
 - The tab owns a session's name and status, so the chat header carries what the
   tab cannot: the cwd, as a muted mono path (rtl-ellipsis). Do not repeat the
   title or the status dot there.
-- The tab strip is the top of the session view, so **it** owns `--safe-top`; the
-  header must not inset again. Whatever is topmost carries the safe area.
+- The header's top row is the topmost chrome, so **it** owns `--safe-top` (a
+  phone's status bar); the tab strip inside it no longer insets, and nothing
+  below re-insets. Whatever is topmost carries the safe area.
 - Mono is the data voice, and it is what makes the chrome legible at a glance: the
   context meter (`Context.svelte`), the token split, the project card, and the
   composer's paths all read as data, not prose. Prose explains; mono states.

@@ -21,6 +21,7 @@
   import BlockView from './BlockView.svelte'
   import ScheduleAfter from './ScheduleAfter.svelte'
   import ToolGroup from './ToolGroup.svelte'
+  import Tabs from './Tabs.svelte'
   import TurnFooter from './TurnFooter.svelte'
   import TurnChanges from './TurnChanges.svelte'
 
@@ -257,27 +258,16 @@
 
 <div class="screen">
   <header>
-    <button class="hbtn back" onclick={() => app.back()} aria-label="Back">
-      <svg width="10" height="16" viewBox="0 0 10 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1L2 8l6 7" /></svg>
-    </button>
-    <button class="hbtn home deskonly" onclick={() => app.back()} aria-label="Home" title="Home">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5L12 3l9 7.5" /><path d="M5 9.5V20a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V9.5" /></svg>
-    </button>
-    <!-- The tab above owns this session's name and status, so the header carries
-         what the tab can't: where it is running. -->
-    <div class="htitle" title={chat.cwd}>
-      <span class="tpath mono">{chat.cwd}</span>
-      {#if chat.projects.length}
-        <button class="wspace" onclick={() => (addProjOpen = true)} title={chat.projects.map((p) => p.path).join('\n')}>
-          +{chat.projects.length} project{chat.projects.length > 1 ? 's' : ''}
-        </button>
-      {/if}
-    </div>
-    <!-- The session's actions, one tap each instead of buried in a menu. Each
-         carries a label (desktop) and its own colour so loop and schedule read
-         at a glance; a phone drops to coloured icons to fit beside the path.
-         Close is icon-only and alert-red so a terminal action stands apart. -->
-    <div class="actions">
+    <!-- Row 1: the open sessions (Tabs) on the left, the session's actions on the
+         right, so the actions ride the tab line instead of taking a row of their
+         own. -->
+    <div class="toprow">
+      <Tabs />
+      <!-- The session's actions, one tap each instead of buried in a menu. Each
+           carries a label (desktop) and its own colour so loop and schedule read
+           at a glance; a phone drops to coloured icons. Close is icon-only and
+           alert-red, set apart by a hairline, so a terminal action stands out. -->
+      <div class="actions">
       <button class="abtn add" onclick={() => (addProjOpen = true)} aria-label="Add project" title="Add another project to this session">
         <span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /><path d="M12 11v4M10 13h4" /></svg></span>
         <span class="albl">Add project</span>
@@ -301,6 +291,25 @@
       <button class="abtn close" onclick={() => app.closeSessionActive()} aria-label="Close session" title="Close this session">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v8" /><path d="M18 7.5a8 8 0 11-12 0" /></svg>
       </button>
+      </div>
+    </div>
+    <!-- Row 2: where the session runs. The tab owns its name and status, so the
+         header carries what the tab can't: the cwd. -->
+    <div class="pathrow">
+      <button class="hbtn back" onclick={() => app.back()} aria-label="Back">
+        <svg width="10" height="16" viewBox="0 0 10 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1L2 8l6 7" /></svg>
+      </button>
+      <button class="hbtn home deskonly" onclick={() => app.back()} aria-label="Home" title="Home">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5L12 3l9 7.5" /><path d="M5 9.5V20a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V9.5" /></svg>
+      </button>
+      <div class="htitle" title={chat.cwd}>
+        <span class="tpath mono">{chat.cwd}</span>
+        {#if chat.projects.length}
+          <button class="wspace" onclick={() => (addProjOpen = true)} title={chat.projects.map((p) => p.path).join('\n')}>
+            +{chat.projects.length} project{chat.projects.length > 1 ? 's' : ''}
+          </button>
+        {/if}
+      </div>
     </div>
   </header>
 
@@ -590,13 +599,23 @@
   }
   header {
     position: relative;
+    background: transparent;
+  }
+  /* Row 1 holds the tabs and the actions on one line; it is the topmost chrome,
+     so it owns the safe area (a phone's status bar). The tab strip flexes to
+     fill and scrolls; the actions stay pinned right. */
+  .toprow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: calc(var(--safe-top) + 6px) 12px 0 10px;
+  }
+  /* Row 2 is just the path (and the back/home button), short and quiet. */
+  .pathrow {
     display: flex;
     align-items: center;
     gap: 6px;
-    /* Short and tight: the tab strip above already clears the status bar, so the
-       header only needs breathing room, not a band. */
-    padding: 4px 12px 6px;
-    background: transparent;
+    padding: 3px 12px 6px 10px;
   }
   /* The divider the header sits on: a hairline that fades at both ends, so the
      compact chrome reads as a seam over the canvas rather than a hard rule. */
@@ -615,8 +634,8 @@
      row reads as the path plus a few quiet actions rather than a toolbar. */
   .hbtn {
     flex: none;
-    width: 28px;
-    height: 28px;
+    width: 26px;
+    height: 26px;
     border-radius: 8px;
     background: none;
     border: 1px solid transparent;

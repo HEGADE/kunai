@@ -2,7 +2,6 @@
   import { onMount } from 'svelte'
   import { app } from './lib/app.svelte'
   import Sidebar from './components/Sidebar.svelte'
-  import Tabs from './components/Tabs.svelte'
   import Chat from './components/Chat.svelte'
   import Home from './components/Home.svelte'
   import NewSession from './components/NewSession.svelte'
@@ -26,7 +25,6 @@
   <aside class="sidebar"><Sidebar /></aside>
   <main class="main">
     {#if app.chat}
-      <Tabs />
       <div class="pane"><Chat chat={app.chat} /></div>
     {:else}
       <button class="rail-toggle" onclick={() => app.toggleSidebar()} aria-label="Toggle sidebar" title="Toggle sidebar">
