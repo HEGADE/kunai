@@ -158,9 +158,14 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   the authorize URL carried. This preserves the promise: the account owner
   authenticates in **their own browser** (credentials never leave it), only the
   code crosses to the machine running the CLI, and the localhost hop is local to
-  that machine, so the two people can be on different networks. NOT verified
-  against a real 2.1.217 login end to end (each piece is unit-tested; the CLI's
-  loopback-server behaviour is assumed from the flow it prints). A loopback login
+  that machine, so the two people can be on different networks. Confirmed against
+  a real 2.1.217 login end to end (a shared account added on another person's Mac
+  whose CLI produced the loopback flow), on top of the unit tests for each piece.
+  Why one CLI emits loopback and another paste-code for the same version and
+  command is still unexplained: there is no login flag to force paste-code
+  (`--claudeai`/`--console`/`--email`/`--sso` are the only ones), so the flow is
+  the CLI's own environment-dependent choice, and kunai handles both rather than
+  trying to steer it. A loopback login
   can also finish with **no paste at all**: if the browser is on this machine it
   hits the CLI's localhost callback directly and the CLI exits. So a single
   `watch` goroutine per flow owns the PTY, waits for the CLI to exit, and
