@@ -285,3 +285,63 @@ func TestCopyFileEmptySource(t *testing.T) {
 		t.Fatal("temp file left behind")
 	}
 }
+
+// The captured tail is the whole point of the diagnostic, and it is also where a
+// secret would leak. These prove it reports what the CLI said and redacts what
+// it must, without spawning a real login.
+
+func TestPTYTailRedactsCodeAndTokens(t *testing.T) {
+	tail := &ptyTail{}
+	tail.hide("ABC-secret-code-123")
+	// A TUI paints escape codes; the exchange echoes token-shaped strings.
+	tail.Write([]byte("\x1b[2J\x1b[HPaste code here: ABC-secret-code-123\r\n"))
+	tail.Write([]byte("saving token sk-ant-abcdefghijklmnopqrstuvwxyz012345\r\n"))
+
+	got := tail.text()
+	if strings.Contains(got, "ABC-secret-code-123") {
+		t.Fatalf("the pasted code survived into the tail: %q", got)
+	}
+	if strings.Contains(got, "sk-ant-abcdefghijklmnopqrstuvwxyz012345") {
+		t.Fatalf("a token-shaped string was not redacted: %q", got)
+	}
+	if strings.Contains(got, "\x1b") {
+		t.Errorf("escape sequences were not stripped: %q", got)
+	}
+	// The human-readable prompt should survive, so the report is actually useful.
+	if !strings.Contains(got, "Paste code here") {
+		t.Errorf("useful text was lost: %q", got)
+	}
+}
+
+// A login that hangs having printed nothing is the macOS Keychain case: the
+// report must say so rather than showing an empty quote.
+func TestWithTailNamesTheSilentHang(t *testing.T) {
+	err := withTail("the login timed out", &ptyTail{})
+	if !strings.Contains(err.Error(), "Keychain") {
+		t.Fatalf("a silent hang should point at the out-of-band prompt, got %q", err)
+	}
+}
+
+// When the CLI did say something, the error carries it.
+func TestWithTailQuotesTheCLI(t *testing.T) {
+	tail := &ptyTail{}
+	tail.Write([]byte("Error: unable to reach authentication server\r\n"))
+	err := withTail("the login timed out", tail)
+	if !strings.Contains(err.Error(), "unable to reach authentication server") {
+		t.Fatalf("the CLI's message was not surfaced: %q", err)
+	}
+}
+
+// Only the tail is kept, so a long-running TUI can't grow memory without bound.
+func TestPTYTailIsBounded(t *testing.T) {
+	tail := &ptyTail{}
+	for i := 0; i < 100; i++ {
+		tail.Write([]byte(strings.Repeat("x", 1000)))
+	}
+	tail.mu.Lock()
+	n := len(tail.buf)
+	tail.mu.Unlock()
+	if n > ptyTailMax {
+		t.Fatalf("buffer grew to %d, past the %d cap", n, ptyTailMax)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -49,6 +50,7 @@ type loginFlow struct {
 	dir     string
 	cmd     *exec.Cmd
 	tty     *os.File
+	tail    *ptyTail // the CLI's terminal output, for reporting a hang
 	started time.Time
 }
 
@@ -99,16 +101,17 @@ func (m *loginManager) start(ctx context.Context, name string) (id, url, dir str
 		return "", "", "", fmt.Errorf("could not start the login: %w", err)
 	}
 
-	url, err = readOAuthURL(tty, loginURLTimeout)
+	tail := &ptyTail{}
+	url, err = readOAuthURL(tty, tail, loginURLTimeout)
 	if err != nil {
 		_ = cmd.Process.Kill()
 		_ = tty.Close()
-		return "", "", "", err
+		return "", "", "", withTail(err.Error(), tail)
 	}
 
 	id, _ = newSessionID() // an opaque handle for this flow; uniqueness is all that matters
 	m.mu.Lock()
-	m.flows[id] = &loginFlow{id: id, name: name, dir: dir, cmd: cmd, tty: tty, started: time.Now()}
+	m.flows[id] = &loginFlow{id: id, name: name, dir: dir, cmd: cmd, tty: tty, tail: tail, started: time.Now()}
 	m.mu.Unlock()
 	return id, url, dir, nil
 }
@@ -126,25 +129,29 @@ func (m *loginManager) finish(id, code string) (CLIProfile, error) {
 	}
 	defer f.tty.Close()
 
+	// The code is about to be typed into the PTY, so register it for redaction
+	// before it can be echoed into the captured output.
+	f.tail.hide(code)
 	if _, err := f.tty.Write([]byte(strings.TrimSpace(code) + "\n")); err != nil {
 		_ = f.cmd.Process.Kill()
 		return CLIProfile{}, fmt.Errorf("could not submit the code: %w", err)
 	}
-	// Drain the PTY so the CLI isn't blocked writing, and let it exit.
+	// Keep draining the PTY into the tail so the CLI isn't blocked writing, and
+	// whatever it says on the way out is captured for a hang report.
 	done := make(chan error, 1)
 	go func() {
-		_, _ = drain(f.tty)
+		_, _ = io.Copy(f.tail, f.tty)
 		done <- f.cmd.Wait()
 	}()
 	select {
 	case <-done:
 	case <-time.After(loginDoneTimeout):
 		_ = f.cmd.Process.Kill()
-		return CLIProfile{}, fmt.Errorf("the login timed out; try again")
+		return CLIProfile{}, withTail("the login timed out", f.tail)
 	}
 
 	if ok, why := authStatus(m.bin, f.dir); !ok {
-		return CLIProfile{}, fmt.Errorf("the code was accepted but the account is not signed in: %s", why)
+		return CLIProfile{}, withTail("the code was accepted but the account is not signed in: "+why, f.tail)
 	}
 	return CLIProfile{Name: f.name, Bin: m.bin, Dir: f.dir}, nil
 }
@@ -177,7 +184,7 @@ func (m *loginManager) sweep() {
 
 // readOAuthURL reads the PTY until the CLI prints its authorize URL or the timeout
 // hits, whichever comes first.
-func readOAuthURL(tty *os.File, timeout time.Duration) (string, error) {
+func readOAuthURL(tty *os.File, tail *ptyTail, timeout time.Duration) (string, error) {
 	type res struct {
 		url string
 		err error
@@ -190,6 +197,7 @@ func readOAuthURL(tty *os.File, timeout time.Duration) (string, error) {
 			n, err := tty.Read(chunk)
 			if n > 0 {
 				buf.Write(chunk[:n])
+				_, _ = tail.Write(chunk[:n]) // capture for a hang report
 				// Accept a match only once a byte follows it (loc[1] < len), which
 				// means the URL terminated at an escape/space and wasn't cut off by
 				// a mid-read buffer boundary.
@@ -223,6 +231,101 @@ func drain(r *os.File) (int64, error) {
 			return total, err
 		}
 	}
+}
+
+// ptyTail captures the tail of a login subprocess's terminal output, so a hang
+// or a failure can report what the CLI was actually doing instead of a generic
+// "the login timed out". Discarding that output was the real bug in diagnosing a
+// stuck login: the CLI usually says what is wrong, and we were deleting it.
+//
+// It is bounded and redacted, because the login carries an OAuth code and can
+// echo credential material, none of which may reach a log or a toast. Even an
+// EMPTY tail is a finding: a login that hangs having printed nothing is blocked
+// on something out of band (a macOS Keychain unlock dialog a headless launchd
+// process can never answer), which no text error would ever show.
+type ptyTail struct {
+	mu      sync.Mutex
+	buf     []byte
+	secrets []string // literals to strip (the pasted code)
+}
+
+const ptyTailMax = 4096 // keep only the last few KB; the tail is what matters
+
+func (t *ptyTail) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > ptyTailMax {
+		t.buf = t.buf[len(t.buf)-ptyTailMax:]
+	}
+	t.mu.Unlock()
+	return len(p), nil
+}
+
+// hide registers a literal to strip from the captured text: the pasted code, so
+// it never survives into a log even though it was typed into the PTY.
+func (t *ptyTail) hide(s string) {
+	if s = strings.TrimSpace(s); len(s) >= 6 {
+		t.mu.Lock()
+		t.secrets = append(t.secrets, s)
+		t.mu.Unlock()
+	}
+}
+
+var (
+	ansiSeq  = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+	tokenish = regexp.MustCompile(`[A-Za-z0-9_\-]{24,}`) // strip anything token-shaped
+)
+
+// text renders the captured tail as printable, redacted, single-spaced prose
+// fit for a log line or a toast. Empty means the CLI printed nothing capturable.
+func (t *ptyTail) text() string {
+	t.mu.Lock()
+	raw := string(t.buf)
+	secrets := append([]string(nil), t.secrets...)
+	t.mu.Unlock()
+
+	s := ansiSeq.ReplaceAllString(raw, "")
+	s = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' || r >= 0x20 {
+			return r
+		}
+		return -1
+	}, s)
+	for _, sec := range secrets {
+		s = strings.ReplaceAll(s, sec, "<code>")
+	}
+	s = tokenish.ReplaceAllString(s, "<redacted>")
+
+	var lines []string
+	for _, ln := range strings.Split(s, "\n") {
+		if ln = strings.TrimRight(ln, " \t\r"); ln != "" {
+			lines = append(lines, ln)
+		}
+	}
+	out := strings.Join(lines, " | ")
+	if len(out) > 600 {
+		out = "…" + out[len(out)-600:]
+	}
+	return out
+}
+
+// withTail folds the captured CLI output into an error, so the failure carries
+// what the CLI said rather than only that it failed. A silent tail is reported
+// as such, because "hung having printed nothing" is itself the diagnosis.
+func withTail(msg string, t *ptyTail) error {
+	tail := t.text()
+	log.Printf("account login: %s; cli output: %s", msg, tailForLog(tail))
+	if tail == "" {
+		return fmt.Errorf("%s. The CLI printed nothing before it stalled, which usually means it is waiting on a system prompt (on macOS, a Keychain unlock) that a background service cannot answer.", msg)
+	}
+	return fmt.Errorf("%s. The CLI last said: %s", msg, tail)
+}
+
+func tailForLog(tail string) string {
+	if tail == "" {
+		return "(none)"
+	}
+	return tail
 }
 
 // authStatusCache memoises signed-in checks briefly. Each check shells the CLI

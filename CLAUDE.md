@@ -138,6 +138,14 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   can't truncate it), streams the one pasted code in, and verifies with
   `auth status --json` before saving the profile to `clis.json`. `login/start`
   returns the URL, `login/finish` the code; abandoned flows are swept on a TTL.
+  When a login **hangs** (the CLI never exits after the code, the `loginDoneTimeout`
+  case), the failure carries what the CLI was doing instead of a generic timeout:
+  `ptyTail` keeps a bounded, redacted capture of the CLI's terminal output (the
+  pasted code and anything token-shaped are stripped) and folds it into the error
+  and the log. A **silent** tail is itself the diagnosis and says so: a login that
+  hangs having printed nothing is blocked on an out-of-band prompt, on macOS a
+  Keychain unlock a headless launchd service cannot answer. Discarding this output
+  (the old `drain`) was the real gap in diagnosing a stuck login.
   The client surface is `Accounts.svelte` (a dedicated view off the sidebar, NOT in
   Settings): lists accounts with signed-in status and a two-step add flow (name ->
   open link + paste code). Nothing but the URL out and the code in ever crosses
