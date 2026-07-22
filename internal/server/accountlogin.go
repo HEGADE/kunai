@@ -823,7 +823,9 @@ func (s *Server) handleSetAccount(w http.ResponseWriter, r *http.Request) {
 	// the respawn is async. Checking here refuses cleanly and leaves the current
 	// session running untouched. This shells `auth status` once (~1s), the price of
 	// a deliberate switch, not a per-turn cost.
-	if !authOK(target.Bin, target.configDir()) {
+	// A proxy provider has no OAuth login in a config dir -- the token in its env
+	// is the whole auth -- so the sign-in preflight does not apply to it.
+	if !isProxyProfile(target) && !authOK(target.Bin, target.configDir()) {
 		writeErr(w, http.StatusConflict, "The "+target.Name+" account is signed out. Add it again from Accounts, then switch.")
 		return
 	}

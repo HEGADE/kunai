@@ -301,6 +301,12 @@
       </span>
       Accounts
     </button>
+    <button class="navitem" onclick={() => app.openProviders()}>
+      <span class="ic">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /></svg>
+      </span>
+      Providers
+    </button>
     <button class="navitem" onclick={() => app.openSettings()}>
       <span class="ic">{@render gear()}</span>
       Settings

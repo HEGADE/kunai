@@ -62,6 +62,16 @@ export interface CLIProfile {
   dir?: string // the account's Claude config folder (what separates two logins)
 }
 
+// A proxy-backed model source (Codex/Grok/Kimi via a local CLIProxyAPI). It runs
+// the same `claude` agent pointed at the proxy; only the model behind it changes.
+// Mirrors the Go Provider struct.
+export interface Provider {
+  name: string
+  base_url: string // ANTHROPIC_BASE_URL, e.g. http://127.0.0.1:8317
+  token: string // ANTHROPIC_AUTH_TOKEN (the proxy's key; often a dummy)
+  models?: Record<string, string> // slot (opus|sonnet|haiku) -> upstream model string
+}
+
 // The thermal safety guard's policy, mirroring the Go guardConfig.
 export interface ThermalConfig {
   enabled: boolean

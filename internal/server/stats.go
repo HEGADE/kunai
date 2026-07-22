@@ -95,8 +95,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	st.ThermalHardC, st.ThermalAction = gc.HardC, gc.Action
 	st.KeepLid, st.KeepLidSupp = s.lid.Enabled(), s.lid.Supported()
 	st.ThermalPrivileged = thermalPrivileged()
-	if len(s.clis) > 1 {
-		st.CLIs = s.cliNames() // only worth sending when there is a real choice
+	if names := s.cliNames(); len(names) > 1 {
+		st.CLIs = names // only worth sending when there is a real choice (accounts + providers)
 	}
 	writeJSON(w, http.StatusOK, st)
 }

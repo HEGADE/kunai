@@ -1,4 +1,4 @@
-import type { AccountInfo, ChannelInfo, Attachment, CLIProfile, HistoryEntry, Job, Listing, MachineInfo, Meta, OlderTurns, Stats, ThermalConfig, Usage } from './types'
+import type { AccountInfo, ChannelInfo, Attachment, CLIProfile, HistoryEntry, Job, Listing, MachineInfo, Meta, OlderTurns, Provider, Stats, ThermalConfig, Usage } from './types'
 
 // Every call takes a `base` origin so the client can reach any machine directly
 // over the tailnet. base === '' means the current origin (the hub), so the hub's
@@ -217,6 +217,27 @@ export function setCLIs(base: string, clis: CLIProfile[]): Promise<CLIProfile[]>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(clis),
   }).then((r) => json<CLIProfile[]>(r))
+}
+
+// getProviders / saveProvider / removeProvider manage a machine's proxy-backed
+// model sources (Codex/Grok/Kimi via a local CLIProxyAPI). Machine-local, like
+// clis; saving one upserts by name and creates its config dir server-side.
+export function getProviders(base: string): Promise<Provider[]> {
+  return fetch(at(base, '/api/providers')).then((r) => json<Provider[]>(r))
+}
+export function saveProvider(base: string, p: Provider): Promise<Provider> {
+  return fetch(at(base, '/api/providers'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(p),
+  }).then((r) => json<Provider>(r))
+}
+export function removeProvider(base: string, name: string): Promise<void> {
+  return fetch(at(base, `/api/providers/${encodeURIComponent(name)}`), { method: 'DELETE' }).then(
+    (r) => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    },
+  )
 }
 
 // updateMachine tells a machine to self-update: it downloads the latest release

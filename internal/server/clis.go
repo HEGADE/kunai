@@ -106,15 +106,27 @@ func (s *Server) resolveCLI(name string) CLIProfile {
 			return c
 		}
 	}
+	// Accounts win over providers on a name clash (handleProviders refuses to
+	// create such a clash), so providers are only consulted after the accounts.
+	for _, p := range s.providerList() {
+		if p.Name == name {
+			return p.profile(s.cfg.DataDir)
+		}
+	}
 	return list[0]
 }
 
-// cliNames lists the profile names for the client's picker, in config order.
+// cliNames lists the names the client's picker offers, accounts first (config
+// order) then providers, so the default stays the first account.
 func (s *Server) cliNames() []string {
 	list := s.cliList()
-	names := make([]string, 0, len(list))
+	provs := s.providerList()
+	names := make([]string, 0, len(list)+len(provs))
 	for _, c := range list {
 		names = append(names, c.Name)
+	}
+	for _, p := range provs {
+		names = append(names, p.Name)
 	}
 	return names
 }
@@ -174,13 +186,21 @@ type accountRoot struct {
 func (s *Server) accountRoots() []accountRoot {
 	seen := map[string]bool{}
 	var roots []accountRoot
-	for _, c := range s.cliList() {
-		root := claudeRoot(c.configDir())
+	add := func(name, cfgDir string) {
+		root := claudeRoot(cfgDir)
 		if seen[root] {
-			continue
+			return
 		}
 		seen[root] = true
-		roots = append(roots, accountRoot{name: c.Name, root: root})
+		roots = append(roots, accountRoot{name: name, root: root})
+	}
+	for _, c := range s.cliList() {
+		add(c.Name, c.configDir())
+	}
+	// A proxy provider keeps its transcripts in its own config dir too, so the
+	// Recent list finds sessions run on it.
+	for _, p := range s.providerList() {
+		add(p.Name, p.profile(s.cfg.DataDir).configDir())
 	}
 	if def := claudeRoot(""); !seen[def] {
 		roots = append(roots, accountRoot{name: "", root: def})

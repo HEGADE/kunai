@@ -7,6 +7,7 @@
   import NewSession from './components/NewSession.svelte'
   import Settings from './components/Settings.svelte'
   import Accounts from './components/Accounts.svelte'
+  import Providers from './components/Providers.svelte'
   import Channels from './components/Channels.svelte'
   import AllSessions from './components/AllSessions.svelte'
 
@@ -51,6 +52,9 @@
 {/if}
 {#if app.showAccounts}
   <Accounts />
+{/if}
+{#if app.showProviders}
+  <Providers />
 {/if}
 {#if app.showAllSessions}
   <AllSessions />

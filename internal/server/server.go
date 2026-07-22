@@ -80,6 +80,7 @@ type Server struct {
 	guardian    *guardian           // whole-machine thermal safety net
 	clis        []CLIProfile        // named Claude CLIs (accounts) a session can run on
 	clisMu      sync.RWMutex        // guards clis, which the Accounts settings edit live
+	providers   *providerStore      // proxy-backed model sources (Codex/Grok/Kimi via CLIProxyAPI)
 	usage       *usageCache         // the default account's subscription quota windows
 	sessionMeta *sessionMetaStore   // per-session pins and renames (nil without a data dir)
 	login       *loginManager       // in-app account login flows (nil without a data dir)
@@ -114,6 +115,9 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	s.guardian.releaseLid = func() { _ = s.lid.Set(false) }
 	s.loadThermal() // a persisted policy overrides the flag defaults
 	s.clis = loadCLIs(cfg.DataDir)
+	// Providers must exist before the first resolveCLI call below (the login
+	// manager resolves the default binary), since resolveCLI now consults them.
+	s.providers = newProviderStore(filepath.Join(cfg.DataDir, "providers.json"))
 	s.sched = schedule.New(filepath.Join(cfg.DataDir, "schedule.json"), s.fireJob)
 	if cfg.DataDir != "" {
 		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))
@@ -175,6 +179,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/thermal", s.handleThermal)
 	mux.HandleFunc("GET /api/clis", s.handleCLIs)
 	mux.HandleFunc("POST /api/clis", s.handleCLIs)
+	mux.HandleFunc("GET /api/providers", s.handleProviders)
+	mux.HandleFunc("POST /api/providers", s.handleProviders)
+	mux.HandleFunc("DELETE /api/providers/{name}", s.handleDeleteProvider)
 	mux.HandleFunc("GET /api/channels", s.handleChannels)
 	mux.HandleFunc("POST /api/channels/{id}", s.handleChannelUpdate)
 	mux.HandleFunc("POST /api/channels/{id}/requests/{code}", s.handleChannelApprove)
