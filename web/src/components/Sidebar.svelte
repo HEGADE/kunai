@@ -8,6 +8,11 @@
   import Home from './Home.svelte'
   import SessionMenu from './SessionMenu.svelte'
 
+  // The nightly channel gets a night-sky header, so you can tell a nightly build
+  // from a stable one at a glance. This is the one place the "no gradients" rule
+  // is broken, and only when the build serving the app is nightly.
+  const nightly = $derived(app.machines.find((m) => m.self)?.stats?.channel === 'nightly')
+
   let notif = $state(pushState())
   let notifHint = $state('')
   let resuming = $state('')
@@ -168,7 +173,7 @@
 {/snippet}
 
 <div class="sb">
-  <header>
+  <header class:nightly>
     <Wordmark size={17} />
     <div class="actions">
       <button
@@ -331,6 +336,23 @@
     align-items: center;
     justify-content: space-between;
     padding: calc(var(--safe-top) + 18px) 20px 14px;
+  }
+  /* Nightly channel only: a night-sky header so a nightly build is obvious at a
+     glance. Stars and the purple gradient are stacked background layers (first is
+     topmost), so they sit behind the wordmark and buttons with no z-index work.
+     This is the single deliberate exception to the no-gradients rule. */
+  header.nightly {
+    background-image:
+      radial-gradient(1.2px 1.2px at 18% 34%, rgba(255, 255, 255, 0.85), transparent 60%),
+      radial-gradient(1px 1px at 40% 20%, rgba(255, 255, 255, 0.6), transparent 60%),
+      radial-gradient(1.3px 1.3px at 63% 44%, rgba(255, 255, 255, 0.8), transparent 60%),
+      radial-gradient(1px 1px at 82% 26%, rgba(255, 255, 255, 0.55), transparent 60%),
+      radial-gradient(1px 1px at 52% 66%, rgba(255, 255, 255, 0.5), transparent 60%),
+      radial-gradient(1px 1px at 30% 72%, rgba(255, 255, 255, 0.5), transparent 60%),
+      radial-gradient(1.4px 1.4px at 90% 58%, rgba(255, 255, 255, 0.7), transparent 60%),
+      radial-gradient(1px 1px at 9% 60%, rgba(255, 255, 255, 0.45), transparent 60%),
+      radial-gradient(130% 100% at 25% -35%, #3a2f6e 0%, #241d49 45%, transparent 80%),
+      linear-gradient(180deg, #1d1739 0%, transparent 100%);
   }
   .actions {
     display: flex;
