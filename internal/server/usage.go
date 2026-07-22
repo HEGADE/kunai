@@ -311,10 +311,20 @@ func (s *Server) feedSchedulerResets(ctx context.Context) {
 // real choice if you can see whether the work account has room.
 func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	p := s.resolveCLI(r.URL.Query().Get("cli"))
-	// A proxy provider has no Anthropic subscription window to report, and shelling
-	// `/usage` against the proxy would only burn ~2s and leave a stray transcript.
+	// A proxy provider has no Anthropic subscription window, and shelling `/usage`
+	// against the proxy would only burn ~2s and leave a stray transcript. For a
+	// Codex provider, though, the ChatGPT account has real quota windows we can
+	// read from OpenAI's usage endpoint; other providers stay unavailable.
 	if isProxyProfile(p) {
-		writeJSON(w, http.StatusOK, map[string]any{"unavailable": "usage is not tracked for proxy providers", "cli": p.Name})
+		if prov := s.providerNamed(p.Name); prov != nil && isCodexModel(providerDisplayModel(*prov)) {
+			if u := s.codexUC.get(r.Context(), s.cfg.DataDir); u != nil {
+				out := *u
+				out.CLI = p.Name
+				writeJSON(w, http.StatusOK, out)
+				return
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"unavailable": "usage not available for this provider", "cli": p.Name})
 		return
 	}
 	usage, err := s.usage.get(r.Context(), p, s.cfg.DataDir)

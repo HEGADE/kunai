@@ -249,11 +249,20 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   credential with no restart. The composer shows a provider session's real model
   (from `/api/stats` `provider_models`) and lets you switch it
   (`/api/sessions/{id}/provider-model` updates the mapping and respawns), since
-  the Claude-tier picker is meaningless there. Confirmed end to end on Codex
-  (login, session, model switch, account switch) by an automated Playwright pass,
-  which also caught the `send on closed channel` respawn crash fixed in
-  `driver.go`. **Tested for Codex only; Grok and Kimi ride the same path but are
-  unverified.**
+  the Claude-tier picker is meaningless there. `codexusage.go` puts a Codex
+  provider's ChatGPT quota on the dashboard, the same two numbers Claude shows:
+  the proxy exposes no rate-limit info and there is no `codex /usage` to shell, so
+  kunai reads the account's OAuth token (the managed sidecar's own, kept fresh by
+  the sidecar, else `~/.codex/auth.json`) and calls ChatGPT's `wham/usage` backend
+  endpoint, the one CodexBar reads. This is the single place kunai reads a login it
+  otherwise only shells, and it is read-only, only to show a number. The windows
+  are placed by length, not a fixed 5h/7d, because a plan varies (a ChatGPT Go plan
+  has one ~30-day window); a short one is the session row, a long one the weekly
+  row, so the reset time is always honest. Confirmed end to end on Codex (login,
+  session, model switch, account switch, and a real 17% quota reading) by an
+  automated Playwright pass, which also caught the `send on closed channel`
+  respawn crash fixed in `driver.go`. **Tested for Codex only; Grok and Kimi ride
+  the same path but are unverified.**
 - `internal/project`: reads a directory into the description a session hands a model
   (`Scan` -> `Info`, `Info.Brief()`): layout, language mix, git head from `.git`,
   the files that name it. It never opens the code, and the walk skips `.git`,
