@@ -283,6 +283,14 @@
        so the chrome is a single 40px row. It is the topmost element, so it owns
        the phone safe-area. -->
   <header>
+    {#if !app.sidebarOpen}
+      <!-- The only way back to an open sidebar once it is collapsed: the
+           dashboard's rail toggle is not on screen while a chat is up. Desktop
+           only (the phone sidebar is not collapsible). -->
+      <button class="hbtn rail deskonly" onclick={() => app.toggleSidebar()} aria-label="Show sidebar" title="Show sidebar">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M9.5 4v16" /></svg>
+      </button>
+    {/if}
     <button class="hbtn back" onclick={() => app.back()} aria-label="Back">
       <svg width="10" height="16" viewBox="0 0 10 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1L2 8l6 7" /></svg>
     </button>
