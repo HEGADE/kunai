@@ -248,6 +248,11 @@ func (s *Server) handleProviderLoginStart(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	// The login runs the proxy binary against the sidecar's config, so the sidecar
+	// (and thus its config.yaml + auth dir) must exist first. Starting it here also
+	// means it is already watching the auth dir when the login writes the new
+	// credential, so it is served with no restart. Safe to call repeatedly.
+	s.ensureCLIProxy()
 	id, url, err := s.cliproxyLogin.start(req.Provider)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
