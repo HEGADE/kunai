@@ -133,22 +133,46 @@ func (lm *cliproxyLoginManager) start(provider string) (id, authURL string, err 
 	}
 	f := &cliproxyLogin{id: randID(), provider: provider, stdin: stdin, cancel: cancel}
 
+	// Keep a bounded copy of what the login process printed, so a failure to
+	// produce a URL can report why (e.g. macOS killing an unsigned binary) rather
+	// than a bare timeout.
+	var outMu sync.Mutex
+	var out strings.Builder
 	urlCh := make(chan string, 1)
 	go func() {
 		sc := bufio.NewScanner(stdout)
 		sc.Buffer(make([]byte, 64*1024), 1<<20)
 		sent := false
 		for sc.Scan() {
-			if sent {
-				continue // keep draining so the process never blocks on a full pipe
+			line := sc.Text()
+			outMu.Lock()
+			if out.Len() < 4096 {
+				out.WriteString(line + "\n")
 			}
-			if u := cliproxyURLRe.FindString(sc.Text()); u != "" {
-				sent = true
-				urlCh <- u
+			outMu.Unlock()
+			if !sent {
+				if u := cliproxyURLRe.FindString(line); u != "" {
+					sent = true
+					urlCh <- u
+				}
 			}
 		}
 	}()
-	go func() { f.settle(cmd.Wait()) }() // the login process exiting settles the flow
+	died := make(chan struct{})
+	go func() { f.settle(cmd.Wait()); close(died) }() // login process exit settles the flow
+
+	tail := func() string {
+		outMu.Lock()
+		defer outMu.Unlock()
+		s := strings.TrimSpace(out.String())
+		if s == "" {
+			return "it printed nothing (the proxy binary may have failed to start)"
+		}
+		if len(s) > 400 {
+			s = s[len(s)-400:]
+		}
+		return s
+	}
 
 	select {
 	case u := <-urlCh:
@@ -158,9 +182,11 @@ func (lm *cliproxyLoginManager) start(provider string) (id, authURL string, err 
 		lm.flows[f.id] = f
 		lm.mu.Unlock()
 		return f.id, u, nil
+	case <-died:
+		return "", "", fmt.Errorf("the %s login exited before a sign-in URL: %s", provider, tail())
 	case <-time.After(25 * time.Second):
 		cancel()
-		return "", "", fmt.Errorf("the %s login did not produce a sign-in URL", provider)
+		return "", "", fmt.Errorf("the %s login produced no sign-in URL in time: %s", provider, tail())
 	}
 }
 

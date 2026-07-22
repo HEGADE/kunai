@@ -139,7 +139,7 @@ func (m *cliproxyManager) isRunning() bool {
 // is not already present. It is safe to call repeatedly.
 func (m *cliproxyManager) ensureBinary(ctx context.Context) error {
 	if _, err := os.Stat(m.binPath()); err == nil {
-		return nil
+		return m.hardenBinary() // already downloaded; still make sure it can run
 	}
 	asset, ok := assetFor(runtime.GOOS, runtime.GOARCH)
 	if !ok {
@@ -179,7 +179,25 @@ func (m *cliproxyManager) ensureBinary(ctx context.Context) error {
 	if err := extractBinary(tmp.Name(), "cli-proxy-api", m.binPath()); err != nil {
 		return err
 	}
-	return os.Chmod(m.binPath(), 0o755)
+	return m.hardenBinary()
+}
+
+// hardenBinary makes the downloaded proxy runnable. On macOS an unsigned or
+// quarantined binary is killed on exec (Apple Silicon requires at least an
+// ad-hoc signature), and we fetched this over HTTP rather than a browser, so
+// strip any quarantine flag and ad-hoc sign it. Best-effort: a Mac without
+// codesign is rare, and a failure then surfaces through the login diagnostics
+// rather than as a silent hang. Runs whether the binary was just downloaded or
+// left over from a prior (unsigned) run.
+func (m *cliproxyManager) hardenBinary() error {
+	if err := os.Chmod(m.binPath(), 0o755); err != nil {
+		return err
+	}
+	if runtime.GOOS == "darwin" {
+		_ = exec.Command("/usr/bin/xattr", "-dr", "com.apple.quarantine", m.binPath()).Run()
+		_ = exec.Command("/usr/bin/codesign", "--force", "--sign", "-", m.binPath()).Run()
+	}
+	return nil
 }
 
 // extractBinary pulls one file (by base name) out of a .tar.gz into dst.
