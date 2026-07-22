@@ -64,6 +64,20 @@ func (p Provider) profile(dataDir string) CLIProfile {
 	return CLIProfile{Name: p.Name, Bin: "claude", Env: env, Dir: dir}
 }
 
+// providerDisplayModel is the model to show for a provider session: the opus
+// slot (kunai's default spawn slot) if set, else any mapped model, else "".
+func providerDisplayModel(p Provider) string {
+	if m := p.Models["opus"]; m != "" {
+		return m
+	}
+	for _, slot := range []string{"sonnet", "haiku"} {
+		if m := p.Models[slot]; m != "" {
+			return m
+		}
+	}
+	return ""
+}
+
 // isProxyProfile reports whether a resolved profile is proxy-backed, true exactly
 // when it carries a base-URL override. Proxy profiles skip the OAuth sign-in
 // preflight and the /usage poll, both of which assume a real Anthropic account.

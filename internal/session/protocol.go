@@ -148,6 +148,13 @@ const (
 // call; the composer can still switch any session to another mode.
 const DefaultPermissionMode = "auto"
 
+// ProviderPermissionMode is the mode a proxy-backed (provider) session starts in.
+// auto decides a Bash command's safety with a second model call, which on a
+// proxied model can rate-limit and stall the turn; accept-edits skips that
+// classifier (edits flow, other tools prompt), so a provider is not blocked on
+// the model being free to judge safety. The composer can still switch it.
+const ProviderPermissionMode = "acceptEdits"
+
 // Turn/session states.
 const (
 	StateStarting = "starting" // claude process is booting

@@ -32,6 +32,7 @@ export interface Stats {
   keep_lid_supported: boolean // platform can hold the lid (Phase 2)
   rate_resets?: Record<string, number> // window -> unix seconds it resets
   clis?: string[] // Claude accounts a new session can pick (first is the default)
+  provider_models?: Record<string, string> // provider name -> real model, to label a provider session truthfully
 }
 
 // One subscription quota window's fill, read from the CLI's own /usage. A

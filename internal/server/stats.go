@@ -60,6 +60,10 @@ type Stats struct {
 	// CLIs are the named Claude accounts a new session can pick on this machine,
 	// in config order (the first is the default). Drives the New Session picker.
 	CLIs []string `json:"clis,omitempty"`
+	// ProviderModels maps a provider name to the upstream model it runs, so the
+	// client can label a provider session with its real model (gpt-5.5) instead
+	// of the Claude slot it was spawned under (Opus). Only proxy providers appear.
+	ProviderModels map[string]string `json:"provider_models,omitempty"`
 }
 
 var (
@@ -97,6 +101,12 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	st.ThermalPrivileged = thermalPrivileged()
 	if names := s.cliNames(); len(names) > 1 {
 		st.CLIs = names // only worth sending when there is a real choice (accounts + providers)
+	}
+	if provs := s.providerList(); len(provs) > 0 {
+		st.ProviderModels = make(map[string]string, len(provs))
+		for _, p := range provs {
+			st.ProviderModels[p.Name] = providerDisplayModel(p)
+		}
 	}
 	writeJSON(w, http.StatusOK, st)
 }

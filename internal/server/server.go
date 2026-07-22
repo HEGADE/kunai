@@ -281,6 +281,14 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Cwd: req.Cwd, Title: req.Title, Model: req.Model, Effort: req.Effort, Resume: req.Resume,
 		CLIName: cli.Name, Bin: cli.Bin, Env: cli.effectiveEnv(),
 	}
+	if isProxyProfile(cli) {
+		// auto mode judges a Bash command's safety with a second, hidden model
+		// call; on a proxied model that call can rate-limit ("temporarily
+		// unavailable") and then nothing runs. accept-edits skips that classifier
+		// (edits flow, other tools just prompt), so a provider session is not
+		// hostage to the model being free for a safety check.
+		opts.Mode = session.ProviderPermissionMode
+	}
 	if req.Resume != "" {
 		// Replay the prior conversation into the buffer so the client doesn't
 		// open onto an empty transcript, and seed the context meter from the

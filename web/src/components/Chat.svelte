@@ -97,6 +97,13 @@
   let accountOpen = $state(false)
   // Claude accounts available on this session's machine (first is the default).
   const accounts = $derived(app.machines.find((m) => m.id === app.activeMachineId)?.stats?.clis ?? [])
+  // When the session runs on a proxy provider, the model chip should read the
+  // provider's real model (e.g. gpt-5.5), not the Claude slot it was spawned
+  // under (Opus). Switching Claude tiers is meaningless there (every slot maps
+  // to the same model), so the chip becomes a plain label, not a dropdown.
+  const providerModel = $derived(
+    app.machines.find((m) => m.id === app.activeMachineId)?.stats?.provider_models?.[chat.cli] ?? '',
+  )
 
   // Scrolling: open at the latest message, follow the stream while pinned to the
   // bottom, and surface a jump-to-bottom button once the user scrolls up.
@@ -514,22 +521,26 @@
             {/if}
           </div>
           <div class="modewrap">
-            <button class="seg" class:open={modelOpen} onclick={() => (modelOpen = !modelOpen)} title="Model">
-              {modelLabel(chat.model)}
-            </button>
-            {#if modelOpen}
-              <button class="mode-scrim" onclick={() => (modelOpen = false)} aria-label="Close"></button>
-              <div class="mode-pop">
-                {#each MODELS as m (m.id)}
-                  <button
-                    class:active={modelLabel(chat.model) === m.label}
-                    onclick={() => { chat.setModel(m.id); modelOpen = false }}
-                  >
-                    <span class="ml">{m.label}</span>
-                    {#if m.hint}<span class="mh">{m.hint}</span>{/if}
-                  </button>
-                {/each}
-              </div>
+            {#if providerModel}
+              <span class="seg static" title="Model served by this provider">{providerModel}</span>
+            {:else}
+              <button class="seg" class:open={modelOpen} onclick={() => (modelOpen = !modelOpen)} title="Model">
+                {modelLabel(chat.model)}
+              </button>
+              {#if modelOpen}
+                <button class="mode-scrim" onclick={() => (modelOpen = false)} aria-label="Close"></button>
+                <div class="mode-pop">
+                  {#each MODELS as m (m.id)}
+                    <button
+                      class:active={modelLabel(chat.model) === m.label}
+                      onclick={() => { chat.setModel(m.id); modelOpen = false }}
+                    >
+                      <span class="ml">{m.label}</span>
+                      {#if m.hint}<span class="mh">{m.hint}</span>{/if}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
             {/if}
           </div>
           <div class="modewrap">
@@ -1088,6 +1099,12 @@
   .seg.on {
     color: var(--text);
     font-weight: 550;
+  }
+  /* A provider's model is fixed, so its chip is a plain mono label, not a picker. */
+  .seg.static {
+    font-family: var(--mono);
+    font-size: 12px;
+    cursor: default;
   }
   .mode-scrim {
     position: fixed;
