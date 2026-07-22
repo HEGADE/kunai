@@ -314,6 +314,13 @@ func (s *Session) send(frame any) error {
 }
 
 func (s *Session) emit(ev Event) {
+	// shutdown closes s.events, and a select can still pick the send case on a
+	// closed channel (a closed-send is "ready" and panics) even when <-s.closed
+	// is also ready. That race fires when a respawn (effort/account/model change)
+	// closes the session while readLoop is still draining stdout. Recover turns a
+	// late emit into a dropped event -- harmless, the session is tearing down --
+	// instead of an unrecovered goroutine panic that would crash the whole server.
+	defer func() { _ = recover() }()
 	select {
 	case s.events <- ev:
 	case <-s.closed:
