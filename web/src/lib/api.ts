@@ -240,6 +240,54 @@ export function removeProvider(base: string, name: string): Promise<void> {
   )
 }
 
+// The models the managed sidecar can currently serve (after a provider login),
+// so the UI offers real model strings instead of asking the owner to type them.
+export function getProviderModels(base: string): Promise<string[]> {
+  return fetch(at(base, '/api/providers/models')).then((r) => json<string[]>(r))
+}
+
+// In-app provider login: authorize a Codex/Grok/Kimi account into the managed
+// sidecar. start returns the OAuth URL; the owner opens it and pastes the
+// callback back (or a local browser completes it, which status reports).
+export function startProviderLogin(
+  base: string,
+  provider: string,
+): Promise<{ login_id: string; url: string }> {
+  return fetch(at(base, '/api/providers/login/start'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider }),
+  }).then((r) => json<{ login_id: string; url: string }>(r))
+}
+export function finishProviderLogin(
+  base: string,
+  loginId: string,
+  code: string,
+): Promise<{ ok: boolean }> {
+  return fetch(at(base, '/api/providers/login/finish'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login_id: loginId, code }),
+  }).then((r) => json<{ ok: boolean }>(r))
+}
+export function providerLoginStatus(
+  base: string,
+  loginId: string,
+): Promise<{ done: boolean; error?: string }> {
+  return fetch(at(base, '/api/providers/login/status'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login_id: loginId }),
+  }).then((r) => json<{ done: boolean; error?: string }>(r))
+}
+export function cancelProviderLogin(base: string, loginId: string): Promise<void> {
+  return fetch(at(base, '/api/providers/login/cancel'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login_id: loginId }),
+  }).then(() => {})
+}
+
 // updateMachine tells a machine to self-update: it downloads the latest release
 // binary, verifies it, swaps it in, and restarts. The response streams NDJSON:
 // {done,total} lines while the download runs (total is -1 when unknown), then a

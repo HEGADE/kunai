@@ -66,26 +66,27 @@ type Config struct {
 type Server struct {
 	// telegram is the Telegram channel state (token, who may use it, pending
 	// pairings). Nil until startTelegram runs.
-	telegram    *telegram.Store
-	cfg         Config
-	mgr         *session.Manager
-	pwa         fs.FS
-	push        *push.Manager // optional; nil disables Web Push
-	uploadsDir  string
-	machines    *machineStore
-	disco       discoveryCache
-	awake       awake.Keeper        // opt-in keep-awake while locked/idle
-	lid         lidKeeper           // opt-in, privileged: keep working with the lid shut
-	sched       *schedule.Scheduler // runs prompts at a time / after quota reset
-	guardian    *guardian           // whole-machine thermal safety net
-	clis        []CLIProfile        // named Claude CLIs (accounts) a session can run on
-	clisMu      sync.RWMutex        // guards clis, which the Accounts settings edit live
-	providers   *providerStore      // proxy-backed model sources (Codex/Grok/Kimi via CLIProxyAPI)
-	cliproxy    *cliproxyManager    // the managed CLIProxyAPI sidecar (nil without a data dir)
-	baseCtx     context.Context     // server lifetime, for starting the sidecar on a runtime provider add
-	usage       *usageCache         // the default account's subscription quota windows
-	sessionMeta *sessionMetaStore   // per-session pins and renames (nil without a data dir)
-	login       *loginManager       // in-app account login flows (nil without a data dir)
+	telegram      *telegram.Store
+	cfg           Config
+	mgr           *session.Manager
+	pwa           fs.FS
+	push          *push.Manager // optional; nil disables Web Push
+	uploadsDir    string
+	machines      *machineStore
+	disco         discoveryCache
+	awake         awake.Keeper          // opt-in keep-awake while locked/idle
+	lid           lidKeeper             // opt-in, privileged: keep working with the lid shut
+	sched         *schedule.Scheduler   // runs prompts at a time / after quota reset
+	guardian      *guardian             // whole-machine thermal safety net
+	clis          []CLIProfile          // named Claude CLIs (accounts) a session can run on
+	clisMu        sync.RWMutex          // guards clis, which the Accounts settings edit live
+	providers     *providerStore        // proxy-backed model sources (Codex/Grok/Kimi via CLIProxyAPI)
+	cliproxy      *cliproxyManager      // the managed CLIProxyAPI sidecar (nil without a data dir)
+	cliproxyLogin *cliproxyLoginManager // in-app provider (Codex/Grok/Kimi) login flows
+	baseCtx       context.Context       // server lifetime, for starting the sidecar on a runtime provider add
+	usage         *usageCache           // the default account's subscription quota windows
+	sessionMeta   *sessionMetaStore     // per-session pins and renames (nil without a data dir)
+	login         *loginManager         // in-app account login flows (nil without a data dir)
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -121,6 +122,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	// manager resolves the default binary), since resolveCLI now consults them.
 	s.providers = newProviderStore(filepath.Join(cfg.DataDir, "providers.json"))
 	s.cliproxy = newCLIProxyManager(cfg.DataDir)
+	s.cliproxyLogin = newCLIProxyLoginManager(s.cliproxy)
 	s.sched = schedule.New(filepath.Join(cfg.DataDir, "schedule.json"), s.fireJob)
 	if cfg.DataDir != "" {
 		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))
@@ -185,6 +187,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/providers", s.handleProviders)
 	mux.HandleFunc("POST /api/providers", s.handleProviders)
 	mux.HandleFunc("DELETE /api/providers/{name}", s.handleDeleteProvider)
+	mux.HandleFunc("GET /api/providers/models", s.handleProviderModels)
+	mux.HandleFunc("POST /api/providers/login/start", s.handleProviderLoginStart)
+	mux.HandleFunc("POST /api/providers/login/finish", s.handleProviderLoginFinish)
+	mux.HandleFunc("POST /api/providers/login/status", s.handleProviderLoginStatus)
+	mux.HandleFunc("POST /api/providers/login/cancel", s.handleProviderLoginCancel)
 	mux.HandleFunc("GET /api/channels", s.handleChannels)
 	mux.HandleFunc("POST /api/channels/{id}", s.handleChannelUpdate)
 	mux.HandleFunc("POST /api/channels/{id}/requests/{code}", s.handleChannelApprove)
