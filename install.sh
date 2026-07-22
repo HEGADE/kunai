@@ -280,6 +280,13 @@ fi
 mkdir -p "$BIN_DIR" "$DATA_DIR"
 install -m 0755 "$BIN" "$BIN_DIR/$NAME.new"
 mv "$BIN_DIR/$NAME.new" "$BIN_DIR/$NAME"
+# A prebuilt binary is cross-compiled on Linux and unsigned; macOS (Apple
+# Silicon) kills an unsigned binary on exec. Ad-hoc sign it so the service can
+# run it. A locally built binary is already signed by the Go toolchain, so this
+# is a harmless no-op there.
+if [ "$OS" = "darwin" ] && command -v codesign >/dev/null 2>&1; then
+  codesign --force --sign - "$BIN_DIR/$NAME" 2>/dev/null || true
+fi
 
 PUSH_ARG=""
 [ -n "${KUNAI_PUSH_EMAIL:-}" ] && PUSH_ARG="-push-email ${KUNAI_PUSH_EMAIL}"

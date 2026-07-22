@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -128,6 +129,14 @@ func applyUpdate(asset, self string, progress func(done, total int64)) error {
 	if err := os.Chmod(newBin, 0o755); err != nil {
 		_ = os.Remove(newBin)
 		return fmt.Errorf("chmod: %w", err)
+	}
+	// The release binaries are cross-compiled on Linux, so the darwin ones are
+	// unsigned; macOS (Apple Silicon) kills an unsigned binary on exec, which
+	// would crash-loop the service after the swap. Ad-hoc sign it in place before
+	// swapping so the service manager can run it. Best-effort: signing lives on
+	// the same code path as the cli-proxy-api sidecar's.
+	if runtime.GOOS == "darwin" {
+		_ = exec.Command("/usr/bin/codesign", "--force", "--sign", "-", newBin).Run()
 	}
 	// Atomic on the same filesystem; replacing a running binary's file is allowed
 	// on Linux and macOS (the running process keeps the old inode until it exits).
