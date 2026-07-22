@@ -58,6 +58,19 @@ stale `dist/` or `./kunai` artifact (that was a real bug). `internal/webui/dist`
 `.gitignore` only ignores the repo-root `/dist/` release dir, never
 `internal/webui/dist`.
 
+**Nightly channel.** A second, bleeding-edge channel built from the `nightly`
+branch coexists with a stable install, so you can run new work beside the setup
+you rely on. `KUNAI_CHANNEL=nightly ./install.sh` installs a separate
+`kunai-nightly` service on port 8444 with its own `~/.kunai-nightly` data dir and
+binary, so nothing is shared. A build-time `buildChannel` ldflag (set by
+`make ... CHANNEL=nightly`) decides which release the self-updater pulls from:
+the moving `nightly` pre-release for nightly, `/releases/latest` for stable, so
+the two never cross over. `.github/workflows/nightly.yml` rebuilds every platform
+on each push to the branch and refreshes that pre-release; the client version
+check is channel-aware (nightly compares a moving build id, stable keeps semver).
+The providers feature and its fixes live on `nightly` and are deliberately NOT
+merged to `main` until Grok/Kimi are verified and the Codex-quota display exists.
+
 Hub URL: `https://<hub>.<tailnet>.ts.net:8443`. Logs:
 `journalctl --user -u kunai -f` (Linux) or `~/.kunai/kunai.log` (macOS). TLS certs
 are minted with `tailscale cert` (roughly 90-day expiry); `certKeeper`
@@ -201,6 +214,46 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   window spanning New Year come out right. `usageRun` is injectable for the same
   reason `guardian.go` has `execRun`: a test asserts the command instead of
   spawning a real claude.
+- `internal/server/providers.go`, `cliproxy.go`, `cliproxy_login.go`:
+  **proxy-backed providers**, so one machine can run non-Claude models (Codex,
+  Grok, Kimi) without leaving the `claude` agent. The whole idea rests on one
+  fact: kunai keeps driving `claude`; only the model endpoint it calls out to
+  changes. `claude` honours `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` and the
+  per-slot `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`, so pointing it at a
+  local CLIProxyAPI (github.com/router-for-me/CLIProxyAPI) that fronts those
+  subscriptions keeps every tool, permission, edit, and bash call intact and
+  swaps only the brain. A `Provider` (name + base_url + token + slot->model map)
+  compiles to a `CLIProfile` whose `Env` carries exactly those vars, so it flows
+  through the *entire* existing session/switch/loop machinery unchanged; the only
+  special-casing is `isProxyProfile` (true when the env has a base URL), which
+  skips the OAuth sign-in preflight and the `/usage` poll (neither means anything
+  for a proxied account). A provider left with a blank base_url points at the
+  **managed sidecar** kunai runs itself (`cliproxyManager`): it downloads a
+  pinned CLIProxyAPI release, verifies it against a hardcoded sha256 (all four
+  platforms pinned; a mismatch is refused), on macOS ad-hoc codesigns it (Apple
+  Silicon kills an unsigned binary on exec, so the same signing is applied to
+  `install.sh`'s prebuilt download and to `update.go`'s self-update), writes a
+  localhost-only config on a free ephemeral port, and supervises the process for
+  the server's lifetime (restart on crash, stop on shutdown). Because the port is
+  assigned asynchronously, `ensureCLIProxyReady` blocks a provider session create
+  (and account-switch-to-a-provider) until the sidecar has a real address, or the
+  baked `ANTHROPIC_BASE_URL` would be empty and the session would hang. Providers
+  default to `session.ProviderPermissionMode` (accept-edits), and `restart()`
+  re-applies it whenever the account is proxy-backed, because auto mode judges a
+  Bash command's safety with a *second* model call that a proxied model can
+  rate-limit and stall on. `cliproxy_login.go` authorizes a provider from the
+  app: it runs the sidecar's own `-codex-login`/`-xai-login`/`-kimi-login` under
+  `--no-browser`, scrapes the OAuth URL from stdout, and bridges the localhost
+  callback with the same `loopbackTarget`/`codeFromPaste`/`forwardLoopback`
+  helpers the Claude account login uses; the sidecar's file watcher loads the new
+  credential with no restart. The composer shows a provider session's real model
+  (from `/api/stats` `provider_models`) and lets you switch it
+  (`/api/sessions/{id}/provider-model` updates the mapping and respawns), since
+  the Claude-tier picker is meaningless there. Confirmed end to end on Codex
+  (login, session, model switch, account switch) by an automated Playwright pass,
+  which also caught the `send on closed channel` respawn crash fixed in
+  `driver.go`. **Tested for Codex only; Grok and Kimi ride the same path but are
+  unverified.**
 - `internal/project`: reads a directory into the description a session hands a model
   (`Scan` -> `Info`, `Info.Brief()`): layout, language mix, git head from `.git`,
   the files that name it. It never opens the code, and the walk skips `.git`,
