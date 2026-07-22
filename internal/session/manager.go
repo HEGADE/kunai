@@ -297,6 +297,14 @@ func (m *Manager) restart(ctx context.Context, id, effort string, acct *acctOver
 		Cwd: meta.Cwd, Title: meta.Title, Model: meta.Model, Effort: eff, ContextTokens: ctxTokens, Overhead: overhead,
 		CLIName: cliName, Bin: cliBin, Env: cliEnv,
 	}
+	// A proxy-backed (provider) account must keep accept-edits across a respawn:
+	// auto mode's Bash safety check is a second model call that a proxied model
+	// can rate-limit, so a restart (effort, account, or model change) that let it
+	// fall back to auto would re-break the session. Keyed on the env the same way
+	// the server's isProxyProfile is, so the two never disagree.
+	if cliEnv["ANTHROPIC_BASE_URL"] != "" {
+		opts.Mode = ProviderPermissionMode
+	}
 	if cid != "" {
 		opts.Resume, opts.Seed = cid, seedFn(dir, cid)
 	} else if seed := seedFn(dir, id); len(seed) > 0 {

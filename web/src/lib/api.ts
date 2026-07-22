@@ -253,8 +253,9 @@ export function setProviderModel(base: string, id: string, model: string): Promi
 
 // The models the managed sidecar can currently serve (after a provider login),
 // so the UI offers real model strings instead of asking the owner to type them.
-export function getProviderModels(base: string): Promise<string[]> {
-  return fetch(at(base, '/api/providers/models')).then((r) => json<string[]>(r))
+export function getProviderModels(base: string, cli = ''): Promise<string[]> {
+  const q = cli ? `?cli=${encodeURIComponent(cli)}` : ''
+  return fetch(at(base, `/api/providers/models${q}`)).then((r) => json<string[]>(r))
 }
 
 // In-app provider login: authorize a Codex/Grok/Kimi account into the managed

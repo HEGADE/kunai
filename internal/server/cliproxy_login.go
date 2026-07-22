@@ -309,18 +309,23 @@ func (s *Server) handleProviderLoginCancel(w http.ResponseWriter, r *http.Reques
 // (one entry per authorized account's models), so the UI can offer real model
 // strings after a login instead of making the owner type them.
 func (s *Server) handleProviderModels(w http.ResponseWriter, r *http.Request) {
-	if s.cliproxy == nil {
-		writeJSON(w, http.StatusOK, []string{})
-		return
+	// Models come from whichever proxy the named provider actually uses: its own
+	// base_url when set, else the managed sidecar. Without a provider name, fall
+	// back to the managed sidecar (the zero-config default).
+	var base, key string
+	if p := s.providerNamed(r.URL.Query().Get("cli")); p != nil {
+		prof := s.providerProfile(*p)
+		base, key = prof.Env["ANTHROPIC_BASE_URL"], prof.Env["ANTHROPIC_AUTH_TOKEN"]
+	} else if s.cliproxy != nil {
+		s.ensureCLIProxy()
+		base, key = s.cliproxy.BaseURL(), s.cliproxy.APIKey()
 	}
-	s.ensureCLIProxy()
-	base := s.cliproxy.BaseURL()
 	if base == "" {
 		writeJSON(w, http.StatusOK, []string{})
 		return
 	}
 	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, base+"/v1/models", nil)
-	req.Header.Set("Authorization", "Bearer "+s.cliproxy.APIKey())
+	req.Header.Set("Authorization", "Bearer "+key)
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	if err != nil {
 		writeJSON(w, http.StatusOK, []string{})

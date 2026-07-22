@@ -115,7 +115,7 @@
     pmOpen = !pmOpen
     if (!pmOpen || pmModels.length) return
     try {
-      const all = await getProviderModels(app.baseForMachine(app.activeMachineId ?? ''))
+      const all = await getProviderModels(app.baseForMachine(app.activeMachineId ?? ''), chat.cli)
       const fam = (providerModel.match(/^[a-zA-Z]+/)?.[0] ?? '').toLowerCase()
       const mine = fam ? all.filter((m) => m.toLowerCase().startsWith(fam)) : all
       pmModels = mine.length ? mine : all
