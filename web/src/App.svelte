@@ -27,9 +27,14 @@
     {#if app.chat}
       <div class="pane"><Chat chat={app.chat} /></div>
     {:else}
-      <button class="rail-toggle" onclick={() => app.toggleSidebar()} aria-label="Toggle sidebar" title="Toggle sidebar">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M9.5 4v16" /></svg>
-      </button>
+      {#if !app.sidebarOpen}
+        <!-- Reopen affordance, shown only while collapsed: when the sidebar is
+             open its own header holds the collapse button, so showing this too
+             was two toggles at once. -->
+        <button class="rail-toggle" onclick={() => app.toggleSidebar()} aria-label="Show sidebar" title="Show sidebar">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M9.5 4v16" /></svg>
+        </button>
+      {/if}
       <div class="dash"><Home /></div>
     {/if}
   </main>
