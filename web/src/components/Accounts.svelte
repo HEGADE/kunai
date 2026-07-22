@@ -210,7 +210,13 @@
         <div class="fhead"><span class="fstep">Sign in {name}</span><span class="fnum">Step 2 of 2</span></div>
         <p class="lead">
           Open the sign-in page, log in as the account you want <b>{name}</b> to be,
-          then paste the code Claude gives you back.
+          then paste the code it gives back.
+        </p>
+        <p class="subtle">
+          The link opens Claude, not kunai, so it is safe to send to whoever owns the
+          account: they sign in, and only the code comes back. If the page ends on a
+          "can't reach the site" error, that is expected. Copy the whole address from
+          the browser bar and paste it below.
         </p>
         <a class="cta" href={url} target="_blank" rel="noopener noreferrer">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><path d="M15 3h6v6" /><path d="M10 14L21 3" /></svg>
@@ -556,6 +562,12 @@
   .lead b {
     color: var(--text);
     font-weight: 600;
+  }
+  .subtle {
+    margin: 8px 0 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-4);
   }
   .cta {
     display: inline-flex;

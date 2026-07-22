@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,6 +54,13 @@ type loginFlow struct {
 	tty     *os.File
 	tail    *ptyTail // the CLI's terminal output, for reporting a hang
 	started time.Time
+	// loopbackBase is set when the CLI chose the localhost-loopback login flow
+	// (newer claude CLIs) rather than paste-code: the local callback endpoint the
+	// code must be delivered to, on this machine. Empty means paste-code, where
+	// the code is typed into the PTY instead. loopbackState is the OAuth state the
+	// authorize URL carried, reused when the pasted code arrives without one.
+	loopbackBase  string
+	loopbackState string
 }
 
 // loginManager owns in-progress login flows, keyed by a flow id. A flow holds a
@@ -110,10 +119,116 @@ func (m *loginManager) start(ctx context.Context, name string) (id, url, dir str
 	}
 
 	id, _ = newSessionID() // an opaque handle for this flow; uniqueness is all that matters
+	// Detect which login flow the CLI chose. A loopback URL sends the code to a
+	// local port on this machine; kunai forwards it there in finish, so a remote
+	// browser still works and the user's credentials never leave their browser.
+	base, state, loopback := loopbackTarget(url)
+	if loopback {
+		log.Printf("account login %q: CLI uses localhost loopback (%s); kunai will forward the code", name, base)
+	}
 	m.mu.Lock()
-	m.flows[id] = &loginFlow{id: id, name: name, dir: dir, cmd: cmd, tty: tty, tail: tail, started: time.Now()}
+	m.flows[id] = &loginFlow{
+		id: id, name: name, dir: dir, cmd: cmd, tty: tty, tail: tail, started: time.Now(),
+		loopbackBase: base, loopbackState: state,
+	}
 	m.mu.Unlock()
 	return id, url, dir, nil
+}
+
+// loopbackTarget extracts the CLI's local callback endpoint from a scraped
+// authorize URL, for the localhost-loopback login flow newer claude CLIs use.
+// The code is redirected to a local port on the machine running the CLI, which a
+// remote browser can never reach — but kunai runs on that machine, so it can
+// deliver the code there itself. Returns the callback base and the OAuth state
+// the URL carried, or ok=false for a paste-code URL (no localhost redirect).
+func loopbackTarget(authorizeURL string) (base, state string, ok bool) {
+	u, err := url.Parse(authorizeURL)
+	if err != nil {
+		return "", "", false
+	}
+	q := u.Query()
+	state = q.Get("state")
+	r, err := url.Parse(q.Get("redirect_uri"))
+	if err != nil || r.Host == "" {
+		return "", "", false
+	}
+	switch r.Hostname() {
+	case "localhost", "127.0.0.1", "::1":
+		return r.String(), state, true
+	}
+	return "", "", false
+}
+
+// codeFromPaste pulls the OAuth code and state out of whatever the user pasted
+// back: the whole failed callback URL, a "code=...&state=..." fragment, or a
+// bare code. A bare code takes the state the authorize URL already carried, so
+// the user only has to copy the code itself.
+func codeFromPaste(pasted, fallbackState string) (code, state string) {
+	p := strings.TrimSpace(pasted)
+	query := p
+	if i := strings.IndexByte(query, '?'); i >= 0 {
+		query = query[i+1:] // strip a full URL down to its query
+	}
+	if q, err := url.ParseQuery(query); err == nil {
+		if c := q.Get("code"); c != "" {
+			if s := q.Get("state"); s != "" {
+				return c, s
+			}
+			return c, fallbackState
+		}
+	}
+	return p, fallbackState // a bare code
+}
+
+// forwardLoopback hands the code to the CLI's local callback server, which then
+// exchanges it (it holds the PKCE verifier) and exits. The server binds a
+// loopback address; "localhost" can resolve to ::1 while the CLI listens on
+// 127.0.0.1 (or the reverse), so both are tried.
+func forwardLoopback(base, code, state string) error {
+	u, err := url.Parse(base)
+	if err != nil {
+		return err
+	}
+	q := u.Query()
+	q.Set("code", code)
+	if state != "" {
+		q.Set("state", state)
+	}
+	u.RawQuery = q.Encode()
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	var lastErr error
+	for _, host := range loopbackHosts(u.Host) {
+		v := *u
+		v.Host = host
+		resp, err := client.Get(v.String())
+		if err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			return nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no loopback address to reach")
+	}
+	return lastErr
+}
+
+// loopbackHosts lists the addresses to try for a loopback host:port, both
+// families, original first.
+func loopbackHosts(hostport string) []string {
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return []string{hostport}
+	}
+	out := []string{hostport}
+	for _, h := range []string{"127.0.0.1", "::1"} {
+		if h != host {
+			out = append(out, net.JoinHostPort(h, port))
+		}
+	}
+	return out
 }
 
 // finish streams the pasted code into the waiting login process, waits for it to
@@ -129,20 +244,35 @@ func (m *loginManager) finish(id, code string) (CLIProfile, error) {
 	}
 	defer f.tty.Close()
 
-	// The code is about to be typed into the PTY, so register it for redaction
-	// before it can be echoed into the captured output.
+	// Register the code for redaction before it can reach the captured output,
+	// however it is delivered.
 	f.tail.hide(code)
-	if _, err := f.tty.Write([]byte(strings.TrimSpace(code) + "\n")); err != nil {
-		_ = f.cmd.Process.Kill()
-		return CLIProfile{}, fmt.Errorf("could not submit the code: %w", err)
+	// Drain the PTY into the tail throughout, so the CLI isn't blocked writing
+	// and whatever it says on the way out is captured for a hang report.
+	go func() { _, _ = io.Copy(f.tail, f.tty) }()
+
+	if f.loopbackBase != "" {
+		// Loopback flow: the code was redirected to a local port on this machine,
+		// so kunai delivers it there rather than typing it into the CLI. This is
+		// what lets the user authenticate in their own browser (credentials never
+		// leave it) and only the code cross to the machine running the CLI.
+		c, st := codeFromPaste(code, f.loopbackState)
+		f.tail.hide(c)
+		if err := forwardLoopback(f.loopbackBase, c, st); err != nil {
+			_ = f.cmd.Process.Kill()
+			return CLIProfile{}, fmt.Errorf("could not hand the code to the CLI's login server: %w", err)
+		}
+	} else {
+		// Paste-code flow: the code is typed into the CLI's prompt.
+		if _, err := f.tty.Write([]byte(strings.TrimSpace(code) + "\n")); err != nil {
+			_ = f.cmd.Process.Kill()
+			return CLIProfile{}, fmt.Errorf("could not submit the code: %w", err)
+		}
 	}
-	// Keep draining the PTY into the tail so the CLI isn't blocked writing, and
-	// whatever it says on the way out is captured for a hang report.
+
+	// Either way, the CLI now exchanges the code and exits.
 	done := make(chan error, 1)
-	go func() {
-		_, _ = io.Copy(f.tail, f.tty)
-		done <- f.cmd.Wait()
-	}()
+	go func() { done <- f.cmd.Wait() }()
 	select {
 	case <-done:
 	case <-time.After(loginDoneTimeout):

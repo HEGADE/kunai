@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -343,5 +346,89 @@ func TestPTYTailIsBounded(t *testing.T) {
 	tail.mu.Unlock()
 	if n > ptyTailMax {
 		t.Fatalf("buffer grew to %d, past the %d cap", n, ptyTailMax)
+	}
+}
+
+// The newer claude CLI redirects the code to a localhost port instead of showing
+// it on a page. kunai has to recognise that so it can forward the code locally;
+// a paste-code URL must not be mistaken for it.
+func TestLoopbackTargetDetection(t *testing.T) {
+	loop := "https://claude.ai/oauth/authorize?client_id=x&redirect_uri=" +
+		url.QueryEscape("http://localhost:53733/callback") + "&state=KCSYRP"
+	base, state, ok := loopbackTarget(loop)
+	if !ok {
+		t.Fatal("did not detect a localhost loopback redirect")
+	}
+	if base != "http://localhost:53733/callback" || state != "KCSYRP" {
+		t.Fatalf("base=%q state=%q, want the callback and the state", base, state)
+	}
+
+	paste := "https://claude.com/cai/oauth/authorize?redirect_uri=" +
+		url.QueryEscape("https://platform.claude.com/oauth/code/callback") + "&state=Z"
+	if _, _, ok := loopbackTarget(paste); ok {
+		t.Error("a paste-code URL was mistaken for loopback")
+	}
+}
+
+// The user might paste the bare code, a code=&state= fragment, or the whole
+// failed callback URL. All three have to yield the same code, and a bare code
+// borrows the state the authorize URL already carried.
+func TestCodeFromPasteAcceptsEveryForm(t *testing.T) {
+	const code = "A3pdzL3bU0WUip0SkAYHyrou25CMt1BboEpX73M"
+	const st = "KCSYRPs3G29NFLoFa7A7MLRK5ZzpqD"
+
+	cases := []struct{ name, in, wantCode, wantState string }{
+		{"bare code", code, code, st},
+		{"code and state", "code=" + code + "&state=" + st, code, st},
+		{"full callback url", "http://localhost:53733/callback?code=" + code + "&state=" + st, code, st},
+		{"code only fragment", "code=" + code, code, st}, // state falls back
+	}
+	for _, c := range cases {
+		gotCode, gotState := codeFromPaste(c.in, st)
+		if gotCode != c.wantCode || gotState != c.wantState {
+			t.Errorf("%s: got (%q,%q), want (%q,%q)", c.name, gotCode, gotState, c.wantCode, c.wantState)
+		}
+	}
+}
+
+// The whole point: kunai delivers the code to the CLI's local server. This
+// stands a server in for the CLI and checks the code and state arrive.
+func TestForwardLoopbackDeliversToLocalServer(t *testing.T) {
+	got := make(chan url.Values, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r.URL.Query()
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	base := srv.URL + "/callback"
+	if err := forwardLoopback(base, "the-code", "the-state"); err != nil {
+		t.Fatalf("forward failed: %v", err)
+	}
+	select {
+	case q := <-got:
+		if q.Get("code") != "the-code" || q.Get("state") != "the-state" {
+			t.Fatalf("server received %v, want the code and state", q)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the local server never received the callback")
+	}
+}
+
+// A loopback host that refuses on one family must be retried on the other, since
+// "localhost" and the CLI's bind address can disagree on v4 vs v6.
+func TestLoopbackHostsTriesBothFamilies(t *testing.T) {
+	hosts := loopbackHosts("localhost:53733")
+	if len(hosts) < 2 {
+		t.Fatalf("only tried %v; a loopback server may bind the other family", hosts)
+	}
+	var haveV4 bool
+	for _, h := range hosts {
+		if strings.HasPrefix(h, "127.0.0.1:") {
+			haveV4 = true
+		}
+	}
+	if !haveV4 {
+		t.Errorf("127.0.0.1 was never tried: %v", hosts)
 	}
 }

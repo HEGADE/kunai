@@ -146,6 +146,21 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   hangs having printed nothing is blocked on an out-of-band prompt, on macOS a
   Keychain unlock a headless launchd service cannot answer. Discarding this output
   (the old `drain`) was the real gap in diagnosing a stuck login.
+  Newer `claude` CLIs (2.1.217+) changed `--claudeai` from paste-code to a
+  **localhost loopback** flow (`redirect_uri=http://localhost:<port>/callback`),
+  which broke this login: a code redirected to a local port can't be carried to
+  another machine. But kunai runs ON that machine, so it **bridges** the callback
+  itself. `loopbackTarget` detects a localhost `redirect_uri` in the scraped URL;
+  `finish` then does an HTTP GET to that local port (`forwardLoopback`, both
+  loopback families tried) instead of typing the code into the PTY, handing the
+  code to the CLI's own callback server. `codeFromPaste` accepts a bare code, a
+  `code=&state=` fragment, or the whole failed callback URL, and reuses the state
+  the authorize URL carried. This preserves the promise: the account owner
+  authenticates in **their own browser** (credentials never leave it), only the
+  code crosses to the machine running the CLI, and the localhost hop is local to
+  that machine, so the two people can be on different networks. NOT verified
+  against a real 2.1.217 login end to end (each piece is unit-tested; the CLI's
+  loopback-server behaviour is assumed from the flow it prints).
   The client surface is `Accounts.svelte` (a dedicated view off the sidebar, NOT in
   Settings): lists accounts with signed-in status and a two-step add flow (name ->
   open link + paste code). Nothing but the URL out and the code in ever crosses
