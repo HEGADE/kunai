@@ -66,6 +66,24 @@
   let loopOpen = $state(false)
   let infoOpen = $state(false)
 
+  // Ending a session is destructive (it stops the running turn), and the button
+  // is one tap in a busy row, so it arms first: one tap turns it solid red, a
+  // second within a few seconds actually closes. It disarms itself if you don't
+  // follow through, so a stray tap never ends a session.
+  let armClose = $state(false)
+  let armTimer: ReturnType<typeof setTimeout> | undefined
+  function closeClicked() {
+    if (armClose) {
+      clearTimeout(armTimer)
+      armClose = false
+      app.closeSessionActive()
+    } else {
+      armClose = true
+      clearTimeout(armTimer)
+      armTimer = setTimeout(() => (armClose = false), 3000)
+    }
+  }
+
   function resetRel(unixSec: number): string {
     let s = Math.round(unixSec - Date.now() / 1000)
     if (s < 0) s = 0
@@ -302,7 +320,13 @@
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></svg>
       </button>
       <span class="asep" aria-hidden="true"></span>
-      <button class="abtn close" onclick={() => app.closeSessionActive()} aria-label="Close session" title="Close this session">
+      <button
+        class="abtn close"
+        class:armed={armClose}
+        onclick={closeClicked}
+        aria-label={armClose ? 'Tap again to close the session' : 'Close session'}
+        title={armClose ? 'Tap again to end this session' : 'Close this session'}
+      >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v8" /><path d="M18 7.5a8 8 0 11-12 0" /></svg>
       </button>
     </div>
@@ -627,7 +651,7 @@
     border-radius: 8px;
     background: none;
     border: 1px solid transparent;
-    color: var(--text-3);
+    color: var(--text-2);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -707,6 +731,13 @@
     background: rgba(207, 111, 102, 0.12);
     border-color: transparent;
     color: var(--alert);
+  }
+  /* Armed: the next tap ends the session, so the button goes solid red to say so. */
+  .abtn.close.armed,
+  .abtn.close.armed:hover {
+    background: var(--alert);
+    border-color: transparent;
+    color: #16181a;
   }
   /* A loop is running: the toggle both signals (amber fill) and stops it. */
   .abtn.loop.on {
