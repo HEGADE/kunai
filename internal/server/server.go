@@ -81,6 +81,8 @@ type Server struct {
 	clis        []CLIProfile        // named Claude CLIs (accounts) a session can run on
 	clisMu      sync.RWMutex        // guards clis, which the Accounts settings edit live
 	providers   *providerStore      // proxy-backed model sources (Codex/Grok/Kimi via CLIProxyAPI)
+	cliproxy    *cliproxyManager    // the managed CLIProxyAPI sidecar (nil without a data dir)
+	baseCtx     context.Context     // server lifetime, for starting the sidecar on a runtime provider add
 	usage       *usageCache         // the default account's subscription quota windows
 	sessionMeta *sessionMetaStore   // per-session pins and renames (nil without a data dir)
 	login       *loginManager       // in-app account login flows (nil without a data dir)
@@ -118,6 +120,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	// Providers must exist before the first resolveCLI call below (the login
 	// manager resolves the default binary), since resolveCLI now consults them.
 	s.providers = newProviderStore(filepath.Join(cfg.DataDir, "providers.json"))
+	s.cliproxy = newCLIProxyManager(cfg.DataDir)
 	s.sched = schedule.New(filepath.Join(cfg.DataDir, "schedule.json"), s.fireJob)
 	if cfg.DataDir != "" {
 		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))
@@ -203,10 +206,16 @@ func (s *Server) Handler() http.Handler {
 
 // Run starts the HTTP(S) server and blocks until ctx is cancelled.
 func (s *Server) Run(ctx context.Context) error {
+	s.baseCtx = ctx // so a provider added at runtime can start the sidecar
 	srv := &http.Server{
 		Addr:              s.cfg.Addr,
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+	// Boot the managed CLIProxyAPI sidecar if any providers are configured, so
+	// their sessions have a proxy to reach. Downloading/verifying happens inside.
+	if s.cliproxy != nil && len(s.providerList()) > 0 {
+		go s.ensureCLIProxy()
 	}
 	go s.sched.Run(ctx) // fire scheduled jobs while the server is up
 	// The guardian wakes the phone the same way a finished turn does; push may

@@ -110,7 +110,7 @@ func (s *Server) resolveCLI(name string) CLIProfile {
 	// create such a clash), so providers are only consulted after the accounts.
 	for _, p := range s.providerList() {
 		if p.Name == name {
-			return p.profile(s.cfg.DataDir)
+			return s.providerProfile(p)
 		}
 	}
 	return list[0]
@@ -200,7 +200,7 @@ func (s *Server) accountRoots() []accountRoot {
 	// A proxy provider keeps its transcripts in its own config dir too, so the
 	// Recent list finds sessions run on it.
 	for _, p := range s.providerList() {
-		add(p.Name, p.profile(s.cfg.DataDir).configDir())
+		add(p.Name, s.providerProfile(p).configDir())
 	}
 	if def := claudeRoot(""); !seen[def] {
 		roots = append(roots, accountRoot{name: "", root: def})

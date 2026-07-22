@@ -183,9 +183,9 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Name = strings.TrimSpace(p.Name)
-	p.BaseURL = strings.TrimSpace(p.BaseURL)
-	if p.Name == "" || p.BaseURL == "" {
-		writeErr(w, http.StatusBadRequest, "name and base_url are required")
+	p.BaseURL = strings.TrimSpace(p.BaseURL) // blank = use the managed sidecar
+	if p.Name == "" {
+		writeErr(w, http.StatusBadRequest, "name is required")
 		return
 	}
 	for _, c := range s.cliList() {
@@ -194,10 +194,14 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if dir := p.profile(s.cfg.DataDir).configDir(); dir != "" {
+	if dir := s.providerProfile(p).configDir(); dir != "" {
 		_ = os.MkdirAll(dir, 0o700)
 	}
 	s.providers.save(p)
+	// A provider that relies on the managed sidecar needs it running.
+	if p.BaseURL == "" {
+		go s.ensureCLIProxy()
+	}
 	writeJSON(w, http.StatusOK, p)
 }
 
@@ -213,4 +217,17 @@ func (s *Server) providerList() []Provider {
 		return nil
 	}
 	return s.providers.all()
+}
+
+// providerProfile compiles a provider to a runnable profile, defaulting the proxy
+// address and token to the managed sidecar when the provider left them blank
+// (the zero-config path: the owner picks only a model, kunai supplies the proxy).
+func (s *Server) providerProfile(p Provider) CLIProfile {
+	if p.BaseURL == "" && s.cliproxy != nil {
+		p.BaseURL = s.cliproxy.BaseURL()
+	}
+	if p.Token == "" && s.cliproxy != nil {
+		p.Token = s.cliproxy.APIKey()
+	}
+	return p.profile(s.cfg.DataDir)
 }
