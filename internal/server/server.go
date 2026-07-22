@@ -118,8 +118,13 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	if cfg.DataDir != "" {
 		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))
 		// New accounts log in with the same binary as the default profile, into a
-		// fresh config dir under the data dir.
-		s.login = newLoginManager(s.resolveCLI("").Bin, cfg.DataDir)
+		// fresh config dir under the data dir. The register callback saves a
+		// completed account, called once from the login's finalize, so it lands
+		// whether the user pasted a code or the browser completed it directly.
+		s.login = newLoginManager(s.resolveCLI("").Bin, cfg.DataDir, func(p CLIProfile) {
+			s.saveCLIs(append(s.cliList(), p))
+			forgetAuthStatus() // a brand-new login must show as signed in at once
+		})
 	}
 	return s
 }
@@ -178,6 +183,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/accounts/{name}", s.handleAccountRemove)
 	mux.HandleFunc("POST /api/accounts/login/start", s.handleAccountLoginStart)
 	mux.HandleFunc("POST /api/accounts/login/finish", s.handleAccountLoginFinish)
+	mux.HandleFunc("POST /api/accounts/login/status", s.handleAccountLoginStatus)
 	mux.HandleFunc("POST /api/accounts/login/cancel", s.handleAccountLoginCancel)
 	mux.HandleFunc("GET /api/schedule", s.handleScheduleList)
 	mux.HandleFunc("POST /api/schedule", s.handleScheduleCreate)

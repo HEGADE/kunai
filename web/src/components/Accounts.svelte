@@ -6,6 +6,7 @@
     fetchAccounts,
     startAccountLogin,
     finishAccountLogin,
+    accountLoginStatus,
     cancelAccountLogin,
     removeAccount,
   } from '../lib/api'
@@ -65,7 +66,37 @@
     })
   })
 
+  // A newer CLI can complete the login on its own: if the browser is on this
+  // machine, it hits the CLI's localhost callback directly and no code is ever
+  // pasted. So while the paste box is shown, poll for that — and finish
+  // hands-free when it happens, rather than waiting on a paste that won't come.
+  let pollTimer: ReturnType<typeof setInterval> | undefined
+  function stopPolling() {
+    clearInterval(pollTimer)
+    pollTimer = undefined
+  }
+  $effect(() => {
+    if (step !== 'link' || !loginId) return
+    const id = loginId
+    pollTimer = setInterval(async () => {
+      try {
+        const res = await accountLoginStatus(base, id)
+        if (res.done) {
+          stopPolling()
+          loginId = '' // already registered server-side; don't cancel it on reset
+          reset()
+          await load()
+        }
+      } catch {
+        // A transient poll failure is harmless; the next tick retries, and the
+        // manual paste is always available as a fallback.
+      }
+    }, 2000)
+    return stopPolling
+  })
+
   function reset() {
+    stopPolling()
     if (loginId) cancelAccountLogin(base, loginId).catch(() => {})
     step = 'idle'
     name = ''

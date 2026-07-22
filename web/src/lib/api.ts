@@ -114,6 +114,20 @@ export function finishAccountLogin(base: string, loginId: string, code: string):
   }).then((r) => json(r))
 }
 
+// accountLoginStatus reports whether a login finished on its own — the browser
+// hit the CLI's localhost callback directly, so no code needs pasting. The
+// Accounts view polls this so the local-browser case completes hands-free.
+export function accountLoginStatus(
+  base: string,
+  loginId: string,
+): Promise<{ done: boolean; name: string }> {
+  return fetch(at(base, '/api/accounts/login/status'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login_id: loginId }),
+  }).then((r) => json(r))
+}
+
 export function cancelAccountLogin(base: string, loginId: string): Promise<void> {
   return fetch(at(base, '/api/accounts/login/cancel'), {
     method: 'POST',

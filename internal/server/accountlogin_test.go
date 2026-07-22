@@ -18,7 +18,7 @@ func TestAccountLoginStartCapturesURL(t *testing.T) {
 	if os.Getenv("KUNAI_E2E") == "" {
 		t.Skip("opt-in: set KUNAI_E2E=1 to spawn a real claude auth login")
 	}
-	m := newLoginManager("claude", t.TempDir())
+	m := newLoginManager("claude", t.TempDir(), nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 	id, url, dir, err := m.start(ctx, "Work Test")
@@ -430,5 +430,57 @@ func TestLoopbackHostsTriesBothFamilies(t *testing.T) {
 	}
 	if !haveV4 {
 		t.Errorf("127.0.0.1 was never tried: %v", hosts)
+	}
+}
+
+// The local-browser case: the CLI's loopback callback is hit directly, so it
+// exits with no code ever pasted. finalize must register the account anyway, and
+// a status poll must report it done. This drives finalize directly (no real CLI).
+func TestFinalizeRegistersOnAutoCompletion(t *testing.T) {
+	var registered []CLIProfile
+	f := &loginFlow{name: "subhi", dir: "/tmp/x"}
+	f.finalize(CLIProfile{Name: "subhi", Dir: "/tmp/x"}, nil, func(p CLIProfile) {
+		registered = append(registered, p)
+	})
+
+	if len(registered) != 1 || registered[0].Name != "subhi" {
+		t.Fatalf("account was not registered on auto-completion: %v", registered)
+	}
+	// finalize is once-only: a later paste that also finalizes must not double it.
+	f.finalize(CLIProfile{Name: "subhi"}, nil, func(p CLIProfile) {
+		registered = append(registered, p)
+	})
+	if len(registered) != 1 {
+		t.Fatalf("account registered twice: %v", registered)
+	}
+	if p, err := f.outcome(); err != nil || p.Name != "subhi" {
+		t.Fatalf("outcome = (%v,%v), want the profile", p, err)
+	}
+}
+
+// A failed login registers nothing and surfaces the reason.
+func TestFinalizeDoesNotRegisterOnFailure(t *testing.T) {
+	var registered []CLIProfile
+	f := &loginFlow{name: "x"}
+	f.finalize(CLIProfile{}, withTail("the login did not complete: locked", &ptyTail{}), func(p CLIProfile) {
+		registered = append(registered, p)
+	})
+	if len(registered) != 0 {
+		t.Fatalf("a failed login registered an account: %v", registered)
+	}
+	if _, err := f.outcome(); err == nil {
+		t.Fatal("a failed login must carry a reason")
+	}
+}
+
+// awaitDone returns immediately once finalized, and false on timeout otherwise.
+func TestAwaitDone(t *testing.T) {
+	f := &loginFlow{}
+	if f.awaitDone(20 * time.Millisecond) {
+		t.Fatal("awaitDone returned true before finalize")
+	}
+	go func() { time.Sleep(10 * time.Millisecond); f.finalize(CLIProfile{Name: "a"}, nil, nil) }()
+	if !f.awaitDone(2 * time.Second) {
+		t.Fatal("awaitDone did not wake on finalize")
 	}
 }

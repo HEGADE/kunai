@@ -61,6 +61,61 @@ type loginFlow struct {
 	// authorize URL carried, reused when the pasted code arrives without one.
 	loopbackBase  string
 	loopbackState string
+
+	// A login can complete two ways and a watcher goroutine finalizes whichever
+	// happens: the CLI exits because the browser hit its localhost callback
+	// directly (no paste needed), or because a pasted code was delivered. finish
+	// waits on this; a status poll reads it.
+	fmu      sync.Mutex
+	finished bool
+	profile  CLIProfile
+	ferr     error
+	waiters  []chan struct{}
+}
+
+// finalize records a login's outcome exactly once, registers the account on
+// success (so it lands whether the user pasted a code or the browser completed
+// it directly), and wakes anyone waiting.
+func (f *loginFlow) finalize(prof CLIProfile, err error, register func(CLIProfile)) {
+	f.fmu.Lock()
+	if f.finished {
+		f.fmu.Unlock()
+		return
+	}
+	f.finished, f.profile, f.ferr = true, prof, err
+	ws := f.waiters
+	f.waiters = nil
+	f.fmu.Unlock()
+	if err == nil && prof.Name != "" && register != nil {
+		register(prof)
+	}
+	for _, ch := range ws {
+		close(ch)
+	}
+}
+
+// awaitDone blocks until the login finalizes or the timeout elapses.
+func (f *loginFlow) awaitDone(timeout time.Duration) bool {
+	f.fmu.Lock()
+	if f.finished {
+		f.fmu.Unlock()
+		return true
+	}
+	ch := make(chan struct{})
+	f.waiters = append(f.waiters, ch)
+	f.fmu.Unlock()
+	select {
+	case <-ch:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+func (f *loginFlow) outcome() (CLIProfile, error) {
+	f.fmu.Lock()
+	defer f.fmu.Unlock()
+	return f.profile, f.ferr
 }
 
 // loginManager owns in-progress login flows, keyed by a flow id. A flow holds a
@@ -72,13 +127,18 @@ type loginManager struct {
 	// logs in with the same binary, just a fresh config dir.
 	bin      string
 	accounts string // <dataDir>/accounts, where new account config dirs live
+	// register saves a completed account. It is called from finalize, once, so a
+	// login lands whether it finished via a pasted code or the browser completing
+	// it directly. Nil is tolerated (tests).
+	register func(CLIProfile)
 }
 
-func newLoginManager(bin, dataDir string) *loginManager {
+func newLoginManager(bin, dataDir string, register func(CLIProfile)) *loginManager {
 	return &loginManager{
 		flows:    map[string]*loginFlow{},
 		bin:      bin,
 		accounts: filepath.Join(dataDir, "accounts"),
+		register: register,
 	}
 }
 
@@ -126,13 +186,31 @@ func (m *loginManager) start(ctx context.Context, name string) (id, url, dir str
 	if loopback {
 		log.Printf("account login %q: CLI uses localhost loopback (%s); kunai will forward the code", name, base)
 	}
-	m.mu.Lock()
-	m.flows[id] = &loginFlow{
+	f := &loginFlow{
 		id: id, name: name, dir: dir, cmd: cmd, tty: tty, tail: tail, started: time.Now(),
 		loopbackBase: base, loopbackState: state,
 	}
+	m.mu.Lock()
+	m.flows[id] = f
 	m.mu.Unlock()
+	// One watcher finalizes the login however it completes: the CLI exits because
+	// a pasted code was delivered, or because the browser hit its localhost
+	// callback directly and it finished with no paste at all.
+	go m.watch(f)
 	return id, url, dir, nil
+}
+
+// watch drains the CLI's output and waits for it to exit, then records the
+// outcome. It owns the PTY for the flow's life.
+func (m *loginManager) watch(f *loginFlow) {
+	defer f.tty.Close()
+	go func() { _, _ = io.Copy(f.tail, f.tty) }() // keep the CLI unblocked, capture output
+	_ = f.cmd.Wait()
+	if ok, why := authStatus(m.bin, f.dir); ok {
+		f.finalize(CLIProfile{Name: f.name, Bin: m.bin, Dir: f.dir}, nil, m.register)
+	} else {
+		f.finalize(CLIProfile{}, withTail("the login did not complete: "+why, f.tail), m.register)
+	}
 }
 
 // loopbackTarget extracts the CLI's local callback endpoint from a scraped
@@ -242,14 +320,9 @@ func (m *loginManager) finish(id, code string) (CLIProfile, error) {
 	if f == nil {
 		return CLIProfile{}, fmt.Errorf("this login expired; start it again")
 	}
-	defer f.tty.Close()
-
 	// Register the code for redaction before it can reach the captured output,
 	// however it is delivered.
 	f.tail.hide(code)
-	// Drain the PTY into the tail throughout, so the CLI isn't blocked writing
-	// and whatever it says on the way out is captured for a hang report.
-	go func() { _, _ = io.Copy(f.tail, f.tty) }()
 
 	if f.loopbackBase != "" {
 		// Loopback flow: the code was redirected to a local port on this machine,
@@ -259,31 +332,48 @@ func (m *loginManager) finish(id, code string) (CLIProfile, error) {
 		c, st := codeFromPaste(code, f.loopbackState)
 		f.tail.hide(c)
 		if err := forwardLoopback(f.loopbackBase, c, st); err != nil {
-			_ = f.cmd.Process.Kill()
 			return CLIProfile{}, fmt.Errorf("could not hand the code to the CLI's login server: %w", err)
 		}
-	} else {
+	} else if _, err := f.tty.Write([]byte(strings.TrimSpace(code) + "\n")); err != nil {
 		// Paste-code flow: the code is typed into the CLI's prompt.
-		if _, err := f.tty.Write([]byte(strings.TrimSpace(code) + "\n")); err != nil {
-			_ = f.cmd.Process.Kill()
-			return CLIProfile{}, fmt.Errorf("could not submit the code: %w", err)
-		}
+		return CLIProfile{}, fmt.Errorf("could not submit the code: %w", err)
 	}
 
-	// Either way, the CLI now exchanges the code and exits.
-	done := make(chan error, 1)
-	go func() { done <- f.cmd.Wait() }()
-	select {
-	case <-done:
-	case <-time.After(loginDoneTimeout):
+	// The watcher finalizes when the CLI exits; wait for that, then report.
+	if !f.awaitDone(loginDoneTimeout) {
 		_ = f.cmd.Process.Kill()
 		return CLIProfile{}, withTail("the login timed out", f.tail)
 	}
+	m.forget(id)
+	return f.outcome()
+}
 
-	if ok, why := authStatus(m.bin, f.dir); !ok {
-		return CLIProfile{}, withTail("the code was accepted but the account is not signed in: "+why, f.tail)
+// poll reports whether a login has completed on its own (the browser hit the
+// CLI's localhost callback directly), so the client can stop waiting on a paste
+// that will never come. It reads the shared outcome the watcher records; the
+// account is already registered by finalize.
+func (m *loginManager) poll(id string) (done bool, prof CLIProfile, err error) {
+	m.mu.Lock()
+	f := m.flows[id]
+	m.mu.Unlock()
+	if f == nil {
+		return false, CLIProfile{}, nil // unknown, or already consumed
 	}
-	return CLIProfile{Name: f.name, Bin: m.bin, Dir: f.dir}, nil
+	f.fmu.Lock()
+	done, prof, err = f.finished, f.profile, f.ferr
+	f.fmu.Unlock()
+	if done {
+		m.forget(id)
+	}
+	return done, prof, err
+}
+
+// forget drops a finished flow from the live map. The watcher has already closed
+// the PTY, so this only releases the handle.
+func (m *loginManager) forget(id string) {
+	m.mu.Lock()
+	delete(m.flows, id)
+	m.mu.Unlock()
 }
 
 // cancel kills an abandoned flow.
@@ -604,9 +694,33 @@ func (s *Server) handleAccountLoginFinish(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.saveCLIs(append(s.cliList(), profile))
-	forgetAuthStatus() // a brand-new login must show as signed in at once
+	// The account is already registered by the login's finalize; just report it.
 	writeJSON(w, http.StatusOK, map[string]string{"name": profile.Name})
+}
+
+// handleAccountLoginStatus reports whether a login finished on its own — the
+// browser hit the CLI's localhost callback directly, so no code was ever pasted.
+// The client polls this after opening the sign-in page and closes the dialog
+// when it returns done, so the local-browser case completes without a manual
+// step.
+func (s *Server) handleAccountLoginStatus(w http.ResponseWriter, r *http.Request) {
+	if s.login == nil {
+		writeErr(w, http.StatusServiceUnavailable, "account login unavailable")
+		return
+	}
+	var req struct {
+		LoginID string `json:"login_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	done, profile, err := s.login.poll(req.LoginID)
+	if done && err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"done": done, "name": profile.Name})
 }
 
 func (s *Server) handleAccountLoginCancel(w http.ResponseWriter, r *http.Request) {

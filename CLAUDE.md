@@ -160,7 +160,15 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   code crosses to the machine running the CLI, and the localhost hop is local to
   that machine, so the two people can be on different networks. NOT verified
   against a real 2.1.217 login end to end (each piece is unit-tested; the CLI's
-  loopback-server behaviour is assumed from the flow it prints).
+  loopback-server behaviour is assumed from the flow it prints). A loopback login
+  can also finish with **no paste at all**: if the browser is on this machine it
+  hits the CLI's localhost callback directly and the CLI exits. So a single
+  `watch` goroutine per flow owns the PTY, waits for the CLI to exit, and
+  `finalize`s the outcome once — registering the account via a callback whether
+  the exit came from a pasted code or the browser completing it. `finish` waits
+  on that; a `login/status` poll reads it, so the client closes the dialog
+  hands-free in the local-browser case instead of waiting on a paste that never
+  comes.
   The client surface is `Accounts.svelte` (a dedicated view off the sidebar, NOT in
   Settings): lists accounts with signed-in status and a two-step add flow (name ->
   open link + paste code). Nothing but the URL out and the code in ever crosses
