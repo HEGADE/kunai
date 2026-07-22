@@ -187,6 +187,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/providers", s.handleProviders)
 	mux.HandleFunc("POST /api/providers", s.handleProviders)
 	mux.HandleFunc("DELETE /api/providers/{name}", s.handleDeleteProvider)
+	mux.HandleFunc("POST /api/sessions/{id}/provider-model", s.handleSetProviderModel)
 	mux.HandleFunc("GET /api/providers/models", s.handleProviderModels)
 	mux.HandleFunc("POST /api/providers/login/start", s.handleProviderLoginStart)
 	mux.HandleFunc("POST /api/providers/login/finish", s.handleProviderLoginFinish)

@@ -1,12 +1,14 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // A Provider is a proxy-backed model source: another model (Codex, Grok, Kimi,
@@ -210,6 +212,52 @@ func (s *Server) handleDeleteProvider(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleSetProviderModel changes which upstream model a provider session runs on.
+// The model is baked into the spawn env (the slot mapping), so this updates the
+// provider's saved mapping and respawns the session under it -- the conversation
+// resumes from the transcript, and future sessions on the provider use the new
+// model too. Only valid for a session currently on a provider.
+func (s *Server) handleSetProviderModel(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sess, ok := s.mgr.Get(id)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "session not found")
+		return
+	}
+	var body struct {
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	model := strings.TrimSpace(body.Model)
+	if model == "" {
+		writeErr(w, http.StatusBadRequest, "model is required")
+		return
+	}
+	p := s.providerNamed(sess.Meta().CLI)
+	if p == nil {
+		writeErr(w, http.StatusBadRequest, "this session is not on a provider")
+		return
+	}
+	// Map every slot to the new model, so whatever slot the CLI spawns under lands
+	// on it, and persist so the provider's next session uses it too.
+	p.Models = map[string]string{"opus": model, "sonnet": model, "haiku": model}
+	s.providers.save(*p)
+	s.ensureCLIProxyReady()
+	prof := s.providerProfile(*p)
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	restarted, err := s.mgr.RestartWithAccount(ctx, id, prof.Name, prof.Bin, prof.effectiveEnv(), loadTranscriptTurns)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.armSession(restarted)
+	writeJSON(w, http.StatusOK, restarted.Meta())
+}
+
 // providerList is the nil-safe snapshot the resolve/list paths use, so a Server
 // built without newProviderStore (some tests) does not panic.
 func (s *Server) providerList() []Provider {
@@ -223,12 +271,18 @@ func (s *Server) providerList() []Provider {
 // opposed to a real Claude account), so the create/switch paths know to make
 // the sidecar ready first.
 func (s *Server) isProviderName(name string) bool {
+	return s.providerNamed(name) != nil
+}
+
+// providerNamed returns the provider with this name, or nil.
+func (s *Server) providerNamed(name string) *Provider {
 	for _, p := range s.providerList() {
-		if p.Name == name {
-			return true
+		if strings.EqualFold(p.Name, name) {
+			p := p
+			return &p
 		}
 	}
-	return false
+	return nil
 }
 
 // providerProfile compiles a provider to a runnable profile, defaulting the proxy

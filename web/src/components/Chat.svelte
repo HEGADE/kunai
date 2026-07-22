@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte'
   import { app } from '../lib/app.svelte'
-  import { uploadFile } from '../lib/api'
+  import { uploadFile, getProviderModels, setProviderModel } from '../lib/api'
   import type { ChatConnection } from '../lib/chat.svelte'
   import type { Attachment } from '../lib/types'
   import { groupTurns } from '../lib/turns'
@@ -104,6 +104,36 @@
   const providerModel = $derived(
     app.machines.find((m) => m.id === app.activeMachineId)?.stats?.provider_models?.[chat.cli] ?? '',
   )
+  // The provider model chip is a live picker: it lists the provider's own models
+  // (the sidecar's list, filtered to this model's family) and respawns the
+  // session on the pick, so a bad default (e.g. a model the account can't use)
+  // is recoverable in one tap.
+  let pmOpen = $state(false)
+  let pmModels = $state<string[]>([])
+  let pmBusy = $state(false)
+  async function openProviderModels() {
+    pmOpen = !pmOpen
+    if (!pmOpen || pmModels.length) return
+    try {
+      const all = await getProviderModels(app.baseForMachine(app.activeMachineId ?? ''))
+      const fam = (providerModel.match(/^[a-zA-Z]+/)?.[0] ?? '').toLowerCase()
+      const mine = fam ? all.filter((m) => m.toLowerCase().startsWith(fam)) : all
+      pmModels = mine.length ? mine : all
+    } catch {
+      pmModels = []
+    }
+  }
+  async function pickProviderModel(m: string) {
+    pmOpen = false
+    if (m === providerModel || pmBusy) return
+    pmBusy = true
+    try {
+      await setProviderModel(app.baseForMachine(app.activeMachineId ?? ''), chat.sessionId, m)
+      app.refresh() // provider_models updates -> the chip label follows
+    } finally {
+      pmBusy = false
+    }
+  }
 
   // Scrolling: open at the latest message, follow the stream while pinned to the
   // bottom, and surface a jump-to-bottom button once the user scrolls up.
@@ -522,7 +552,23 @@
           </div>
           <div class="modewrap">
             {#if providerModel}
-              <span class="seg static" title="Model served by this provider">{providerModel}</span>
+              <button class="seg mono" class:open={pmOpen} onclick={openProviderModels} title="Model served by this provider">
+                {providerModel}
+              </button>
+              {#if pmOpen}
+                <button class="mode-scrim" onclick={() => (pmOpen = false)} aria-label="Close"></button>
+                <div class="mode-pop">
+                  {#if pmModels.length}
+                    {#each pmModels as m (m)}
+                      <button class:active={m === providerModel} onclick={() => pickProviderModel(m)}>
+                        <span class="ml mono">{m}</span>
+                      </button>
+                    {/each}
+                  {:else}
+                    <div class="pop-note">Loading models…</div>
+                  {/if}
+                </div>
+              {/if}
             {:else}
               <button class="seg" class:open={modelOpen} onclick={() => (modelOpen = !modelOpen)} title="Model">
                 {modelLabel(chat.model)}
@@ -1100,11 +1146,11 @@
     color: var(--text);
     font-weight: 550;
   }
-  /* A provider's model is fixed, so its chip is a plain mono label, not a picker. */
-  .seg.static {
+  /* A provider's model chip reads as data (mono), and its dropdown lists that
+     provider's own models. */
+  .seg.mono {
     font-family: var(--mono);
     font-size: 12px;
-    cursor: default;
   }
   .mode-scrim {
     position: fixed;

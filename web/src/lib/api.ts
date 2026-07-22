@@ -240,6 +240,17 @@ export function removeProvider(base: string, name: string): Promise<void> {
   )
 }
 
+// setProviderModel changes which upstream model a provider session runs on. It
+// respawns the session (the conversation resumes) and updates the provider's
+// saved model, so the composer's model chip follows on the next stats refresh.
+export function setProviderModel(base: string, id: string, model: string): Promise<Meta> {
+  return fetch(at(base, `/api/sessions/${id}/provider-model`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model }),
+  }).then((r) => json<Meta>(r))
+}
+
 // The models the managed sidecar can currently serve (after a provider login),
 // so the UI offers real model strings instead of asking the owner to type them.
 export function getProviderModels(base: string): Promise<string[]> {
