@@ -658,8 +658,12 @@ reserved for status dots and the permission gate. Fonts: Geist (UI), Geist Mono
 rtl-ellipsis trick and need `unicode-bidi: plaintext` to keep the leading slash from
 jumping to the end.
 
-- The chat header and composer float on the canvas with no full-width divider or
-  band; the field's own edge defines it.
+- The composer floats on the canvas with no full-width divider or band; the
+  field's own edge defines it. The chat header is the exception: it is short and
+  ghost-buttoned (no chrome at rest, a panel fill on hover) and sits on a hairline
+  that **fades at both ends** (a masked gradient, not a hard rule), so the compact
+  top chrome reads as a seam over the canvas. A hairline `.asep` sets the terminal
+  Close action apart from the safe ones.
 - Sessions are grouped in the sidebar by the codebase they belong to
   (`web/src/lib/grouping.ts`, pure and testable). Two kinds of heading, and the
   difference is who chose the name: a **project** group is derived from the

@@ -297,6 +297,7 @@
         <span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 1.5" /><path d="M5 3L2 6M22 6l-3-3" /></svg></span>
         <span class="albl">Schedule</span>
       </button>
+      <span class="asep" aria-hidden="true"></span>
       <button class="abtn close" onclick={() => app.closeSessionActive()} aria-label="Close session" title="Close this session">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v8" /><path d="M18 7.5a8 8 0 11-12 0" /></svg>
       </button>
@@ -591,52 +592,76 @@
     position: relative;
     display: flex;
     align-items: center;
-    gap: 10px;
-    /* The tab strip sits above and already clears the status bar, so the header
-       must not inset again or it double-spaces. */
-    padding: 12px 14px;
+    gap: 6px;
+    /* Short and tight: the tab strip above already clears the status bar, so the
+       header only needs breathing room, not a band. */
+    padding: 4px 12px 6px;
     background: transparent;
   }
+  /* The divider the header sits on: a hairline that fades at both ends, so the
+     compact chrome reads as a seam over the canvas rather than a hard rule. */
+  header::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 1px;
+    background: var(--border-2);
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent);
+    mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent);
+  }
+  /* Chrome buttons are ghosts: no chrome at rest, a panel fill on hover, so the
+     row reads as the path plus a few quiet actions rather than a toolbar. */
   .hbtn {
     flex: none;
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    color: var(--text-2);
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: none;
+    border: 1px solid transparent;
+    color: var(--text-3);
     display: flex;
     align-items: center;
     justify-content: center;
   }
   .hbtn:hover {
-    color: var(--text);
-    border-color: var(--border-2);
+    color: var(--text-2);
+    background: var(--panel);
+    border-color: var(--border);
   }
-  /* The session's action row: labelled, colour-coded pills on desktop so loop
-     and schedule are unmistakable; each icon keeps its own hue. */
+  /* The session's actions: quiet ghost buttons, each keeping its own icon hue so
+     loop and schedule read by colour; a hairline sets the terminal action apart. */
   .actions {
     flex: none;
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 2px;
+  }
+  .asep {
+    flex: none;
+    width: 1px;
+    height: 16px;
+    margin: 0 4px;
+    background: var(--border);
   }
   .abtn {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    height: 32px;
-    padding: 0 12px 0 9px;
-    border-radius: 100px;
-    background: var(--panel);
-    border: 1px solid var(--border);
+    height: 26px;
+    padding: 0 10px 0 8px;
+    border-radius: 7px;
+    background: none;
+    border: 1px solid transparent;
     color: var(--text-2);
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 500;
     cursor: pointer;
   }
   .abtn:hover {
-    border-color: var(--border-2);
+    background: var(--panel);
+    border-color: var(--border);
     color: var(--text);
   }
   .abtn .ic {
@@ -655,8 +680,13 @@
   .abtn.close {
     color: var(--alert);
     padding: 0;
-    width: 32px;
+    width: 28px;
     justify-content: center;
+  }
+  .abtn.close:hover {
+    background: rgba(207, 111, 102, 0.12);
+    border-color: transparent;
+    color: var(--alert);
   }
   /* A loop is running: the toggle both signals (amber fill) and stops it. */
   .abtn.loop.on {
@@ -672,16 +702,20 @@
      the meaning. */
   @media (max-width: 860px) {
     .abtn {
-      width: 34px;
-      height: 34px;
+      width: 32px;
+      height: 32px;
       padding: 0;
       justify-content: center;
-      border-radius: 50%;
+      border-radius: 9px;
     }
     .abtn.close {
-      width: 34px;
+      width: 32px;
     }
     .albl {
+      display: none;
+    }
+    /* No room for the separator beside icon-only buttons on a phone. */
+    .asep {
       display: none;
     }
   }
