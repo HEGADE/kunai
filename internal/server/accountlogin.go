@@ -811,6 +811,9 @@ func (s *Server) handleSetAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if s.isProviderName(req.Name) {
+		s.ensureCLIProxyReady() // a provider target needs the sidecar's real address
+	}
 	target := s.resolveCLI(req.Name)
 	if strings.EqualFold(target.Name, sess.Meta().CLI) {
 		writeJSON(w, http.StatusOK, sess.Meta()) // already on it

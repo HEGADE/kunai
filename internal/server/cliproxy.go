@@ -36,6 +36,29 @@ func (s *Server) ensureCLIProxy() {
 	}
 }
 
+// ensureCLIProxyReady starts the sidecar if needed and blocks (bounded) until it
+// has a bound port, so a provider session compiled right after gets a real
+// base_url rather than the empty string a still-starting sidecar returns. The
+// started flag is set before the port is assigned, so we poll BaseURL() rather
+// than trust it. Called synchronously on the provider paths that bake the env.
+func (s *Server) ensureCLIProxyReady() {
+	if s.cliproxy == nil {
+		return
+	}
+	ctx := s.baseCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go func() { _ = s.cliproxy.start(ctx) }() // ensure a start is in flight (idempotent)
+	deadline := time.Now().Add(25 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.cliproxy.BaseURL() != "" {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
 // The managed CLIProxyAPI sidecar. Providers (Codex/Grok/Kimi) work by pointing
 // the claude agent at a local CLIProxyAPI; rather than make the owner install and
 // run that themselves, kunai fetches a pinned release, verifies its checksum,

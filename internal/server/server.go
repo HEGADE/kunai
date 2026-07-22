@@ -292,6 +292,12 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// Session start blocks on the CLI init handshake; give it room.
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
+	// A provider session's base_url comes from the managed sidecar, which may
+	// still be starting; wait for it to have a real address before we bake the
+	// env, or claude would spawn with no proxy to reach.
+	if s.isProviderName(req.CLI) {
+		s.ensureCLIProxyReady()
+	}
 	cli := s.resolveCLI(req.CLI)
 	opts := session.CreateOptions{
 		Cwd: req.Cwd, Title: req.Title, Model: req.Model, Effort: req.Effort, Resume: req.Resume,

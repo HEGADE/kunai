@@ -219,6 +219,18 @@ func (s *Server) providerList() []Provider {
 	return s.providers.all()
 }
 
+// isProviderName reports whether the given CLI name is a proxy provider (as
+// opposed to a real Claude account), so the create/switch paths know to make
+// the sidecar ready first.
+func (s *Server) isProviderName(name string) bool {
+	for _, p := range s.providerList() {
+		if p.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // providerProfile compiles a provider to a runnable profile, defaulting the proxy
 // address and token to the managed sidecar when the provider left them blank
 // (the zero-config path: the owner picks only a model, kunai supplies the proxy).
