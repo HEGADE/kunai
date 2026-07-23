@@ -27,6 +27,34 @@ type nativeGrokManager struct {
 	port    int
 	started bool
 	srv     *http.Server
+	proxy   *grok.Proxy // kept so the dashboard can read the free-tier quota it captured
+}
+
+// freeQuotaUsage returns the free-tier token quota the proxy captured from a 429, as
+// a Usage window, or nil if none seen (or it is too stale to trust). This is the only
+// source of the free tier's 1M/24h limit; paid accounts use the billing endpoint.
+func (m *nativeGrokManager) freeQuotaUsage() *Usage {
+	m.mu.Lock()
+	p := m.proxy
+	m.mu.Unlock()
+	if p == nil {
+		return nil
+	}
+	used, limit, at, ok := p.FreeQuota()
+	if !ok || limit <= 0 {
+		return nil
+	}
+	// A capture older than the rolling window is meaningless; drop it.
+	if time.Since(at) > 24*time.Hour {
+		return nil
+	}
+	pct := float64(used) / float64(limit) * 100
+	if pct > 100 {
+		pct = 100
+	}
+	// A 24h rolling window is a short window -> the session row. No precise reset time
+	// is available from the 429, so ResetsAt stays 0.
+	return &Usage{Session: &UsageWindow{Percent: pct}, FetchedAt: at.Unix()}
 }
 
 func newNativeGrokManager() *nativeGrokManager { return &nativeGrokManager{} }
@@ -72,9 +100,11 @@ func (m *nativeGrokManager) start(ctx context.Context) error {
 		m.mu.Unlock()
 		return err
 	}
-	srv := &http.Server{Handler: grok.NewProxy(tokenPath).Handler()}
+	proxy := grok.NewProxy(tokenPath)
+	srv := &http.Server{Handler: proxy.Handler()}
 	m.port = ln.Addr().(*net.TCPAddr).Port
 	m.srv = srv
+	m.proxy = proxy
 	m.started = true
 	m.mu.Unlock()
 

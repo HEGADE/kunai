@@ -324,6 +324,20 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// A Grok provider: paid accounts have credit billing; a free tier has only the
+		// token quota the proxy captured from a 429.
+		if prov := s.providerNamed(p.Name); prov != nil && isGrokModel(providerDisplayModel(*prov)) {
+			u := s.grokUC.get(r.Context())
+			if u == nil && s.nativeGrok != nil {
+				u = s.nativeGrok.freeQuotaUsage()
+			}
+			if u != nil {
+				out := *u
+				out.CLI = p.Name
+				writeJSON(w, http.StatusOK, out)
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"unavailable": "usage not available for this provider", "cli": p.Name})
 		return
 	}

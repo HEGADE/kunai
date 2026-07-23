@@ -96,6 +96,7 @@ type Server struct {
 	baseCtx       context.Context          // server lifetime, for starting the sidecar on a runtime provider add
 	usage         *usageCache              // the default account's subscription quota windows
 	codexUC       *codexUsageCache         // a Codex provider's ChatGPT quota (read from OpenAI's usage endpoint)
+	grokUC        *grokUsageCache          // a Grok provider's xAI credit-billing quota
 	sessionMeta   *sessionMetaStore        // per-session pins and renames (nil without a data dir)
 	login         *loginManager            // in-app account login flows (nil without a data dir)
 }
@@ -142,6 +143,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	}
 	s.cliproxyLogin = newCLIProxyLoginManager(s.cliproxy)
 	s.codexUC = &codexUsageCache{}
+	s.grokUC = &grokUsageCache{}
 	s.sched = schedule.New(filepath.Join(cfg.DataDir, "schedule.json"), s.fireJob)
 	if cfg.DataDir != "" {
 		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))

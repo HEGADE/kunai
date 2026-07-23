@@ -132,3 +132,19 @@ func TestGrokClientError(t *testing.T) {
 		t.Errorf("transient 500 should pass through, got %d", st)
 	}
 }
+
+func TestNoteQuotaFrom429(t *testing.T) {
+	p := NewProxy("/nonexistent")
+	body := []byte(`{"code":"subscription:free-usage-exhausted","error":"...Usage resets over a rolling 24-hour window — tokens (actual/limit): 1024032/1000000. Upgrade..."}`)
+	p.noteQuota(body)
+	used, limit, _, ok := p.FreeQuota()
+	if !ok || used != 1024032 || limit != 1000000 {
+		t.Errorf("FreeQuota = %d/%d ok=%v, want 1024032/1000000", used, limit, ok)
+	}
+	// A body without the token line leaves it unset.
+	p2 := NewProxy("/nonexistent")
+	p2.noteQuota([]byte(`{"error":"something else"}`))
+	if _, _, _, ok := p2.FreeQuota(); ok {
+		t.Error("should not capture without a token line")
+	}
+}

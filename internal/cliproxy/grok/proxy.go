@@ -7,7 +7,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hegade/kunai/internal/cliproxy/codex"
@@ -35,7 +38,47 @@ type Proxy struct {
 	tokens  *tokenManager
 	baseURL string
 	client  *http.Client
+
+	// The free tier's token limit is not exposed by any proactive endpoint; it only
+	// appears in a 429 body ("tokens (actual/limit): X/Y"). Capture the last one so
+	// the dashboard can show it. Zero limit means none seen.
+	qmu    sync.Mutex
+	qUsed  int64
+	qLimit int64
+	qAt    time.Time
 }
+
+var grokTokenLimitRe = regexp.MustCompile(`tokens \(actual/limit\):\s*(\d+)\s*/\s*(\d+)`)
+
+// noteQuota records the free-tier token usage parsed from a 429 body, if present.
+func (p *Proxy) noteQuota(body []byte) {
+	m := grokTokenLimitRe.FindSubmatch(body)
+	if m == nil {
+		return
+	}
+	used, _ := strconv.ParseInt(string(m[1]), 10, 64)
+	limit, _ := strconv.ParseInt(string(m[2]), 10, 64)
+	if limit <= 0 {
+		return
+	}
+	p.qmu.Lock()
+	p.qUsed, p.qLimit, p.qAt = used, limit, timeNow()
+	p.qmu.Unlock()
+}
+
+// FreeQuota returns the last-seen free-tier token usage (used, limit, whenSeen),
+// ok=false if none has been observed. Stale after a while; the caller decides.
+func (p *Proxy) FreeQuota() (used, limit int64, at time.Time, ok bool) {
+	p.qmu.Lock()
+	defer p.qmu.Unlock()
+	if p.qLimit <= 0 {
+		return 0, 0, time.Time{}, false
+	}
+	return p.qUsed, p.qLimit, p.qAt, true
+}
+
+// timeNow is a var so tests are deterministic.
+var timeNow = time.Now
 
 // NewProxy builds a Grok proxy authenticating with the grok CLI token at tokenPath
 // (normally ~/.grok/auth.json).
@@ -97,6 +140,7 @@ func (p *Proxy) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if upResp.StatusCode < 200 || upResp.StatusCode >= 300 {
 		b, _ := io.ReadAll(upResp.Body)
 		log.Printf("grok: upstream HTTP %d model=%q body=%.200s", upResp.StatusCode, model, string(b))
+		p.noteQuota(b)
 		status, msg := grokClientError(upResp.StatusCode, b)
 		writeAnthropicError(w, status, msg)
 		return
