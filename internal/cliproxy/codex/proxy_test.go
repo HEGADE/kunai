@@ -135,3 +135,28 @@ func TestProxyUpstreamErrorPassthrough(t *testing.T) {
 		t.Errorf("not an anthropic error envelope: %s", rec.Body.String())
 	}
 }
+
+func TestCodexModelOrFallback(t *testing.T) {
+	cases := map[string]string{
+		"gpt-5.5":         "gpt-5.5",
+		"gpt-5.6-terra":   "gpt-5.6-terra",
+		"codex-1":         "codex-1",
+		"o3-mini":         "o3-mini",
+		"claude-opus-4-8": fallbackCodexModel,
+		"grok-4.5":        fallbackCodexModel,
+	}
+	for in, want := range cases {
+		if got := codexModelOrFallback(in); got != want {
+			t.Errorf("codexModelOrFallback(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestCodexDropOrphanToolChoice(t *testing.T) {
+	if strings.Contains(string(dropOrphanToolChoice([]byte(`{"tool_choice":{"type":"auto"}}`))), "tool_choice") {
+		t.Error("orphan tool_choice not stripped")
+	}
+	if !strings.Contains(string(dropOrphanToolChoice([]byte(`{"tool_choice":{"type":"auto"},"tools":[{"name":"x"}]}`))), "tool_choice") {
+		t.Error("valid tool_choice wrongly stripped")
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -21,6 +22,12 @@ const (
 	defaultGrokBaseURL = "https://cli-chat-proxy.grok.com/v1"
 	grokClientVersion  = "0.2.111"
 	grokUserAgent      = "xai-grok-workspace/" + grokClientVersion
+	// fallbackGrokModel is used when the incoming request names a non-Grok model.
+	// That happens when claude sends a resolved Claude id (e.g. claude-opus-4-8)
+	// instead of the mapped model -- a switched session carries the id the slot env
+	// vars do not remap -- and xAI 404s on it. Coercing to a real Grok model keeps
+	// the session working instead of returning empty turns.
+	fallbackGrokModel = "grok-4.5"
 )
 
 // Proxy serves the Anthropic Messages API and forwards to xAI (Grok).
@@ -82,12 +89,14 @@ func (p *Proxy) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 	upResp, err := p.client.Do(upReq)
 	if err != nil {
+		log.Printf("grok: upstream error model=%q: %v", model, err)
 		writeAnthropicError(w, http.StatusBadGateway, "grok upstream: "+err.Error())
 		return
 	}
 	defer upResp.Body.Close()
 	if upResp.StatusCode < 200 || upResp.StatusCode >= 300 {
 		b, _ := io.ReadAll(upResp.Body)
+		log.Printf("grok: upstream HTTP %d model=%q body=%.200s", upResp.StatusCode, model, string(b))
 		writeAnthropicError(w, upResp.StatusCode, grokErrorMessage(b))
 		return
 	}
@@ -102,7 +111,7 @@ func (p *Proxy) handleMessages(w http.ResponseWriter, r *http.Request) {
 // buildGrokRequest translates the Anthropic request to the Responses format and
 // applies the same massaging the reference xAI executor does.
 func (p *Proxy) buildGrokRequest(model string, inbound []byte) []byte {
-	baseModel := codex.ParseSuffix(model).ModelName
+	baseModel := grokModelOrFallback(codex.ParseSuffix(model).ModelName)
 	body := codex.ConvertClaudeRequestToCodex(baseModel, inbound, false)
 	body, _ = sjson.SetBytes(body, "model", baseModel)
 	body, _ = sjson.SetBytes(body, "stream", true)
@@ -110,6 +119,22 @@ func (p *Proxy) buildGrokRequest(model string, inbound []byte) []byte {
 	body, _ = sjson.DeleteBytes(body, "prompt_cache_retention")
 	body, _ = sjson.DeleteBytes(body, "safety_identifier")
 	body, _ = sjson.DeleteBytes(body, "stream_options")
+	body = dropOrphanToolChoice(body)
+	return body
+}
+
+// dropOrphanToolChoice removes a tool_choice that has no tools to choose from. xAI
+// rejects such a request ("A tool_choice was set but no tools were specified"), which
+// can happen on a turn where the translated body carries a tool_choice but an empty
+// or absent tools array.
+func dropOrphanToolChoice(body []byte) []byte {
+	if !gjson.GetBytes(body, "tool_choice").Exists() {
+		return body
+	}
+	tools := gjson.GetBytes(body, "tools")
+	if !tools.Exists() || !tools.IsArray() || len(tools.Array()) == 0 {
+		body, _ = sjson.DeleteBytes(body, "tool_choice")
+	}
 	return body
 }
 
@@ -168,6 +193,16 @@ func applyGrokHeaders(r *http.Request, token string) {
 	r.Header.Set("X-XAI-Token-Auth", "xai-grok-cli")
 	r.Header.Set("x-grok-client-version", grokClientVersion)
 	r.Header.Set("User-Agent", grokUserAgent)
+}
+
+// grokModelOrFallback returns the model if it is a Grok model, else the fallback.
+// A correctly-mapped request already carries a grok-* model and passes through; only
+// a stray Claude/other id gets coerced, so xAI never sees a model it cannot serve.
+func grokModelOrFallback(model string) string {
+	if strings.HasPrefix(strings.ToLower(model), "grok") {
+		return model
+	}
+	return fallbackGrokModel
 }
 
 func grokErrorMessage(b []byte) string {

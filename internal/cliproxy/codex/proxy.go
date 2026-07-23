@@ -122,7 +122,7 @@ func (p *Proxy) handleMessages(w http.ResponseWriter, r *http.Request) {
 // buildCodexRequest translates the Anthropic request and applies the same body
 // massaging the reference executor does before calling /responses.
 func (p *Proxy) buildCodexRequest(model string, inbound []byte) []byte {
-	baseModel := ParseSuffix(model).ModelName
+	baseModel := codexModelOrFallback(ParseSuffix(model).ModelName)
 	body := ConvertClaudeRequestToCodex(baseModel, inbound, false)
 	body, _ = sjson.SetBytes(body, "model", baseModel)
 	body, _ = sjson.SetBytes(body, "stream", true)
@@ -130,8 +130,37 @@ func (p *Proxy) buildCodexRequest(model string, inbound []byte) []byte {
 	body, _ = sjson.DeleteBytes(body, "prompt_cache_retention")
 	body, _ = sjson.DeleteBytes(body, "safety_identifier")
 	body, _ = sjson.DeleteBytes(body, "stream_options")
+	body = dropOrphanToolChoice(body)
 	if !gjson.GetBytes(body, "instructions").Exists() {
 		body, _ = sjson.SetBytes(body, "instructions", "")
+	}
+	return body
+}
+
+// fallbackCodexModel is used when the request names a non-Codex model (e.g. a
+// resolved Claude id like claude-opus-4-8 that a switched session carries), which
+// Codex 404s on. Coercing to a real model keeps the session working.
+const fallbackCodexModel = "gpt-5.5"
+
+func codexModelOrFallback(model string) string {
+	m := strings.ToLower(model)
+	for _, pfx := range []string{"gpt", "codex", "o1", "o3", "o4", "chatgpt"} {
+		if strings.HasPrefix(m, pfx) {
+			return model
+		}
+	}
+	return fallbackCodexModel
+}
+
+// dropOrphanToolChoice removes a tool_choice with no tools to choose from, which the
+// /responses upstreams reject ("A tool_choice was set but no tools were specified").
+func dropOrphanToolChoice(body []byte) []byte {
+	if !gjson.GetBytes(body, "tool_choice").Exists() {
+		return body
+	}
+	tools := gjson.GetBytes(body, "tools")
+	if !tools.Exists() || !tools.IsArray() || len(tools.Array()) == 0 {
+		body, _ = sjson.DeleteBytes(body, "tool_choice")
 	}
 	return body
 }

@@ -83,3 +83,36 @@ func TestGrokProxyRoundTrip(t *testing.T) {
 		t.Error("upstream body should request stream")
 	}
 }
+
+func TestGrokModelOrFallback(t *testing.T) {
+	cases := map[string]string{
+		"grok-4.5":        "grok-4.5",
+		"grok-4.5-fast":   "grok-4.5-fast",
+		"claude-opus-4-8": fallbackGrokModel, // a switched session's Claude id
+		"gpt-5.5":         fallbackGrokModel,
+		"":                fallbackGrokModel,
+	}
+	for in, want := range cases {
+		if got := grokModelOrFallback(in); got != want {
+			t.Errorf("grokModelOrFallback(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestDropOrphanToolChoice(t *testing.T) {
+	// tool_choice with no tools -> stripped
+	got := string(dropOrphanToolChoice([]byte(`{"tool_choice":{"type":"auto"}}`)))
+	if strings.Contains(got, "tool_choice") {
+		t.Errorf("orphan tool_choice not stripped: %s", got)
+	}
+	// tool_choice with tools -> kept
+	got = string(dropOrphanToolChoice([]byte(`{"tool_choice":{"type":"auto"},"tools":[{"name":"x"}]}`)))
+	if !strings.Contains(got, "tool_choice") {
+		t.Errorf("valid tool_choice wrongly stripped: %s", got)
+	}
+	// empty tools array -> stripped
+	got = string(dropOrphanToolChoice([]byte(`{"tool_choice":{"type":"auto"},"tools":[]}`)))
+	if strings.Contains(got, "tool_choice") {
+		t.Errorf("tool_choice with empty tools not stripped: %s", got)
+	}
+}

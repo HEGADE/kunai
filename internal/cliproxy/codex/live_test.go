@@ -75,3 +75,38 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "...[truncated]"
 }
+
+// A session switched from Claude carries a resolved Claude id (claude-opus-4-8);
+// the proxy must coerce it to a real Codex model instead of 404ing. Live proof.
+func TestLiveCodexCoercesClaudeModel(t *testing.T) {
+	if os.Getenv("KUNAI_CODEX_LIVE") != "1" {
+		t.Skip("set KUNAI_CODEX_LIVE=1 and KUNAI_CODEX_TOKEN to run")
+	}
+	tokenPath := os.Getenv("KUNAI_CODEX_TOKEN")
+	if tokenPath == "" {
+		t.Fatal("KUNAI_CODEX_TOKEN not set")
+	}
+	p := NewProxy(tokenPath, false)
+	body := `{"model":"claude-opus-4-8","max_tokens":64,"stream":true,` +
+		`"messages":[{"role":"user","content":"Reply with exactly this word and nothing else: pong"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	p.handleMessages(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("coerced request failed: status=%d body=%s", rec.Code, truncate(rec.Body.String(), 800))
+	}
+	var text strings.Builder
+	for _, line := range strings.Split(rec.Body.String(), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "data:") {
+			d := strings.TrimSpace(line[5:])
+			if gjson.Get(d, "type").String() == "content_block_delta" {
+				text.WriteString(gjson.Get(d, "delta.text").String())
+			}
+		}
+	}
+	if !strings.Contains(strings.ToLower(text.String()), "pong") {
+		t.Errorf("expected pong from a coerced claude model, got %q", text.String())
+	}
+	t.Log("coercion OK: claude-opus-4-8 -> Codex model -> pong")
+}
