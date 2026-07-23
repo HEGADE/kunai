@@ -307,6 +307,19 @@ func (s *Server) providerProfile(p Provider) CLIProfile {
 			return p.profile(s.cfg.DataDir)
 		}
 	}
+	if p.BaseURL == "" && s.nativeGrok != nil && isGrokModel(providerDisplayModel(p)) {
+		ctx := s.baseCtx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if err := s.nativeGrok.start(ctx); err != nil {
+			log.Printf("native grok: %v (falling back to sidecar)", err)
+		} else if base := s.nativeGrok.BaseURL(); base != "" {
+			p.BaseURL = base
+			p.Token = s.nativeGrok.APIKey()
+			return p.profile(s.cfg.DataDir)
+		}
+	}
 	if p.BaseURL == "" && s.cliproxy != nil {
 		p.BaseURL = s.cliproxy.BaseURL()
 	}

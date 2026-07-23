@@ -64,6 +64,9 @@ type Config struct {
 	// (internal/cliproxy/codex) instead of the CLIProxyAPI sidecar. Opt-in
 	// (KUNAI_NATIVE_CODEX=1) while it is proven out; login still uses the sidecar.
 	NativeCodex bool
+	// NativeGrok routes a Grok provider through kunai's own in-process proxy
+	// (internal/cliproxy/grok), reading the grok CLI login. Opt-in (KUNAI_NATIVE_GROK=1).
+	NativeGrok bool
 }
 
 // Server wires the manager, config, and embedded PWA into an http.Handler.
@@ -87,6 +90,7 @@ type Server struct {
 	providers     *providerStore           // proxy-backed model sources (Codex/Grok/Kimi via CLIProxyAPI)
 	cliproxy      *cliproxyManager         // the managed CLIProxyAPI sidecar (nil without a data dir)
 	nativeCodex   *nativeCodexManager      // kunai's own in-process Codex proxy (opt-in, replaces the sidecar for Codex)
+	nativeGrok    *nativeGrokManager       // kunai's own in-process Grok proxy (opt-in, replaces the sidecar for Grok)
 	nativeLogin   *nativeCodexLoginManager // native Codex OAuth login (no sidecar), when NativeCodex is on
 	cliproxyLogin *cliproxyLoginManager    // in-app provider (Codex/Grok/Kimi) login flows
 	baseCtx       context.Context          // server lifetime, for starting the sidecar on a runtime provider add
@@ -132,6 +136,9 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	if cfg.NativeCodex {
 		s.nativeCodex = newNativeCodexManager(cfg.DataDir)
 		s.nativeLogin = newNativeCodexLoginManager(cfg.DataDir)
+	}
+	if cfg.NativeGrok {
+		s.nativeGrok = newNativeGrokManager()
 	}
 	s.cliproxyLogin = newCLIProxyLoginManager(s.cliproxy)
 	s.codexUC = &codexUsageCache{}
@@ -246,6 +253,13 @@ func (s *Server) Run(ctx context.Context) error {
 			}
 		}()
 	}
+	if s.nativeGrok != nil {
+		go func() {
+			if err := s.nativeGrok.start(s.baseCtx); err != nil {
+				log.Printf("native grok: %v", err)
+			}
+		}()
+	}
 	go s.sched.Run(ctx) // fire scheduled jobs while the server is up
 	// The guardian wakes the phone the same way a finished turn does; push may
 	// have been set after New, so wire the notifier here at launch.
@@ -317,7 +331,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// A provider session's base_url comes from the managed sidecar, which may
 	// still be starting; wait for it to have a real address before we bake the
 	// env, or claude would spawn with no proxy to reach.
-	if s.isProviderName(req.CLI) && !s.providerUsesNative(req.CLI) {
+	if s.isProviderName(req.CLI) && !s.providerUsesNative(req.CLI) && !s.providerUsesNativeGrok(req.CLI) {
 		s.ensureCLIProxyReady()
 	}
 	cli := s.resolveCLI(req.CLI)

@@ -39,6 +39,7 @@ func main() {
 	tgAllowed := flag.String("telegram-allow", os.Getenv("KUNAI_TELEGRAM_ALLOW"), "comma-separated Telegram user ids allowed to drive kunai")
 	flag.BoolVar(&cfg.TelegramDetail, "telegram-detail", envBool("KUNAI_TELEGRAM_DETAIL", false), "send tool inputs and outputs to Telegram (file contents and command output leave the machine)")
 	flag.BoolVar(&cfg.NativeCodex, "native-codex", envBool("KUNAI_NATIVE_CODEX", false), "route a Codex provider through kunai's own in-process proxy instead of the CLIProxyAPI sidecar (experimental)")
+	flag.BoolVar(&cfg.NativeGrok, "native-grok", envBool("KUNAI_NATIVE_GROK", false), "route a Grok provider through kunai's own in-process proxy (reads the grok CLI login; experimental)")
 	flag.Parse()
 	cfg.DataDir = *dataDir
 	cfg.TelegramToken = *tgToken

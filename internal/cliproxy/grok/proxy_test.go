@@ -1,0 +1,85 @@
+package grok
+
+import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/tidwall/gjson"
+)
+
+func writeGrokToken(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "auth.json")
+	// The grok CLI's nested shape: one "<issuer>::<id>" key holding the session token.
+	body := `{"https://auth.x.ai::abc-123":{"key":"sess-tok","refresh_token":"rt","expires_at":"2999-01-01T00:00:00Z","oidc_issuer":"https://auth.x.ai","oidc_client_id":"cid"}}`
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestGrokTokenParse(t *testing.T) {
+	m := newTokenManager(writeGrokToken(t))
+	tok, err := m.token(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok != "sess-tok" {
+		t.Errorf("token = %q, want sess-tok", tok)
+	}
+}
+
+func TestGrokProxyRoundTrip(t *testing.T) {
+	var gotAuth, gotXAuth, gotUA string
+	var gotBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotXAuth = r.Header.Get("X-XAI-Token-Auth")
+		gotUA = r.Header.Get("User-Agent")
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		sse := strings.Join([]string{
+			`data: {"type":"response.created","response":{"id":"r1"}}`,
+			`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","role":"assistant"}}`,
+			`data: {"type":"response.output_text.delta","delta":"pong"}`,
+			`data: {"type":"response.completed","response":{"stop_reason":"stop","usage":{"input_tokens":1,"output_tokens":1}}}`,
+			"",
+		}, "\n\n")
+		_, _ = w.Write([]byte(sse))
+	}))
+	defer upstream.Close()
+
+	p := NewProxy(writeGrokToken(t))
+	p.baseURL = upstream.URL
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"grok-4.5","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	rec := httptest.NewRecorder()
+	p.handleMessages(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	out := rec.Body.String()
+	for _, want := range []string{"message_start", "content_block", "pong", "message_stop"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q; got:\n%s", want, out)
+		}
+	}
+	if gotAuth != "Bearer sess-tok" {
+		t.Errorf("upstream Authorization = %q", gotAuth)
+	}
+	if gotXAuth != "xai-grok-cli" {
+		t.Errorf("X-XAI-Token-Auth = %q", gotXAuth)
+	}
+	if !strings.Contains(gotUA, "xai-grok-workspace") {
+		t.Errorf("User-Agent = %q", gotUA)
+	}
+	if gjson.GetBytes(gotBody, "stream").Bool() != true {
+		t.Error("upstream body should request stream")
+	}
+}

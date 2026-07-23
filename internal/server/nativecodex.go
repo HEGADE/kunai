@@ -55,7 +55,10 @@ func (s *Server) anyProviderNeedsSidecar() bool {
 			continue // points at its own proxy, not ours
 		}
 		if s.nativeCodex != nil && isCodexModel(providerDisplayModel(p)) {
-			continue // native handles it
+			continue // native Codex handles it
+		}
+		if s.nativeGrok != nil && isGrokModel(providerDisplayModel(p)) {
+			continue // native Grok handles it
 		}
 		return true
 	}
