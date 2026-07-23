@@ -23,6 +23,7 @@ import (
 )
 
 type nativeGrokManager struct {
+	dataDir string
 	mu      sync.Mutex
 	port    int
 	started bool
@@ -57,11 +58,12 @@ func (m *nativeGrokManager) freeQuotaUsage() *Usage {
 	return &Usage{Session: &UsageWindow{Percent: pct}, FetchedAt: at.Unix()}
 }
 
-func newNativeGrokManager() *nativeGrokManager { return &nativeGrokManager{} }
+func newNativeGrokManager(dataDir string) *nativeGrokManager {
+	return &nativeGrokManager{dataDir: dataDir}
+}
 
-// grokTokenPath returns the grok CLI's login file, or ok=false if it is not there.
-// A var so a test can stub the credential check deterministically.
-var grokTokenPath = func() (string, bool) {
+// grokTokenPathFn is the home-dir check, a var so a test can stub it.
+var grokTokenPathFn = func() (string, bool) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", false
@@ -71,6 +73,23 @@ var grokTokenPath = func() (string, bool) {
 		return "", false
 	}
 	return p, true
+}
+
+// tokenPath returns the grok login file native grok should read: the sidecar's
+// app-login credential (xai-*.json in the managed auth dir, written when you log in
+// through the kunai app) first, then the grok CLI's own ~/.grok/auth.json. The
+// sidecar-dir check is the fix for a login that was invisible to native grok -- an
+// in-app login lived only in the sidecar dir, so native grok found nothing and fell
+// back to the sidecar, which hangs for minutes on a 429.
+func (m *nativeGrokManager) tokenPath() (string, bool) {
+	if m != nil && m.dataDir != "" {
+		for _, pat := range []string{"xai-*.json", "grok-*.json"} {
+			if matches, _ := filepath.Glob(filepath.Join(m.dataDir, "cliproxy", "auth", pat)); len(matches) > 0 {
+				return matches[0], true
+			}
+		}
+	}
+	return grokTokenPathFn()
 }
 
 func (m *nativeGrokManager) BaseURL() string {
@@ -90,7 +109,7 @@ func (m *nativeGrokManager) start(ctx context.Context) error {
 		m.mu.Unlock()
 		return nil
 	}
-	tokenPath, ok := grokTokenPath()
+	tokenPath, ok := m.tokenPath()
 	if !ok {
 		m.mu.Unlock()
 		return errNoGrokToken
@@ -142,7 +161,7 @@ func (s *Server) providerUsesNativeGrok(name string) bool {
 	if p == nil || p.BaseURL != "" || !isGrokModel(providerDisplayModel(*p)) {
 		return false
 	}
-	_, ok := grokTokenPath()
+	_, ok := s.nativeGrok.tokenPath()
 	return ok
 }
 

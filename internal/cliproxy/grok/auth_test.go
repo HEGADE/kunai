@@ -89,3 +89,22 @@ func containsAll(s string, subs ...string) bool {
 	}
 	return true
 }
+
+// The app-login fix: native grok must read the sidecar's flat CLIProxyAPI shape
+// ({access_token, refresh_token, expired}) so an in-app login routes native.
+func TestReadToken_FlatSidecarXAIShape(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "xai-abc.json")
+	body := `{"access_token":"xai-access-tok","refresh_token":"rt","expired":"2099-01-01T00:00:00Z","type":"xai"}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := newTokenManager(path)
+	tok, err := m.token(nil)
+	if err != nil {
+		t.Fatalf("flat xai token: %v", err)
+	}
+	if tok != "xai-access-tok" {
+		t.Errorf("token = %q, want the flat access_token", tok)
+	}
+}

@@ -139,7 +139,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 		s.nativeLogin = newNativeCodexLoginManager(cfg.DataDir)
 	}
 	if cfg.NativeGrok {
-		s.nativeGrok = newNativeGrokManager()
+		s.nativeGrok = newNativeGrokManager(cfg.DataDir)
 	}
 	s.cliproxyLogin = newCLIProxyLoginManager(s.cliproxy)
 	s.codexUC = &codexUsageCache{}

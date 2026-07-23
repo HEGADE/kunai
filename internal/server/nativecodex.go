@@ -64,7 +64,7 @@ func (s *Server) anyProviderNeedsSidecar() bool {
 			}
 		}
 		if s.nativeGrok != nil && isGrokModel(providerDisplayModel(p)) {
-			if _, ok := grokTokenPath(); ok {
+			if _, ok := s.nativeGrok.tokenPath(); ok {
 				continue // native Grok has a login; it handles this one
 			}
 		}

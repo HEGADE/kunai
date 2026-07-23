@@ -110,18 +110,33 @@ func (m *tokenManager) readLocked() error {
 	if err != nil {
 		return fmt.Errorf("grok token: read %s: %w", m.path, err)
 	}
+	// The grok CLI writes a map of "<issuer>::<id>" -> entry; pick the one with a key.
 	var raw map[string]authEntry
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return fmt.Errorf("grok token: parse %s: %w", m.path, err)
-	}
-	// Pick the entry with a key (there is normally exactly one).
-	for k, e := range raw {
-		if e.Key != "" {
-			m.tok = e
-			m.fileKey = k
-			m.exp = parseTime(e.ExpiresAt)
-			return nil
+	if err := json.Unmarshal(b, &raw); err == nil {
+		for k, e := range raw {
+			if e.Key != "" {
+				m.tok = e
+				m.fileKey = k
+				m.exp = parseTime(e.ExpiresAt)
+				return nil
+			}
 		}
+	}
+	// The kunai app's in-app login writes the sidecar's flat CLIProxyAPI shape
+	// instead ({access_token, refresh_token, expired, type:"xai"}). Accept it so a
+	// provider logged in through the app routes native rather than to the hanging
+	// sidecar. There is no OIDC issuer in this shape, so the access token is used as
+	// is until it expires (kunai does not refresh it; the sidecar/app owns that).
+	var flat struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		Expired      string `json:"expired"`
+	}
+	if json.Unmarshal(b, &flat) == nil && flat.AccessToken != "" {
+		m.tok = authEntry{Key: flat.AccessToken, RefreshToken: flat.RefreshToken}
+		m.exp = parseTime(flat.Expired)
+		m.fileKey = "" // no map wrapper to write back into
+		return nil
 	}
 	return fmt.Errorf("grok token: no session key in %s", m.path)
 }
