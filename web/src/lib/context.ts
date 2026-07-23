@@ -6,6 +6,13 @@ const WINDOWS: { family: string; window: number }[] = [
   { family: 'opus', window: 1_000_000 },
   { family: 'sonnet', window: 1_000_000 },
   { family: 'haiku', window: 200_000 },
+  // Provider models (Codex / Grok) reached through the proxy. Their real windows
+  // are smaller than Claude's, and the proxy slides the context to stay under them
+  // (internal/cliproxy/codex/resilience.go), so the meter must divide by the real
+  // window or a near-full provider session wrongly pins at 100%.
+  { family: 'gpt', window: 272_000 },
+  { family: 'codex', window: 272_000 },
+  { family: 'grok', window: 256_000 },
 ]
 const DEFAULT_WINDOW = 200_000
 

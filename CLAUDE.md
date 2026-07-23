@@ -99,10 +99,15 @@ proxy):
   answering every turn while the log showed `trimmed N oldest message(s)`, and that a
   single file read cannot overflow (the CLI caps a tool result) -- only conversation
   accumulated over many turns does, which is why the bug needed a long session to
-  show. The trade is honest: the model forgets the oldest turns (as compaction would,
-  minus the summary), and the CLI's own context meter still counts the full history,
-  so it can read past 100% while the proxy quietly keeps the request within the real
-  window.
+  show. In practice the trim rarely fires: the CLI is NOT in 1M-context mode for a
+  provider session (its request carries `context-management-2025-06-27` but no
+  `context-1m` beta, confirmed live), so for a normal-window model like gpt-5.5
+  (~272k) the CLI's own compaction fires around ~180k -- with a real summary -- well
+  before the proxy would trim; the trim is the safety net for a smaller-window model
+  or an edge spike. The one honest residue: when the trim does fire, the model forgets
+  the oldest turns (a drop, not a summary). The context meter now reads the real
+  provider window (`web/src/lib/context.ts` knows gpt/codex ~272k, grok ~256k) so a
+  near-full provider session no longer pins falsely at 100%.
 - **Guaranteed stream terminal.** `StreamTranslate` tracks whether it emitted
   `message_stop`; a socket drop, an early EOF, or an inline `response.failed` becomes
   a typed Anthropic `error` event (overflow -> `invalid_request_error` so the CLI
