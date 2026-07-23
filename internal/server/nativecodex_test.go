@@ -1,11 +1,33 @@
 package server
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// codexMgrWithToken builds a native codex manager whose data dir already holds a
+// codex-*.json, so its credential check passes deterministically.
+func codexMgrWithToken(t *testing.T) *nativeCodexManager {
+	t.Helper()
+	dir := t.TempDir()
+	authDir := filepath.Join(dir, "cliproxy", "auth")
+	if err := os.MkdirAll(authDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(authDir, "codex-test.json"), []byte(`{"access_token":"t"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return newNativeCodexManager(dir)
+}
 
 // The routing logic that decides sidecar vs native for a provider, unit-tested
 // without spawning anything. The live path (real Codex) is exercised by the
 // internal/cliproxy/codex live tests.
 func TestNativeCodexRouting(t *testing.T) {
+	// Isolate HOME so a real ~/.codex on the dev box never leaks into the check.
+	t.Setenv("HOME", t.TempDir())
+
 	codex := Provider{Name: "Codex", Models: map[string]string{"opus": "gpt-5.5"}}
 	grok := Provider{Name: "Grok", Models: map[string]string{"opus": "grok-4.5"}}
 	external := Provider{Name: "Ext", BaseURL: "http://127.0.0.1:9999", Models: map[string]string{"opus": "gpt-5.5"}}
@@ -20,14 +42,15 @@ func TestNativeCodexRouting(t *testing.T) {
 		t.Error("native off: a Codex provider should need the sidecar")
 	}
 
-	// With native ON, a Codex provider is native; a Grok provider still needs the sidecar.
-	on := &Server{nativeCodex: newNativeCodexManager("")}
+	// With native ON and a token, a Codex provider is native; a Grok provider still
+	// needs the sidecar.
+	on := &Server{nativeCodex: codexMgrWithToken(t)}
 	on.providers = &providerStore{list: []Provider{codex}}
 	if !on.providerUsesNative("Codex") {
-		t.Error("native on: Codex should use native")
+		t.Error("native on + token: Codex should use native")
 	}
 	if on.anyProviderNeedsSidecar() {
-		t.Error("native on: an all-Codex setup should NOT need the sidecar (the 40MB is the point)")
+		t.Error("native on + token: an all-Codex setup should NOT need the sidecar (the 40MB is the point)")
 	}
 
 	on.providers = &providerStore{list: []Provider{codex, grok}}
@@ -45,6 +68,20 @@ func TestNativeCodexRouting(t *testing.T) {
 	}
 	if on.providerUsesNative("Ext") {
 		t.Error("external-base provider should not route to native (it has its own base)")
+	}
+}
+
+// The fix: native codex ON but NO codex token must fall back to the sidecar, not
+// claim the session and leave it unserved.
+func TestNativeCodexWithoutTokenFallsBack(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // no ~/.codex either
+	s := &Server{nativeCodex: newNativeCodexManager(t.TempDir())}
+	s.providers = &providerStore{list: []Provider{{Name: "Codex", Models: map[string]string{"opus": "gpt-5.5"}}}}
+	if s.providerUsesNative("Codex") {
+		t.Error("Codex without a token must not be claimed by native")
+	}
+	if !s.anyProviderNeedsSidecar() {
+		t.Error("Codex without a token must fall back to needing the sidecar")
 	}
 }
 

@@ -321,6 +321,11 @@ func (s *Server) providerProfile(p Provider) CLIProfile {
 		}
 	}
 	if p.BaseURL == "" && s.cliproxy != nil {
+		// Reaching here means the sidecar is the proxy for this session (either a
+		// plain sidecar provider, or a native provider whose login was missing so it
+		// degraded). Make sure the sidecar has a bound port before baking its URL, or
+		// the session would spawn with an empty base URL and reply with nothing.
+		s.ensureCLIProxyReady()
 		p.BaseURL = s.cliproxy.BaseURL()
 	}
 	if p.Token == "" && s.cliproxy != nil {

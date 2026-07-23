@@ -42,7 +42,11 @@ func (s *Server) providerUsesNative(name string) bool {
 		return false
 	}
 	p := s.providerNamed(name)
-	return p != nil && p.BaseURL == "" && isCodexModel(providerDisplayModel(*p))
+	if p == nil || p.BaseURL != "" || !isCodexModel(providerDisplayModel(*p)) {
+		return false
+	}
+	_, _, ok := s.nativeCodex.codexTokenPath() // only if a Codex token actually exists
+	return ok
 }
 
 // anyProviderNeedsSidecar reports whether at least one configured provider relies
@@ -55,10 +59,14 @@ func (s *Server) anyProviderNeedsSidecar() bool {
 			continue // points at its own proxy, not ours
 		}
 		if s.nativeCodex != nil && isCodexModel(providerDisplayModel(p)) {
-			continue // native Codex handles it
+			if _, _, ok := s.nativeCodex.codexTokenPath(); ok {
+				continue // native Codex has a token; it handles this one
+			}
 		}
 		if s.nativeGrok != nil && isGrokModel(providerDisplayModel(p)) {
-			continue // native Grok handles it
+			if _, ok := grokTokenPath(); ok {
+				continue // native Grok has a login; it handles this one
+			}
 		}
 		return true
 	}

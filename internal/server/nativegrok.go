@@ -32,7 +32,8 @@ type nativeGrokManager struct {
 func newNativeGrokManager() *nativeGrokManager { return &nativeGrokManager{} }
 
 // grokTokenPath returns the grok CLI's login file, or ok=false if it is not there.
-func grokTokenPath() (string, bool) {
+// A var so a test can stub the credential check deterministically.
+var grokTokenPath = func() (string, bool) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", false
@@ -97,13 +98,22 @@ func isGrokModel(model string) bool {
 }
 
 // providerUsesNativeGrok reports whether the named provider is a Grok provider the
-// native proxy handles.
+// native proxy can actually serve: native grok enabled, a Grok model, AND a grok CLI
+// login present. The credential check is load-bearing -- without it, a machine with
+// -native-grok but no grok CLI would skip the sidecar and then have nothing to serve
+// the session, producing empty replies. When there is no ~/.grok login this returns
+// false, so the create path readies the sidecar (where the in-app Grok login writes)
+// and the session works.
 func (s *Server) providerUsesNativeGrok(name string) bool {
 	if s.nativeGrok == nil {
 		return false
 	}
 	p := s.providerNamed(name)
-	return p != nil && p.BaseURL == "" && isGrokModel(providerDisplayModel(*p))
+	if p == nil || p.BaseURL != "" || !isGrokModel(providerDisplayModel(*p)) {
+		return false
+	}
+	_, ok := grokTokenPath()
+	return ok
 }
 
 var errNoGrokToken = &grokTokenErr{}
