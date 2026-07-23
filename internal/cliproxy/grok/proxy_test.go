@@ -116,3 +116,19 @@ func TestDropOrphanToolChoice(t *testing.T) {
 		t.Errorf("tool_choice with empty tools not stripped: %s", got)
 	}
 }
+
+func TestGrokClientError(t *testing.T) {
+	// Permanent conditions -> non-retryable 400 (so the CLI surfaces immediately).
+	for _, body := range []string{
+		`{"code":"subscription:free-usage-exhausted","error":"used all free usage"}`,
+		`{"error":"The model x does not exist or your team does not have access to it"}`,
+	} {
+		if st, _ := grokClientError(429, []byte(body)); st != 400 {
+			t.Errorf("permanent error should map to 400, got %d for %s", st, body)
+		}
+	}
+	// A transient 500 passes through so the CLI can retry.
+	if st, _ := grokClientError(500, []byte(`{"error":"internal"}`)); st != 500 {
+		t.Errorf("transient 500 should pass through, got %d", st)
+	}
+}

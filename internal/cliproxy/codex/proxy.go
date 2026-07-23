@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -108,7 +109,9 @@ func (p *Proxy) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 	if upResp.StatusCode < 200 || upResp.StatusCode >= 300 {
 		b, _ := io.ReadAll(upResp.Body)
-		writeAnthropicError(w, upResp.StatusCode, codexErrorMessage(b))
+		log.Printf("codex: upstream HTTP %d body=%.200s", upResp.StatusCode, string(b))
+		status, msg := codexClientError(upResp.StatusCode, b)
+		writeAnthropicError(w, status, msg)
 		return
 	}
 
@@ -232,6 +235,23 @@ func applyCodexHeaders(r *http.Request, token, account string) {
 	if strings.Contains(codexUserAgent, "Mac OS") {
 		r.Header.Set("Session_id", uuid.NewString())
 	}
+}
+
+// codexClientError mirrors grok's: a permanent condition (quota exhausted, model not
+// available) becomes a non-retryable 400 so the CLI surfaces it at once instead of
+// backing off and retrying for tens of seconds.
+func codexClientError(upstreamStatus int, body []byte) (int, string) {
+	msg := codexErrorMessage(body)
+	low := strings.ToLower(string(body))
+	permanent := strings.Contains(low, "usage-exhausted") ||
+		strings.Contains(low, "subscription:") ||
+		strings.Contains(low, "does not exist") ||
+		strings.Contains(low, "does not have access") ||
+		strings.Contains(low, "insufficient_quota")
+	if permanent {
+		return http.StatusBadRequest, msg
+	}
+	return upstreamStatus, msg
 }
 
 func codexErrorMessage(b []byte) string {

@@ -97,7 +97,8 @@ func (p *Proxy) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if upResp.StatusCode < 200 || upResp.StatusCode >= 300 {
 		b, _ := io.ReadAll(upResp.Body)
 		log.Printf("grok: upstream HTTP %d model=%q body=%.200s", upResp.StatusCode, model, string(b))
-		writeAnthropicError(w, upResp.StatusCode, grokErrorMessage(b))
+		status, msg := grokClientError(upResp.StatusCode, b)
+		writeAnthropicError(w, status, msg)
 		return
 	}
 
@@ -203,6 +204,24 @@ func grokModelOrFallback(model string) string {
 		return model
 	}
 	return fallbackGrokModel
+}
+
+// grokClientError maps an upstream error to a status + message for the client. A
+// permanent condition (quota exhausted, no access to the model) is returned as a
+// non-retryable 400 so the CLI surfaces it at once instead of backing off and
+// retrying for tens of seconds -- the "stuck, did nothing" symptom. Genuinely
+// transient statuses pass through so the CLI can retry them.
+func grokClientError(upstreamStatus int, body []byte) (int, string) {
+	msg := grokErrorMessage(body)
+	low := strings.ToLower(string(body))
+	permanent := strings.Contains(low, "usage-exhausted") ||
+		strings.Contains(low, "subscription:") ||
+		strings.Contains(low, "does not exist") ||
+		strings.Contains(low, "does not have access")
+	if permanent {
+		return http.StatusBadRequest, msg
+	}
+	return upstreamStatus, msg
 }
 
 func grokErrorMessage(b []byte) string {
