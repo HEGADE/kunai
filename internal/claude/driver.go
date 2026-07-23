@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -85,6 +86,27 @@ type PermissionAsk struct {
 	DisplayName string          //
 	Description string          //
 	Suggestions json.RawMessage // permission_suggestions (raw PermissionUpdate[])
+}
+
+// providerModelArg guards the --model value for a provider session. A session that
+// ran on Claude has its model resolved to a full id (e.g. claude-opus-4-8) by the
+// CLI's init event; when it is then switched to a provider, spawning --model
+// claude-opus-4-8 sends that id straight through to the proxy/sidecar, which 404s
+// with "unknown provider for model claude-opus-4-8" and the turn fails. A provider
+// session is detected by ANTHROPIC_BASE_URL in its env; for one, a claude-* model is
+// swapped for the opus slot, which the provider's ANTHROPIC_DEFAULT_OPUS_MODEL env
+// remaps to the real upstream model. A non-Claude model (already a provider model, or
+// a Claude session with no base URL) passes through untouched.
+func providerModelArg(model string, env []string) string {
+	if !strings.HasPrefix(strings.ToLower(model), "claude-") {
+		return model
+	}
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "ANTHROPIC_BASE_URL=") && len(kv) > len("ANTHROPIC_BASE_URL=") {
+			return "opus"
+		}
+	}
+	return model
 }
 
 // Options configure a Session.
@@ -168,7 +190,7 @@ func (s *Session) args() []string {
 		"--permission-mode", s.opts.PermissionMode,
 	}
 	if s.opts.Model != "" {
-		a = append(a, "--model", s.opts.Model)
+		a = append(a, "--model", providerModelArg(s.opts.Model, s.opts.Env))
 	}
 	if s.opts.Effort != "" {
 		a = append(a, "--effort", s.opts.Effort)
