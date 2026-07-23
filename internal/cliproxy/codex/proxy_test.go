@@ -162,10 +162,10 @@ func TestCodexDropOrphanToolChoice(t *testing.T) {
 }
 
 func TestCodexClientError(t *testing.T) {
-	if st, _ := codexClientError(429, []byte(`{"error":{"message":"insufficient_quota"}}`)); st != 400 {
+	if st, _, _ := ClassifyUpstreamError(429, []byte(`{"error":{"message":"insufficient_quota"}}`)); st != 400 {
 		t.Errorf("quota error should map to 400, got %d", st)
 	}
-	if st, _ := codexClientError(503, []byte(`{"error":"overloaded"}`)); st != 503 {
+	if st, _, _ := ClassifyUpstreamError(503, []byte(`{"error":"overloaded"}`)); st != 503 {
 		t.Errorf("transient 503 should pass through, got %d", st)
 	}
 }

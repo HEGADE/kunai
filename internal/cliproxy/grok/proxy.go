@@ -1,7 +1,6 @@
 package grok
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"io"
@@ -114,6 +113,16 @@ func (p *Proxy) handleMessages(w http.ResponseWriter, r *http.Request) {
 	model := gjson.GetBytes(inbound, "model").String()
 	wantStream := gjson.GetBytes(inbound, "stream").Bool()
 
+	// Guard the smaller Grok window before sending, so an over-window turn fails as
+	// a clean prompt-too-long error instead of a dropped stream (the "stream
+	// disconnected" symptom after a compaction refills the window).
+	baseModel := grokModelOrFallback(codex.ParseSuffix(model).ModelName)
+	if tooLong, status, errType, msg := codex.GuardContextWindow(baseModel, inbound); tooLong {
+		log.Printf("grok: request over window for %s: %s", baseModel, msg)
+		codex.WriteAnthropicError(w, status, errType, msg)
+		return
+	}
+
 	body := p.buildGrokRequest(model, inbound)
 
 	token, err := p.tokens.token(r.Context())
@@ -141,13 +150,13 @@ func (p *Proxy) handleMessages(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(upResp.Body)
 		log.Printf("grok: upstream HTTP %d model=%q body=%.200s", upResp.StatusCode, model, string(b))
 		p.noteQuota(b)
-		status, msg := grokClientError(upResp.StatusCode, b)
-		writeAnthropicError(w, status, msg)
+		status, errType, msg := codex.ClassifyUpstreamError(upResp.StatusCode, b)
+		codex.WriteAnthropicError(w, status, errType, msg)
 		return
 	}
 
 	if wantStream {
-		p.streamBack(r.Context(), w, model, inbound, upResp.Body)
+		codex.StreamTranslate(r.Context(), w, "grok", model, inbound, upResp.Body)
 		return
 	}
 	p.bufferBack(r.Context(), w, model, inbound, upResp.Body)
@@ -181,28 +190,6 @@ func dropOrphanToolChoice(body []byte) []byte {
 		body, _ = sjson.DeleteBytes(body, "tool_choice")
 	}
 	return body
-}
-
-func (p *Proxy) streamBack(ctx context.Context, w http.ResponseWriter, model string, original []byte, body io.Reader) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	flusher, _ := w.(http.Flusher)
-	var param any
-	sc := bufio.NewScanner(body)
-	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if len(bytes.TrimSpace(line)) == 0 {
-			continue
-		}
-		for _, out := range codex.ConvertCodexResponseToClaude(ctx, model, original, nil, append([]byte(nil), line...), &param) {
-			_, _ = w.Write(codex.InjectContextEstimate(out, original))
-		}
-		if flusher != nil {
-			flusher.Flush()
-		}
-	}
 }
 
 func (p *Proxy) bufferBack(ctx context.Context, w http.ResponseWriter, model string, original []byte, body io.Reader) {
@@ -250,41 +237,9 @@ func grokModelOrFallback(model string) string {
 	return fallbackGrokModel
 }
 
-// grokClientError maps an upstream error to a status + message for the client. A
-// permanent condition (quota exhausted, no access to the model) is returned as a
-// non-retryable 400 so the CLI surfaces it at once instead of backing off and
-// retrying for tens of seconds -- the "stuck, did nothing" symptom. Genuinely
-// transient statuses pass through so the CLI can retry them.
-func grokClientError(upstreamStatus int, body []byte) (int, string) {
-	msg := grokErrorMessage(body)
-	low := strings.ToLower(string(body))
-	permanent := strings.Contains(low, "usage-exhausted") ||
-		strings.Contains(low, "subscription:") ||
-		strings.Contains(low, "does not exist") ||
-		strings.Contains(low, "does not have access")
-	if permanent {
-		return http.StatusBadRequest, msg
-	}
-	return upstreamStatus, msg
-}
-
-func grokErrorMessage(b []byte) string {
-	if m := gjson.GetBytes(b, "error.message").String(); m != "" {
-		return m
-	}
-	if m := gjson.GetBytes(b, "message").String(); m != "" {
-		return m
-	}
-	if s := strings.TrimSpace(string(b)); s != "" {
-		return s
-	}
-	return "grok upstream error"
-}
-
+// writeAnthropicError is the api_error convenience wrapper for the auth/read/setup
+// failures in this file; the upstream and stream paths use codex.ClassifyUpstreamError
+// / codex.WriteAnthropicError directly.
 func writeAnthropicError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	out := []byte(`{"type":"error","error":{"type":"api_error","message":""}}`)
-	out, _ = sjson.SetBytes(out, "error.message", msg)
-	_, _ = w.Write(out)
+	codex.WriteAnthropicError(w, status, "api_error", msg)
 }

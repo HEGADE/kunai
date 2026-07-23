@@ -33,8 +33,9 @@ const (
 // test can point it at a mock server.
 var oauthTokenURL = "https://auth.openai.com/oauth/token"
 
-// TokenFile is the on-disk shape the sidecar login writes (flat fields) and that
-// the codex CLI's auth.json shares. Only the fields kunai needs are decoded.
+// TokenFile is the on-disk shape the sidecar login writes (flat fields). The codex
+// CLI instead nests these under a "tokens" object; readFileLocked accepts both.
+// Only the fields kunai needs are decoded.
 type TokenFile struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -105,12 +106,56 @@ func (m *tokenManager) readFileLocked() error {
 	if err := json.Unmarshal(b, &t); err != nil {
 		return fmt.Errorf("codex token: parse %s: %w", m.path, err)
 	}
+	// The codex CLI writes the token nested under "tokens" (with a sibling
+	// "last_refresh"), while the sidecar login writes the fields flat. Accept both
+	// so pointing a Codex provider at a real ~/.codex/auth.json works instead of
+	// failing with "no access or refresh token".
+	if t.AccessToken == "" {
+		var nested struct {
+			Tokens TokenFile `json:"tokens"`
+		}
+		if json.Unmarshal(b, &nested) == nil && nested.Tokens.AccessToken != "" {
+			expired := t.Expired // preserve a flat expiry if one was also present
+			t = nested.Tokens
+			if expired != "" {
+				t.Expired = expired
+			}
+		}
+	}
 	m.tok = t
 	m.exp = parseExpiry(t.Expired)
-	if t.AccountID == "" {
+	// The nested format carries no "expired" field, so fall back to the access
+	// token's own JWT exp claim -- the real expiry, and better than a fixed TTL.
+	if m.exp.IsZero() {
+		if e := expiryFromJWT(t.AccessToken); !e.IsZero() {
+			m.exp = e
+		}
+	}
+	if m.tok.AccountID == "" {
 		m.tok.AccountID = accountFromIDToken(t.IDToken)
 	}
 	return nil
+}
+
+// expiryFromJWT reads the exp claim from a JWT access token, so a token file that
+// records no explicit expiry still refreshes at the right time. Best-effort: a
+// parse failure returns the zero time (treated as expired, forcing a refresh).
+func expiryFromJWT(accessToken string) time.Time {
+	parts := strings.Split(accessToken, ".")
+	if len(parts) < 2 {
+		return time.Time{}
+	}
+	claims, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return time.Time{}
+	}
+	var c struct {
+		Exp int64 `json:"exp"`
+	}
+	if json.Unmarshal(claims, &c) != nil || c.Exp == 0 {
+		return time.Time{}
+	}
+	return time.Unix(c.Exp, 0)
 }
 
 // refreshLocked exchanges the refresh token for a new access token. Caller holds mu.

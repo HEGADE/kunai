@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hegade/kunai/internal/cliproxy/codex"
 	"github.com/tidwall/gjson"
 )
 
@@ -123,12 +124,12 @@ func TestGrokClientError(t *testing.T) {
 		`{"code":"subscription:free-usage-exhausted","error":"used all free usage"}`,
 		`{"error":"The model x does not exist or your team does not have access to it"}`,
 	} {
-		if st, _ := grokClientError(429, []byte(body)); st != 400 {
+		if st, _, _ := codex.ClassifyUpstreamError(429, []byte(body)); st != 400 {
 			t.Errorf("permanent error should map to 400, got %d for %s", st, body)
 		}
 	}
 	// A transient 500 passes through so the CLI can retry.
-	if st, _ := grokClientError(500, []byte(`{"error":"internal"}`)); st != 500 {
+	if st, _, _ := codex.ClassifyUpstreamError(500, []byte(`{"error":"internal"}`)); st != 500 {
 		t.Errorf("transient 500 should pass through, got %d", st)
 	}
 }

@@ -17,7 +17,6 @@ package codex
 // mock upstream.
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"io"
@@ -84,6 +83,17 @@ func (p *Proxy) handleMessages(w http.ResponseWriter, r *http.Request) {
 	model := gjson.GetBytes(inbound, "model").String()
 	wantStream := gjson.GetBytes(inbound, "stream").Bool()
 
+	// Stop an over-window request before it is sent: a Codex model has a smaller
+	// context window than the Claude window the CLI packs to, so a too-large turn
+	// would otherwise be dropped mid-stream ("stream disconnected"). Returning
+	// prompt-too-long lets the CLI compact or surface it instead.
+	baseModel := codexModelOrFallback(ParseSuffix(model).ModelName)
+	if tooLong, status, errType, msg := GuardContextWindow(baseModel, inbound); tooLong {
+		log.Printf("codex: request over window for %s: %s", baseModel, msg)
+		WriteAnthropicError(w, status, errType, msg)
+		return
+	}
+
 	upstreamBody := p.buildCodexRequest(model, inbound)
 
 	access, account, err := p.tokens.creds(r.Context())
@@ -110,13 +120,13 @@ func (p *Proxy) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if upResp.StatusCode < 200 || upResp.StatusCode >= 300 {
 		b, _ := io.ReadAll(upResp.Body)
 		log.Printf("codex: upstream HTTP %d body=%.200s", upResp.StatusCode, string(b))
-		status, msg := codexClientError(upResp.StatusCode, b)
-		writeAnthropicError(w, status, msg)
+		status, errType, msg := ClassifyUpstreamError(upResp.StatusCode, b)
+		WriteAnthropicError(w, status, errType, msg)
 		return
 	}
 
 	if wantStream {
-		p.streamBack(r.Context(), w, model, inbound, upResp.Body)
+		StreamTranslate(r.Context(), w, "codex", model, inbound, upResp.Body)
 		return
 	}
 	p.bufferBack(r.Context(), w, model, inbound, upResp.Body)
@@ -210,31 +220,6 @@ func dropOrphanToolChoice(body []byte) []byte {
 	return body
 }
 
-// streamBack pumps the upstream Codex SSE through the streaming translator and
-// writes Anthropic SSE to the client as events arrive.
-func (p *Proxy) streamBack(ctx context.Context, w http.ResponseWriter, model string, original []byte, body io.Reader) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	flusher, _ := w.(http.Flusher)
-
-	var param any
-	sc := bufio.NewScanner(body)
-	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024) // a codex event can be large (reasoning)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if len(bytes.TrimSpace(line)) == 0 {
-			continue
-		}
-		for _, out := range ConvertCodexResponseToClaude(ctx, model, original, nil, append([]byte(nil), line...), &param) {
-			_, _ = w.Write(InjectContextEstimate(out, original))
-		}
-		if flusher != nil {
-			flusher.Flush()
-		}
-	}
-}
-
 // bufferBack collects the whole upstream stream and returns a single Anthropic
 // Messages JSON (for a non-streaming client request).
 func (p *Proxy) bufferBack(ctx context.Context, w http.ResponseWriter, model string, original []byte, body io.Reader) {
@@ -279,40 +264,9 @@ func applyCodexHeaders(r *http.Request, token, account string) {
 	}
 }
 
-// codexClientError mirrors grok's: a permanent condition (quota exhausted, model not
-// available) becomes a non-retryable 400 so the CLI surfaces it at once instead of
-// backing off and retrying for tens of seconds.
-func codexClientError(upstreamStatus int, body []byte) (int, string) {
-	msg := codexErrorMessage(body)
-	low := strings.ToLower(string(body))
-	permanent := strings.Contains(low, "usage-exhausted") ||
-		strings.Contains(low, "subscription:") ||
-		strings.Contains(low, "does not exist") ||
-		strings.Contains(low, "does not have access") ||
-		strings.Contains(low, "insufficient_quota")
-	if permanent {
-		return http.StatusBadRequest, msg
-	}
-	return upstreamStatus, msg
-}
-
-func codexErrorMessage(b []byte) string {
-	if m := gjson.GetBytes(b, "error.message").String(); m != "" {
-		return m
-	}
-	if m := gjson.GetBytes(b, "message").String(); m != "" {
-		return m
-	}
-	if s := strings.TrimSpace(string(b)); s != "" {
-		return s
-	}
-	return "codex upstream error"
-}
-
+// writeAnthropicError is the api_error convenience wrapper for the auth/read/setup
+// failures in this file; the upstream and stream paths use the typed
+// WriteAnthropicError / ClassifyUpstreamError in resilience.go directly.
 func writeAnthropicError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	out := []byte(`{"type":"error","error":{"type":"api_error","message":""}}`)
-	out, _ = sjson.SetBytes(out, "error.message", msg)
-	_, _ = w.Write(out)
+	WriteAnthropicError(w, status, "api_error", msg)
 }

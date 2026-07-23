@@ -69,9 +69,43 @@ the two never cross over. `.github/workflows/nightly.yml` rebuilds every platfor
 on each push to the branch and refreshes that pre-release; the client version
 check is channel-aware (nightly compares a moving build id, stable keeps semver).
 The native-provider work (Codex and Grok in-process proxies, native Codex login,
-Codex/Grok quota) soaked on `nightly` and shipped to `main` in **v1.0.0**. Kimi is
-not built (no subscription to verify it). Both providers are off by default behind
-`-native-codex`/`-native-grok`; the CLIProxyAPI sidecar remains the fallback.
+Codex/Grok quota) soaked on `nightly` and shipped to `main` in **v1.0.0**, then was
+**reverted from `main`** as too buggy; `main` is Claude-only (v1.0.2+). The work
+lives on `nightly` again, hardened, with the native proxies now **on by default**
+(`-native-codex`/`-native-grok` default true, falling back to the CLIProxyAPI
+sidecar only if the login is missing) so the fixes are on the path a provider
+session actually takes -- the v1.0.0 bug was that native was off by default, so the
+default path used the unfixed sidecar. Kimi is not built (no subscription).
+
+The re-ship hardens the seam the CLI cannot see, because pointing `claude` at a
+non-Claude backend means the CLI packs context to Claude's window while the upstream
+model's is smaller (`internal/cliproxy/codex/resilience.go`, shared by the Grok
+proxy):
+- **Context-window guard.** Before a request is sent, `GuardContextWindow` estimates
+  its tokens (`EstimateTokens`, bytes/4.8) against the real upstream window
+  (`ModelWindow`: ~260k Codex, ~240k Grok) and, if over, returns Anthropic's own
+  `prompt is too long` 400 so the CLI compacts or surfaces it, instead of the
+  upstream silently dropping the request mid-stream. That drop, after a compaction
+  refilled the window with a coding turn's file reads, was the "stream disconnected"
+  report.
+- **Guaranteed stream terminal.** `StreamTranslate` tracks whether it emitted
+  `message_stop`; a socket drop, an early EOF, or an inline `response.failed` becomes
+  a typed Anthropic `error` event (overflow -> `invalid_request_error` so the CLI
+  compacts; a plain drop -> retryable `api_error`) rather than a truncated stream the
+  CLI reports as disconnected. A client-cancelled request (the CLI got what it
+  needed) is distinguished by `ctx.Err()` and never fabricates an error.
+- **Overflow error mapping.** `ClassifyUpstreamError` reshapes an upstream
+  context-length rejection into the same `prompt is too long`, and keeps the earlier
+  permanent-vs-transient split (quota exhausted -> non-retryable 400).
+- **Dual token format.** `codex/auth.go` now reads both the flat sidecar-login shape
+  and the codex CLI's nested `tokens{...}` `~/.codex/auth.json`, deriving expiry from
+  the access-token JWT. Pointing a Codex provider at a real Codex login used to fail
+  with "no access or refresh token".
+
+Validated live end to end: real `claude` CLI -> native proxy -> real Codex, single
+and multi-turn with Read/Write tools, through the full server over WebSocket. Grok's
+free tier was quota-exhausted at test time, so only its error path was exercised
+live; its happy path rides the same shared translator/stream code as Codex.
 
 Hub URL: `https://<hub>.<tailnet>.ts.net:8443`. Logs:
 `journalctl --user -u kunai -f` (Linux) or `~/.kunai/kunai.log` (macOS). TLS certs
