@@ -263,6 +263,31 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   automated Playwright pass, which also caught the `send on closed channel`
   respawn crash fixed in `driver.go`. **Tested for Codex only; Grok and Kimi ride
   the same path but are unverified.**
+- `internal/cliproxy/codex`, `internal/cliproxy/grok`: the **native provider
+  proxies**, kunai's own in-process replacement for the CLIProxyAPI sidecar, so a
+  Codex or Grok provider needs no 40MB download at all. The whole idea rests on one
+  measured fact: the 40MB sidecar IS the Anthropic<->provider translator matrix, so
+  embedding its SDK does not shrink anything (kunai 9.3->37.7MB), but porting only
+  the ~1500-LOC claude<->responses translator does (+0.41MB). `codex` ports that
+  translator verbatim from CLIProxyAPI (MIT; proven against its own golden tests),
+  wraps it in an executor (OAuth load+refresh in `auth.go`, the upstream call and
+  SSE stream-translate in `proxy.go`), and a native OAuth login in `login.go` (PKCE
+  S256 against auth.openai.com, the localhost:1455 callback), so Codex is fully
+  sidecar-free including sign-in. `grok` **reuses the codex translator unchanged**,
+  because xAI's `/responses` is the same OpenAI-Responses format; it only adds the
+  xAI endpoint (`cli-chat-proxy.grok.com`), the grok CLI token (`~/.grok/auth.json`,
+  refreshed via its OIDC issuer), and the `xai-grok-cli` headers. `internal/server/
+  nativecodex.go`/`nativegrok.go` serve each on a localhost port and `providerProfile`
+  bakes it as the provider's `ANTHROPIC_BASE_URL`; `anyProviderNeedsSidecar` skips the
+  download on boot and create when every provider is native or external. Both are
+  opt-in and off by default (`-native-codex`/`KUNAI_NATIVE_CODEX=1`,
+  `-native-grok`/`KUNAI_NATIVE_GROK=1`). Live-proven against real Codex and real Grok:
+  single-turn, multi-turn tool use, reasoning-signature replay (Codex accepts the
+  replayed signature, so the reference's replay cache is unnecessary here because the
+  claude CLI replays reasoning itself), the real `claude` CLI end to end, and a full
+  kunai WebSocket + UI session, all with the sidecar never downloaded. Kimi K3 is the
+  remaining provider (Moonshot's Anthropic-native `api.kimi.com/coding/v1/messages`,
+  the easiest of the three), not built yet.
 - `internal/project`: reads a directory into the description a session hands a model
   (`Scan` -> `Info`, `Info.Brief()`): layout, language mix, git head from `.git`,
   the files that name it. It never opens the code, and the walk skips `.git`,
