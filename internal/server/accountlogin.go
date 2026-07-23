@@ -848,7 +848,11 @@ func (s *Server) handleSetAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
-	restarted, err := s.mgr.RestartWithAccount(ctx, id, target.Name, target.Bin, target.effectiveEnv(), loadTranscriptTurns)
+	// Reset the model when the target account can't use the current one (a provider
+	// model carried into a Claude account), so the picker shows a real tier and the
+	// CLI spawns with a slot it understands.
+	model := s.switchModelFor(target, sess.Meta().Model)
+	restarted, err := s.mgr.RestartWithAccountModel(ctx, id, target.Name, target.Bin, target.effectiveEnv(), model, loadTranscriptTurns)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

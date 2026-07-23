@@ -228,9 +228,10 @@ func (m *Manager) removeIf(id string, s *Session) {
 // respawn. The caller is responsible for making the transcript reachable under
 // the new account's config dir first (see the account-switch handler).
 type acctOverride struct {
-	name string
-	bin  string
-	env  map[string]string
+	name  string
+	bin   string
+	env   map[string]string
+	model string // "" carries the old model over; set to reset it (e.g. provider -> Claude)
 }
 
 // RestartWithEffort relaunches a live session at a new reasoning effort by
@@ -249,6 +250,14 @@ func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seed
 // account's config dir (the handler copies it before calling this).
 func (m *Manager) RestartWithAccount(ctx context.Context, id, name, bin string, env map[string]string, seedFn func(configDir, cid string) []SeedTurn) (*Session, error) {
 	return m.restart(ctx, id, "", &acctOverride{name: name, bin: bin, env: env}, seedFn)
+}
+
+// RestartWithAccountModel is RestartWithAccount plus a model reset, for switching to
+// an account where the current model is meaningless (e.g. provider -> Claude, where
+// a carried-over "grok-4.5" is not a Claude tier and leaves the picker blank). An
+// empty model carries the old one over, as before.
+func (m *Manager) RestartWithAccountModel(ctx context.Context, id, name, bin string, env map[string]string, model string, seedFn func(configDir, cid string) []SeedTurn) (*Session, error) {
+	return m.restart(ctx, id, "", &acctOverride{name: name, bin: bin, env: env, model: model}, seedFn)
 }
 
 // restart is the shared respawn: close the live process and re-create it with
@@ -277,6 +286,10 @@ func (m *Manager) restart(ctx context.Context, id, effort string, acct *acctOver
 	if effort != "" {
 		eff = effort
 	}
+	mdl := meta.Model
+	if acct != nil && acct.model != "" {
+		mdl = acct.model // reset the model (e.g. a provider model is invalid for a Claude account)
+	}
 	dir := cliEnv["CLAUDE_CONFIG_DIR"] // where the resumed process reads its transcript
 
 	old.Close()
@@ -294,7 +307,7 @@ func (m *Manager) restart(ctx context.Context, id, effort string, acct *acctOver
 	//   - brand-new session, no turns and no transcript: respawn fresh under the
 	//     same handle id.
 	opts := CreateOptions{
-		Cwd: meta.Cwd, Title: meta.Title, Model: meta.Model, Effort: eff, ContextTokens: ctxTokens, Overhead: overhead,
+		Cwd: meta.Cwd, Title: meta.Title, Model: mdl, Effort: eff, ContextTokens: ctxTokens, Overhead: overhead,
 		CLIName: cliName, Bin: cliBin, Env: cliEnv,
 	}
 	// A proxy-backed (provider) account must keep accept-edits across a respawn:

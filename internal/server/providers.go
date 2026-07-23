@@ -107,6 +107,31 @@ func isProxyProfile(p CLIProfile) bool {
 	return p.Env["ANTHROPIC_BASE_URL"] != ""
 }
 
+// isClaudeTierModel reports whether a model string names a Claude tier the UI's
+// model picker recognizes (same families as web/src/lib/models.ts modelLabel). A
+// provider model like "grok-4.5" is not one, so it leaves the picker blank.
+func isClaudeTierModel(model string) bool {
+	l := strings.ToLower(model)
+	for _, fam := range []string{"opus", "sonnet", "haiku", "fable"} {
+		if strings.Contains(l, fam) {
+			return true
+		}
+	}
+	return false
+}
+
+// switchModelFor returns the model to spawn under when switching a session to the
+// target account. Switching to a Claude account while carrying a provider model
+// (e.g. grok-4.5 after Codex->Grok->Claude) would leave --model as a value the CLI
+// cannot use and the picker blank ("Model"), so it resets to the default Claude
+// model. A provider target keeps its env-driven slot ("" = carry over).
+func (s *Server) switchModelFor(target CLIProfile, currentModel string) string {
+	if isProxyProfile(target) || isClaudeTierModel(currentModel) {
+		return ""
+	}
+	return s.model()
+}
+
 // providerSlug is a filesystem-safe folder name for a provider's config dir.
 func providerSlug(name string) string {
 	var b strings.Builder
