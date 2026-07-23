@@ -25,11 +25,11 @@ func TestModelWindow(t *testing.T) {
 }
 
 func TestGuardContextWindow(t *testing.T) {
-	// Under the window: no guard.
+	// Under the window: no guard. (100KB / 4 = 25k tokens, well under any window.)
 	if tooLong, _, _, _ := GuardContextWindow("grok-4.5", make([]byte, 100_000)); tooLong {
 		t.Error("small request wrongly guarded")
 	}
-	// Over the Grok window (~240k tokens => ~1.15MB of body).
+	// Over the Grok window: 1.3MB / 4 = 325k tokens > 240k.
 	tooLong, status, errType, msg := GuardContextWindow("grok-4.5", make([]byte, 1_300_000))
 	if !tooLong {
 		t.Fatal("over-window grok request not guarded")
@@ -40,10 +40,13 @@ func TestGuardContextWindow(t *testing.T) {
 	if !strings.Contains(msg, "prompt is too long") {
 		t.Errorf("guard message %q missing the prompt-too-long phrasing the CLI recognizes", msg)
 	}
-	// A codex model has a larger window than grok, so a body that trips grok must
-	// still pass under codex's window when it is comfortably smaller.
-	if tooLong, _, _, _ := GuardContextWindow("gpt-5.5", make([]byte, 1_100_000)); tooLong {
-		t.Error("codex request under its (larger) window wrongly guarded")
+	// Codex has a larger window than Grok, so a body between the two (1.0MB / 4 =
+	// 250k tokens) trips Grok (240k) but not Codex (260k).
+	if tooLong, _, _, _ := GuardContextWindow("grok-4.5", make([]byte, 1_000_000)); !tooLong {
+		t.Error("250k-token request should trip the Grok window")
+	}
+	if tooLong, _, _, _ := GuardContextWindow("gpt-5.5", make([]byte, 1_000_000)); tooLong {
+		t.Error("250k-token request wrongly guarded under the larger Codex window")
 	}
 }
 

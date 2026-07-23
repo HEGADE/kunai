@@ -82,12 +82,17 @@ non-Claude backend means the CLI packs context to Claude's window while the upst
 model's is smaller (`internal/cliproxy/codex/resilience.go`, shared by the Grok
 proxy):
 - **Context-window guard.** Before a request is sent, `GuardContextWindow` estimates
-  its tokens (`EstimateTokens`, bytes/4.8) against the real upstream window
-  (`ModelWindow`: ~260k Codex, ~240k Grok) and, if over, returns Anthropic's own
-  `prompt is too long` 400 so the CLI compacts or surfaces it, instead of the
-  upstream silently dropping the request mid-stream. That drop, after a compaction
-  refilled the window with a coding turn's file reads, was the "stream disconnected"
-  report.
+  its tokens (`EstimateTokens`, a deliberately conservative bytes/4.0 -- it must
+  over-count, since the guard's failure mode is letting an over-window request
+  through) against the real upstream window (`ModelWindow`: ~260k Codex, ~240k Grok,
+  env-overridable via `KUNAI_CODEX_WINDOW`/`KUNAI_GROK_WINDOW`) and, if over, returns
+  Anthropic's own `prompt is too long` 400 so the CLI compacts or surfaces it,
+  instead of the upstream silently dropping the request mid-stream. That drop was the
+  "stream disconnected" report. Playwright against a real Codex session showed the
+  guard converting the overflow into a clean "Prompt is too long" in the UI (never a
+  disconnect), and that a single file read cannot overflow (the CLI caps a tool
+  result) -- only conversation accumulated over many turns does, which is why the bug
+  needed a long session to show.
 - **Guaranteed stream terminal.** `StreamTranslate` tracks whether it emitted
   `message_stop`; a socket drop, an early EOF, or an inline `response.failed` becomes
   a typed Anthropic `error` event (overflow -> `invalid_request_error` so the CLI

@@ -21,6 +21,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -38,25 +40,49 @@ const (
 	WindowDefault = 190000 // unknown model: assume a conservative 200k-class window
 )
 
+// Windows are overridable per family, because a real window varies by plan and
+// model revision and because a test needs to trip the guard without a 260k-token
+// bill. KUNAI_CODEX_WINDOW / KUNAI_GROK_WINDOW / KUNAI_MODEL_WINDOW, in tokens.
+var (
+	winCodex   = envWindow("KUNAI_CODEX_WINDOW", WindowCodex)
+	winGrok    = envWindow("KUNAI_GROK_WINDOW", WindowGrok)
+	winDefault = envWindow("KUNAI_MODEL_WINDOW", WindowDefault)
+)
+
+func envWindow(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
+}
+
 // ModelWindow returns the real input-token window for an upstream model name.
 func ModelWindow(model string) int {
 	m := strings.ToLower(model)
 	switch {
 	case strings.HasPrefix(m, "grok"):
-		return WindowGrok
+		return winGrok
 	case strings.HasPrefix(m, "gpt"), strings.HasPrefix(m, "codex"),
 		strings.HasPrefix(m, "o1"), strings.HasPrefix(m, "o3"),
 		strings.HasPrefix(m, "o4"), strings.HasPrefix(m, "chatgpt"):
-		return WindowCodex
+		return winCodex
 	default:
-		return WindowDefault
+		return winDefault
 	}
 }
 
-// EstimateTokens approximates the token count of an Anthropic request body using
-// the same bytes/4.8 ratio InjectContextEstimate uses (measured against real Codex
-// usage). It is a gauge, not an exact count; the window guard leaves margin for it.
-func EstimateTokens(body []byte) int { return len(body) * 10 / 48 }
+// EstimateTokens approximates the token count of an Anthropic request body for the
+// window guard. It deliberately uses a denser bytes/4.0 ratio than the meter's
+// bytes/4.8: a real request is dominated by the system prompt and tool schemas,
+// which tokenize to MORE tokens per byte than prose, so bytes/4.8 undercounts them
+// (measured: a 156KB request was ~41k real tokens but bytes/4.8 called it ~32k).
+// The guard's failure mode is letting an over-window request through, which the
+// upstream drops mid-stream, so it must OVER-count, not under-count: firing a little
+// early is a clean prompt-too-long, firing a little late is the disconnect this
+// whole file exists to prevent.
+func EstimateTokens(body []byte) int { return len(body) / 4 }
 
 // promptTooLongMessage mirrors the wording Anthropic's own API returns when a
 // request exceeds the model's context window. The CLI recognizes this shape and
