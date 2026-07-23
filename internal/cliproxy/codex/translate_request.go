@@ -131,15 +131,30 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 				}
 
 				rawSignature := part.Get("signature").String()
-				signature, ok := CompatibleSignatureForProvider(SignatureProviderGPT, rawSignature)
-				if !ok {
-					if !codexClaudeTargetAcceptsGrokSignature(modelName) {
-						return
-					}
+
+				// The reasoning encrypted_content is provider-specific: xAI cannot
+				// decrypt a Codex-encrypted blob and vice-versa. So a reasoning block
+				// must only be replayed to the provider that produced it, keyed off the
+				// TARGET model -- not a hardcoded provider. Without this, switching a
+				// session from Codex to Grok (or back) replays the old provider's
+				// signature and the upstream rejects the whole request ("could not
+				// decrypt the provided encrypted_content").
+				var signature string
+				if codexClaudeTargetAcceptsGrokSignature(modelName) {
+					// Grok target: keep only a valid Grok encrypted_content; drop a
+					// Codex/GPT signature left in history after a mid-session switch.
 					if _, err := InspectGrokEncryptedContent(rawSignature); err != nil {
 						return
 					}
 					signature = rawSignature
+				} else {
+					// Codex/GPT target: keep a GPT-compatible signature, drop anything
+					// else (e.g. a Grok signature from a switch the other way).
+					sig, ok := CompatibleSignatureForProvider(SignatureProviderGPT, rawSignature)
+					if !ok {
+						return
+					}
+					signature = sig
 				}
 
 				flushMessage()
