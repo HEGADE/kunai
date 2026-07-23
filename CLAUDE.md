@@ -81,18 +81,28 @@ The re-ship hardens the seam the CLI cannot see, because pointing `claude` at a
 non-Claude backend means the CLI packs context to Claude's window while the upstream
 model's is smaller (`internal/cliproxy/codex/resilience.go`, shared by the Grok
 proxy):
-- **Context-window guard.** Before a request is sent, `GuardContextWindow` estimates
-  its tokens (`EstimateTokens`, a deliberately conservative bytes/4.0 -- it must
-  over-count, since the guard's failure mode is letting an over-window request
-  through) against the real upstream window (`ModelWindow`: ~260k Codex, ~240k Grok,
-  env-overridable via `KUNAI_CODEX_WINDOW`/`KUNAI_GROK_WINDOW`) and, if over, returns
-  Anthropic's own `prompt is too long` 400 so the CLI compacts or surfaces it,
-  instead of the upstream silently dropping the request mid-stream. That drop was the
-  "stream disconnected" report. Playwright against a real Codex session showed the
-  guard converting the overflow into a clean "Prompt is too long" in the UI (never a
-  disconnect), and that a single file read cannot overflow (the CLI caps a tool
-  result) -- only conversation accumulated over many turns does, which is why the bug
-  needed a long session to show.
+- **Context-window sliding.** Before a request is sent, `FitContextToWindow`
+  estimates its tokens (`EstimateTokens`, a deliberately conservative bytes/4.0 -- it
+  must over-count, since the failure mode is letting an over-window request through)
+  against the real upstream window (`ModelWindow`: ~260k Codex, ~240k Grok,
+  env-overridable via `KUNAI_CODEX_WINDOW`/`KUNAI_GROK_WINDOW`). If the request
+  overflows, it **drops the oldest whole turns until it fits** -- a sliding window --
+  keeping the system prompt and tools and never orphaning a tool_result from its
+  tool_use, so the session keeps working on its recent context instead of the
+  upstream dropping the request mid-stream (the "stream disconnected" report). This
+  is what the CLI's own compaction would do if it knew the real, smaller window; it
+  does not, because it thinks it is Claude, so the proxy slides the window itself.
+  Only when even the single latest turn plus the fixed overhead cannot fit does it
+  return Anthropic's own `prompt is too long` 400 (`GuardContextWindow` /
+  `PromptTooLongMessage`), the one case nothing can save. Playwright against a real
+  Codex session proved a 9-turn conversation that grew past a lowered window kept
+  answering every turn while the log showed `trimmed N oldest message(s)`, and that a
+  single file read cannot overflow (the CLI caps a tool result) -- only conversation
+  accumulated over many turns does, which is why the bug needed a long session to
+  show. The trade is honest: the model forgets the oldest turns (as compaction would,
+  minus the summary), and the CLI's own context meter still counts the full history,
+  so it can read past 100% while the proxy quietly keeps the request within the real
+  window.
 - **Guaranteed stream terminal.** `StreamTranslate` tracks whether it emitted
   `message_stop`; a socket drop, an early EOF, or an inline `response.failed` becomes
   a typed Anthropic `error` event (overflow -> `invalid_request_error` so the CLI

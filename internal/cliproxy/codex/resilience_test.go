@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/tidwall/gjson"
 )
 
 func TestModelWindow(t *testing.T) {
@@ -153,5 +155,92 @@ func TestStreamTranslate_EmptyUpstream(t *testing.T) {
 	out := runStream(t, "")
 	if !strings.Contains(out, "event: error") {
 		t.Errorf("empty upstream should still close with an error event, got:\n%q", out)
+	}
+}
+
+// buildReq builds an Anthropic request with a system prompt and the given messages
+// (each a raw JSON object), for the trimming tests.
+func buildReq(system string, msgs ...string) []byte {
+	body := `{"model":"gpt-5.5","system":"` + system + `","messages":[` + strings.Join(msgs, ",") + `]}`
+	return []byte(body)
+}
+
+func userMsg(text string) string      { return `{"role":"user","content":"` + text + `"}` }
+func assistantMsg(text string) string { return `{"role":"assistant","content":"` + text + `"}` }
+func toolResultMsg(id string) string {
+	return `{"role":"user","content":[{"type":"tool_result","tool_use_id":"` + id + `","content":"ok"}]}`
+}
+
+func TestFitContextToWindow_TrimsOldest(t *testing.T) {
+	orig := winCodex
+	winCodex = 2000 // ~8KB byte budget (bytes/4)
+	defer func() { winCodex = orig }()
+
+	pad := strings.Repeat("x", 1800)
+	// 5 messages ending on a user turn; total well over 8KB so it must trim.
+	req := buildReq("sys", userMsg("u1 "+pad), assistantMsg("a1 "+pad), userMsg("u2 "+pad), assistantMsg("a2 "+pad), userMsg("LATEST "+pad))
+	if EstimateTokens(req) <= winCodex {
+		t.Fatal("test request should exceed the window")
+	}
+	out, dropped, ok := FitContextToWindow("gpt-5.5", req)
+	if !ok {
+		t.Fatal("should have fit by trimming")
+	}
+	if dropped == 0 {
+		t.Fatal("expected to drop oldest messages")
+	}
+	if EstimateTokens(out) > winCodex {
+		t.Errorf("trimmed request still over window: est %d > %d", EstimateTokens(out), winCodex)
+	}
+	// The latest turn must survive; the oldest must be gone.
+	if !strings.Contains(string(out), "LATEST") {
+		t.Error("latest turn was dropped")
+	}
+	if strings.Contains(string(out), "u1 ") {
+		t.Error("oldest turn should have been trimmed")
+	}
+}
+
+func TestFitContextToWindow_NeverOrphansToolResult(t *testing.T) {
+	orig := winCodex
+	winCodex = 1200
+	defer func() { winCodex = orig }()
+
+	pad := strings.Repeat("y", 1500)
+	// A tool_use/tool_result pair: dropping past the assistant would orphan the
+	// tool_result, so the trim must not start the conversation on it.
+	req := buildReq("sys",
+		userMsg("first "+pad),
+		`{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}`,
+		toolResultMsg("t1"),
+		userMsg("LATEST "+pad))
+	out, _, ok := FitContextToWindow("gpt-5.5", req)
+	if !ok {
+		return // couldn't fit at all is acceptable; the point is validity below
+	}
+	first := gjson.GetBytes(out, "messages.0")
+	if first.Get("role").String() == "user" {
+		c := first.Get("content")
+		if c.IsArray() && c.Array()[0].Get("type").String() == "tool_result" {
+			t.Error("trimmed conversation starts with an orphaned tool_result")
+		}
+	}
+}
+
+func TestFitContextToWindow_UnfittableLatestTurn(t *testing.T) {
+	orig := winCodex
+	winCodex = 100 // 400 bytes: even one padded turn cannot fit
+	defer func() { winCodex = orig }()
+	req := buildReq("sys", userMsg(strings.Repeat("z", 5000)))
+	if _, _, ok := FitContextToWindow("gpt-5.5", req); ok {
+		t.Error("a single over-window turn should be unfittable (ok=false)")
+	}
+}
+
+func TestFitContextToWindow_UnderWindowUnchanged(t *testing.T) {
+	req := buildReq("sys", userMsg("hi"))
+	out, dropped, ok := FitContextToWindow("gpt-5.5", req)
+	if !ok || dropped != 0 || string(out) != string(req) {
+		t.Errorf("under-window request should pass through unchanged (dropped=%d ok=%v)", dropped, ok)
 	}
 }

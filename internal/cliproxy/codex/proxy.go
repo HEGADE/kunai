@@ -83,15 +83,20 @@ func (p *Proxy) handleMessages(w http.ResponseWriter, r *http.Request) {
 	model := gjson.GetBytes(inbound, "model").String()
 	wantStream := gjson.GetBytes(inbound, "stream").Bool()
 
-	// Stop an over-window request before it is sent: a Codex model has a smaller
-	// context window than the Claude window the CLI packs to, so a too-large turn
-	// would otherwise be dropped mid-stream ("stream disconnected"). Returning
-	// prompt-too-long lets the CLI compact or surface it instead.
+	// A Codex model has a smaller context window than the Claude window the CLI packs
+	// to, so a too-large turn would otherwise be dropped mid-stream ("stream
+	// disconnected"). Slide the window: drop the oldest turns to fit and keep the
+	// session working. Only when even the latest turn cannot fit do we return the
+	// clean prompt-too-long.
 	baseModel := codexModelOrFallback(ParseSuffix(model).ModelName)
-	if tooLong, status, errType, msg := GuardContextWindow(baseModel, inbound); tooLong {
-		log.Printf("codex: request over window for %s: %s", baseModel, msg)
-		WriteAnthropicError(w, status, errType, msg)
+	if fitted, dropped, ok := FitContextToWindow(baseModel, inbound); !ok {
+		est, win := EstimateTokens(inbound), ModelWindow(baseModel)
+		log.Printf("codex: request over window for %s and cannot be trimmed to fit (est %d > %d)", baseModel, est, win)
+		WriteAnthropicError(w, http.StatusBadRequest, "invalid_request_error", PromptTooLongMessage(est, win))
 		return
+	} else if dropped > 0 {
+		log.Printf("codex: trimmed %d oldest message(s) to fit the %s window", dropped, baseModel)
+		inbound = fitted
 	}
 
 	upstreamBody := p.buildCodexRequest(model, inbound)

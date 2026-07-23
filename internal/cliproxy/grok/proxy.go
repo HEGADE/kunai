@@ -113,14 +113,18 @@ func (p *Proxy) handleMessages(w http.ResponseWriter, r *http.Request) {
 	model := gjson.GetBytes(inbound, "model").String()
 	wantStream := gjson.GetBytes(inbound, "stream").Bool()
 
-	// Guard the smaller Grok window before sending, so an over-window turn fails as
-	// a clean prompt-too-long error instead of a dropped stream (the "stream
-	// disconnected" symptom after a compaction refills the window).
+	// Slide the smaller Grok window: drop the oldest turns to fit so an over-window
+	// session keeps working instead of the "stream disconnected" symptom. Only when
+	// even the latest turn cannot fit do we return the clean prompt-too-long.
 	baseModel := grokModelOrFallback(codex.ParseSuffix(model).ModelName)
-	if tooLong, status, errType, msg := codex.GuardContextWindow(baseModel, inbound); tooLong {
-		log.Printf("grok: request over window for %s: %s", baseModel, msg)
-		codex.WriteAnthropicError(w, status, errType, msg)
+	if fitted, dropped, ok := codex.FitContextToWindow(baseModel, inbound); !ok {
+		est, win := codex.EstimateTokens(inbound), codex.ModelWindow(baseModel)
+		log.Printf("grok: request over window for %s and cannot be trimmed to fit (est %d > %d)", baseModel, est, win)
+		codex.WriteAnthropicError(w, http.StatusBadRequest, "invalid_request_error", codex.PromptTooLongMessage(est, win))
 		return
+	} else if dropped > 0 {
+		log.Printf("grok: trimmed %d oldest message(s) to fit the %s window", dropped, baseModel)
+		inbound = fitted
 	}
 
 	body := p.buildGrokRequest(model, inbound)

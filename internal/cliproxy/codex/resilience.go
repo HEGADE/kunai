@@ -84,12 +84,12 @@ func ModelWindow(model string) int {
 // whole file exists to prevent.
 func EstimateTokens(body []byte) int { return len(body) / 4 }
 
-// promptTooLongMessage mirrors the wording Anthropic's own API returns when a
+// PromptTooLongMessage mirrors the wording Anthropic's own API returns when a
 // request exceeds the model's context window. The CLI recognizes this shape and
 // reacts to it (surface / compact) natively, so emitting it -- instead of letting
 // the upstream drop the socket -- turns a mysterious disconnect into the CLI's own
 // too-long handling.
-func promptTooLongMessage(estimate, window int) string {
+func PromptTooLongMessage(estimate, window int) string {
 	return "prompt is too long: " + itoa(estimate) + " tokens > " + itoa(window) +
 		" maximum for this model. Compact or start a new session."
 }
@@ -126,7 +126,83 @@ func GuardContextWindow(baseModel string, inbound []byte) (tooLong bool, status 
 	if est <= win {
 		return false, 0, "", ""
 	}
-	return true, http.StatusBadRequest, "invalid_request_error", promptTooLongMessage(est, win)
+	return true, http.StatusBadRequest, "invalid_request_error", PromptTooLongMessage(est, win)
+}
+
+// FitContextToWindow keeps a session alive past the upstream model's window by
+// sliding the context: when a request would overflow, it drops the OLDEST whole
+// turns (never the latest) until the request fits, so the model works on its recent
+// context instead of the session getting stuck on a prompt-too-long. This is what
+// the CLI's own compaction would do if it knew the real (smaller) window; it does
+// not, because it thinks it is talking to Claude, so the proxy does it here.
+//
+// The trim preserves validity: the system prompt and tools are never dropped (they
+// are fixed overhead), and messages are dropped only at a clean user-turn boundary
+// so a tool_result is never orphaned from its tool_use. It returns the trimmed body,
+// how many leading messages were dropped, and ok=false only when even the system,
+// tools, and the single latest turn cannot fit -- the one case nothing can save,
+// where the caller returns the clean prompt-too-long.
+func FitContextToWindow(baseModel string, inbound []byte) (out []byte, dropped int, ok bool) {
+	win := ModelWindow(baseModel)
+	if EstimateTokens(inbound) <= win {
+		return inbound, 0, true
+	}
+	msgs := gjson.GetBytes(inbound, "messages")
+	if !msgs.IsArray() {
+		return inbound, 0, false
+	}
+	arr := msgs.Array()
+	n := len(arr)
+	// Try keeping ever-shorter suffixes messages[start:], smallest drop first, but
+	// only cutting at a clean user-turn boundary. Keep at least the last message.
+	for start := 1; start < n; start++ {
+		if !isCleanTurnStart(arr[start]) {
+			continue
+		}
+		cand, err := sjson.SetRawBytes(inbound, "messages", sliceRawArray(arr[start:]))
+		if err != nil {
+			continue
+		}
+		if EstimateTokens(cand) <= win {
+			return cand, start, true
+		}
+	}
+	// Even the last turn alone (plus system + tools) does not fit.
+	return inbound, 0, false
+}
+
+// isCleanTurnStart reports whether a message can be the first message of a valid
+// trimmed conversation: a user message that does not lead with a tool_result (which
+// would be orphaned from the tool_use in a now-dropped assistant message).
+func isCleanTurnStart(m gjson.Result) bool {
+	if m.Get("role").String() != "user" {
+		return false
+	}
+	c := m.Get("content")
+	if c.IsArray() {
+		items := c.Array()
+		if len(items) > 0 && items[0].Get("type").String() == "tool_result" {
+			return false
+		}
+	}
+	return true
+}
+
+// sliceRawArray rebuilds a JSON array from the raw text of the given elements.
+func sliceRawArray(items []gjson.Result) []byte {
+	if len(items) == 0 {
+		return []byte("[]")
+	}
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, it := range items {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(it.Raw)
+	}
+	b.WriteByte(']')
+	return []byte(b.String())
 }
 
 // looksLikeOverflow reports whether an upstream error body is the upstream's own
