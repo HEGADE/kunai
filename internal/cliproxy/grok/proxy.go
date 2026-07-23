@@ -131,7 +131,10 @@ func (p *Proxy) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 	token, err := p.tokens.token(r.Context())
 	if err != nil {
-		writeAnthropicError(w, http.StatusUnauthorized, "grok auth: "+err.Error())
+		// A dead login will not fix itself, so return a non-retryable 400: the CLI
+		// retries a 401 (auth is often transient), which just hangs the turn on
+		// "Working..." before failing. 400 surfaces the "sign in again" message now.
+		codex.WriteAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "grok auth: "+err.Error())
 		return
 	}
 

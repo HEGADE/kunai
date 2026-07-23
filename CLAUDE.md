@@ -121,6 +121,16 @@ proxy):
   and the codex CLI's nested `tokens{...}` `~/.codex/auth.json`, deriving expiry from
   the access-token JWT. Pointing a Codex provider at a real Codex login used to fail
   with "no access or refresh token".
+- **Grok rotating tokens + dead-login clarity.** xAI rotates refresh tokens (each
+  refresh revokes the old one), so `grok/auth.go` now writes the rotated token back
+  to `~/.grok/auth.json` (`persistLocked`, read-modify-write preserving other
+  fields); without this, kunai refreshed once, kept the new token only in memory, and
+  every restart re-read the now-revoked token and 401'd. A login that genuinely
+  cannot refresh returns an actionable "run `grok` to sign in again" error, and an
+  auth failure is now a non-retryable 400 (not a 401): the CLI retries a 401, so a
+  dead login used to hang the turn on "Working..." for minutes before failing --
+  which, on the sidecar path, was the "cooling down credentials" 3-5 minute hang.
+  Both proxies return auth failures as invalid_request_error so they surface at once.
 
 Validated live end to end: real `claude` CLI -> native proxy -> real Codex, single
 and multi-turn with Read/Write tools, through the full server over WebSocket. Grok's

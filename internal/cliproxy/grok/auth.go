@@ -24,6 +24,26 @@ import (
 	"time"
 )
 
+// errGrokReauth is the error returned when the grok login is dead (expired with no
+// working refresh). Its message tells the user the one thing that fixes it, so the
+// app surfaces "run `grok` to sign in again" instead of a bare upstream 401.
+func errGrokReauth(detail string) error {
+	return fmt.Errorf("%s -- run `grok` on this machine to sign in again", detail)
+}
+
+// refreshReason pulls the human reason out of an OIDC refresh error (e.g. the
+// error_description "Refresh token has been revoked") for a clearer message.
+func refreshReason(err error) string {
+	s := err.Error()
+	if i := strings.Index(s, `"error_description":"`); i >= 0 {
+		rest := s[i+len(`"error_description":"`):]
+		if j := strings.IndexByte(rest, '"'); j >= 0 {
+			return rest[:j]
+		}
+	}
+	return "token refresh failed"
+}
+
 const (
 	oidcTokenPath  = "/oauth2/token" // relative to the issuer
 	refreshLeadway = 5 * time.Minute
@@ -43,10 +63,11 @@ type tokenManager struct {
 	path  string
 	httpc *http.Client
 
-	mu   sync.Mutex
-	tok  authEntry
-	exp  time.Time
-	load bool
+	mu      sync.Mutex
+	tok     authEntry
+	exp     time.Time
+	load    bool
+	fileKey string // the "<issuer>::<id>" map key the token lives under, for write-back
 }
 
 func newTokenManager(path string) *tokenManager {
@@ -67,16 +88,19 @@ func (m *tokenManager) token(ctx context.Context) (string, error) {
 		return m.tok.Key, nil
 	}
 	if m.tok.RefreshToken == "" || m.tok.OIDCIssuer == "" {
-		if m.tok.Key != "" {
-			return m.tok.Key, nil // no way to refresh; try what we have
+		if m.tok.Key != "" && time.Now().Before(m.exp) {
+			return m.tok.Key, nil // can't refresh, but the key has not expired yet
 		}
-		return "", fmt.Errorf("grok token: no key or refresh token in %s", m.path)
+		return "", errGrokReauth("grok login expired and there is no refresh token")
 	}
 	if err := m.refreshLocked(ctx); err != nil {
-		if m.tok.Key != "" {
+		// A stale key that is still within its lifetime is worth a try; a dead login
+		// is not, and the user needs a clear "sign in again" instead of a cryptic
+		// upstream 401 (or the sidecar hanging on the retry).
+		if m.tok.Key != "" && time.Now().Before(m.exp) {
 			return m.tok.Key, nil
 		}
-		return "", err
+		return "", errGrokReauth("grok login could not be refreshed (" + refreshReason(err) + ")")
 	}
 	return m.tok.Key, nil
 }
@@ -91,9 +115,10 @@ func (m *tokenManager) readLocked() error {
 		return fmt.Errorf("grok token: parse %s: %w", m.path, err)
 	}
 	// Pick the entry with a key (there is normally exactly one).
-	for _, e := range raw {
+	for k, e := range raw {
 		if e.Key != "" {
 			m.tok = e
+			m.fileKey = k
 			m.exp = parseTime(e.ExpiresAt)
 			return nil
 		}
@@ -142,7 +167,49 @@ func (m *tokenManager) refreshLocked(ctx context.Context) error {
 	} else {
 		m.exp = time.Now().Add(time.Hour)
 	}
+	// xAI rotates refresh tokens (each refresh revokes the old one), so the new
+	// token MUST be written back or the next process reads the now-revoked token and
+	// every grok session 401s. This is why the login broke: the rotated token was
+	// only kept in memory.
+	m.persistLocked()
 	return nil
+}
+
+// persistLocked writes the refreshed key/refresh_token/expires_at back into the
+// grok auth file, preserving every other entry and every other field of this entry
+// (read-modify-write), so a rotated refresh token survives a restart. Best-effort:
+// a write failure is not fatal (the in-memory token still works this run).
+func (m *tokenManager) persistLocked() {
+	if m.path == "" || m.fileKey == "" {
+		return
+	}
+	b, err := os.ReadFile(m.path)
+	if err != nil {
+		return
+	}
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(b, &raw) != nil {
+		return
+	}
+	entRaw, ok := raw[m.fileKey]
+	if !ok {
+		return
+	}
+	var ent map[string]any
+	if json.Unmarshal(entRaw, &ent) != nil {
+		return
+	}
+	ent["key"] = m.tok.Key
+	ent["refresh_token"] = m.tok.RefreshToken
+	ent["expires_at"] = m.exp.UTC().Format(time.RFC3339Nano)
+	nb, err := json.Marshal(ent)
+	if err != nil {
+		return
+	}
+	raw[m.fileKey] = nb
+	if fb, err := json.MarshalIndent(raw, "", "  "); err == nil {
+		_ = os.WriteFile(m.path, fb, 0o600)
+	}
 }
 
 func parseTime(s string) time.Time {

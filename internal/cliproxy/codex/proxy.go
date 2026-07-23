@@ -103,7 +103,9 @@ func (p *Proxy) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 	access, account, err := p.tokens.creds(r.Context())
 	if err != nil {
-		writeAnthropicError(w, http.StatusUnauthorized, "codex auth: "+err.Error())
+		// Non-retryable 400: a dead login will not fix on a retry, and the CLI
+		// retries a 401, hanging the turn on "Working..." before it fails.
+		WriteAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "codex auth: "+err.Error())
 		return
 	}
 
