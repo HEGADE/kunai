@@ -68,8 +68,10 @@ the moving `nightly` pre-release for nightly, `/releases/latest` for stable, so
 the two never cross over. `.github/workflows/nightly.yml` rebuilds every platform
 on each push to the branch and refreshes that pre-release; the client version
 check is channel-aware (nightly compares a moving build id, stable keeps semver).
-The providers feature and its fixes live on `nightly` and are deliberately NOT
-merged to `main` until Grok/Kimi are verified and the Codex-quota display exists.
+The native-provider work (Codex and Grok in-process proxies, native Codex login,
+Codex/Grok quota) soaked on `nightly` and shipped to `main` in **v1.0.0**. Kimi is
+not built (no subscription to verify it). Both providers are off by default behind
+`-native-codex`/`-native-grok`; the CLIProxyAPI sidecar remains the fallback.
 
 Hub URL: `https://<hub>.<tailnet>.ts.net:8443`. Logs:
 `journalctl --user -u kunai -f` (Linux) or `~/.kunai/kunai.log` (macOS). TLS certs
