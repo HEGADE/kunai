@@ -169,3 +169,18 @@ func TestCodexClientError(t *testing.T) {
 		t.Errorf("transient 503 should pass through, got %d", st)
 	}
 }
+
+func TestInjectContextEstimate(t *testing.T) {
+	original := make([]byte, 48000) // ~48k bytes -> ~10000 tokens
+	ev := []byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}}\n\n")
+	out := InjectContextEstimate(ev, original)
+	got := gjson.GetBytes([]byte(strings.SplitN(string(out), "data: ", 2)[1]), "message.usage.input_tokens").Int()
+	if got != 10000 {
+		t.Errorf("estimate = %d, want 10000", got)
+	}
+	// a non-message_start event is untouched
+	delta := []byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\"}\n\n")
+	if string(InjectContextEstimate(delta, original)) != string(delta) {
+		t.Error("non-message_start event should be untouched")
+	}
+}

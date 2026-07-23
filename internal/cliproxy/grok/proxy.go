@@ -197,7 +197,7 @@ func (p *Proxy) streamBack(ctx context.Context, w http.ResponseWriter, model str
 			continue
 		}
 		for _, out := range codex.ConvertCodexResponseToClaude(ctx, model, original, nil, append([]byte(nil), line...), &param) {
-			_, _ = w.Write(out)
+			_, _ = w.Write(codex.InjectContextEstimate(out, original))
 		}
 		if flusher != nil {
 			flusher.Flush()

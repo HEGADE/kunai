@@ -155,6 +155,48 @@ func codexModelOrFallback(model string) string {
 	return fallbackCodexModel
 }
 
+// InjectContextEstimate fills a message_start event's usage.input_tokens with an
+// estimate of the context size, because the /responses upstreams only report the real
+// input tokens at the END of the stream (response.completed) while Anthropic carries
+// input_tokens in message_start at the START -- so without this the CLI reads a
+// context of 0 and the meter never moves. The estimate is bytes/4.8 of the original
+// request (measured against real Codex usage; JSON overhead puts it a little above the
+// classic 4 chars/token). Approximate, but a context meter is a gauge, and an
+// approximate meter beats a dead one. Applied to the event bytes as they stream.
+func InjectContextEstimate(event, original []byte) []byte {
+	if !bytes.Contains(event, []byte(`"type":"message_start"`)) {
+		return event
+	}
+	est := int64(len(original)) * 10 / 48
+	if est <= 0 {
+		return event
+	}
+	// event is "event: message_start\ndata: {json}\n\n"; rewrite the json's usage.
+	i := bytes.Index(event, []byte("data:"))
+	if i < 0 {
+		return event
+	}
+	head := event[:i]
+	rest := event[i+len("data:"):]
+	// rest starts with " {json}\n\n"
+	trimmed := bytes.TrimLeft(rest, " ")
+	end := bytes.IndexByte(trimmed, '\n')
+	if end < 0 {
+		end = len(trimmed)
+	}
+	obj := trimmed[:end]
+	tail := trimmed[end:]
+	obj, err := sjson.SetBytes(obj, "message.usage.input_tokens", est)
+	if err != nil {
+		return event
+	}
+	out := append([]byte{}, head...)
+	out = append(out, "data: "...)
+	out = append(out, obj...)
+	out = append(out, tail...)
+	return out
+}
+
 // dropOrphanToolChoice removes a tool_choice with no tools to choose from, which the
 // /responses upstreams reject ("A tool_choice was set but no tools were specified").
 func dropOrphanToolChoice(body []byte) []byte {
@@ -185,7 +227,7 @@ func (p *Proxy) streamBack(ctx context.Context, w http.ResponseWriter, model str
 			continue
 		}
 		for _, out := range ConvertCodexResponseToClaude(ctx, model, original, nil, append([]byte(nil), line...), &param) {
-			_, _ = w.Write(out)
+			_, _ = w.Write(InjectContextEstimate(out, original))
 		}
 		if flusher != nil {
 			flusher.Flush()
