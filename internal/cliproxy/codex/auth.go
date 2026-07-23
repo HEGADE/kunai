@@ -25,10 +25,13 @@ import (
 )
 
 const (
-	oauthTokenURL  = "https://auth.openai.com/oauth/token"
 	oauthClientID  = "app_EMoamEEZ73f0CkXaXp7hrann"
 	refreshLeadway = 5 * time.Minute // refresh this long before the token actually expires
 )
+
+// oauthTokenURL is the OAuth token endpoint (refresh and code exchange). A var so a
+// test can point it at a mock server.
+var oauthTokenURL = "https://auth.openai.com/oauth/token"
 
 // TokenFile is the on-disk shape the sidecar login writes (flat fields) and that
 // the codex CLI's auth.json shares. Only the fields kunai needs are decoded.

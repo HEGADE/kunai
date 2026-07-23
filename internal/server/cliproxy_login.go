@@ -248,6 +248,17 @@ func (s *Server) handleProviderLoginStart(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	// A Codex login goes through kunai's own in-process OAuth flow when native Codex
+	// is enabled, so no sidecar is needed to add a Codex account.
+	if s.nativeLogin != nil && strings.EqualFold(strings.TrimSpace(req.Provider), "codex") {
+		id, url, err := s.nativeLogin.start()
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"login_id": "native:" + id, "url": url})
+		return
+	}
 	// The login runs the proxy binary against the sidecar's config, so the sidecar
 	// (and thus its config.yaml + auth dir) must exist first. Starting it here also
 	// means it is already watching the auth dir when the login writes the new
@@ -270,6 +281,18 @@ func (s *Server) handleProviderLoginFinish(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if id, ok := strings.CutPrefix(req.LoginID, "native:"); ok {
+		if s.nativeLogin == nil {
+			writeErr(w, http.StatusBadRequest, "native login is not enabled")
+			return
+		}
+		if err := s.nativeLogin.finish(id, req.Code); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
 	if err := s.cliproxyLogin.finish(req.LoginID, req.Code); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -285,7 +308,13 @@ func (s *Server) handleProviderLoginStatus(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	done, err := s.cliproxyLogin.status(req.LoginID)
+	var done bool
+	var err error
+	if id, ok := strings.CutPrefix(req.LoginID, "native:"); ok && s.nativeLogin != nil {
+		done, err = s.nativeLogin.status(id)
+	} else {
+		done, err = s.cliproxyLogin.status(req.LoginID)
+	}
 	out := map[string]any{"done": done}
 	if err != nil {
 		out["error"] = err.Error()
@@ -299,6 +328,13 @@ func (s *Server) handleProviderLoginCancel(w http.ResponseWriter, r *http.Reques
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if id, ok := strings.CutPrefix(req.LoginID, "native:"); ok {
+		if s.nativeLogin != nil {
+			s.nativeLogin.cancel(id)
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	s.cliproxyLogin.cancel(req.LoginID)

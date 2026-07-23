@@ -64,13 +64,30 @@ port, `providerProfile` bakes that as the provider's `ANTHROPIC_BASE_URL`, and t
 sidecar is skipped entirely (boot and create paths) when every provider is native or
 external. Off by default.
 
+## Native login (done)
+
+`login.go` ports the Codex OAuth flow (same client_id, PKCE S256, the
+auth.openai.com endpoints, the registered `http://localhost:1455/auth/callback`
+redirect). With `-native-codex`, a Codex provider login runs entirely in kunai:
+`StartLogin` returns the authorize URL and binds the localhost callback; if the
+owner's browser is on this machine the redirect finishes it hands-free, otherwise
+they paste the code back and kunai exchanges it directly (kunai holds the PKCE
+verifier, so no forwarding). The token is written as `codex-<account>.json` into the
+auth dir the proxy reads. `nativeCodexLoginManager` (internal/server/nativecodex.go)
+routes the `/api/providers/login/*` handlers to this flow for Codex; a new login
+reclaims the 1455 callback from any abandoned one. **Result: with -native-codex the
+40MB sidecar is never fetched at all** — model calls and login are both in-process.
+Verified live: login-start returns a real auth.openai.com URL, the callback binds
+and releases, and a session runs, all with no sidecar on disk.
+
 ## Still to do
 
-- **Login.** Provider OAuth login still shells the sidecar (`cliproxy_login.go`).
-  Porting the Codex device/loopback login natively would let the sidecar be dropped
-  completely; until then it is fetched only for the login step.
 - **Grok/Kimi.** Different upstreams; the same pattern applies, not built here.
 - Default-on once it has run a while in nightly.
+- One link only a browser can exercise: a *real* OpenAI code exchange (needs the
+  owner to authenticate). Every mechanical piece around it is tested (PKCE, the
+  authorize URL, callback binding, code parsing, exchange against a mock, and the
+  token-file shape the proxy proven-reads).
 
 ## Verification status
 

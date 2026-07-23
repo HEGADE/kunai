@@ -78,21 +78,22 @@ type Server struct {
 	uploadsDir    string
 	machines      *machineStore
 	disco         discoveryCache
-	awake         awake.Keeper          // opt-in keep-awake while locked/idle
-	lid           lidKeeper             // opt-in, privileged: keep working with the lid shut
-	sched         *schedule.Scheduler   // runs prompts at a time / after quota reset
-	guardian      *guardian             // whole-machine thermal safety net
-	clis          []CLIProfile          // named Claude CLIs (accounts) a session can run on
-	clisMu        sync.RWMutex          // guards clis, which the Accounts settings edit live
-	providers     *providerStore        // proxy-backed model sources (Codex/Grok/Kimi via CLIProxyAPI)
-	cliproxy      *cliproxyManager      // the managed CLIProxyAPI sidecar (nil without a data dir)
-	nativeCodex   *nativeCodexManager   // kunai's own in-process Codex proxy (opt-in, replaces the sidecar for Codex)
-	cliproxyLogin *cliproxyLoginManager // in-app provider (Codex/Grok/Kimi) login flows
-	baseCtx       context.Context       // server lifetime, for starting the sidecar on a runtime provider add
-	usage         *usageCache           // the default account's subscription quota windows
-	codexUC       *codexUsageCache      // a Codex provider's ChatGPT quota (read from OpenAI's usage endpoint)
-	sessionMeta   *sessionMetaStore     // per-session pins and renames (nil without a data dir)
-	login         *loginManager         // in-app account login flows (nil without a data dir)
+	awake         awake.Keeper             // opt-in keep-awake while locked/idle
+	lid           lidKeeper                // opt-in, privileged: keep working with the lid shut
+	sched         *schedule.Scheduler      // runs prompts at a time / after quota reset
+	guardian      *guardian                // whole-machine thermal safety net
+	clis          []CLIProfile             // named Claude CLIs (accounts) a session can run on
+	clisMu        sync.RWMutex             // guards clis, which the Accounts settings edit live
+	providers     *providerStore           // proxy-backed model sources (Codex/Grok/Kimi via CLIProxyAPI)
+	cliproxy      *cliproxyManager         // the managed CLIProxyAPI sidecar (nil without a data dir)
+	nativeCodex   *nativeCodexManager      // kunai's own in-process Codex proxy (opt-in, replaces the sidecar for Codex)
+	nativeLogin   *nativeCodexLoginManager // native Codex OAuth login (no sidecar), when NativeCodex is on
+	cliproxyLogin *cliproxyLoginManager    // in-app provider (Codex/Grok/Kimi) login flows
+	baseCtx       context.Context          // server lifetime, for starting the sidecar on a runtime provider add
+	usage         *usageCache              // the default account's subscription quota windows
+	codexUC       *codexUsageCache         // a Codex provider's ChatGPT quota (read from OpenAI's usage endpoint)
+	sessionMeta   *sessionMetaStore        // per-session pins and renames (nil without a data dir)
+	login         *loginManager            // in-app account login flows (nil without a data dir)
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -130,6 +131,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	s.cliproxy = newCLIProxyManager(cfg.DataDir)
 	if cfg.NativeCodex {
 		s.nativeCodex = newNativeCodexManager(cfg.DataDir)
+		s.nativeLogin = newNativeCodexLoginManager(cfg.DataDir)
 	}
 	s.cliproxyLogin = newCLIProxyLoginManager(s.cliproxy)
 	s.codexUC = &codexUsageCache{}

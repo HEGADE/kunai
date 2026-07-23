@@ -9,6 +9,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -129,6 +130,93 @@ func (m *nativeCodexManager) start(ctx context.Context) error {
 		_ = srv.Shutdown(shutCtx)
 	}()
 	return nil
+}
+
+// --- native login -------------------------------------------------------------
+
+// nativeCodexLoginManager runs Codex OAuth logins in-process (internal/cliproxy/codex),
+// writing the token into the same auth dir the native proxy reads, so no sidecar is
+// needed to add a Codex account. Mirrors cliproxyLoginManager's start/finish/status/
+// cancel shape so the HTTP handlers can branch to it.
+type nativeCodexLoginManager struct {
+	authDir string
+	mu      sync.Mutex
+	flows   map[string]*codex.LoginFlow
+}
+
+func newNativeCodexLoginManager(dataDir string) *nativeCodexLoginManager {
+	return &nativeCodexLoginManager{
+		authDir: filepath.Join(dataDir, "cliproxy", "auth"),
+		flows:   map[string]*codex.LoginFlow{},
+	}
+}
+
+func (lm *nativeCodexLoginManager) start() (id, authURL string, err error) {
+	// Only one Codex login runs at a time (you are adding one account), and an
+	// abandoned flow holds the localhost:1455 callback, so reclaim it: cancel any
+	// prior flow before starting a new one, freeing the port to rebind.
+	lm.mu.Lock()
+	prior := lm.flows
+	lm.flows = map[string]*codex.LoginFlow{}
+	lm.mu.Unlock()
+	for _, f := range prior {
+		f.Cancel()
+	}
+	f, url, err := codex.StartLogin(lm.authDir)
+	if err != nil {
+		return "", "", err
+	}
+	id = randID()
+	lm.mu.Lock()
+	lm.flows[id] = f
+	lm.mu.Unlock()
+	return id, url, nil
+}
+
+func (lm *nativeCodexLoginManager) finish(id, code string) error {
+	lm.mu.Lock()
+	f := lm.flows[id]
+	lm.mu.Unlock()
+	if f == nil {
+		return fmt.Errorf("this login expired; start it again")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	err := f.Finish(ctx, code)
+	if err == nil {
+		lm.forget(id)
+	}
+	return err
+}
+
+func (lm *nativeCodexLoginManager) status(id string) (bool, error) {
+	lm.mu.Lock()
+	f := lm.flows[id]
+	lm.mu.Unlock()
+	if f == nil {
+		return true, nil
+	}
+	done, err := f.Status()
+	if done {
+		lm.forget(id)
+	}
+	return done, err
+}
+
+func (lm *nativeCodexLoginManager) cancel(id string) {
+	lm.mu.Lock()
+	f := lm.flows[id]
+	delete(lm.flows, id)
+	lm.mu.Unlock()
+	if f != nil {
+		f.Cancel()
+	}
+}
+
+func (lm *nativeCodexLoginManager) forget(id string) {
+	lm.mu.Lock()
+	delete(lm.flows, id)
+	lm.mu.Unlock()
 }
 
 var errNoCodexToken = &codexTokenErr{}
