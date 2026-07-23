@@ -244,3 +244,16 @@ func TestFitContextToWindow_UnderWindowUnchanged(t *testing.T) {
 		t.Errorf("under-window request should pass through unchanged (dropped=%d ok=%v)", dropped, ok)
 	}
 }
+
+func TestErrorMessage_XAIStringError(t *testing.T) {
+	// xAI's 429 body puts the human message in a string "error" field.
+	body := []byte(`{"code":"subscription:free-usage-exhausted","error":"You've used all the included free usage for model grok-4.5-build-free. Upgrade to a Grok subscription."}`)
+	got := errorMessage(body)
+	if !strings.Contains(got, "free usage") || !strings.Contains(got, "Upgrade") {
+		t.Errorf("errorMessage did not extract xAI's string error: %q", got)
+	}
+	// And such a body classifies as a permanent, non-retryable 400 (fast fail).
+	if st, _, _ := ClassifyUpstreamError(429, body); st != 400 {
+		t.Errorf("free-usage-exhausted should map to 400, got %d", st)
+	}
+}

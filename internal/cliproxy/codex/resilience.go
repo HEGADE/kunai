@@ -249,10 +249,20 @@ func ClassifyUpstreamError(upstreamStatus int, body []byte) (status int, errType
 func errorMessage(b []byte) string {
 	// Try the shapes the upstreams actually use: a top-level error object, the
 	// nested response.error a streamed response.failed carries, and a bare message.
-	for _, path := range []string{"error.message", "response.error.message", "message", "response.error"} {
+	for _, path := range []string{"error.message", "response.error.message", "message"} {
 		if m := gjson.GetBytes(b, path).String(); m != "" {
 			return m
 		}
+	}
+	// xAI puts the human message in a STRING "error" field (e.g. "You've used all
+	// the included free usage for model grok-4.5-build-free... Upgrade to a Grok
+	// subscription"), not an object, so read it only when it is a string -- an
+	// object here would stringify to raw JSON.
+	if e := gjson.GetBytes(b, "error"); e.Type == gjson.String && e.String() != "" {
+		return e.String()
+	}
+	if m := gjson.GetBytes(b, "response.error").String(); m != "" {
+		return m
 	}
 	if s := strings.TrimSpace(string(b)); s != "" {
 		return s

@@ -5,12 +5,31 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 )
+
+// baseURLIsLocalOrEmpty reports whether a provider base_url is unset or points at a
+// loopback address (the managed sidecar). Both mean the native proxy may take over;
+// a non-loopback host is treated as a deliberate external override and left alone.
+func baseURLIsLocalOrEmpty(raw string) bool {
+	if strings.TrimSpace(raw) == "" {
+		return true
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	switch u.Hostname() {
+	case "127.0.0.1", "localhost", "::1", "[::1]":
+		return true
+	}
+	return false
+}
 
 // A Provider is a proxy-backed model source: another model (Codex, Grok, Kimi,
 // ...) reached by pointing the ordinary `claude` agent at a local CLIProxyAPI
@@ -290,37 +309,41 @@ func (s *Server) providerNamed(name string) *Provider {
 // address and token to the managed sidecar when the provider left them blank
 // (the zero-config path: the owner picks only a model, kunai supplies the proxy).
 func (s *Server) providerProfile(p Provider) CLIProfile {
-	// A Codex provider goes through kunai's own in-process proxy when NativeCodex
-	// is enabled (no sidecar needed for the model calls). Only when the native
-	// proxy actually has a bound port; otherwise fall through to the sidecar so a
-	// still-starting native proxy never bakes an empty base URL.
-	if p.BaseURL == "" && s.nativeCodex != nil && isCodexModel(providerDisplayModel(p)) {
-		ctx := s.baseCtx
-		if ctx == nil {
-			ctx = context.Background()
-		}
+	ctx := s.baseCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	model := providerDisplayModel(p)
+	// The native in-process proxy takes precedence over an empty OR loopback
+	// base_url: the CLIProxyAPI sidecar is the legacy fallback, and it hangs for
+	// minutes on a 429 with a cryptic "credentials cooling down" message, so a
+	// native-capable model must go native whenever its login is present -- even if a
+	// stale sidecar base_url was saved on the provider (which used to route around
+	// native entirely). A genuine external base_url is honored as an explicit
+	// override. Native still needs a bound port before its URL is baked, or the
+	// session spawns pointing nowhere.
+	if s.nativeCodex != nil && isCodexModel(model) && baseURLIsLocalOrEmpty(p.BaseURL) {
 		if err := s.nativeCodex.start(ctx); err != nil {
 			log.Printf("native codex: %v (falling back to sidecar)", err)
 		} else if base := s.nativeCodex.BaseURL(); base != "" {
 			p.BaseURL = base
 			p.Token = s.nativeCodex.APIKey()
+			log.Printf("provider %q -> native codex proxy (%s)", p.Name, model)
 			return p.profile(s.cfg.DataDir)
 		}
 	}
-	if p.BaseURL == "" && s.nativeGrok != nil && isGrokModel(providerDisplayModel(p)) {
-		ctx := s.baseCtx
-		if ctx == nil {
-			ctx = context.Background()
-		}
+	if s.nativeGrok != nil && isGrokModel(model) && baseURLIsLocalOrEmpty(p.BaseURL) {
 		if err := s.nativeGrok.start(ctx); err != nil {
 			log.Printf("native grok: %v (falling back to sidecar)", err)
 		} else if base := s.nativeGrok.BaseURL(); base != "" {
 			p.BaseURL = base
 			p.Token = s.nativeGrok.APIKey()
+			log.Printf("provider %q -> native grok proxy (%s)", p.Name, model)
 			return p.profile(s.cfg.DataDir)
 		}
 	}
 	if p.BaseURL == "" && s.cliproxy != nil {
+		log.Printf("provider %q -> CLIProxyAPI sidecar (%s)", p.Name, model)
 		// Reaching here means the sidecar is the proxy for this session (either a
 		// plain sidecar provider, or a native provider whose login was missing so it
 		// degraded). Make sure the sidecar has a bound port before baking its URL, or
