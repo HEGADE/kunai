@@ -34,25 +34,46 @@ Measured cost: **+0.41 MB** to kunai's stripped binary (9.33 -> 9.74 MB), versus
   against a mock upstream: auth headers reach upstream, Codex SSE becomes valid
   Anthropic SSE, errors pass through).
 
-## What is NOT done yet (honest gaps)
+## Live validation (done)
 
-1. **Reasoning-replay / signature cache.** CLIProxyAPI's executor caches encrypted
-   reasoning content and replays it with signatures across turns; some multi-turn
-   reasoning sequences need this or Codex rejects them with "invalid signature".
-   This package does not reproduce that cache yet. Single-turn and ordinary tool
-   use go through the same translator and should work; the replay edge cases need a
-   **live token** to exercise and fix, which could not be done offline.
-2. **Not wired into the server.** kunai still uses the sidecar. Swapping in this
-   proxy means: a manager that starts a `*codex.Proxy` on a localhost port (in
-   place of `cliproxyManager`), pointing a provider's `ANTHROPIC_BASE_URL` at it,
-   and keeping the sidecar only for provider **login** (the OAuth flows are still
-   sidecar-shelled; porting login is a separate step).
-3. **Codex only.** Grok/Kimi ride different upstreams; the same approach applies but
-   is not built here.
+Run against a real Codex (ChatGPT Go) account, all passing:
+
+1. **Single-turn** — `pong` round-trips through the proxy (status 200).
+2. **Multi-turn tool-use** — the model calls a tool, the tool_result is sent back,
+   and the final answer returns (status 200).
+3. **Reasoning replay** — a turn producing a thinking block with a 1100-char
+   signature is replayed in the next turn; **Codex accepts it (status 200)**. The
+   reference's reasoning-replay *cache* exists for clients that DROP reasoning
+   between turns; the `claude` CLI replays the full assistant message itself and the
+   ported translator preserves the encrypted content, so **no server-side cache is
+   needed for kunai's client.** This was the main risk and it does not bite.
+4. **Real `claude` CLI end-to-end** — `claude -p` with `ANTHROPIC_BASE_URL` pointed
+   at the proxy returns `pong` from real Codex.
+5. **Full kunai session** — a session on a Codex provider, driven over the real
+   WebSocket with `-native-codex`, returns `pong`, and the 40MB sidecar is **never
+   downloaded**.
+
+(The live tests are gated on `KUNAI_CODEX_LIVE=1 KUNAI_CODEX_TOKEN=<path>`; the proxy
+reads the token file itself.)
+
+## Wired into the server
+
+`-native-codex` (env `KUNAI_NATIVE_CODEX=1`) routes a Codex provider through this
+proxy: `nativeCodexManager` (internal/server/nativecodex.go) serves it on a localhost
+port, `providerProfile` bakes that as the provider's `ANTHROPIC_BASE_URL`, and the
+sidecar is skipped entirely (boot and create paths) when every provider is native or
+external. Off by default.
+
+## Still to do
+
+- **Login.** Provider OAuth login still shells the sidecar (`cliproxy_login.go`).
+  Porting the Codex device/loopback login natively would let the sidecar be dropped
+  completely; until then it is fetched only for the login step.
+- **Grok/Kimi.** Different upstreams; the same pattern applies, not built here.
+- Default-on once it has run a while in nightly.
 
 ## Verification status
 
-- Offline: 45 tests pass (42 translator golden + 3 proxy round-trip). `go build`,
-  `go test ./...`, `-race` green.
-- Live: NOT yet run against a real Codex account (needs the owner's token; would
-  consume quota). The reasoning-replay gap in particular can only be confirmed live.
+- Offline: 47 tests pass (42 translator golden + 3 proxy round-trip + 2 server
+  wiring). `go build`, `go test ./...`, `-race` green.
+- Live: 5 scenarios above pass against a real Codex account.

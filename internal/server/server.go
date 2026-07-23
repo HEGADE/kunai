@@ -60,6 +60,10 @@ type Config struct {
 	TelegramToken   string
 	TelegramAllowed []int64 // Telegram user ids permitted to drive kunai
 	TelegramDetail  bool    // let tool inputs and outputs leave the machine
+	// NativeCodex routes a Codex provider through kunai's own in-process proxy
+	// (internal/cliproxy/codex) instead of the CLIProxyAPI sidecar. Opt-in
+	// (KUNAI_NATIVE_CODEX=1) while it is proven out; login still uses the sidecar.
+	NativeCodex bool
 }
 
 // Server wires the manager, config, and embedded PWA into an http.Handler.
@@ -82,6 +86,7 @@ type Server struct {
 	clisMu        sync.RWMutex          // guards clis, which the Accounts settings edit live
 	providers     *providerStore        // proxy-backed model sources (Codex/Grok/Kimi via CLIProxyAPI)
 	cliproxy      *cliproxyManager      // the managed CLIProxyAPI sidecar (nil without a data dir)
+	nativeCodex   *nativeCodexManager   // kunai's own in-process Codex proxy (opt-in, replaces the sidecar for Codex)
 	cliproxyLogin *cliproxyLoginManager // in-app provider (Codex/Grok/Kimi) login flows
 	baseCtx       context.Context       // server lifetime, for starting the sidecar on a runtime provider add
 	usage         *usageCache           // the default account's subscription quota windows
@@ -123,6 +128,9 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	// manager resolves the default binary), since resolveCLI now consults them.
 	s.providers = newProviderStore(filepath.Join(cfg.DataDir, "providers.json"))
 	s.cliproxy = newCLIProxyManager(cfg.DataDir)
+	if cfg.NativeCodex {
+		s.nativeCodex = newNativeCodexManager(cfg.DataDir)
+	}
 	s.cliproxyLogin = newCLIProxyLoginManager(s.cliproxy)
 	s.codexUC = &codexUsageCache{}
 	s.sched = schedule.New(filepath.Join(cfg.DataDir, "schedule.json"), s.fireJob)
@@ -224,8 +232,17 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	// Boot the managed CLIProxyAPI sidecar if any providers are configured, so
 	// their sessions have a proxy to reach. Downloading/verifying happens inside.
-	if s.cliproxy != nil && len(s.providerList()) > 0 {
+	if s.cliproxy != nil && s.anyProviderNeedsSidecar() {
 		go s.ensureCLIProxy()
+	}
+	// Start the native Codex proxy too when enabled, so a Codex provider session
+	// created right after boot finds it ready.
+	if s.nativeCodex != nil {
+		go func() {
+			if err := s.nativeCodex.start(s.baseCtx); err != nil {
+				log.Printf("native codex: %v", err)
+			}
+		}()
 	}
 	go s.sched.Run(ctx) // fire scheduled jobs while the server is up
 	// The guardian wakes the phone the same way a finished turn does; push may
@@ -298,7 +315,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// A provider session's base_url comes from the managed sidecar, which may
 	// still be starting; wait for it to have a real address before we bake the
 	// env, or claude would spawn with no proxy to reach.
-	if s.isProviderName(req.CLI) {
+	if s.isProviderName(req.CLI) && !s.providerUsesNative(req.CLI) {
 		s.ensureCLIProxyReady()
 	}
 	cli := s.resolveCLI(req.CLI)

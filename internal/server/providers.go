@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -289,6 +290,23 @@ func (s *Server) providerNamed(name string) *Provider {
 // address and token to the managed sidecar when the provider left them blank
 // (the zero-config path: the owner picks only a model, kunai supplies the proxy).
 func (s *Server) providerProfile(p Provider) CLIProfile {
+	// A Codex provider goes through kunai's own in-process proxy when NativeCodex
+	// is enabled (no sidecar needed for the model calls). Only when the native
+	// proxy actually has a bound port; otherwise fall through to the sidecar so a
+	// still-starting native proxy never bakes an empty base URL.
+	if p.BaseURL == "" && s.nativeCodex != nil && isCodexModel(providerDisplayModel(p)) {
+		ctx := s.baseCtx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if err := s.nativeCodex.start(ctx); err != nil {
+			log.Printf("native codex: %v (falling back to sidecar)", err)
+		} else if base := s.nativeCodex.BaseURL(); base != "" {
+			p.BaseURL = base
+			p.Token = s.nativeCodex.APIKey()
+			return p.profile(s.cfg.DataDir)
+		}
+	}
 	if p.BaseURL == "" && s.cliproxy != nil {
 		p.BaseURL = s.cliproxy.BaseURL()
 	}
