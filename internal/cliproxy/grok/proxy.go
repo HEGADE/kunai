@@ -201,17 +201,9 @@ func dropOrphanToolChoice(body []byte) []byte {
 
 func (p *Proxy) bufferBack(ctx context.Context, w http.ResponseWriter, model string, original []byte, body io.Reader) {
 	raw, _ := io.ReadAll(body)
-	var completed []byte
-	for _, line := range bytes.Split(raw, []byte("\n")) {
-		if !bytes.HasPrefix(line, []byte("data:")) {
-			continue
-		}
-		data := bytes.TrimSpace(line[5:])
-		t := gjson.GetBytes(data, "type").String()
-		if t == "response.completed" || t == "response.incomplete" {
-			completed = data
-		}
-	}
+	// Terminal event with output backfilled from the streamed items (Codex's
+	// terminal can be empty; see codex/nonstream.go). Shared with the codex proxy.
+	completed := codex.CompletedEventForNonStream(raw)
 	if completed == nil {
 		writeAnthropicError(w, http.StatusBadGateway, "grok upstream: no completed event")
 		return

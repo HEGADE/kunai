@@ -231,19 +231,13 @@ func dropOrphanToolChoice(body []byte) []byte {
 // Messages JSON (for a non-streaming client request).
 func (p *Proxy) bufferBack(ctx context.Context, w http.ResponseWriter, model string, original []byte, body io.Reader) {
 	raw, _ := io.ReadAll(body)
-	// The non-stream translator wants the terminal completed event's data.
-	var completed []byte
-	for _, line := range bytes.Split(raw, []byte("\n")) {
-		if !bytes.HasPrefix(line, []byte("data:")) {
-			continue
-		}
-		data := bytes.TrimSpace(line[5:])
-		t := gjson.GetBytes(data, "type").String()
-		if t == "response.completed" || t == "response.incomplete" {
-			completed = data
-		}
-	}
+	// The non-stream translator wants the terminal completed event's data — with
+	// its output backfilled from the streamed items, because Codex's terminal
+	// event can carry an empty output array (see nonstream.go; this dropped the
+	// auto-mode classifier's verdict and broke auto mode on a Codex provider).
+	completed := CompletedEventForNonStream(raw)
 	if completed == nil {
+		log.Printf("codex: non-stream upstream ended with no completed event (%d bytes raw)", len(raw))
 		writeAnthropicError(w, http.StatusBadGateway, "codex upstream: no completed event")
 		return
 	}
