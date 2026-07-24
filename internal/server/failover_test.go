@@ -15,12 +15,12 @@ func TestDecide_ChainsAcrossWalledAccounts(t *testing.T) {
 	fc := newFailoverController(&Server{cfg: Config{DataDir: t.TempDir()}})
 	fc.candidatesFn = func(context.Context, string) []availability {
 		return []availability{
-			{Name: "Claude", Remaining: 0, Known: true},                 // weekly 100%
-			{Name: "claude-work", Remaining: 42, Known: true},           // session 58% used
+			{Name: "Claude", Remaining: 0, Known: true},                   // weekly 100%
+			{Name: "claude-work", Remaining: 42, Known: true},             // session 58% used
 			{Name: "claude-teams-max-shorya", Remaining: 74, Known: true}, // session 26% used
-			{Name: "claude-shob", Remaining: 0, Known: true},            // session 100%
-			{Name: "Grok", Provider: true, Remaining: 0, Known: true},   // session 100%
-			{Name: "Codex", Provider: true, Remaining: 0, Known: true},  // weekly 100%
+			{Name: "claude-shob", Remaining: 0, Known: true},              // session 100%
+			{Name: "Grok", Provider: true, Remaining: 0, Known: true},     // session 100%
+			{Name: "Codex", Provider: true, Remaining: 0, Known: true},    // weekly 100%
 		}
 	}
 	ctx := context.Background()
