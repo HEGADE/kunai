@@ -51,8 +51,10 @@ phase() {
   pct=$(( PHASE * 100 / PHASE_TOTAL ))
   if [ "$pct" -gt 100 ]; then pct=100; fi
   f=$(( pct * w / 100 ))
-  i=0; while [ "$i" -lt "$f" ]; do bar="$bar━"; i=$((i + 1)); done
-  i="$f"; while [ "$i" -lt "$w" ]; do trk="$trk·"; i=$((i + 1)); done
+  # Brace the expansions: macOS's bash 3.2 otherwise reads the name as bar/trk PLUS
+  # the following multibyte glyph's bytes -> an unbound var under `set -u`.
+  i=0; while [ "$i" -lt "$f" ]; do bar="${bar}━"; i=$((i + 1)); done
+  i="$f"; while [ "$i" -lt "$w" ]; do trk="${trk}·"; i=$((i + 1)); done
   printf '  %s▸ %s%s%-13s%s %s%s%s%s%s%s %s%3d%%%s\n' \
     "$C_B" "$C_RST" "$C_B" "$1" "$C_RST" \
     "$C_B" "$bar" "$C_RST" "$C_DIM" "$trk" "$C_RST" "$C_DIM" "$pct" "$C_RST"
