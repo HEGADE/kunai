@@ -28,6 +28,36 @@ else
   C_G=; C_R=; C_Y=; C_DIM=; C_B=; C_RST=
 fi
 
+# banner is the wordmark shown once at the top. A kunai is a thrown blade, so the
+# rule under the name reads as one in flight — restrained, monochrome, no color
+# but bold/dim, matching the app's own aesthetic (no gradients, no emoji).
+banner() {
+  printf '\n'
+  printf '   %s█ ▄▀  █ █  █▀█  ▄▀▄  █%s\n' "$C_B" "$C_RST"
+  printf '   %s█▀▄   █ █  █ █  █▀█  █%s\n' "$C_B" "$C_RST"
+  printf '   %s█ ▀▄  ▀▀▀  █ █  █ █  █%s\n' "$C_B" "$C_RST"
+  printf '\n'
+  printf '   %s╾━━━━━━━━━━━━━━━━━━━▸%s  %sClaude Code, over your tailnet%s\n' "$C_DIM" "$C_RST" "$C_DIM" "$C_RST"
+  printf '\n'
+}
+
+# phase draws the forged-blade progress: one line per real install phase, the
+# blade growing as each completes (honest, not a fake percent). PHASE_TOTAL is the
+# count of phase() calls on the happy path.
+PHASE=0; PHASE_TOTAL=5
+phase() {
+  local pct f i bar='' trk='' w=26
+  PHASE=$((PHASE + 1))
+  pct=$(( PHASE * 100 / PHASE_TOTAL ))
+  if [ "$pct" -gt 100 ]; then pct=100; fi
+  f=$(( pct * w / 100 ))
+  i=0; while [ "$i" -lt "$f" ]; do bar="$bar━"; i=$((i + 1)); done
+  i="$f"; while [ "$i" -lt "$w" ]; do trk="$trk·"; i=$((i + 1)); done
+  printf '  %s▸ %s%s%-13s%s %s%s%s%s%s%s %s%3d%%%s\n' \
+    "$C_B" "$C_RST" "$C_B" "$1" "$C_RST" \
+    "$C_B" "$bar" "$C_RST" "$C_DIM" "$trk" "$C_RST" "$C_DIM" "$pct" "$C_RST"
+}
+
 # Preflight report rows. chk_bad records a hint and flags MISSING so we can show
 # the whole picture at once, then fail with everything the user needs to fix.
 MISSING=0; HINTS=""; NEED_CLAUDE=0; NEED_TS=0
@@ -137,8 +167,8 @@ ensure_go() {
 CLAUDE_BIN="$(find_bin claude "$HOME/.local/bin/claude" /usr/local/bin/claude /opt/homebrew/bin/claude || true)"
 TS_BIN="$(find_bin tailscale /Applications/Tailscale.app/Contents/MacOS/Tailscale /usr/local/bin/tailscale /opt/homebrew/bin/tailscale /usr/bin/tailscale || true)"
 
-say ""
-say "${C_B}Kunai installer${C_RST} ${C_DIM}· $PLAT${C_RST}"
+banner
+say "${C_DIM}installing · $CHANNEL · $PLAT${C_RST}"
 say ""
 
 if [ -n "$CLAUDE_BIN" ]; then chk_ok "Claude Code" "$CLAUDE_BIN"
@@ -198,6 +228,7 @@ if [ "$MISSING" -ne 0 ]; then
 
   fail "install the above, then re-run ./install.sh"
 fi
+phase "prerequisites"
 
 # --- find or build the binary -----------------------------------------------
 
@@ -259,6 +290,7 @@ if [ -z "$BIN" ]; then
 fi
 
 [ -n "$BIN" ] || fail "no kunai binary and could not build one (Go bootstrap needs curl or wget and network access). Put a kunai-$PLAT binary next to this script, or install Go, or install gh."
+phase "binary"
 
 # --- TLS certificate over Tailscale -----------------------------------------
 
@@ -274,6 +306,7 @@ if [ ! -s "$CRT" ] || [ ! -s "$KEY" ]; then
       || fail "could not mint a TLS certificate. Enable HTTPS Certificates in the Tailscale admin console (DNS tab > HTTPS Certificates), then re-run."
   fi
 fi
+phase "certificate"
 
 # --- install binary ----------------------------------------------------------
 
@@ -362,6 +395,7 @@ else
   say "no service manager for this platform. Run manually:"
   say "  $BIN_DIR/$NAME -addr $TS_IP:$PORT -tls-cert $CRT -tls-key $KEY -data $DATA_DIR $IDENT_ARGS $PUSH_ARG"
 fi
+phase "service"
 
 # --- thermal safety privileges (opt-in) ---------------------------------------
 #
@@ -420,8 +454,9 @@ URL="https://$FQDN:$PORT"
 if command -v curl >/dev/null 2>&1; then
   for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
     if curl -s -m 4 -o /dev/null "$URL/api/stats"; then
+      phase "live"
       say ""
-      say "${C_G}${C_B}kunai is running.${C_RST}"
+      say "  ${C_B}kunai is live.${C_RST}  ${C_DIM}forged and thrown.${C_RST}"
       say ""
       say "  Open on any device in your tailnet:  ${C_B}$URL${C_RST}"
       say ""
