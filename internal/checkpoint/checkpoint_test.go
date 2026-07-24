@@ -203,3 +203,45 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 	}
 	return string(out)
 }
+
+// List reads checkpoints straight from the git shadow refs, so they survive a
+// kunai restart (the in-memory map does not, but the refs do). It must return the
+// per-turn snapshots in Seq order and exclude the safety refs.
+func TestList_ReadsFromRefsInSeqOrder(t *testing.T) {
+	dir := newRepo(t)
+	sid := "sess-abc"
+	// Capture three turns out of order, plus a safety ref that must NOT appear.
+	for _, n := range []uint64{2, 10, 1} {
+		if _, err := Capture(dir, RefFor(sid, n), "turn"); err != nil {
+			t.Fatalf("capture %d: %v", n, err)
+		}
+	}
+	if _, err := Capture(dir, SafetyRefFor(sid, 99), "safety"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := List(dir, sid)
+	if len(got) != 3 {
+		t.Fatalf("want 3 turn snapshots, got %d: %+v", len(got), got)
+	}
+	wantSeq := []uint64{1, 2, 10}
+	for i, s := range got {
+		if s.Seq != wantSeq[i] {
+			t.Errorf("snapshot %d: seq %d, want %d", i, s.Seq, wantSeq[i])
+		}
+		if s.Ref != RefFor(sid, s.Seq) {
+			t.Errorf("snapshot %d: ref %q, want %q", i, s.Ref, RefFor(sid, s.Seq))
+		}
+	}
+}
+
+// A session with no checkpoints, and a non-git dir, both return empty (never a
+// panic or error the caller must handle).
+func TestList_EmptyAndNonGit(t *testing.T) {
+	if got := List(newRepo(t), "no-such-session"); len(got) != 0 {
+		t.Errorf("empty session should list nothing, got %+v", got)
+	}
+	if got := List(t.TempDir(), "sess"); got != nil {
+		t.Errorf("non-git dir should list nil, got %+v", got)
+	}
+}

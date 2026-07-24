@@ -41,12 +41,12 @@ func TestCheckpointManager_CaptureAndRevert(t *testing.T) {
 	// Turn seq 7 starts: snapshot the pre-turn tree (code.txt == "v0").
 	m.capture("sessA", repo, 7)
 
-	ref, ok := m.refForSeq("sessA", 7)
+	ref, ok := m.refForSeq("sessA", repo, 7)
 	if !ok {
 		t.Fatal("no checkpoint recorded for the turn")
 	}
-	if len(m.list("sessA")) != 1 {
-		t.Fatalf("expected 1 checkpoint, got %d", len(m.list("sessA")))
+	if len(m.list("sessA", repo)) != 1 {
+		t.Fatalf("expected 1 checkpoint, got %d", len(m.list("sessA", repo)))
 	}
 
 	// The "agent" edits the file and adds a new one during the turn.
@@ -74,17 +74,51 @@ func TestCheckpointManager_NonGitAndRecords(t *testing.T) {
 	m := newCheckpointManager()
 	// A non-git cwd records nothing (silently skipped).
 	m.capture("s", t.TempDir(), 1)
-	if len(m.list("s")) != 0 {
+	if len(m.list("s", "")) != 0 {
 		t.Error("non-git session should have no checkpoints")
 	}
 	// record replaces a re-prompted turn's ref rather than duplicating it.
 	m.record("s", 3, checkpoint.Ref("refs/kunai/checkpoints/s/3"))
 	m.record("s", 3, checkpoint.Ref("refs/kunai/checkpoints/s/3b"))
-	if l := m.list("s"); len(l) != 1 || l[0].Ref != "refs/kunai/checkpoints/s/3b" {
+	if l := m.list("s", ""); len(l) != 1 || l[0].Ref != "refs/kunai/checkpoints/s/3b" {
 		t.Errorf("re-prompt should replace the checkpoint, got %+v", l)
 	}
 	m.forget("s")
-	if len(m.list("s")) != 0 {
+	if len(m.list("s", "")) != 0 {
 		t.Error("forget should clear the session's checkpoints")
+	}
+}
+
+// The restart guarantee: the in-memory map dies with the process, but the git
+// shadow refs persist. A FRESH manager (cold map, like a just-restarted kunai)
+// must rebuild a session's checkpoints from git via cwd, so the revert buttons
+// don't vanish after an auto-update or crash.
+func TestCheckpointManager_RebuildsFromGitAfterRestart(t *testing.T) {
+	repo := gitRepo(t)
+
+	// Process 1 captures two turns.
+	m1 := newCheckpointManager()
+	m1.capture("sessR", repo, 4)
+	m1.capture("sessR", repo, 9)
+	if len(m1.list("sessR", repo)) != 2 {
+		t.Fatalf("pre-restart: expected 2 checkpoints, got %d", len(m1.list("sessR", repo)))
+	}
+
+	// Process 2: a brand-new manager with an empty map (the restart).
+	m2 := newCheckpointManager()
+	got := m2.list("sessR", repo)
+	if len(got) != 2 {
+		t.Fatalf("post-restart list should rebuild 2 from git, got %d: %+v", len(got), got)
+	}
+	// And a revert by seq must resolve its ref from git too.
+	ref, ok := m2.refForSeq("sessR", repo, 9)
+	if !ok || ref != checkpoint.RefFor("sessR", 9) {
+		t.Fatalf("post-restart refForSeq(9) = %q,%v; want the git ref", ref, ok)
+	}
+
+	// With no cwd (a closed session we can't locate), it honestly returns nothing
+	// rather than guessing.
+	if len(newCheckpointManager().list("sessR", "")) != 0 {
+		t.Error("no cwd should list nothing, not panic or guess")
 	}
 }

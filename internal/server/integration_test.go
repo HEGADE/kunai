@@ -52,36 +52,66 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("expected hello for %s, got %+v", id, hello)
 	}
 
-	// Send a prompt that requires the Write tool (a real permission gate).
+	// Send a prompt that requires the Write tool (a real permission gate) and drive
+	// it to completion, auto-allowing the permission ask.
 	send(t, ctx, c, session.Command{T: session.CmdPrompt,
 		Text: "Create a file notes.txt containing the word PING using the Write tool, then say done."})
 
-	var gotDelta, gotPermission, gotResult bool
-	deadline := time.After(80 * time.Second)
-	for !gotResult {
+	turn := waitForTurn(t, ctx, c, true)
+	if !turn.sawPermission {
+		t.Fatalf("expected a Write permission request")
+	}
+	if !turn.sawDelta {
+		t.Fatalf("expected streamed deltas")
+	}
+	if _, err := os.Stat(cwd + "/notes.txt"); err != nil {
+		t.Fatalf("approved Write did not create the file: %v", err)
+	}
+}
+
+// turnOutcome is what waitForTurn observed across one turn: the terminal result
+// event plus flags for the interesting things that happened on the way to it.
+type turnOutcome struct {
+	result        session.AppEvent // the EvResult frame (carries the turn's usage)
+	sawDelta      bool
+	sawPermission bool
+	compact       *session.AppEvent // set if the turn compacted (manual or auto)
+}
+
+// waitForTurn pumps events until the turn's EvResult, returning what it saw. If
+// autoAllow is set it approves every permission ask (echoing the input back, which
+// the CLI requires); otherwise it leaves the ask for the caller to handle. It fails
+// the test on an EvError or a timeout, so a caller reads a clean outcome or nothing.
+// This is the shared pump every session-driving test wants, so none re-implements
+// the event loop or forgets that an allow must echo updatedInput.
+func waitForTurn(t *testing.T, ctx context.Context, c *websocket.Conn, autoAllow bool) turnOutcome {
+	t.Helper()
+	var out turnOutcome
+	deadline := time.After(120 * time.Second)
+	for {
 		select {
 		case <-deadline:
-			t.Fatalf("timeout; delta=%v permission=%v result=%v", gotDelta, gotPermission, gotResult)
+			t.Fatalf("waitForTurn timeout; delta=%v permission=%v", out.sawDelta, out.sawPermission)
 		default:
 		}
 		ev := readEvent(t, ctx, c)
 		switch ev.T {
 		case session.EvDelta:
-			gotDelta = true
+			out.sawDelta = true
 		case session.EvPermission:
-			gotPermission = true
-			send(t, ctx, c, session.Command{T: session.CmdPermission, RequestID: ev.RequestID, Behavior: "allow"})
+			out.sawPermission = true
+			if autoAllow {
+				send(t, ctx, c, session.Command{T: session.CmdPermission, RequestID: ev.RequestID, Behavior: "allow"})
+			}
+		case session.EvCompact:
+			cp := ev
+			out.compact = &cp
 		case session.EvResult:
-			gotResult = true
+			out.result = ev
+			return out
 		case session.EvError:
 			t.Fatalf("error event: %s", ev.Message)
 		}
-	}
-	if !gotPermission {
-		t.Fatalf("expected a Write permission request")
-	}
-	if _, err := os.Stat(cwd + "/notes.txt"); err != nil {
-		t.Fatalf("approved Write did not create the file: %v", err)
 	}
 }
 

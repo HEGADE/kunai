@@ -165,6 +165,58 @@ func Restore(dir string, ref, safetyRef Ref) (Ref, error) {
 	return safety, nil
 }
 
+// Snapshot is one captured turn checkpoint: the turn's Seq, its ref, and the git
+// commit time of the snapshot (unix seconds).
+type Snapshot struct {
+	Seq        uint64
+	Ref        Ref
+	CapturedAt int64
+}
+
+// List returns every turn checkpoint for a session, read straight from the git
+// shadow refs — so it survives a kunai restart, since git, not an in-memory map, is
+// the store. Safety refs (refs/.../safety/...) are excluded; only the per-turn
+// snapshots are returned, ordered by Seq. A non-git dir or a session with none
+// returns an empty slice, never an error the caller must handle.
+func List(dir, sessionID string) []Snapshot {
+	root, err := repoRoot(dir)
+	if err != nil {
+		return nil
+	}
+	prefix := RefPrefix + sanitize(sessionID) + "/"
+	out, err := git(root, "for-each-ref", "--format=%(refname) %(creatordate:unix)", prefix)
+	if err != nil {
+		return nil
+	}
+	var snaps []Snapshot
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 1 || !strings.HasPrefix(fields[0], prefix) {
+			continue
+		}
+		tail := strings.TrimPrefix(fields[0], prefix)
+		if strings.Contains(tail, "/") { // a nested ref (shouldn't happen for turns); skip
+			continue
+		}
+		var seq uint64
+		if _, err := fmt.Sscanf(tail, "%d", &seq); err != nil {
+			continue
+		}
+		var at int64
+		if len(fields) > 1 {
+			fmt.Sscanf(fields[1], "%d", &at)
+		}
+		snaps = append(snaps, Snapshot{Seq: seq, Ref: Ref(fields[0]), CapturedAt: at})
+	}
+	// Order by Seq so the client sees turns in conversation order.
+	for i := 1; i < len(snaps); i++ {
+		for j := i; j > 0 && snaps[j-1].Seq > snaps[j].Seq; j-- {
+			snaps[j-1], snaps[j] = snaps[j], snaps[j-1]
+		}
+	}
+	return snaps
+}
+
 // Exists reports whether a checkpoint ref is present.
 func Exists(dir string, ref Ref) bool {
 	root, err := repoRoot(dir)

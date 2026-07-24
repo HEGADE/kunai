@@ -73,18 +73,51 @@ func (m *checkpointManager) record(id string, seq uint64, ref checkpoint.Ref) {
 	m.byID[id] = append(list, checkpointEntry{Seq: seq, Ref: string(ref), CapturedAt: time.Now().Unix()})
 }
 
-func (m *checkpointManager) list(id string) []checkpointEntry {
+// list returns a session's turn checkpoints. cwd lets it fall back to the git
+// shadow refs when the in-memory map is empty -- which is exactly the case after a
+// restart, since the refs persist but the map does not. Git is the source of truth;
+// the map is a warm cache for the live process.
+func (m *checkpointManager) list(id, cwd string) []checkpointEntry {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]checkpointEntry, len(m.byID[id]))
-	copy(out, m.byID[id])
+	cached := m.byID[id]
+	if len(cached) > 0 {
+		out := make([]checkpointEntry, len(cached))
+		copy(out, cached)
+		m.mu.Unlock()
+		return out
+	}
+	m.mu.Unlock()
+
+	if cwd == "" {
+		return []checkpointEntry{}
+	}
+	snaps := checkpoint.List(cwd, id)
+	out := make([]checkpointEntry, 0, len(snaps))
+	for _, s := range snaps {
+		out = append(out, checkpointEntry{Seq: s.Seq, Ref: string(s.Ref), CapturedAt: s.CapturedAt})
+	}
+	// Warm the cache so the client's follow-up calls (and a revert) hit memory.
+	if len(out) > 0 {
+		m.mu.Lock()
+		if len(m.byID[id]) == 0 {
+			m.byID[id] = append([]checkpointEntry(nil), out...)
+		}
+		m.mu.Unlock()
+	}
 	return out
 }
 
-func (m *checkpointManager) refForSeq(id string, seq uint64) (checkpoint.Ref, bool) {
+func (m *checkpointManager) refForSeq(id, cwd string, seq uint64) (checkpoint.Ref, bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	for _, e := range m.byID[id] {
+		if e.Seq == seq {
+			m.mu.Unlock()
+			return checkpoint.Ref(e.Ref), true
+		}
+	}
+	m.mu.Unlock()
+	// Not in the live cache -- reconstruct from git (post-restart) using cwd.
+	for _, e := range m.list(id, cwd) {
 		if e.Seq == seq {
 			return checkpoint.Ref(e.Ref), true
 		}
@@ -108,7 +141,13 @@ func (s *Server) handleListCheckpoints(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []checkpointEntry{})
 		return
 	}
-	writeJSON(w, http.StatusOK, s.checkpoints.list(r.PathValue("id")))
+	id := r.PathValue("id")
+	// cwd, if the session is live, lets list() rebuild from git after a restart.
+	var cwd string
+	if sess, ok := s.mgr.Get(id); ok {
+		cwd = sess.Cwd
+	}
+	writeJSON(w, http.StatusOK, s.checkpoints.list(id, cwd))
 }
 
 // handleRevert restores the working tree to a turn's pre-turn snapshot (undo the
@@ -133,7 +172,7 @@ func (s *Server) handleRevert(w http.ResponseWriter, r *http.Request) {
 	case body.Ref != "":
 		ref = checkpoint.Ref(body.Ref)
 	case s.checkpoints != nil:
-		if got, found := s.checkpoints.refForSeq(id, body.Seq); found {
+		if got, found := s.checkpoints.refForSeq(id, sess.Cwd, body.Seq); found {
 			ref = got
 		}
 	}
