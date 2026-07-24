@@ -348,11 +348,9 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		CLIName: cli.Name, Bin: cli.Bin, Env: cli.effectiveEnv(),
 	}
 	if isProxyProfile(cli) {
-		// auto mode judges a Bash command's safety with a second, hidden model
-		// call; on a proxied model that call can rate-limit ("temporarily
-		// unavailable") and then nothing runs. accept-edits skips that classifier
-		// (edits flow, other tools just prompt), so a provider session is not
-		// hostage to the model being free for a safety check.
+		// Provider sessions deliberately use their own default. It currently matches
+		// the normal Auto default, but keeping the branch means provider-specific
+		// safety-mode policy stays one constant instead of leaking into create/resume.
 		opts.Mode = session.ProviderPermissionMode
 	}
 	if req.Resume != "" {

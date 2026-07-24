@@ -308,11 +308,13 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   assigned asynchronously, `ensureCLIProxyReady` blocks a provider session create
   (and account-switch-to-a-provider) until the sidecar has a real address, or the
   baked `ANTHROPIC_BASE_URL` would be empty and the session would hang. Providers
-  default to `session.ProviderPermissionMode` (accept-edits), and `restart()`
-  re-applies it whenever the account is proxy-backed, because auto mode judges a
-  Bash command's safety with a *second* model call that a proxied model can
-  rate-limit and stall on. `cliproxy_login.go` authorizes a provider from the
-  app: it runs the sidecar's own `-codex-login`/`-xai-login`/`-kimi-login` under
+  default to `session.ProviderPermissionMode` (auto), and `restart()` re-applies
+  it whenever the account is proxy-backed, so a Codex/Grok session starts with the
+  same hands-off safe-command behavior as Claude. The native proxies handle the
+  CLI's non-streaming Bash safety-classifier call correctly; the cost is one
+  extra provider model call for each non-obvious Bash command. `cliproxy_login.go`
+  authorizes a provider from the app: it runs the sidecar's own
+  `-codex-login`/`-xai-login`/`-kimi-login` under
   `--no-browser`, scrapes the OAuth URL from stdout, and bridges the localhost
   callback with the same `loopbackTarget`/`codeFromPaste`/`forwardLoopback`
   helpers the Claude account login uses; the sidecar's file watcher loads the new

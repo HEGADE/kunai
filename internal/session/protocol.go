@@ -149,11 +149,11 @@ const (
 const DefaultPermissionMode = "auto"
 
 // ProviderPermissionMode is the mode a proxy-backed (provider) session starts in.
-// auto decides a Bash command's safety with a second model call, which on a
-// proxied model can rate-limit and stall the turn; accept-edits skips that
-// classifier (edits flow, other tools prompt), so a provider is not blocked on
-// the model being free to judge safety. The composer can still switch it.
-const ProviderPermissionMode = "acceptEdits"
+// Auto is safe here now: the native proxies handle the CLI's non-streaming Bash
+// safety-classifier call correctly, so provider sessions can match Claude's default
+// and get on with safe Bash without stopping for every command. The composer can
+// still switch it.
+const ProviderPermissionMode = "auto"
 
 // Turn/session states.
 const (
