@@ -1,7 +1,7 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
   import { enablePush, disablePush, isSubscribed, pushState } from '../lib/push'
-  import { setKeepAwake, setThermal, setLid, getCLIs, setCLIs } from '../lib/api'
+  import { setKeepAwake, setThermal, setLid, setFailover, getCLIs, setCLIs } from '../lib/api'
   import type { Machine, CLIProfile } from '../lib/types'
 
   const st = $derived(app.stats)
@@ -58,6 +58,25 @@
       machErr = (e as Error).message
     } finally {
       discovering = false
+    }
+  }
+
+  // Per-machine account auto-failover (opt-in). Rolls a rate-limited session onto
+  // the account with the most headroom.
+  let foBusy = $state<Record<string, boolean>>({})
+  async function toggleFailover(m: Machine) {
+    if (foBusy[m.id]) return
+    foBusy = { ...foBusy, [m.id]: true }
+    machErr = ''
+    try {
+      await setFailover(m.url, !m.stats?.failover)
+      await app.refresh()
+    } catch (e) {
+      machErr = (e as Error).message
+    } finally {
+      const b = { ...foBusy }
+      delete b[m.id]
+      foBusy = b
     }
   }
 
@@ -291,6 +310,28 @@
         {#if !selM.online}
           <p class="hint">Offline — nothing to change here until it is back.</p>
         {:else}
+          {#if selM.stats?.clis && selM.stats.clis.length > 1}
+            <div class="grp">Accounts</div>
+            <div class="info">
+              <div class="irow awrow">
+                <span class="awk">
+                  <span class="awname">Auto-failover on limit</span>
+                  <span class="awsub">When an account hits its 5-hour or weekly wall, roll to the account with the most headroom (Claude or provider) and continue.</span>
+                </span>
+                <button
+                  class="switch"
+                  class:on={selM.stats.failover}
+                  onclick={() => toggleFailover(selM)}
+                  disabled={foBusy[selM.id]}
+                  role="switch"
+                  aria-checked={selM.stats.failover ?? false}
+                  aria-label="Toggle account auto-failover"
+                >
+                  <span class="knob"></span>
+                </button>
+              </div>
+            </div>
+          {/if}
           {#if selM.stats?.keep_awake_supported || selM.stats?.keep_lid_supported || selM.stats}
             <div class="grp">Unattended</div>
             <div class="info">

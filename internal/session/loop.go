@@ -334,9 +334,17 @@ func (s *Session) advanceLoop() {
 // Called with the turn's cost already folded into lastCostUSD.
 func (s *Session) afterTurn(turnFailed bool) {
 	s.mu.Lock()
+	// The turn-end hook fires for every session (failover reacts to a wall here),
+	// so it runs before the loop-only early return. Snapshot under the lock, call
+	// after unlocking: the handler may respawn this session.
+	hook := s.onTurnEnd
+	rl := s.rateLimited
 	l := s.loop
 	if s.closed || l == nil || l.state != LoopRunning {
 		s.mu.Unlock()
+		if hook != nil {
+			hook(rl)
+		}
 		return
 	}
 	spent := s.lastCostUSD - l.startCost

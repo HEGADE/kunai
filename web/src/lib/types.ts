@@ -23,6 +23,7 @@ export interface Stats {
   cpu_temp_c: number // hottest CPU sensor in Celsius; 0 on macOS (no degrees there)
   thermal_pressure: string // macOS thermal pressure level; '' on Linux (uses degrees)
   thermal_trip: boolean // guardian is holding everything stopped after a trip
+  failover?: boolean // account auto-failover opt-in on this machine
   thermal_guard: boolean // guard enabled on this machine
   thermal_soft_c: number // trip temperature
   thermal_max_hours: number // wall-clock cap on unattended work

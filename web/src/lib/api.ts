@@ -225,6 +225,16 @@ export function setKeepAwake(
   }).then((r) => json<{ enabled: boolean; supported: boolean }>(r))
 }
 
+// setFailover toggles a machine's opt-in account auto-failover (roll a walled
+// session onto the account with the most headroom). Returns the resolved state.
+export function setFailover(base: string, enabled: boolean): Promise<{ enabled: boolean }> {
+  return fetch(at(base, '/api/failover'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  }).then((r) => json<{ enabled: boolean }>(r))
+}
+
 // setThermal updates a machine's thermal-guard policy. Returns the resolved
 // config (the server clamps the thresholds).
 export function setThermal(base: string, cfg: ThermalConfig): Promise<ThermalConfig> {

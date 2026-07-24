@@ -19,15 +19,15 @@ type Stats struct {
 	OS            string  `json:"os"`
 	Arch          string  `json:"arch"`
 	Sessions      int     `json:"sessions"`
-	UptimeSec     int64   `json:"uptime_sec"`     // host uptime
-	Load1         float64 `json:"load1"`          // 1-minute load average
-	MemTotal      uint64  `json:"mem_total"`      // bytes
-	MemAvailable  uint64  `json:"mem_available"`  // bytes
-	DiskTotal     uint64  `json:"disk_total"`     // bytes (data dir filesystem)
-	DiskFree      uint64  `json:"disk_free"`      // bytes
-	Cores         int     `json:"cores"`          // logical CPUs
-	ClaudeVersion string  `json:"claude_version"` //
-	KunaiVersion  string  `json:"kunai_version"`  // build revision
+	UptimeSec     int64   `json:"uptime_sec"`        // host uptime
+	Load1         float64 `json:"load1"`             // 1-minute load average
+	MemTotal      uint64  `json:"mem_total"`         // bytes
+	MemAvailable  uint64  `json:"mem_available"`     // bytes
+	DiskTotal     uint64  `json:"disk_total"`        // bytes (data dir filesystem)
+	DiskFree      uint64  `json:"disk_free"`         // bytes
+	Cores         int     `json:"cores"`             // logical CPUs
+	ClaudeVersion string  `json:"claude_version"`    //
+	KunaiVersion  string  `json:"kunai_version"`     // build revision
 	Channel       string  `json:"channel,omitempty"` // release channel: "nightly", else stable/omitted
 	KunaiUptime   int64   `json:"kunai_uptime_sec"`
 	KeepAwake     bool    `json:"keep_awake"`           // idle-sleep hold currently held
@@ -65,6 +65,9 @@ type Stats struct {
 	// client can label a provider session with its real model (gpt-5.5) instead
 	// of the Claude slot it was spawned under (Opus). Only proxy providers appear.
 	ProviderModels map[string]string `json:"provider_models,omitempty"`
+	// Failover is the per-machine account auto-failover opt-in, so the Settings
+	// fan-out can render the toggle without a second fetch.
+	Failover bool `json:"failover"`
 }
 
 var (
@@ -101,6 +104,9 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	st.ThermalHardC, st.ThermalAction = gc.HardC, gc.Action
 	st.KeepLid, st.KeepLidSupp = s.lid.Enabled(), s.lid.Supported()
 	st.ThermalPrivileged = thermalPrivileged()
+	if s.failover != nil {
+		st.Failover = s.failover.Enabled()
+	}
 	if names := s.cliNames(); len(names) > 1 {
 		st.CLIs = names // only worth sending when there is a real choice (accounts + providers)
 	}

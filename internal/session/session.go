@@ -69,7 +69,10 @@ type Session struct {
 	projects        []project.Info  // codebases this session has been given context for
 	loop            *loopRun        // self-prompting run, if one was ever started
 	lastText        string          // the newest assistant text this turn, for the loop's promise
+	lastPromptText  string          // the newest real user prompt, so failover can resend it
 	rateLimited     bool            // the usage window is spent; a loop must not push on
+	limitWindow     string          // the window that was reported spent ("five_hour"/"seven_day")
+	limitResetsAt   int64           // when that window resets (unix secs), for failover to report
 
 	pending         map[string]AppEvent // unresolved permission asks, keyed by request_id
 	suggestionByReq map[string]json.RawMessage
@@ -77,7 +80,8 @@ type Session struct {
 	done            chan struct{} // closed when the driver has ended
 	notify          func(kind, detail string)
 	onRateLimit     func(window string, resetsAt int64)
-	loopPersist     func(LoopPersist) // save/clear a running loop so it survives a restart
+	onTurnEnd       func(rateLimited bool) // fired after every turn; failover reacts to a wall
+	loopPersist     func(LoopPersist)      // save/clear a running loop so it survives a restart
 	// checkpointHook, if set, snapshots the working tree at the start of a turn --
 	// synchronously, BEFORE the prompt reaches the CLI, so the checkpoint is the true
 	// pre-turn state (a later capture would race the agent's first edit). seq is the
@@ -120,6 +124,39 @@ func (s *Session) SetRateLimitHandler(fn func(window string, resetsAt int64)) {
 	s.mu.Lock()
 	s.onRateLimit = fn
 	s.mu.Unlock()
+}
+
+// SetTurnEndHook registers a callback fired once each time a turn ends, told
+// whether the turn ended against the usage wall. Account auto-failover uses it to
+// roll a rate-limited session onto another account. It runs after the turn is
+// fully settled, so the handler may safely respawn the session.
+func (s *Session) SetTurnEndHook(fn func(rateLimited bool)) {
+	s.mu.Lock()
+	s.onTurnEnd = fn
+	s.mu.Unlock()
+}
+
+// LastPromptText is the most recent real (non-silent) user prompt, so failover can
+// resend it on the account it switches to.
+func (s *Session) LastPromptText() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastPromptText
+}
+
+// LastLimit reports the window last seen spent and when it resets (0,"" if none).
+func (s *Session) LastLimit() (window string, resetsAt int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.limitWindow, s.limitResetsAt
+}
+
+// InLoop reports whether a self-prompting loop is currently running, so failover
+// can leave loops to their own limit handling (loop failover is not yet wired).
+func (s *Session) InLoop() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loop != nil && s.loop.state == LoopRunning
 }
 
 // notifyAttention fires the notifier whenever the session needs attention (a
@@ -357,6 +394,9 @@ func (s *Session) pump() {
 			// wall: treating it as limited cried "rate-limited" before the quota was
 			// gone and would stop a loop early. This is latched for afterTurn to read.
 			s.rateLimited = ev.LimitStatus != "" && ev.LimitStatus != "allowed" && ev.LimitStatus != "allowed_warning"
+			if s.rateLimited {
+				s.limitWindow, s.limitResetsAt = ev.Window, ev.ResetsAt
+			}
 			s.mu.Unlock()
 			if fn != nil && ev.ResetsAt > 0 {
 				go fn(ev.Window, ev.ResetsAt)
@@ -465,6 +505,7 @@ func (s *Session) startTurnLocked(q *queuedPrompt) uint64 {
 	s.lastText = "" // this turn has not said anything yet
 	var userSeq uint64
 	if !q.silent {
+		s.lastPromptText = q.Text // remember it so failover can resend on another account
 		ev := s.sequenceLocked(AppEvent{T: EvUser, Text: q.Text, Attachments: q.Attachments})
 		userSeq = ev.Seq
 		s.emitLocked(ev)

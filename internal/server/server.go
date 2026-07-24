@@ -100,6 +100,7 @@ type Server struct {
 	sessionMeta   *sessionMetaStore        // per-session pins and renames (nil without a data dir)
 	login         *loginManager            // in-app account login flows (nil without a data dir)
 	checkpoints   *checkpointManager       // per-turn git snapshots for undo/revert
+	failover      *failoverController      // opt-in: roll a walled session onto another account
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -145,6 +146,8 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	s.cliproxyLogin = newCLIProxyLoginManager(s.cliproxy)
 	s.codexUC = &codexUsageCache{}
 	s.grokUC = &grokUsageCache{}
+	s.failover = newFailoverController(s)
+	s.failover.load() // re-apply the persisted opt-in on boot (default off)
 	s.sched = schedule.New(filepath.Join(cfg.DataDir, "schedule.json"), s.fireJob)
 	if cfg.DataDir != "" {
 		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))
@@ -172,6 +175,9 @@ func (s *Server) armSession(sess *session.Session) {
 	sess.SetLoopPersister(s.loopPersister()) // save a running loop so it survives a restart
 	if s.checkpoints != nil {
 		sess.SetCheckpointHook(func(seq uint64) { s.checkpoints.capture(sess.ID, sess.Cwd, seq) })
+	}
+	if s.failover != nil {
+		sess.SetTurnEndHook(func(rateLimited bool) { s.failover.onTurnEnd(sess, rateLimited) })
 	}
 }
 
@@ -209,6 +215,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/lid", s.handleLid)
 	mux.HandleFunc("GET /api/thermal", s.handleThermal)
 	mux.HandleFunc("POST /api/thermal", s.handleThermal)
+	mux.HandleFunc("GET /api/failover", s.handleFailover)
+	mux.HandleFunc("POST /api/failover", s.handleFailover)
 	mux.HandleFunc("GET /api/clis", s.handleCLIs)
 	mux.HandleFunc("POST /api/clis", s.handleCLIs)
 	mux.HandleFunc("GET /api/providers", s.handleProviders)

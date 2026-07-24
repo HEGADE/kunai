@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/hegade/kunai/internal/session"
 )
 
 // In-app account login. Adding a second Claude account used to mean a terminal
@@ -832,9 +833,26 @@ func (s *Server) handleSetAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "The "+target.Name+" account is signed out. Add it again from Accounts, then switch.")
 		return
 	}
-	// Copy the transcript into the target account's folder so the resumed process
-	// loads the full context under the new login. cid is the CLI-assigned id once a
-	// turn has happened; before that the transcript (if any) lives under the handle.
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	restarted, err := s.switchSessionToAccount(ctx, sess, target)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, restarted.Meta())
+}
+
+// switchSessionToAccount moves a live session onto target, keeping its id and
+// conversation: the transcript is copied into target's config dir so the resumed
+// process loads the full context under the new login, then the session is
+// respawned under that account. Shared by the manual account switch
+// (handleSetAccount) and auto-failover (failover.go). Callers are responsible for
+// any sign-in/provider-readiness preflight; this performs the move and respawn.
+func (s *Server) switchSessionToAccount(ctx context.Context, sess *session.Session, target CLIProfile) (*session.Session, error) {
+	id := sess.Meta().ID
+	// cid is the CLI-assigned id once a turn has happened; before that the
+	// transcript (if any) lives under the handle id.
 	cid := sess.ClaudeSessionID()
 	if cid == "" {
 		cid = id
@@ -843,22 +861,18 @@ func (s *Server) handleSetAccount(w http.ResponseWriter, r *http.Request) {
 	if _, err := stageTranscriptForSwitch(cur.configDir(), target.configDir(), cid, func() string {
 		return s.transcriptForID(cid)
 	}); err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not move the conversation to that account: "+err.Error())
-		return
+		return nil, fmt.Errorf("could not move the conversation to that account: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
-	defer cancel()
 	// Reset the model when the target account can't use the current one (a provider
 	// model carried into a Claude account), so the picker shows a real tier and the
 	// CLI spawns with a slot it understands.
 	model := s.switchModelFor(target, sess.Meta().Model)
 	restarted, err := s.mgr.RestartWithAccountModel(ctx, id, target.Name, target.Bin, target.effectiveEnv(), model, loadTranscriptTurns)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
+		return nil, err
 	}
 	s.armSession(restarted)
-	writeJSON(w, http.StatusOK, restarted.Meta())
+	return restarted, nil
 }
 
 // copyFile copies src to dst, creating dst's parent folder. Used to move a
