@@ -42,6 +42,7 @@ type Proxy struct {
 	tokens  *tokenManager
 	baseURL string
 	client  *http.Client
+	mc      modelsCache // cached upstream model list for the picker
 }
 
 // NewProxy builds a proxy that authenticates with the Codex token at tokenPath.
@@ -61,13 +62,6 @@ func (p *Proxy) Handler() http.Handler {
 	mux.HandleFunc("/v1/messages", p.handleMessages)
 	mux.HandleFunc("/v1/models", p.handleModels)
 	return mux
-}
-
-// handleModels answers a minimal model list so a client health check passes; the
-// real model is chosen by kunai's provider mapping, not discovered here.
-func (p *Proxy) handleModels(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = io.WriteString(w, `{"data":[],"object":"list"}`)
 }
 
 func (p *Proxy) handleMessages(w http.ResponseWriter, r *http.Request) {

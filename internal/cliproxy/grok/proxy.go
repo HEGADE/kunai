@@ -45,6 +45,8 @@ type Proxy struct {
 	qUsed  int64
 	qLimit int64
 	qAt    time.Time
+
+	mc modelsCache // cached upstream model list for the picker
 }
 
 var grokTokenLimitRe = regexp.MustCompile(`tokens \(actual/limit\):\s*(\d+)\s*/\s*(\d+)`)
@@ -93,10 +95,7 @@ func NewProxy(tokenPath string) *Proxy {
 func (p *Proxy) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/messages", p.handleMessages)
-	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"data":[{"id":"grok-4.5","object":"model"}],"object":"list"}`)
-	})
+	mux.HandleFunc("/v1/models", p.handleModels)
 	return mux
 }
 

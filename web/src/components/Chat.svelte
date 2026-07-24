@@ -117,8 +117,11 @@
     try {
       const all = await getProviderModels(app.baseForMachine(app.activeMachineId ?? ''), chat.cli)
       const fam = (providerModel.match(/^[a-zA-Z]+/)?.[0] ?? '').toLowerCase()
-      const mine = fam ? all.filter((m) => m.toLowerCase().startsWith(fam)) : all
-      pmModels = mine.length ? mine : all
+      // Scope to this model's own family. Never fall back to the full list: a
+      // cross-family pick (e.g. grok-4.5 on a Codex session) rewrites the shared
+      // provider mapping and reroutes every Codex session to Grok — the bug that
+      // sent a Codex provider to the grok proxy. Empty means "no alternatives".
+      pmModels = fam ? all.filter((m) => m.toLowerCase().startsWith(fam)) : all
     } catch {
       pmModels = []
     }
