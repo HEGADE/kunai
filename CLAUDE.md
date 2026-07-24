@@ -69,13 +69,17 @@ the two never cross over. `.github/workflows/nightly.yml` rebuilds every platfor
 on each push to the branch and refreshes that pre-release; the client version
 check is channel-aware (nightly compares a moving build id, stable keeps semver).
 The native-provider work (Codex and Grok in-process proxies, native Codex login,
-Codex/Grok quota) soaked on `nightly` and shipped to `main` in **v1.0.0**, then was
-**reverted from `main`** as too buggy; `main` is Claude-only (v1.0.2+). The work
-lives on `nightly` again, hardened, with the native proxies now **on by default**
+Codex/Grok quota) shipped to `main` in **v1.0.0**, was **reverted** as too buggy
+(`main` went Claude-only for v1.0.2), then soaked and hardened on `nightly` and
+**shipped back to `main` in v1.1.0** -- this time on the path a provider session
+actually takes, because the native proxies are now **on by default**
 (`-native-codex`/`-native-grok` default true, falling back to the CLIProxyAPI
-sidecar only if the login is missing) so the fixes are on the path a provider
-session actually takes -- the v1.0.0 bug was that native was off by default, so the
-default path used the unfixed sidecar. Kimi is not built (no subscription).
+sidecar only if the login is missing). The v1.0.0 bug was that native was off by
+default, so the default path used the unfixed sidecar; every hardening below is on
+by default now. Kimi is not built (no subscription). Providers are default-on but
+inert for a Claude-only user: the sidecar download is skipped when no provider is
+configured (`anyProviderNeedsSidecar`), so a stable install that never adds a
+provider is unaffected by the re-ship.
 
 The re-ship hardens the seam the CLI cannot see, because pointing `claude` at a
 non-Claude backend means the CLI packs context to Claude's window while the upstream
