@@ -110,11 +110,16 @@
   // is recoverable in one tap.
   let pmOpen = $state(false)
   let pmModels = $state<string[]>([])
+  let pmFor = $state('') // the cli pmModels was fetched for, so a provider change refetches
   let pmBusy = $state(false)
   async function openProviderModels() {
     pmOpen = !pmOpen
-    if (!pmOpen || pmModels.length) return
+    // Refetch when the list is empty OR belongs to another provider. The chip is a
+    // live $derived, but pmModels was cached forever, so viewing a Codex session and
+    // then a Grok one showed the stale gpt list under a grok-4.5 chip.
+    if (!pmOpen || (pmModels.length && pmFor === chat.cli)) return
     try {
+      pmFor = chat.cli
       const all = await getProviderModels(app.baseForMachine(app.activeMachineId ?? ''), chat.cli)
       const fam = (providerModel.match(/^[a-zA-Z]+/)?.[0] ?? '').toLowerCase()
       // Scope to this model's own family. Never fall back to the full list: a
