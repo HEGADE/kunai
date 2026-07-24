@@ -631,7 +631,7 @@
               </button>
               {#if accountOpen}
                 <button class="mode-scrim" onclick={() => (accountOpen = false)} aria-label="Close"></button>
-                <div class="mode-pop">
+                <div class="mode-pop right">
                   <div class="pop-note">Switches the account and resumes here. The new account re-reads the conversation once.</div>
                   {#each accounts as a (a)}
                     <button class:active={(chat.cli || accounts[0]) === a} onclick={() => { if ((chat.cli || accounts[0]) !== a) app.switchAccount(a); accountOpen = false }}>
@@ -1195,11 +1195,20 @@
     bottom: calc(100% + 8px);
     left: 0;
     min-width: 230px;
+    /* Never exceed the viewport: the account name can be long, and on a phone a
+       left-anchored menu ran off the right edge. */
+    max-width: calc(100vw - 24px);
     padding: 5px;
     background: var(--panel-2);
     border: 1px solid var(--border-2);
     border-radius: var(--r);
     box-shadow: 0 16px 40px -14px rgba(0, 0, 0, 0.7);
+  }
+  /* The account segment is the rightmost control, so its menu opens leftward from
+     the right edge instead of growing off-screen to the right. */
+  .mode-pop.right {
+    left: auto;
+    right: 0;
   }
   .pop-note {
     padding: 6px 11px 8px;
