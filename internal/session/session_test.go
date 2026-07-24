@@ -352,3 +352,51 @@ func TestPromptSetsRunningState(t *testing.T) {
 		t.Fatalf("prompt not forwarded to driver: %+v", f.prompts)
 	}
 }
+
+// The turn-end hook is what account auto-failover hangs on: it must fire after a
+// turn, and report rateLimited=true only on a hard rejection -- an approaching
+// warning is not a wall. This drives the real trigger path (rate-limit event ->
+// afterTurn -> hook) with the fake driver, exactly as a walled account behaves.
+func TestTurnEndHookReportsRateLimit(t *testing.T) {
+	check := func(status string, wantRL bool) {
+		f := newFakeDriver()
+		s := newSession("fo", "/tmp/p", "", f)
+		defer s.Close()
+
+		var mu sync.Mutex
+		var calls []bool
+		s.SetTurnEndHook(func(rl bool) { mu.Lock(); calls = append(calls, rl); mu.Unlock() })
+
+		if err := s.Prompt("do the thing", nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		waitPrompts(t, f, 1)
+		if status != "" {
+			f.events <- claude.Event{Kind: claude.EventRateLimit, Window: "seven_day", ResetsAt: 1, LimitStatus: status}
+		}
+		endTurn(f, 0.01)
+		quiet()
+
+		mu.Lock()
+		defer mu.Unlock()
+		if len(calls) != 1 {
+			t.Fatalf("status %q: hook fired %d times, want once", status, len(calls))
+		}
+		if calls[0] != wantRL {
+			t.Fatalf("status %q: hook rateLimited=%v, want %v", status, calls[0], wantRL)
+		}
+		// The last prompt must be recoverable for the resend on the new account.
+		if got := s.LastPromptText(); got != "do the thing" {
+			t.Fatalf("LastPromptText=%q, want the prompt to resend", got)
+		}
+		// And a real wall latches the window for failover to report.
+		if wantRL {
+			if w, _ := s.LastLimit(); w != "seven_day" {
+				t.Fatalf("LastLimit window=%q, want seven_day", w)
+			}
+		}
+	}
+	check("rejected", true)         // a hard wall -> failover should fire
+	check("allowed_warning", false) // approaching the limit is NOT a wall
+	check("", false)                // an ordinary turn
+}

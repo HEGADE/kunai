@@ -1,9 +1,53 @@
 package server
 
 import (
+	"context"
 	"os"
 	"testing"
 )
+
+// decide drives the real decision path (tried-set + candidate gathering + ranking)
+// with injected availability, so the wiring is exercised, not just pickFailover.
+// It mirrors the field state after a walled turn on the Mac in the screenshot:
+// Claude and claude-shob and Grok and Codex are at 100% (walled); claude-work (58%)
+// and claude-teams-max-shorya (26%) have headroom.
+func TestDecide_ChainsAcrossWalledAccounts(t *testing.T) {
+	fc := newFailoverController(&Server{cfg: Config{DataDir: t.TempDir()}})
+	fc.candidatesFn = func(context.Context, string) []availability {
+		return []availability{
+			{Name: "Claude", Remaining: 0, Known: true},                 // weekly 100%
+			{Name: "claude-work", Remaining: 42, Known: true},           // session 58% used
+			{Name: "claude-teams-max-shorya", Remaining: 74, Known: true}, // session 26% used
+			{Name: "claude-shob", Remaining: 0, Known: true},            // session 100%
+			{Name: "Grok", Provider: true, Remaining: 0, Known: true},   // session 100%
+			{Name: "Codex", Provider: true, Remaining: 0, Known: true},  // weekly 100%
+		}
+	}
+	ctx := context.Background()
+
+	// A session walled on "Claude" fails over to the most-headroom account.
+	got, ok := fc.decide(ctx, "sess", "Claude", "")
+	if !ok || got != "claude-teams-max-shorya" {
+		t.Fatalf("first failover = %q,%v; want claude-teams-max-shorya,true", got, ok)
+	}
+	// Simulate the switch, then that account also walls: the chain must move on to
+	// the next-best, never back to one already tried.
+	fc.addTried("sess", got)
+	got2, ok := fc.decide(ctx, "sess", got, "")
+	if !ok || got2 != "claude-work" {
+		t.Fatalf("second failover = %q,%v; want claude-work,true", got2, ok)
+	}
+	// After the last usable account, nothing is left -> step aside.
+	fc.addTried("sess", got2)
+	if _, ok := fc.decide(ctx, "sess", got2, ""); ok {
+		t.Fatal("expected ok=false once every account with headroom is exhausted")
+	}
+	// A clean turn resets the chain, so the next wall can reuse those accounts.
+	fc.clearTried("sess")
+	if got, ok := fc.decide(ctx, "sess", "Claude", ""); !ok || got != "claude-teams-max-shorya" {
+		t.Fatalf("after a clean turn the chain resets, got %q,%v", got, ok)
+	}
+}
 
 // win is a small helper: a usage window at pct% used, resetting at reset.
 func win(pct float64, reset int64) *UsageWindow { return &UsageWindow{Percent: pct, ResetsAt: reset} }

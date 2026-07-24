@@ -130,13 +130,28 @@ func availabilityFromUsage(name string, provider bool, u *Usage) availability {
 type failoverController struct {
 	srv *Server
 
+	// candidatesFn gathers current availability; a var so a test can drive the
+	// decision through the real tried-set + ranking path without live accounts.
+	candidatesFn func(ctx context.Context, cwd string) []availability
+
 	mu      sync.Mutex
 	enabled bool
 	tried   map[string]map[string]bool // sessionID -> lowercased account names already used this chain
 }
 
 func newFailoverController(srv *Server) *failoverController {
-	return &failoverController{srv: srv, tried: map[string]map[string]bool{}}
+	fc := &failoverController{srv: srv, tried: map[string]map[string]bool{}}
+	fc.candidatesFn = srv.failoverCandidates
+	return fc
+}
+
+// decide is the whole choice: fold the current account into the chain's tried-set,
+// read every account's availability, and rank. Returns the target to switch to, or
+// ok=false when nothing has headroom. Pure of side effects beyond recording the
+// current account as tried, so it is exercised end to end in tests.
+func (fc *failoverController) decide(ctx context.Context, id, current, cwd string) (string, bool) {
+	tried := fc.triedSnapshot(id, current)
+	return pickFailover(current, fc.candidatesFn(ctx, cwd), tried)
 }
 
 func (fc *failoverController) path() string {
@@ -224,9 +239,7 @@ func (fc *failoverController) onTurnEnd(sess *session.Session, rateLimited bool)
 	defer cancel()
 
 	current := sess.Meta().CLI
-	tried := fc.triedSnapshot(id, current)
-	cands := fc.srv.failoverCandidates(ctx, sess.Cwd)
-	target, ok := pickFailover(current, cands, tried)
+	target, ok := fc.decide(ctx, id, current, sess.Cwd)
 	if !ok {
 		win, reset := sess.LastLimit()
 		log.Printf("failover: session %s hit the wall on %q (%s) and no other account has headroom; leaving it for reset %s",
