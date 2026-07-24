@@ -3,7 +3,10 @@
   import type { Block } from '../lib/types'
   import { formatDuration, formatTokens, formatCost } from '../lib/format'
 
-  let { turn }: { turn: Turn } = $props()
+  // isProvider: the session runs a non-Claude model through a proxy. The CLI still
+  // prices tokens at Claude's rates, so its cost figure is fiction there and is
+  // hidden; the token counts are real usage and stay.
+  let { turn, isProvider = false }: { turn: Turn; isProvider?: boolean } = $props()
 
   // What the agent wrote this turn, as markdown, for the clipboard. The answer
   // is the trailing text the view leaves visible, which is what you are looking
@@ -33,7 +36,7 @@
   }
 
   const duration = $derived(turn.durationMs != null ? formatDuration(turn.durationMs) : '')
-  const cost = $derived(turn.costUsd ? formatCost(turn.costUsd) : '')
+  const cost = $derived(turn.costUsd && !isProvider ? formatCost(turn.costUsd) : '')
   // A turn re-sends the conversation on every tool call, so its total is
   // dominated by re-reads. Split them out: "new" is what the model read fresh
   // and pays full price for, "cached" is the same context read back cheaply.

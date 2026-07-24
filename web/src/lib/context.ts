@@ -5,6 +5,7 @@
 const WINDOWS: { family: string; window: number }[] = [
   { family: 'opus', window: 1_000_000 },
   { family: 'sonnet', window: 1_000_000 },
+  { family: 'fable', window: 1_000_000 },
   { family: 'haiku', window: 200_000 },
   // Provider models (Codex / Grok) reached through the proxy. Their real windows
   // are smaller than Claude's, and the proxy slides the context to stay under them

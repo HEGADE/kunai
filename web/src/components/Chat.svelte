@@ -433,7 +433,7 @@
                   {#each turn.answer as b, j (j)}
                     <BlockView block={b} {chat} />
                   {/each}
-                  <TurnFooter {turn} />
+                  <TurnFooter {turn} isProvider={!!providerModel} />
                 {/if}
               </div>
             </div>
