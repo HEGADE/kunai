@@ -568,7 +568,7 @@
           <div class="modewrap">
             {#if providerModel}
               <button class="seg mono" class:open={pmOpen} onclick={openProviderModels} title="Model served by this provider">
-                {providerModel}
+                <span class="segtext">{providerModel}</span>
               </button>
               {#if pmOpen}
                 <button class="mode-scrim" onclick={() => (pmOpen = false)} aria-label="Close"></button>
@@ -627,7 +627,7 @@
           {#if accounts.length > 1}
             <div class="modewrap">
               <button class="seg" class:open={accountOpen} onclick={() => (accountOpen = !accountOpen)} title="Claude account (restarts the session)">
-                {chat.cli || accounts[0]}
+                <span class="segtext">{chat.cli || accounts[0]}</span>
               </button>
               {#if accountOpen}
                 <button class="mode-scrim" onclick={() => (accountOpen = false)} aria-label="Close"></button>
@@ -1127,11 +1127,27 @@
     display: inline-flex;
     align-items: center;
     margin-left: 4px;
+    min-width: 0; /* allow the strip to shrink so a long account name can't push send off-screen */
   }
   .modewrap {
     position: relative;
     display: inline-flex;
     align-items: center;
+    min-width: 0;
+  }
+  /* Long dynamic labels (account name, provider model) truncate instead of
+     overflowing the row. The account "claude-teams-max-shorya" used to shove the
+     send button off the right edge on a phone. */
+  .segtext {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 130px;
+  }
+  @media (max-width: 560px) {
+    .segtext {
+      max-width: 84px;
+    }
   }
   .controls > .modewrap + .modewrap::before {
     content: '';
@@ -1150,6 +1166,7 @@
     font-size: 12.5px;
     font-weight: 500;
     white-space: nowrap;
+    min-width: 0; /* let a truncating .segtext child shrink instead of overflowing */
     transition: color 0.12s, background 0.12s;
   }
   .seg:hover,
