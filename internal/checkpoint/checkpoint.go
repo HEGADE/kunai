@@ -219,9 +219,15 @@ func git(dir string, args ...string) (string, error) {
 func gitEnv(dir string, extraEnv []string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	if len(extraEnv) > 0 {
-		cmd.Env = append(os.Environ(), extraEnv...)
-	}
+	// commit-tree needs an author/committer identity, and the user's repo may have
+	// none configured (fresh CI, a repo without `git config user.*`). A fixed kunai
+	// identity keeps checkpoints working everywhere; it only ever tags shadow-ref
+	// commits the user never sees, so it does not touch their own commit identity.
+	env := append(os.Environ(),
+		"GIT_AUTHOR_NAME=kunai", "GIT_AUTHOR_EMAIL=kunai@localhost",
+		"GIT_COMMITTER_NAME=kunai", "GIT_COMMITTER_EMAIL=kunai@localhost",
+	)
+	cmd.Env = append(env, extraEnv...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
