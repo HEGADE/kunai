@@ -121,8 +121,31 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 // over self. Everything but the process exit lives here so it is testable.
 // progress (optional) is called with downloaded and total bytes; total is -1
 // when the release server sends no Content-Length.
+// The nightly release is recreated on every push, so for the ~minute CI takes to
+// upload, the binary and checksums.txt can disagree (or an asset can be briefly
+// missing). Those windows surfaced to users as a hard "checksum mismatch"; retrying
+// after a short wait rides them out. Vars so tests run without the wait.
+var (
+	updateRetries    = 3
+	updateRetryDelay = 25 * time.Second
+)
+
+// retryableUpdateErr reports whether an update failure looks like the transient
+// mid-publish window (mismatched checksum, asset momentarily gone) rather than a
+// permanent condition.
+func retryableUpdateErr(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "checksum mismatch") ||
+		strings.Contains(s, "HTTP 404") || strings.Contains(s, "HTTP 403")
+}
+
 func applyUpdate(asset, self string, progress func(done, total int64)) error {
 	newBin, err := downloadAndVerify(asset, filepath.Dir(self), progress)
+	for attempt := 0; err != nil && retryableUpdateErr(err) && attempt < updateRetries; attempt++ {
+		log.Printf("update: %v; retrying in %s (the release may be mid-publish)", err, updateRetryDelay)
+		time.Sleep(updateRetryDelay)
+		newBin, err = downloadAndVerify(asset, filepath.Dir(self), progress)
+	}
 	if err != nil {
 		return err
 	}

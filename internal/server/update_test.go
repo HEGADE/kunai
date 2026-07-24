@@ -76,6 +76,7 @@ func TestApplyUpdateChecksumMismatchLeavesBinary(t *testing.T) {
 	if err := os.WriteFile(self, []byte("old-kunai"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	noRetryWait(t)
 	if err := applyUpdate(asset, self, nil); err == nil {
 		t.Fatal("expected a checksum-mismatch error")
 	}
@@ -118,5 +119,59 @@ func TestChecksumFor(t *testing.T) {
 
 	if _, err := checksumFor(srv.Client(), "kunai-windows-amd64"); err == nil {
 		t.Fatal("expected error for a missing asset")
+	}
+}
+
+// noRetryWait makes the mid-publish retry loop run without sleeping.
+func noRetryWait(t *testing.T) {
+	t.Helper()
+	orig := updateRetryDelay
+	updateRetryDelay = 0
+	t.Cleanup(func() { updateRetryDelay = orig })
+}
+
+// The nightly release is recreated on every push, so a download begun during the
+// upload window can see a binary that disagrees with checksums.txt. The updater
+// must ride that out: a mismatch on the first attempt and a clean asset on the
+// retry is a successful update, not an error surfaced to the user.
+func TestApplyUpdateRetriesThroughPublishWindow(t *testing.T) {
+	asset := fmt.Sprintf("kunai-%s-%s", runtime.GOOS, runtime.GOARCH)
+	content := []byte("#!/bin/sh\necho healed\n")
+	sum := sha256.Sum256(content)
+	checksums := fmt.Sprintf("%s  %s\n", hex.EncodeToString(sum[:]), asset)
+
+	var assetHits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch filepath.Base(r.URL.Path) {
+		case "checksums.txt":
+			_, _ = w.Write([]byte(checksums))
+		case asset:
+			assetHits++
+			if assetHits == 1 {
+				_, _ = w.Write(append([]byte("mid-publish"), content...)) // stale bytes
+				return
+			}
+			_, _ = w.Write(content)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	orig := releaseBase
+	releaseBase = srv.URL
+	t.Cleanup(func() { releaseBase = orig; srv.Close() })
+
+	self := filepath.Join(t.TempDir(), "kunai")
+	if err := os.WriteFile(self, []byte("old-kunai"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	noRetryWait(t)
+	if err := applyUpdate(asset, self, nil); err != nil {
+		t.Fatalf("update should heal through the publish window, got: %v", err)
+	}
+	if got, _ := os.ReadFile(self); string(got) != string(content) {
+		t.Fatalf("binary not swapped to the healed content: %q", got)
+	}
+	if assetHits != 2 {
+		t.Fatalf("expected exactly one retry (2 hits), got %d", assetHits)
 	}
 }
