@@ -99,6 +99,7 @@ type Server struct {
 	grokUC        *grokUsageCache          // a Grok provider's xAI credit-billing quota
 	sessionMeta   *sessionMetaStore        // per-session pins and renames (nil without a data dir)
 	login         *loginManager            // in-app account login flows (nil without a data dir)
+	checkpoints   *checkpointManager       // per-turn git snapshots for undo/revert
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -116,7 +117,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 
 	machines := newMachineStore(filepath.Join(cfg.DataDir, "machines.json"))
 
-	s := &Server{cfg: cfg, mgr: mgr, pwa: webui.FS(), uploadsDir: uploads, machines: machines, awake: awake.New(), lid: newLidKeeper(), usage: newUsageCache()}
+	s := &Server{cfg: cfg, mgr: mgr, pwa: webui.FS(), uploadsDir: uploads, machines: machines, awake: awake.New(), lid: newLidKeeper(), usage: newUsageCache(), checkpoints: newCheckpointManager()}
 	s.loadAwake() // re-apply a persisted keep-awake preference on boot
 	s.loadLid()   // re-apply a persisted lid-closed preference (after boot-time unstick)
 	s.guardian = newGuardian(mgr, s.awake, clampGuardConfig(guardConfig{
@@ -169,6 +170,9 @@ func (s *Server) armSession(sess *session.Session) {
 		sess.SetRateLimitHandler(s.sched.NoteReset)
 	}
 	sess.SetLoopPersister(s.loopPersister()) // save a running loop so it survives a restart
+	if s.checkpoints != nil {
+		sess.SetCheckpointHook(func(seq uint64) { s.checkpoints.capture(sess.ID, sess.Cwd, seq) })
+	}
 }
 
 // SetPush enables Web Push wake-ups.
@@ -184,6 +188,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/effort", s.handleSetEffort)
 	mux.HandleFunc("POST /api/sessions/{id}/account", s.handleSetAccount)
 	mux.HandleFunc("GET /api/sessions/{id}/history", s.handleOlderTurns)
+	mux.HandleFunc("GET /api/sessions/{id}/checkpoints", s.handleListCheckpoints)
+	mux.HandleFunc("POST /api/sessions/{id}/revert", s.handleRevert)
 	mux.HandleFunc("GET /api/browse", s.handleBrowse)
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("DELETE /api/history/{id}", s.handleDeleteHistory)
@@ -407,7 +413,11 @@ func (s *Server) handlePushUnsubscribe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
-	s.mgr.Close(r.PathValue("id"))
+	id := r.PathValue("id")
+	s.mgr.Close(id)
+	if s.checkpoints != nil {
+		s.checkpoints.forget(id) // the shadow refs remain for git GC; drop the tracking
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

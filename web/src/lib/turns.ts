@@ -10,6 +10,9 @@ import { fileChangesOf, type FileChange } from './toolMeta'
 
 export interface Turn {
   user?: string
+  // The Seq of this turn's user message, which keys its pre-turn checkpoint (for
+  // the revert affordance). Undefined for a synthetic turn (project/loop/compact).
+  userSeq?: number
   // Files sent with the user message (metadata only).
   userFiles?: Attachment[]
   // Set when this entry is a codebase joining the session rather than a message.
@@ -44,10 +47,11 @@ const isText = (b: Block): boolean => b.type === 'text' && !!b.text
 export function groupTurns(items: Item[]): Turn[] {
   const turns: Turn[] = []
   let cur: Turn | null = null
-  const start = (user?: string, userFiles?: Attachment[]): Turn => {
+  const start = (user?: string, userFiles?: Attachment[], userSeq?: number): Turn => {
     cur = {
       user,
       userFiles,
+      userSeq,
       blocks: [],
       hasAssistant: false,
       toolCalls: 0,
@@ -85,7 +89,7 @@ export function groupTurns(items: Item[]): Turn[] {
       continue
     }
     if (it.role === 'user') {
-      start(it.text, it.attachments)
+      start(it.text, it.attachments, it.seq)
     } else {
       const t = cur ?? start(undefined)
       t.hasAssistant = true

@@ -74,6 +74,45 @@ export function setEffort(base: string, id: string, effort: string): Promise<Met
   }).then((r) => json<Meta>(r))
 }
 
+// A pre-turn working-tree snapshot the session can revert to. seq is the turn's
+// user-message Seq (so a turn maps to its checkpoint).
+export interface Checkpoint {
+  seq: number
+  ref: string
+  captured_at: number
+}
+
+// listCheckpoints returns the turns that have a restorable pre-turn snapshot.
+export function listCheckpoints(base: string, id: string): Promise<Checkpoint[]> {
+  return fetch(at(base, `/api/sessions/${id}/checkpoints`)).then((r) => json<Checkpoint[]>(r))
+}
+
+// A revert returns the safety ref it captured first, so the revert can be undone by
+// POSTing that ref back.
+export interface RevertResult {
+  reverted_to: string
+  safety_ref: string
+}
+
+// revertTurn restores the working tree to a turn's pre-turn snapshot (undo the
+// turn's file changes). The conversation is untouched.
+export function revertTurn(base: string, id: string, seq: number): Promise<RevertResult> {
+  return fetch(at(base, `/api/sessions/${id}/revert`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ seq }),
+  }).then((r) => json<RevertResult>(r))
+}
+
+// undoRevert restores the working tree to a safety ref captured by a prior revert.
+export function undoRevert(base: string, id: string, ref: string): Promise<RevertResult> {
+  return fetch(at(base, `/api/sessions/${id}/revert`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ref }),
+  }).then((r) => json<RevertResult>(r))
+}
+
 // setAccount switches a live session to a different Claude account, keeping its
 // conversation (the server copies the transcript to the new account and resumes).
 export function setAccount(base: string, id: string, name: string): Promise<Meta> {

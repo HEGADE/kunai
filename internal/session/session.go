@@ -78,6 +78,30 @@ type Session struct {
 	notify          func(kind, detail string)
 	onRateLimit     func(window string, resetsAt int64)
 	loopPersist     func(LoopPersist) // save/clear a running loop so it survives a restart
+	// checkpointHook, if set, snapshots the working tree at the start of a turn --
+	// synchronously, BEFORE the prompt reaches the CLI, so the checkpoint is the true
+	// pre-turn state (a later capture would race the agent's first edit). seq is the
+	// turn's user-message Seq, so the client can map the checkpoint to a turn.
+	checkpointHook func(seq uint64)
+}
+
+// SetCheckpointHook registers the pre-turn working-tree snapshot callback. The hook
+// runs off the session lock but on the turn-start path, so it must be fast and never
+// block the turn (the server gives it a timeout and swallows failures).
+func (s *Session) SetCheckpointHook(fn func(seq uint64)) {
+	s.mu.Lock()
+	s.checkpointHook = fn
+	s.mu.Unlock()
+}
+
+// runCheckpointHook invokes the pre-turn snapshot for a real (non-silent) turn.
+func (s *Session) runCheckpointHook(seq uint64) {
+	s.mu.Lock()
+	fn := s.checkpointHook
+	s.mu.Unlock()
+	if seq != 0 && fn != nil {
+		fn(seq)
+	}
 }
 
 // SetNotifier registers a callback invoked when the session needs attention
@@ -420,8 +444,9 @@ func (s *Session) prompt(q *queuedPrompt) error {
 	}
 	// Claim the turn under the same lock that tested for it, so a second prompt
 	// arriving now queues instead of racing this one into the CLI mid-turn.
-	s.startTurnLocked(q)
+	userSeq := s.startTurnLocked(q)
 	s.mu.Unlock()
+	s.runCheckpointHook(userSeq) // snapshot the pre-turn tree before the CLI can edit it
 	return s.deliver(q.Text, q.content)
 }
 
@@ -433,14 +458,20 @@ func (q *queuedPrompt) display() string {
 	return q.Text
 }
 
-// startTurnLocked records a prompt as the turn that is now running.
-func (s *Session) startTurnLocked(q *queuedPrompt) {
+// startTurnLocked records a prompt as the turn that is now running. It returns the
+// Seq of the turn's user message (0 for a silent turn), which keys the pre-turn
+// checkpoint to this turn.
+func (s *Session) startTurnLocked(q *queuedPrompt) uint64 {
 	s.lastText = "" // this turn has not said anything yet
+	var userSeq uint64
 	if !q.silent {
-		s.emitLocked(s.sequenceLocked(AppEvent{T: EvUser, Text: q.Text, Attachments: q.Attachments}))
+		ev := s.sequenceLocked(AppEvent{T: EvUser, Text: q.Text, Attachments: q.Attachments})
+		userSeq = ev.Seq
+		s.emitLocked(ev)
 	}
 	s.state = StateRunning
 	s.emitLocked(s.sequenceLocked(AppEvent{T: EvState, State: StateRunning}))
+	return userSeq
 }
 
 func (s *Session) deliver(text string, content any) error {
@@ -493,8 +524,9 @@ func (s *Session) drainQueue() {
 	q := s.queue[0]
 	s.queue = s.queue[1:]
 	s.emitLocked(s.sequenceLocked(AppEvent{T: EvUnqueued, QueueID: q.ID}))
-	s.startTurnLocked(q)
+	userSeq := s.startTurnLocked(q)
 	s.mu.Unlock()
+	s.runCheckpointHook(userSeq) // snapshot the pre-turn tree before the CLI can edit it
 
 	if err := s.deliver(q.Text, q.content); err != nil {
 		s.broadcast(AppEvent{T: EvError, Message: "queued prompt failed: " + err.Error()})

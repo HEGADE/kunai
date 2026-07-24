@@ -13,7 +13,42 @@
   // add/remove gauge so the churn's shape is legible at a glance, and each file
   // expandable to its diff. Fed entirely from the turn's tool inputs (fileEditsOf),
   // so it is per-query, needs no git, and stays correct after the work is committed.
-  let { turn }: { turn: Turn } = $props()
+  let {
+    turn,
+    canRevert = false,
+    reverted = false,
+    onRevert,
+    onUndo,
+  }: {
+    turn: Turn
+    // Whether a pre-turn snapshot exists to revert this turn's file changes to.
+    canRevert?: boolean
+    // Whether this turn has already been reverted (offer Undo instead).
+    reverted?: boolean
+    onRevert?: () => Promise<void> | void
+    onUndo?: () => Promise<void> | void
+  } = $props()
+
+  // Reverting rewrites files on disk, so it takes a second tap to confirm.
+  let confirming = $state(false)
+  let busy = $state(false)
+  async function doRevert() {
+    busy = true
+    try {
+      await onRevert?.()
+    } finally {
+      busy = false
+      confirming = false
+    }
+  }
+  async function doUndo() {
+    busy = true
+    try {
+      await onUndo?.()
+    } finally {
+      busy = false
+    }
+  }
 
   const files = $derived(fileEditsOf(turn.blocks))
   const tree = $derived<TreeNode[]>(buildTree(files))
@@ -149,6 +184,23 @@
           </span>
         {/if}
       </span>
+      {#if reverted}
+        <button class="tbtn undo" onclick={doUndo} disabled={busy} title="Restore the files this revert undid"
+          >Undo revert</button
+        >
+      {:else if canRevert}
+        {#if confirming}
+          <button class="tbtn danger" onclick={doRevert} disabled={busy}>Revert — sure?</button>
+          <button class="tbtn" onclick={() => (confirming = false)} disabled={busy}>Cancel</button>
+        {:else}
+          <button
+            class="tbtn"
+            onclick={() => (confirming = true)}
+            title="Restore the working tree to before this turn (undoes its file changes; the conversation stays)"
+            >Revert</button
+          >
+        {/if}
+      {/if}
       <button class="tbtn" onclick={collapseAll} disabled={allCollapsed} aria-label="Collapse all folders">Collapse</button>
     </div>
     <div class="tree">
@@ -237,6 +289,17 @@
   .tbtn:disabled {
     opacity: 0.3;
     border-color: var(--border);
+  }
+  /* The confirm step of a destructive revert reads in the diff's muted red. */
+  .tbtn.danger {
+    color: var(--diff-del, #d98b8b);
+    border-color: var(--diff-del, #d98b8b);
+  }
+  .tbtn.danger:hover {
+    background: color-mix(in srgb, var(--diff-del, #d98b8b) 12%, transparent);
+  }
+  .tbtn.undo {
+    color: var(--text-2);
   }
 
   .tree {

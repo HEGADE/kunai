@@ -1,4 +1,4 @@
-import { fetchOlderTurns } from './api'
+import { fetchOlderTurns, listCheckpoints, revertTurn, undoRevert } from './api'
 import { DEFAULT_MODEL, DEFAULT_EFFORT } from './models'
 import type {
   AppEvent,
@@ -14,7 +14,7 @@ import type {
 } from './types'
 
 export type Item =
-  | { role: 'user'; text: string; attachments?: Attachment[] }
+  | { role: 'user'; text: string; attachments?: Attachment[]; seq?: number }
   | { role: 'project'; project: ProjectInfo }
   | { role: 'compact'; preTokens: number; postTokens: number; trigger: string }
   // A moment in the loop's life: it started, it went round again, or it ended.
@@ -72,6 +72,13 @@ export class ChatConnection {
   // long conversation appears in one paint at the bottom instead of streaming in
   // from the top. Stays true across reconnects (they only replay a small gap).
   ready = $state(false)
+  // Turns (keyed by their user-message Seq) that have a restorable pre-turn git
+  // snapshot, so the changed-files card can offer a revert. Refreshed on ready and
+  // after every turn (a new checkpoint is taken at each turn's start).
+  checkpointSeqs = $state<number[]>([])
+  // Turns reverted this session -> the safety ref captured before the revert, so the
+  // card can offer a one-tap Undo.
+  reverted = $state<Record<number, string>>({})
   // Resolvers waiting on the initial backlog (see whenReady).
   private readyWaiters: (() => void)[] = []
   sessionState = $state<SessionState>('idle')
@@ -214,7 +221,10 @@ export class ChatConnection {
         if (this.highSeq === 0) this.markReady() // nothing to replay
         break
       case 'user':
-        this.items = [...this.items, { role: 'user', text: ev.text ?? '', attachments: ev.attachments }]
+        this.items = [
+          ...this.items,
+          { role: 'user', text: ev.text ?? '', attachments: ev.attachments, seq: ev.seq },
+        ]
         break
       case 'delta':
         this.streaming += ev.text ?? ''
@@ -327,6 +337,9 @@ export class ChatConnection {
             }
           }
         }
+        // A turn just finished; its pre-turn checkpoint is now recorded, so the
+        // changed-files card can offer to revert it.
+        void this.refreshCheckpoints()
         break
       case 'state':
         if (ev.state) this.sessionState = ev.state
@@ -513,6 +526,39 @@ export class ChatConnection {
   private markReady() {
     this.ready = true
     this.releaseReadyWaiters()
+    void this.refreshCheckpoints()
+  }
+
+  // refreshCheckpoints reloads which turns have a restorable snapshot. Best-effort:
+  // a failure (non-git session, older server) just leaves the revert affordance off.
+  async refreshCheckpoints() {
+    try {
+      const cps = await listCheckpoints(this.base, this.id)
+      this.checkpointSeqs = cps.map((c) => c.seq)
+    } catch {
+      /* no checkpoints available */
+    }
+  }
+
+  hasCheckpoint(seq: number | undefined): boolean {
+    return seq != null && this.checkpointSeqs.includes(seq)
+  }
+
+  // revert undoes a turn's file changes (restores the working tree to the pre-turn
+  // snapshot). Records the safety ref so the change can be undone.
+  async revert(seq: number): Promise<void> {
+    const res = await revertTurn(this.base, this.id, seq)
+    this.reverted = { ...this.reverted, [seq]: res.safety_ref }
+  }
+
+  // undo restores the working tree to the safety snapshot a prior revert captured.
+  async undo(seq: number): Promise<void> {
+    const ref = this.reverted[seq]
+    if (!ref) return
+    await undoRevert(this.base, this.id, ref)
+    const next = { ...this.reverted }
+    delete next[seq]
+    this.reverted = next
   }
 
   private releaseReadyWaiters() {
