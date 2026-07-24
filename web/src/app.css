@@ -9,13 +9,19 @@
   --panel: #131315;
   --panel-2: #191a1c;
   --panel-3: #202124;
-  --border: #232427;
-  --border-2: #303236;
+  --border: #2c2d31;
+  --border-2: #3c3e43;
 
+  /* The gray ramp is tuned for bright-light legibility, not just a dark room:
+     text-2 ~8.2:1, text-3 ~5.2:1 (AA for body text), text-4 ~3.1:1 (the WCAG
+     floor for large/UI text) against --bg. text-4 is the dimmest tier anything
+     readable may use — placeholders, hints, code comments — so it must stay
+     above 3:1; the earlier #454649 (2.1:1) washed out entirely on a phone in
+     daylight. The ramp's ordering and near-monochrome character are unchanged. */
   --text: #ededee;
-  --text-2: #9a9ba1;
-  --text-3: #67686e;
-  --text-4: #454649;
+  --text-2: #a6a7ad;
+  --text-3: #82838a;
+  --text-4: #5f6065;
 
   /* muted, flat status — only ever a small dot or a word, never a fill/glow */
   --live: #4f9e7f;
