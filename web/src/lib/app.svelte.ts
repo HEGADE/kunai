@@ -21,7 +21,13 @@ import {
 import { ChatConnection } from './chat.svelte'
 import { DEFAULT_MODEL, DEFAULT_EFFORT } from './models'
 import { learnModel, setDiscovered } from './modelVersions.svelte'
-import { fetchLatestVersion } from './update'
+import {
+  fetchLatestVersion,
+  readCachedVersion,
+  writeCachedVersion,
+  VERSION_FLOOR,
+  VERSION_TTL,
+} from './update'
 import { startWorktree, type WorktreeChoice } from './worktrees'
 import type { Job, Machine, Meta, TaggedHistoryEntry, TaggedJob, TaggedMeta } from './types'
 
@@ -106,6 +112,9 @@ class AppStore {
   // Latest release tag from GitHub (client-side check), and per-machine
   // in-flight update flags so the dashboard can show "Updating…".
   latestVersion = $state<string | null>(null)
+  // Why the last update check produced nothing, when it produced nothing. Empty
+  // means the check is fine.
+  versionCheckFailed = $state('')
   updating = $state<Record<string, boolean>>({})
   // Per-machine reason the last update attempt failed (server's error text).
   updateError = $state<Record<string, string>>({})
@@ -353,11 +362,38 @@ class AppStore {
     // so gate on stats being present, not on the channel value.
     const self = this.machines.find((m) => m.self)
     if (!self?.stats) return // retry next tick, once we know what we are
+    const channel = self.stats.channel ?? ''
+
+    // Reuse a recent answer, from this tab or any other. Without this the check
+    // ran on every load, every five minutes, and every time a tab regained
+    // focus, which spends GitHub's whole unauthenticated allowance of sixty an
+    // hour: a phone and a laptop on one connection exhaust it between them, and
+    // the app then shows no update banner at all, which is indistinguishable
+    // from being up to date. That is how a machine sat a release behind with
+    // nothing on screen to say so.
+    const cached = readCachedVersion(channel)
     const now = Date.now()
-    if (!force && now - this.lastVersionCheck < 60_000) return
+    const age = cached ? now - cached.at : Infinity
+    if (age < (force ? VERSION_FLOOR : VERSION_TTL)) {
+      this.latestVersion = cached!.tag
+      this.versionCheckFailed = ''
+      return
+    }
+    if (now - this.lastVersionCheck < VERSION_FLOOR) return
     this.lastVersionCheck = now
-    const tag = await fetchLatestVersion(self.stats.channel ?? '')
-    if (tag) this.latestVersion = tag
+
+    const res = await fetchLatestVersion(channel)
+    if (res.tag) {
+      this.latestVersion = res.tag
+      this.versionCheckFailed = ''
+      writeCachedVersion(channel, res.tag, now)
+      return
+    }
+    // Keep whatever was last known; say why there is no answer rather than
+    // letting silence read as "nothing new".
+    this.versionCheckFailed = res.rateLimited
+      ? 'GitHub is rate limiting update checks from this network; it clears within the hour'
+      : 'could not reach GitHub to check for updates'
   }
 
   // updateMachine asks a machine to self-update (download latest release,

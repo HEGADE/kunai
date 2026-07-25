@@ -391,6 +391,13 @@
     </div>
   {/if}
 
+  <!-- A check that could not run must say so. Showing nothing is what "you are up
+       to date" looks like, and a machine sat a release behind with an empty
+       screen is exactly how this was missed. -->
+  {#if !outdated && app.versionCheckFailed && sel}
+    <p class="ufail">{app.versionCheckFailed}</p>
+  {/if}
+
   {#if outdated && sel}
     <div class="update">
       <span class="udot"></span>
@@ -1526,6 +1533,13 @@
   }
   .browse2:hover {
     color: var(--text);
+  }
+
+  /* Quiet: it is not an error, it is an answer that has not arrived. */
+  .ufail {
+    margin: 0 0 4px;
+    font-size: 11.5px;
+    color: var(--text-4);
   }
 
   /* --- reference: dense, quiet ---------------------------------------------- */

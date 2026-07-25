@@ -10,10 +10,23 @@ const LATEST_URL = 'https://api.github.com/repos/HEGADE/kunai/releases/latest'
 // a nightly install it is behind.
 const NIGHTLY_URL = 'https://api.github.com/repos/HEGADE/kunai/releases/tags/nightly'
 
+// VersionCheck is what a check produced. The failure is reported rather than
+// folded into a null, because the two are not the same thing to a user: no
+// answer looks exactly like "you are up to date", and that is how a machine sat
+// three releases behind with nothing on screen to say so.
+export interface VersionCheck {
+  tag: string | null
+  // rateLimited is GitHub refusing because too many checks came from this
+  // address. Unauthenticated callers get 60 an hour, shared by every tab, every
+  // phone and every laptop on the same connection, so this is not exotic.
+  rateLimited: boolean
+  failed: boolean
+}
+
 // fetchLatestVersion returns the newest version string for the given channel:
 // the latest release tag ("v0.2.0") on stable, or the nightly pre-release's
-// build id on nightly. null if GitHub is unreachable / rate-limited.
-export async function fetchLatestVersion(channel = ''): Promise<string | null> {
+// build id on nightly.
+export async function fetchLatestVersion(channel = ''): Promise<VersionCheck> {
   const url = channel === 'nightly' ? NIGHTLY_URL : LATEST_URL
   try {
     // no-store so a just-published release is seen immediately, not served from
@@ -22,12 +35,17 @@ export async function fetchLatestVersion(channel = ''): Promise<string | null> {
       headers: { Accept: 'application/vnd.github+json' },
       cache: 'no-store',
     })
-    if (!res.ok) return null
+    if (!res.ok) {
+      // 403 is what the rate limiter returns; 429 is the documented one. Both
+      // mean "ask again later", not "there is nothing new".
+      return { tag: null, rateLimited: res.status === 403 || res.status === 429, failed: true }
+    }
     const body = (await res.json()) as { tag_name?: string; name?: string }
     // Nightly moves the tag, so its `name` (the build id) is the comparable bit.
-    return (channel === 'nightly' ? body.name || body.tag_name : body.tag_name) ?? null
+    const tag = (channel === 'nightly' ? body.name || body.tag_name : body.tag_name) ?? null
+    return { tag, rateLimited: false, failed: tag === null }
   } catch {
-    return null
+    return { tag: null, rateLimited: false, failed: true }
   }
 }
 
@@ -65,4 +83,36 @@ export function updateAvailable(
     if (c[i] > l[i]) return false
   }
   return false
+}
+
+// --- caching -------------------------------------------------------------------
+
+// A release is not a per-minute event, so the answer is good for a long while.
+// The floor bounds even a deliberate re-check, so a reload loop cannot spend the
+// allowance.
+export const VERSION_TTL = 30 * 60_000
+export const VERSION_FLOOR = 60_000
+
+const cacheKey = (channel: string) => `kunai-latest:${channel || 'stable'}`
+
+// Cached in localStorage rather than in memory so it is shared by every tab of
+// this origin: two tabs polling independently is two tabs' worth of GitHub's
+// allowance for one answer.
+export function readCachedVersion(channel: string): { tag: string; at: number } | null {
+  try {
+    const raw = localStorage.getItem(cacheKey(channel))
+    if (!raw) return null
+    const v = JSON.parse(raw) as { tag?: string; at?: number }
+    return v.tag && v.at ? { tag: v.tag, at: v.at } : null
+  } catch {
+    return null
+  }
+}
+
+export function writeCachedVersion(channel: string, tag: string, at: number): void {
+  try {
+    localStorage.setItem(cacheKey(channel), JSON.stringify({ tag, at }))
+  } catch {
+    // A browser refusing storage costs a re-check, nothing more.
+  }
 }
