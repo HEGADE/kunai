@@ -35,6 +35,8 @@ type HistoryEntry struct {
 	// Repo is the main checkout when Cwd is a git worktree of it, so a past
 	// worktree session still groups under the codebase it belonged to.
 	Repo string `json:"repo,omitempty"`
+	// Branch is that worktree's branch, which outlives its directory name.
+	Branch string `json:"branch,omitempty"`
 }
 
 // claudeRoot is the transcripts folder for a Claude config dir. An empty configDir
@@ -70,7 +72,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	for i := range entries {
 		// A past session in a worktree still groups under its repository, so long
 		// as the worktree is still there to say so.
-		entries[i].Repo = s.worktrees.repoFor(entries[i].Cwd)
+		entries[i].Repo, entries[i].Branch = s.worktrees.identify(entries[i].Cwd)
 		if o, ok := over[entries[i].ID]; ok {
 			if o.Name != "" {
 				entries[i].Title = o.Name

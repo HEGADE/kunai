@@ -184,9 +184,17 @@ func (s *Server) armSession(sess *session.Session) {
 	if s.checkpoints != nil {
 		sess.SetCheckpointHook(func(seq uint64) { s.checkpoints.capture(sess.ID, sess.Cwd, seq) })
 	}
-	if s.failover != nil {
-		sess.SetTurnEndHook(func(rateLimited bool) { s.failover.onTurnEnd(sess, rateLimited) })
-	}
+	// One hook, because a session has one: failover reacts to a wall, and a
+	// worktree still carrying a placeholder name takes one from what was asked
+	// of it. Composed here rather than fought over.
+	sess.SetTurnEndHook(func(rateLimited bool) {
+		if s.worktrees != nil {
+			s.worktrees.nameFromFirstPrompt(sess.Cwd, sess.LastPromptText())
+		}
+		if s.failover != nil {
+			s.failover.onTurnEnd(sess, rateLimited)
+		}
+	})
 }
 
 // SetPush enables Web Push wake-ups.

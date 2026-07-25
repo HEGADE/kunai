@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -294,15 +295,24 @@ func (s *worktreeStore) all() []worktreeRecord {
 // is not a worktree kunai made. Cheap: a map lookup, because it is called once
 // per row of every session and history listing.
 func (s *worktreeStore) repoFor(cwd string) string {
+	repo, _ := s.identify(cwd)
+	return repo
+}
+
+// identify returns the repository a worktree belongs to and the branch it is on.
+// The branch is reported separately from the directory because the two diverge:
+// a worktree that names itself from its first prompt renames the branch and
+// leaves the directory where a running process expects it.
+func (s *worktreeStore) identify(cwd string) (repo, branch string) {
 	if s == nil || cwd == "" {
-		return ""
+		return "", ""
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if rec, ok := s.records[cwd]; ok {
-		return rec.Repo
+		return rec.Repo, rec.Branch
 	}
-	return ""
+	return "", ""
 }
 
 // tagRepos marks the entries whose directory is a worktree with the repository
@@ -310,7 +320,7 @@ func (s *worktreeStore) repoFor(cwd string) string {
 // giving each worktree a heading of its own.
 func (s *worktreeStore) tagRepos(metas []session.Meta) {
 	for i := range metas {
-		metas[i].Repo = s.repoFor(metas[i].Cwd)
+		metas[i].Repo, metas[i].Branch = s.identify(metas[i].Cwd)
 	}
 }
 
@@ -337,6 +347,11 @@ type createRequest struct {
 	Repo string `json:"repo"`
 	Name string `json:"name"`
 	Base string `json:"base"`
+	// Prompt is the task the worktree is being made for, when the caller has it.
+	// The name comes from it, so nobody has to name a branch before describing
+	// the work: describing the work IS the name. The launcher always has this;
+	// the sidebar's one-tap start never does, and gets a placeholder instead.
+	Prompt string `json:"prompt,omitempty"`
 	// Setup is a pointer so absent and empty mean different things. Absent means
 	// "use whatever this repository resolves to", which is what a one-tap start
 	// needs: it never showed the user a command, so it must not silently decide
@@ -344,6 +359,19 @@ type createRequest struct {
 	Setup *string `json:"setup"`
 	// Remember stores Setup as this repository's command for next time.
 	Remember bool `json:"remember"`
+}
+
+// worktreeName is what to call this worktree: what the user typed if they typed
+// anything, else what they asked for, else a placeholder to be replaced once
+// they have asked for something.
+func (req createRequest) worktreeName() string {
+	if strings.TrimSpace(req.Name) != "" {
+		return req.Name
+	}
+	if derived := worktree.NameFromPrompt(req.Prompt); derived != "" {
+		return derived
+	}
+	return worktree.PlaceholderName()
 }
 
 // setupCommand resolves what this request should actually run.
@@ -366,7 +394,7 @@ func (s *worktreeStore) create(req createRequest) (worktreeRecord, error) {
 	info, err := worktree.Create(worktree.CreateOptions{
 		Repo:       req.Repo,
 		Root:       s.root,
-		Name:       req.Name,
+		Name:       req.worktreeName(),
 		Base:       req.Base,
 		FromOrigin: s.getSettings().FromOrigin,
 	})
@@ -436,6 +464,40 @@ func (s *worktreeStore) waitReady(ctx context.Context, path string) {
 	case <-rec.ready:
 	case <-ctx.Done():
 	}
+}
+
+// nameFromFirstPrompt replaces a placeholder branch once the session has said
+// what it is doing.
+//
+// This is t3code's move, without its model call: it creates a throwaway branch
+// and has a model read the first message to rename it. The rename is the good
+// idea; the model is not needed to slug a sentence the user already wrote, and it
+// would be spent from the same subscription the work runs on.
+//
+// Only a placeholder is replaced, so a name someone chose is never overwritten,
+// and only the branch moves. git can move a worktree's directory too, but a
+// session's claude process is running with that directory as its cwd.
+func (s *worktreeStore) nameFromFirstPrompt(path, prompt string) {
+	rec, ok := s.get(path)
+	if !ok || !worktree.IsPlaceholder(rec.Branch) {
+		return
+	}
+	name := worktree.NameFromPrompt(prompt)
+	if name == "" {
+		return
+	}
+	renamed, err := worktree.Rename(rec.Info, name)
+	if err != nil {
+		log.Printf("worktree: naming %s from its first prompt: %v", path, err)
+		return
+	}
+	s.mu.Lock()
+	if live, ok := s.records[path]; ok {
+		live.Info = renamed
+		s.saveLocked()
+	}
+	s.mu.Unlock()
+	log.Printf("worktree: %s named itself %s", path, renamed.Branch)
 }
 
 // brief renders what the agent working in this worktree is told.

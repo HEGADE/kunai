@@ -665,7 +665,9 @@ class AppStore {
       // A worktree is made first and handed to the session as a path. It has to
       // exist before the CLI is spawned, since the whole isolation mechanism is
       // that the session's cwd is the worktree.
-      const worktree = wt ? await startWorktree(base, cwd, wt) : ''
+      // The brief names the branch when the picker's name was left empty, which
+      // it usually is: you have already said what the work is.
+      const worktree = wt ? await startWorktree(base, cwd, wt, text) : ''
       const meta = await createSession(base, {
         cwd,
         model: DEFAULT_MODEL,

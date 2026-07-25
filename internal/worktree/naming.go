@@ -64,19 +64,50 @@ func PathFor(root, repo, branch string) string {
 // before simply fails, which is the common case rather than an edge one (you
 // finish a piece of work, keep the branch, and start another like it).
 //
-// Borrowed from t3code's resolveAvailableBranchName, which does the same thing
-// for the same reason.
+// Borrowed from t3code's resolveAvailableBranchName, including where it starts
+// counting: the second one is "-2", because it is the second, and a "-1" beside
+// an unsuffixed original reads as though the original were the zeroth.
 func AvailableBranch(repo, desired string) (string, error) {
 	if !branchExists(repo, desired) {
 		return desired, nil
 	}
-	for n := 1; n <= maxBranchAttempts; n++ {
+	for n := 2; n < maxBranchAttempts+2; n++ {
 		candidate := fmt.Sprintf("%s-%d", desired, n)
 		if !branchExists(repo, candidate) {
 			return candidate, nil
 		}
 	}
 	return "", fmt.Errorf("worktree: no free branch name for %q after %d attempts", desired, maxBranchAttempts)
+}
+
+// Rename moves a worktree's branch to a new name, keeping its recorded merge
+// base. Used to replace a placeholder once the user has said what they are doing.
+//
+// The directory is deliberately left where it is. git can move a worktree, but a
+// session's claude process is running with that directory as its cwd, and moving
+// it out from under a live process is a good way to break a turn in a way that is
+// very hard to explain. The branch is the identity here; the directory is just
+// where the files happen to sit.
+func Rename(info Info, name string) (Info, error) {
+	repo, err := Root(info.Repo)
+	if err != nil {
+		return info, err
+	}
+	target, err := AvailableBranch(repo, BranchFor(name))
+	if err != nil {
+		return info, err
+	}
+	if target == info.Branch {
+		return info, nil
+	}
+	if _, err := git(repo, "branch", "-m", info.Branch, target); err != nil {
+		return info, err
+	}
+	renamed := info
+	renamed.Branch = target
+	// The merge base is stored per branch, so it does not follow a rename.
+	recordMergeBase(repo, renamed)
+	return renamed, nil
 }
 
 func branchExists(repo, branch string) bool {

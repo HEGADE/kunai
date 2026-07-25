@@ -87,8 +87,12 @@
     }
   }
 
-  // The worktree's directory name, which is its branch without the kunai/ prefix.
-  const leafOf = (cwd: string) => cwd.replace(/\/+$/, '').split('/').slice(-1)[0] || cwd
+  // What to call a worktree session: its branch, minus the kunai/ prefix. The
+  // branch rather than the directory, because a worktree that names itself from
+  // its first prompt renames the branch and leaves the directory alone.
+  const wtName = (m: { branch?: string; cwd: string }) =>
+    (m.branch ?? '').replace(/^kunai\//, '') ||
+    m.cwd.replace(/\/+$/, '').split('/').slice(-1)[0]
 
   const activeGroups = $derived(groupSessions(activeUnpinned))
   const recentGroups = $derived(groupSessions(recentDisplay))
@@ -166,8 +170,8 @@
            checkout. Skipped when the session has no title of its own yet, since
            the name is then already the worktree's directory and the chip would
            just say it twice. -->
-      {#if m.repo && leafOf(m.cwd) !== shortName(m)}
-        <span class="wtchip mono" title="In a worktree on {m.cwd}">{leafOf(m.cwd)}</span>
+      {#if m.repo && wtName(m) && wtName(m) !== shortName(m)}
+        <span class="wtchip mono" title="On {m.branch} in {m.cwd}">{wtName(m)}</span>
       {/if}
     </button>
     <SessionMenu

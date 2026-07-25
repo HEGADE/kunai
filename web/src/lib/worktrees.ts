@@ -110,7 +110,17 @@ export function worktreeSetup(base: string, repo: string): Promise<SetupProposal
 // user looked and chose none.
 export function createWorktree(
   base: string,
-  body: { repo: string; name?: string; base?: string; setup?: string; remember?: boolean },
+  body: {
+    repo: string
+    name?: string
+    base?: string
+    setup?: string
+    remember?: boolean
+    // prompt is the task this worktree is for. The server names the branch from
+    // it when no name was given, so nobody has to name a branch before they have
+    // described the work.
+    prompt?: string
+  },
 ): Promise<Worktree> {
   return fetch(at(base, '/api/worktrees'), {
     method: 'POST',
@@ -183,12 +193,14 @@ export async function startWorktree(
   base: string,
   repo: string,
   choice: WorktreeChoice,
+  prompt = '',
 ): Promise<string> {
   if (!choice.on) return ''
   const wt = await createWorktree(base, {
     repo,
     name: choice.name,
     base: choice.base,
+    prompt,
     setup: choice.setup,
     // Remember the command per repo once someone has accepted it, so the next
     // worktree of this repository does not ask again. Never for a one-tap start,

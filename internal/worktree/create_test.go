@@ -47,8 +47,10 @@ func TestCreateSuffixesATakenBranchName(t *testing.T) {
 	if first.Branch != "kunai/fix-auth" {
 		t.Fatalf("first branch = %q", first.Branch)
 	}
-	if second.Branch != "kunai/fix-auth-1" {
-		t.Errorf("second branch = %q, want kunai/fix-auth-1", second.Branch)
+	// The second one is "-2" because it is the second; a "-1" beside an
+	// unsuffixed original reads as though the original were the zeroth.
+	if second.Branch != "kunai/fix-auth-2" {
+		t.Errorf("second branch = %q, want kunai/fix-auth-2", second.Branch)
 	}
 	if first.Path == second.Path {
 		t.Errorf("both worktrees landed on %q", first.Path)

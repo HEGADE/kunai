@@ -268,6 +268,36 @@ async function main() {
   check('the one-tap worktree still ran the repository\'s own setup', !oneTapSetup.includes('Setup failed'), oneTapSetup)
   await shot(page, '09-one-tap-worktree')
 
+  // --- the branch names itself -------------------------------------------------
+  // Nobody should have to name a branch before describing the work, because
+  // describing the work is the name. The launcher has the brief at the moment the
+  // worktree is made, so no name is typed here at all.
+  await page.goto(ORIGIN)
+  await home.locator('.launch').waitFor({ state: 'visible', timeout: 15000 })
+  await home.locator('.lbar .pick').first().click()
+  await home.locator('.dirpop').first().waitFor({ timeout: 5000 })
+  await home.locator('.dirpop .dp', { hasText: REPO }).first().click()
+
+  await home.locator('.lbar .pick', { hasText: 'this checkout' }).first().click()
+  await home.locator('.wtpop .mode', { hasText: 'New worktree' }).click()
+  await home.locator('.wtpop .fields').waitFor({ timeout: 5000 })
+  await home.locator('.wtpop .nameinput').press('Enter') // left empty on purpose
+  await home.locator('.wtpop').waitFor({ state: 'detached', timeout: 5000 })
+
+  await home.locator('.launch .brief').fill('please fix the login redirect loop')
+  await home.locator('.launch .go').click()
+  await page.waitForSelector('.wtcard', { timeout: 30000 })
+
+  const named = (await page.locator('.wtcard .branch').innerText()).trim()
+  check(
+    'an unnamed worktree names itself from the task',
+    /^fix-login-redirect-loop(-\d+)?$/.test(named),
+    named,
+  )
+  const namedBranches = git(['branch', '--list', 'kunai/fix-login-redirect-loop*'])
+  check('and that is the real branch', namedBranches.trim() !== '', namedBranches.replace(/\s+/g, ' '))
+  await shot(page, '10-self-named')
+
   await browser.close()
 
   // Leave nothing behind, so the next run starts from the same state this one

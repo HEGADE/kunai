@@ -879,6 +879,12 @@ type Meta struct {
 	// the codebase it belongs to: grouping by its own directory would give every
 	// worktree a heading of its own and scatter one repository across the list.
 	Repo string `json:"repo,omitempty"`
+	// Branch is the worktree's branch, when Cwd is one. Merged in by the server
+	// like Repo. It is shown rather than the directory name because a worktree
+	// that names itself from its first prompt renames the branch and leaves the
+	// directory alone (a live process is running in it), so the directory goes
+	// stale and the branch is the identity.
+	Branch string `json:"branch,omitempty"`
 }
 
 func (s *Session) Meta() Meta {

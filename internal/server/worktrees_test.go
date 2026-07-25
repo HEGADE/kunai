@@ -347,3 +347,120 @@ func TestListReportsStatusAndDropsWorktreesThatAreGone(t *testing.T) {
 // mean different things there: absent resolves the repository's own command,
 // empty means the user looked at it and chose none.
 func strptr(s string) *string { return &s }
+
+// --- naming -------------------------------------------------------------------
+
+// The launcher has the task text when the worktree is made, so the branch names
+// itself and nobody is asked to name a branch before describing the work.
+func TestAWorktreeNamesItselfFromTheTask(t *testing.T) {
+	r := newWTRepo(t)
+
+	rec, err := r.store.create(createRequest{
+		Repo: r.dir, Base: "main",
+		Prompt: "please fix the login redirect loop",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Branch != "kunai/fix-login-redirect-loop" {
+		t.Errorf("branch = %q", rec.Branch)
+	}
+}
+
+// A name someone typed always wins: they were more specific than we can be.
+func TestATypedNameWinsOverTheTask(t *testing.T) {
+	r := newWTRepo(t)
+
+	rec, err := r.store.create(createRequest{
+		Repo: r.dir, Base: "main",
+		Name: "spike", Prompt: "fix the login redirect loop",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Branch != "kunai/spike" {
+		t.Errorf("branch = %q, want the typed name", rec.Branch)
+	}
+}
+
+// The sidebar's one-tap start asks nothing, so there is nothing to name it after
+// until the first turn ends. Then it takes a name, as t3code does, minus the
+// model call.
+func TestAPlaceholderTakesItsNameFromTheFirstPrompt(t *testing.T) {
+	r := newWTRepo(t)
+
+	rec, err := r.store.create(createRequest{Repo: r.dir, Base: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Branch != "kunai/work" {
+		t.Fatalf("a nameless start should get a placeholder, got %q", rec.Branch)
+	}
+
+	r.store.nameFromFirstPrompt(rec.Path, "add a retry to the discovery poller")
+
+	named, ok := r.store.get(rec.Path)
+	if !ok {
+		t.Fatal("the record vanished")
+	}
+	if named.Branch != "kunai/add-retry-discovery-poller" {
+		t.Errorf("branch = %q", named.Branch)
+	}
+	// The directory stays put: a session's claude process is running in it.
+	if named.Path != rec.Path {
+		t.Errorf("the directory moved to %q, out from under the running session", named.Path)
+	}
+	// And it survives a reload, since the record is what the sidebar reads.
+	if again := newWorktreeStore(r.dataDir, nil); func() bool {
+		got, ok := again.get(rec.Path)
+		return !ok || got.Branch != named.Branch
+	}() {
+		t.Error("the new name was not persisted")
+	}
+}
+
+// A name someone chose must never be overwritten by a later prompt.
+func TestARealNameIsNeverReplaced(t *testing.T) {
+	r := newWTRepo(t)
+
+	rec, err := r.store.create(createRequest{Repo: r.dir, Base: "main", Name: "my spike"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.store.nameFromFirstPrompt(rec.Path, "completely different work")
+
+	got, _ := r.store.get(rec.Path)
+	if got.Branch != "kunai/my-spike" {
+		t.Errorf("branch = %q; a chosen name was overwritten", got.Branch)
+	}
+}
+
+// Renaming twice would rewrite the branch on every turn.
+func TestTheNameIsTakenOnlyOnce(t *testing.T) {
+	r := newWTRepo(t)
+
+	rec, _ := r.store.create(createRequest{Repo: r.dir, Base: "main"})
+	r.store.nameFromFirstPrompt(rec.Path, "add retries")
+	first, _ := r.store.get(rec.Path)
+
+	r.store.nameFromFirstPrompt(rec.Path, "something else entirely")
+	second, _ := r.store.get(rec.Path)
+
+	if first.Branch != second.Branch {
+		t.Errorf("the branch was renamed again on a later turn: %q -> %q", first.Branch, second.Branch)
+	}
+}
+
+// A prompt with nothing nameable in it leaves the placeholder alone rather than
+// producing a branch called after punctuation.
+func TestAnUnnameablePromptLeavesThePlaceholder(t *testing.T) {
+	r := newWTRepo(t)
+
+	rec, _ := r.store.create(createRequest{Repo: r.dir, Base: "main"})
+	r.store.nameFromFirstPrompt(rec.Path, "!!! ???")
+
+	got, _ := r.store.get(rec.Path)
+	if got.Branch != rec.Branch {
+		t.Errorf("branch = %q, want the placeholder %q", got.Branch, rec.Branch)
+	}
+}
