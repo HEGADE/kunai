@@ -417,10 +417,21 @@ class AppStore {
       await this.refresh()
       const m = this.machines.find((x) => x.id === machineId)
       const v = m?.online ? m.stats?.kunai_version : undefined
-      // Back on a new build: the "Update available" badge clears itself, so
-      // there is nothing left to say.
-      if (v && v !== before) return
+      // Success is being on the build we were trying to reach, not merely having
+      // changed. A machine already running the newest build reports the same
+      // version afterwards, and calling that a failure told people to reinstall a
+      // service that was working: observed on a real machine, on the exact build
+      // it was supposed to be on.
+      if (v && (v === this.latestVersion || v !== before)) return
       if (Date.now() < deadline) continue
+
+      // Before saying anything went wrong, make sure what we are comparing
+      // against is current. The version check is throttled to a minute, which is
+      // exactly the window an update happens in, so the target can easily be a
+      // build older than the one now running: judged against that, a machine
+      // that updated perfectly looks like it failed.
+      await this.loadLatestVersion(true)
+      if (v && v === this.latestVersion) return
 
       // Out of patience. Whatever is wrong is on the machine, not here, and its
       // OS is known from the last stats we saw, so name the exact command.
@@ -430,10 +441,13 @@ class AppStore {
           : m?.stats?.os === 'linux'
             ? 'on the machine, run: systemctl --user restart kunai · log: journalctl --user -u kunai'
             : "check the machine's service and log"
+      // Say what was seen, not what it must mean. The old wording named one cause
+      // (a service running a different binary) as though it were the finding, and
+      // sent people to reinstall on the strength of it.
       this.updateError = {
         ...this.updateError,
         [machineId]: v
-          ? `restarted but still on ${v}; the service runs a different binary, rerun install.sh on the machine`
+          ? `still on ${v} after restarting${this.latestVersion ? `, not ${this.latestVersion}` : ''}; ${restartHint}`
           : `not back after ${Math.round(RESTART_WAIT_MS / 1000)}s; ${restartHint}`,
       }
       return
