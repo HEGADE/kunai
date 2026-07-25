@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -129,6 +130,13 @@ func (e *APIError) Error() string {
 // here; treating either as a refusal drops the chat to the slowest path for
 // good, on a hiccup. Only a flat rejection from Telegram counts, and 429 is
 // explicitly excluded even though it arrives the same way.
+//
+// A flat 4xx turned out not to be enough on its own. Telegram rejects a message whose
+// CONTENT it cannot render with the same shape it uses to say a method is
+// unavailable, so one reply carrying a relative link or an unclosed entity used
+// to cost the chat rich messages for the life of the process: every later reply,
+// however ordinary, went as plain text. Proven with a fake sender before this
+// was written, and it is why contentRejected exists.
 func unsupported(err error) bool {
 	var api *APIError
 	if !errors.As(err, &api) {
@@ -137,7 +145,45 @@ func unsupported(err error) bool {
 	if api.Code == http.StatusTooManyRequests || api.RetryAfter > 0 {
 		return false
 	}
+	if contentRejected(err) {
+		return false
+	}
 	return api.Code >= 400 && api.Code < 500
+}
+
+// contentRejectedRE matches the rejections that are about THIS message rather
+// than about what the chat supports.
+//
+// The list is openclaw's (extensions/telegram/src/rich-plain-fallback.ts), which
+// is live-verified against Bot API 10.2: the structural limits are the real ones
+// Telegram enforces (>500 top-level blocks, >16 depth, oversized text, >50 media,
+// >20 table columns), and the parse phrasings are the ones it actually returns.
+// Rediscovering that list by watching a bot fail in production is exactly the
+// reinvention worth skipping.
+var contentRejectedRE = regexp.MustCompile(
+	`(?i)` +
+		`RICH_MESSAGE_[A-Z_]+_INVALID` + // entities, media, depth
+		`|RICH_MESSAGE_CONTENT_REQUIRED` +
+		`|RICH_MESSAGE_(?:BLOCKS_TOO_MANY|DEPTH_INVALID|TEXT_TOO_LONG|MEDIA_TOO_MANY|TABLE_COLS_TOO_MANY)` +
+		`|can't parse entities|parse entities|find end of the entity|can't parse InputRichBlock`,
+)
+
+// contentRejected reports whether Telegram refused this particular message's
+// content. Such a refusal must NOT cost a capability: the next reply, with
+// different content, may well be fine. The caller still falls back to plain text
+// for this one, so the answer is never lost; it just does not take the chat's
+// formatting down with it.
+//
+// The cost of being wrong in this direction is one wasted request per reply for
+// a session that keeps producing unrenderable output. The cost of being wrong in
+// the other direction is every reply in that chat arriving as plain text forever,
+// which is what happened.
+func contentRejected(err error) bool {
+	var api *APIError
+	if !errors.As(err, &api) {
+		return false
+	}
+	return contentRejectedRE.MatchString(api.Description)
 }
 
 // GetUpdates long-polls for updates after offset. It returns as soon as
