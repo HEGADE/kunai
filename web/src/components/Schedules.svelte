@@ -1,6 +1,6 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
-  import { MODELS } from '../lib/models'
+  import { MODELS, modelOptionLabel } from '../lib/models'
   import type { Job, TaggedJob } from '../lib/types'
 
   const MODES = [
@@ -189,7 +189,7 @@
         <div class="two">
           {#if f.targetKind === 'new'}
             <label class="field"><span class="fl">Model</span>
-              <select bind:value={f.model}>{#each MODELS as m (m.id)}<option value={m.id}>{m.label}</option>{/each}</select>
+              <select bind:value={f.model}>{#each MODELS as m (m.id)}<option value={m.id}>{modelOptionLabel(m.id)}</option>{/each}</select>
             </label>
           {/if}
           <label class="field"><span class="fl">Mode</span>

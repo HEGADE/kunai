@@ -5,7 +5,7 @@
   import type { ChatConnection } from '../lib/chat.svelte'
   import type { Attachment } from '../lib/types'
   import { groupTurns } from '../lib/turns'
-  import { MODELS, EFFORTS, modelLabel, effortLabel } from '../lib/models'
+  import { MODELS, EFFORTS, modelLabel, modelOptionLabel, modelFamily, effortLabel } from '../lib/models'
   import { setReloadGuard } from '../lib/updater'
   import PermissionGate from './PermissionGate.svelte'
   import Context from './Context.svelte'
@@ -593,10 +593,10 @@
                 <div class="mode-pop">
                   {#each MODELS as m (m.id)}
                     <button
-                      class:active={modelLabel(chat.model) === m.label}
+                      class:active={modelFamily(chat.model) === m.id}
                       onclick={() => { chat.setModel(m.id); modelOpen = false }}
                     >
-                      <span class="ml">{m.label}</span>
+                      <span class="ml">{modelOptionLabel(m.id)}</span>
                       {#if m.hint}<span class="mh">{m.hint}</span>{/if}
                     </button>
                   {/each}

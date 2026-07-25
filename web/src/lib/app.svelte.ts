@@ -20,6 +20,7 @@ import {
 } from './api'
 import { ChatConnection } from './chat.svelte'
 import { DEFAULT_MODEL, DEFAULT_EFFORT } from './models'
+import { learnModel } from './modelVersions.svelte'
 import { fetchLatestVersion } from './update'
 import type { Job, Machine, Meta, TaggedHistoryEntry, TaggedJob, TaggedMeta } from './types'
 
@@ -226,6 +227,10 @@ class AppStore {
       nextHistory.push(...keptHistory(m.id))
       return { ...m, online: false }
     })
+
+    // Learn the latest model version per family from every resolved session id we
+    // see, so the picker labels self-heal when a new model ships (no release).
+    for (const s of nextSessions) learnModel(s.model)
 
     // Rune reactivity: build locally, assign once (never mutate in place).
     this.sessions = nextSessions

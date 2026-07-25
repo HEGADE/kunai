@@ -3,6 +3,8 @@
 // set_model, and an `--effort` level. Effort is a spawn-time flag only, so it is
 // chosen when a session is created and cannot change mid-session.
 
+import { familyVersion, parseModelId } from './modelVersions.svelte'
+
 export interface Option {
   id: string
   label: string
@@ -13,19 +15,35 @@ export interface Option {
 export const DEFAULT_MODEL = 'opus'
 export const DEFAULT_EFFORT = 'high'
 
-// Current version per family, shown in the picker labels. The composer button
-// prefers the real version the CLI reports (see modelLabel); this map is only a
-// best-effort label before a session resolves, so keep it roughly current.
-const VERSIONS: Record<string, string> = { opus: '4.8', sonnet: '5', haiku: '4.5', fable: '5' }
-const ver = (fam: string) => (VERSIONS[fam] ? ` ${VERSIONS[fam]}` : '')
-
-// Runtime-switchable models (composer). Aliases resolve to the latest of each.
-export const MODELS: Option[] = [
-  { id: 'opus', label: `Opus${ver('opus')}`, hint: 'Most capable' },
-  { id: 'sonnet', label: `Sonnet${ver('sonnet')}`, hint: 'Balanced' },
-  { id: 'haiku', label: `Haiku${ver('haiku')}`, hint: 'Fastest, cheapest' },
-  { id: 'fable', label: `Fable${ver('fable')}`, hint: 'Latest flagship' },
+// Runtime-switchable models (composer). The id is a family ALIAS, which the CLI
+// resolves to the latest model of that family -- so a new release is reachable
+// with no change here. Version labels are NOT baked in; they come from
+// modelOptionLabel, which reads the version learned from real usage.
+export interface ModelFamily {
+  id: string
+  hint?: string
+}
+export const MODELS: ModelFamily[] = [
+  { id: 'opus', hint: 'Most capable' },
+  { id: 'sonnet', hint: 'Balanced' },
+  { id: 'haiku', hint: 'Fastest, cheapest' },
+  { id: 'fable', hint: 'Latest flagship' },
 ]
+
+// modelOptionLabel is the picker label for a family alias, e.g. "Opus 5". The
+// version is the latest learned from a resolved id (else the seed), so it stays
+// current without a release. Call it in a template so it tracks the learned store.
+export function modelOptionLabel(id: string): string {
+  const cap = id.charAt(0).toUpperCase() + id.slice(1)
+  const v = familyVersion(id)
+  return v ? `${cap} ${v}` : cap
+}
+
+// modelFamily returns the family alias a resolved model id belongs to (for the
+// picker's active state), or '' if it matches none.
+export function modelFamily(model: string): string {
+  return parseModelId(model)?.family ?? ''
+}
 
 // Reasoning effort levels (new session only). '' means the CLI default.
 export const EFFORTS: Option[] = [
@@ -44,13 +62,11 @@ export function effortLabel(id: string): string {
 // modelLabel maps a model string to a short "Family Version" label for the
 // composer button. It parses the real version out of the id the CLI reports
 // (e.g. "claude-opus-4-8" -> "Opus 4.8", "claude-haiku-4-5-20251001" -> "Haiku
-// 4.5"), and falls back to the family's current version for a bare alias.
+// 4.5"), and falls back to the family's learned version for a bare alias.
 export function modelLabel(model: string): string {
-  const m = model.toLowerCase()
-  const fam = ['opus', 'sonnet', 'haiku', 'fable'].find((f) => m.includes(f))
-  if (!fam) return 'Model'
-  const cap = fam[0].toUpperCase() + fam.slice(1)
-  const match = m.match(new RegExp(`${fam}[-_]?(\\d+)(?:[-_](\\d+))?`))
-  const version = match ? (match[2] ? `${match[1]}.${match[2]}` : match[1]) : VERSIONS[fam] ?? ''
+  const p = parseModelId(model)
+  if (!p) return 'Model'
+  const cap = p.family.charAt(0).toUpperCase() + p.family.slice(1)
+  const version = p.version || familyVersion(p.family)
   return version ? `${cap} ${version}` : cap
 }

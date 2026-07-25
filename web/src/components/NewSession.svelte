@@ -1,7 +1,7 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
   import { browse, createSession } from '../lib/api'
-  import { MODELS, EFFORTS, DEFAULT_MODEL, DEFAULT_EFFORT } from '../lib/models'
+  import { MODELS, EFFORTS, DEFAULT_MODEL, DEFAULT_EFFORT, modelOptionLabel } from '../lib/models'
   import type { Listing } from '../lib/types'
 
   // Model + reasoning effort are both spawn-time CLI flags, so they are chosen
@@ -203,7 +203,7 @@
         <span class="olabel">Model</span>
         <div class="oseg">
           {#each modelOpts as m (m.id)}
-            <button class="oc" class:on={model === m.id} onclick={() => (model = m.id)} title={m.hint ?? ''}>{m.label}</button>
+            <button class="oc" class:on={model === m.id} onclick={() => (model = m.id)} title={m.hint ?? ''}>{modelOptionLabel(m.id)}</button>
           {/each}
         </div>
       </div>
