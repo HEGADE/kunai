@@ -104,6 +104,45 @@
   // numbers that were right a second ago: that blanking collapsed the quota
   // rows to zero height and shoved the whole sidebar list ("dancing").
   let usageFor = ''
+  // Sessions on the machine being shown, split by what they need from you. A
+  // session sitting at a permission gate is doing nothing until you answer, which
+  // is the one state here that can quietly waste hours.
+  const machineSessions = $derived(sel ? app.sessions.filter((s) => s.machineId === sel.id) : [])
+  const waiting = $derived(machineSessions.find((s) => s.state === 'awaiting_permission') ?? null)
+  const liveSessions = $derived(machineSessions.filter((s) => s.state === 'running'))
+
+  // The best account to work on right now: the most REMAINING headroom on its
+  // binding window (the one that walls you first) -- the same rule server-side
+  // account failover uses. An account with nothing left is not a candidate.
+  const bestAccount = $derived.by(() => {
+    let best: { cli: string; left: number; when: string } | null = null
+    for (const cli of accounts) {
+      const b = binding(uses[cli] ?? null)
+      if (!b) continue
+      const left = Math.max(0, 100 - b.pct)
+      if (left < 2) continue
+      if (!best || left > best.left) best = { cli: cli || 'Claude', left, when: b.when }
+    }
+    return best
+  })
+
+  // The hero answers whichever question is live, in priority order.
+  const hero = $derived.by(() => {
+    if (waiting) return { head: 'Needs you', sub: '' }
+    if (liveSessions.length) {
+      const n = liveSessions.length
+      return { head: n === 1 ? '1 session working' : n + ' sessions working', sub: 'Nothing needs you right now.' }
+    }
+    if (!usageLoaded) return { head: greeting + '.', sub: 'Checking what your accounts have left\u2026' }
+    if (bestAccount) {
+      return {
+        head: 'Ready to work',
+        sub: bestAccount.cli + ' has ' + Math.round(bestAccount.left) + '% left' + (bestAccount.when ? ' \u00b7 ' + bestAccount.when : ''),
+      }
+    }
+    return { head: 'Every account is spent', sub: 'Work resumes when a window resets, or schedule a run for then.' }
+  })
+
   $effect(() => {
     const url = selUrl,
       online = selOnline,
@@ -211,12 +250,28 @@
      the data. Fixed and pointer-transparent, so it never intercepts a tap. -->
 <div class="ambient" aria-hidden="true"></div>
 <div class="home" class:compact>
-  <div class="hello">
-    <h1>{greeting}.</h1>
-    <p class="sub">
-      {#if st?.hostname}<span class="host mono">{st.hostname}</span>{:else if sel}<span class="host mono">{sel.label}</span>{/if}
-      <span class="mono dim">· direct over tailnet</span>
-      {#if st?.claude_version}<span class="mono dim">· claude {st.claude_version}</span>{/if}
+  <!-- The hero answers whichever question is actually live, because that is what
+       you opened the page to ask. A session stuck on a permission gate is the worst
+       state this product has (an agent you believe is working while it waits on a
+       click you never saw), so it outranks everything else. -->
+  <div class="lede" class:needs={!!waiting} class:working={!waiting && liveSessions.length > 0}>
+    <div class="ltop">
+      <span class="ldot" aria-hidden="true"></span>
+      <h1>{hero.head}</h1>
+    </div>
+    <p class="lsub">
+      {#if waiting}
+        <button class="lact" onclick={() => app.open(waiting.machineId, waiting.id)}>
+          {waiting.title || waiting.cwd.split('/').slice(-1)[0]} is waiting on you<span class="larr">→</span>
+        </button>
+      {:else}
+        <span>{hero.sub}</span>
+      {/if}
+    </p>
+    <p class="lmeta mono">
+      {#if st?.hostname}{st.hostname}{:else if sel}{sel.label}{/if}
+      <span class="dim">· direct over tailnet</span>
+      {#if st?.claude_version}<span class="dim">· claude {st.claude_version}</span>{/if}
     </p>
   </div>
 
@@ -263,166 +318,203 @@
     </div>
   {/if}
 
-  {#if st}
-    <!-- Quota first, and close to alone. It is the only thing on this page that
-         can stop you working, so it is the only thing that gets any weight. -->
-    {#if !usageLoaded}
-      <!-- Hold the rows' exact height while the CLI is asked. The quota takes a
-           couple of seconds to arrive, and appearing from nothing shoved the
-           whole page down; this reserves the space and fills it in place. -->
-      <div class="quota" aria-hidden="true">
-        {#each ['Session', 'Weekly'] as k (k)}
-          <div class="q skel">
-            <span class="q-k">{k}</span>
-            <div class="q-track"></div>
-            <span class="q-pct mono">—</span>
-            <span class="q-when mono"></span>
+  <!-- Two columns, because the page has two jobs: acting (left) and knowing
+       (right). One narrow column left half the viewport empty and kept the
+       sessions off the page entirely. Stacks act-first on a phone. -->
+  <div class="cols">
+    <div class="col main">
+      {#if liveSessions.length}
+        <section class="blk">
+          <h2 class="blabel">Working</h2>
+          <div class="rows">
+            {#each liveSessions as s (s.id)}
+              <button class="srow" onclick={() => app.open(s.machineId, s.id)} title={s.cwd}>
+                <span class="sd live" aria-hidden="true"></span>
+                <span class="stitle">{s.title || s.cwd.split('/').slice(-1)[0]}</span>
+                <span class="srsp"></span>
+                <span class="scwd mono">{s.cwd.split('/').slice(-1)[0]}</span>
+              </button>
+            {/each}
           </div>
+        </section>
+      {/if}
+
+    <div class="start">
+      <span class="s-label">{multi && sel ? `Start on ${sel.label}` : 'Start in'}</span>
+      <div class="chips">
+        {#each selProjects as p (p.cwd)}
+          <button class="chip" title={p.cwd} onclick={() => sel && app.quickStart(sel.id, p.cwd)}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
+            {p.name}
+          </button>
         {/each}
+        <button class="chip browse" onclick={() => app.newSession()}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+          Browse…
+        </button>
       </div>
-    {:else if accounts.length > 1}
-      <!-- Several accounts: one line each, the binding window only. Six bars that
-           mostly say "fine" is not a dashboard, and on a phone it is a wall. -->
-      <div class="qroster">
+    </div>
+
+    </div>
+
+    <div class="col side">
+    {#if st}
+      <!-- Quota first, and close to alone. It is the only thing on this page that
+           can stop you working, so it is the only thing that gets any weight. -->
+      {#if !usageLoaded}
+        <!-- Hold the rows' exact height while the CLI is asked. The quota takes a
+             couple of seconds to arrive, and appearing from nothing shoved the
+             whole page down; this reserves the space and fills it in place. -->
+        <div class="quota" aria-hidden="true">
+          {#each ['Session', 'Weekly'] as k (k)}
+            <div class="q skel">
+              <span class="q-k">{k}</span>
+              <div class="q-track"></div>
+              <span class="q-pct mono">—</span>
+              <span class="q-when mono"></span>
+            </div>
+          {/each}
+        </div>
+      {:else if accounts.length > 1}
+        <!-- Several accounts: one line each, the binding window only. Six bars that
+             mostly say "fine" is not a dashboard, and on a phone it is a wall. -->
+        <div class="qroster">
+          <h2 class="blabel qhead">Capacity</h2>
+          {#each accounts as cli (cli)}
+            {@const u = uses[cli] ?? null}
+            {@const b = binding(u)}
+            {@const err = usageErrs[cli] ?? ''}
+            {@const open = openAcct === cli}
+            {@const left = b ? Math.max(0, 100 - b.pct) : null}
+            {@const spent = left !== null && left < 2}
+            <!-- The bar is what you have LEFT, not what you spent: longer is better,
+                 which is the only reading that needs no explaining. A spent account
+                 cannot be worked on, so it drops its bar and says when it is back. -->
+            <button
+              class="qrow"
+              class:spent
+              class:open
+              onclick={() => (openAcct = open ? '' : cli)}
+              aria-expanded={open}
+              title="{cli} — tap for both windows"
+            >
+              {#if !spent && left !== null}
+                <i class="qfill" style="width:{Math.max(2, left)}%"></i>
+              {/if}
+              <span class="qname">{cli || 'Claude'}</span>
+              {#if spent}
+                <span class="qwhen mono">spent{b?.when ? ` · back in ${b.when.replace(/^resets in /, '')}` : ''}</span>
+                <span class="qpct mono">0<small>%</small></span>
+              {:else if b && left !== null}
+                <span class="qwhen mono">{b.window}{b.when ? ` · ${b.when}` : ''}</span>
+                <span class="qpct mono">{Math.round(left)}<small>%</small></span>
+              {:else}
+                <span class="qwhen mono">{err ? 'no quota' : '—'}</span>
+                <span class="qpct mono">—</span>
+              {/if}
+            </button>
+            {#if open && u}
+              <!-- Both windows, on demand. -->
+              <div class="qdetail">
+                {#each [{ k: 'Session', w: u.session }, { k: 'Weekly', w: u.weekly }] as { k, w } (k)}
+                  {#if w}
+                    <div class="q">
+                      <span class="q-k">{k}</span>
+                      <div class="q-track">
+                        <i class:hot={w.percent >= 80} style="width:{Math.max(1.5, Math.min(100, w.percent))}%"></i>
+                      </div>
+                      <span class="q-pct mono" class:hot={w.percent >= 80}>{Math.round(w.percent)}<small>%</small></span>
+                      <span class="q-when mono">{resetsIn(w)}</span>
+                    </div>
+                  {/if}
+                {/each}
+              </div>
+            {/if}
+          {/each}
+        </div>
+      {:else}
+        <!-- One account: two rows was never the clutter, and it says more. -->
         {#each accounts as cli (cli)}
           {@const u = uses[cli] ?? null}
-          {@const b = binding(u)}
+          {@const session = u?.session ?? null}
+          {@const weekly = u?.weekly ?? null}
           {@const err = usageErrs[cli] ?? ''}
-          {@const open = openAcct === cli}
-          <button
-            class="qrow"
-            class:hot={(b?.pct ?? 0) >= 80}
-            class:open
-            onclick={() => (openAcct = open ? '' : cli)}
-            aria-expanded={open}
-            title="{cli} — tap for both windows"
-          >
-            <i class="qfill" style="width:{Math.min(100, b?.pct ?? 0)}%"></i>
-            <span class="qname">{cli}</span>
-            {#if b}
-              <span class="qwhen mono">{b.window}{b.when ? ` · ${b.when}` : ''}</span>
-              <span class="qpct mono">{Math.round(b.pct)}<small>%</small></span>
-            {:else}
-              <span class="qwhen mono">{err ? 'no quota' : '—'}</span>
-              <span class="qpct mono">—</span>
-            {/if}
-          </button>
-          {#if open && u}
-            <!-- Both windows, on demand. -->
-            <div class="qdetail">
-              {#each [{ k: 'Session', w: u.session }, { k: 'Weekly', w: u.weekly }] as { k, w } (k)}
-                {#if w}
-                  <div class="q">
-                    <span class="q-k">{k}</span>
-                    <div class="q-track">
-                      <i class:hot={w.percent >= 80} style="width:{Math.max(1.5, Math.min(100, w.percent))}%"></i>
-                    </div>
-                    <span class="q-pct mono" class:hot={w.percent >= 80}>{Math.round(w.percent)}<small>%</small></span>
-                    <span class="q-when mono">{resetsIn(w)}</span>
-                  </div>
-                {/if}
+          <div class="quota">
+            {#if err && !session && !weekly}
+              {#each ['Session', 'Weekly'] as k (k)}
+                <div class="q skel">
+                  <span class="q-k">{k}</span>
+                  <div class="q-track"></div>
+                  <span class="q-pct mono">—</span>
+                  <span class="q-when mono">{err === 'unavailable' ? 'no quota reported' : 'unavailable'}</span>
+                </div>
               {/each}
-            </div>
-          {/if}
+            {:else}
+              {#if session}
+                <div class="q">
+                  <span class="q-k">Session</span>
+                  <div class="q-track">
+                    <i class:hot={session.percent >= 80} style="width:{Math.max(1.5, Math.min(100, session.percent))}%"></i>
+                  </div>
+                  <span class="q-pct mono" class:hot={session.percent >= 80}
+                    >{Math.round(session.percent)}<small>%</small></span
+                  >
+                  <span class="q-when mono">{resetsIn(session)}</span>
+                </div>
+              {/if}
+              {#if weekly}
+                <div class="q">
+                  <span class="q-k">Weekly</span>
+                  <div class="q-track">
+                    <i class:hot={weekly.percent >= 80} style="width:{Math.max(1.5, Math.min(100, weekly.percent))}%"></i>
+                  </div>
+                  <span class="q-pct mono" class:hot={weekly.percent >= 80}
+                    >{Math.round(weekly.percent)}<small>%</small></span
+                  >
+                  <span class="q-when mono">{resetsIn(weekly)}</span>
+                </div>
+              {/if}
+            {/if}
+          </div>
         {/each}
-      </div>
-    {:else}
-      <!-- One account: two rows was never the clutter, and it says more. -->
-      {#each accounts as cli (cli)}
-        {@const u = uses[cli] ?? null}
-        {@const session = u?.session ?? null}
-        {@const weekly = u?.weekly ?? null}
-        {@const err = usageErrs[cli] ?? ''}
-        <div class="quota">
-          {#if err && !session && !weekly}
-            {#each ['Session', 'Weekly'] as k (k)}
-              <div class="q skel">
-                <span class="q-k">{k}</span>
-                <div class="q-track"></div>
-                <span class="q-pct mono">—</span>
-                <span class="q-when mono">{err === 'unavailable' ? 'no quota reported' : 'unavailable'}</span>
-              </div>
-            {/each}
-          {:else}
-            {#if session}
-              <div class="q">
-                <span class="q-k">Session</span>
-                <div class="q-track">
-                  <i class:hot={session.percent >= 80} style="width:{Math.max(1.5, Math.min(100, session.percent))}%"></i>
-                </div>
-                <span class="q-pct mono" class:hot={session.percent >= 80}
-                  >{Math.round(session.percent)}<small>%</small></span
-                >
-                <span class="q-when mono">{resetsIn(session)}</span>
-              </div>
-            {/if}
-            {#if weekly}
-              <div class="q">
-                <span class="q-k">Weekly</span>
-                <div class="q-track">
-                  <i class:hot={weekly.percent >= 80} style="width:{Math.max(1.5, Math.min(100, weekly.percent))}%"></i>
-                </div>
-                <span class="q-pct mono" class:hot={weekly.percent >= 80}
-                  >{Math.round(weekly.percent)}<small>%</small></span
-                >
-                <span class="q-when mono">{resetsIn(weekly)}</span>
-              </div>
-            {/if}
-          {/if}
+      {/if}
+
+      <!-- The machine, by exception. A vital that is fine is not news, so it stays
+           one quiet line; the guard tripping is news, so it says so in words. The
+           silence is the signal. -->
+      {#if st.thermal_trip}
+        <p class="alarm">Ran too hot — the guard stopped every session here.</p>
+      {/if}
+      <div class="status">
+        <p class="state" class:live={selSessions > 0}>
+          <span class="sdot" class:live={selSessions > 0} aria-hidden="true"></span>
+          {running}
+          <!-- A count of what you could reopen is navigation, not status, so it
+               rides along quietly rather than sharing the sentence's weight. -->
+          {#if selSessions === 0 && selResumable}<span class="sresume">· {selResumable} to resume</span>{/if}
+        </p>
+        <div class="vitals mono">
+        {#if st.cpu_temp_c > 0}
+          <span class:warn={tempHot}>{Math.round(st.cpu_temp_c)}°C</span>
+        {:else if st.thermal_pressure}
+          <span class:warn={tempHot}>{capitalize(st.thermal_pressure)}</span>
+        {/if}
+        {#if st.mem_total}
+          <span class:warn={memHigh} title="{gb(st.mem_total - st.mem_available)} of {gb(st.mem_total)}"
+            >{memUsedPct}% memory</span
+          >
+        {/if}
+        {#if st.disk_total}
+          <span class:warn={diskLow} title="of {gbDisk(st.disk_total)}">{gbDisk(st.disk_free)} free</span>
+        {/if}
+          {#if st.uptime_sec}<span>up {dur(st.uptime_sec)}</span>{/if}
         </div>
-      {/each}
-    {/if}
-
-    <!-- The machine, by exception. A vital that is fine is not news, so it stays
-         one quiet line; the guard tripping is news, so it says so in words. The
-         silence is the signal. -->
-    {#if st.thermal_trip}
-      <p class="alarm">Ran too hot — the guard stopped every session here.</p>
-    {/if}
-    <div class="status">
-      <p class="state" class:live={selSessions > 0}>
-        <span class="sdot" class:live={selSessions > 0} aria-hidden="true"></span>
-        {running}
-        <!-- A count of what you could reopen is navigation, not status, so it
-             rides along quietly rather than sharing the sentence's weight. -->
-        {#if selSessions === 0 && selResumable}<span class="sresume">· {selResumable} to resume</span>{/if}
-      </p>
-      <div class="vitals mono">
-      {#if st.cpu_temp_c > 0}
-        <span class:warn={tempHot}>{Math.round(st.cpu_temp_c)}°C</span>
-      {:else if st.thermal_pressure}
-        <span class:warn={tempHot}>{capitalize(st.thermal_pressure)}</span>
-      {/if}
-      {#if st.mem_total}
-        <span class:warn={memHigh} title="{gb(st.mem_total - st.mem_available)} of {gb(st.mem_total)}"
-          >{memUsedPct}% memory</span
-        >
-      {/if}
-      {#if st.disk_total}
-        <span class:warn={diskLow} title="of {gbDisk(st.disk_total)}">{gbDisk(st.disk_free)} free</span>
-      {/if}
-        {#if st.uptime_sec}<span>up {dur(st.uptime_sec)}</span>{/if}
       </div>
-    </div>
-  {/if}
+    {/if}
 
-  <div class="start">
-    <span class="s-label">{multi && sel ? `Start on ${sel.label}` : 'Start in'}</span>
-    <div class="chips">
-      {#each selProjects as p (p.cwd)}
-        <button class="chip" title={p.cwd} onclick={() => sel && app.quickStart(sel.id, p.cwd)}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
-          {p.name}
-        </button>
-      {/each}
-      <button class="chip browse" onclick={() => app.newSession()}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
-        Browse…
-      </button>
+      <Schedules />
     </div>
   </div>
-
-  <Schedules />
 </div>
 
 <style>
@@ -464,9 +556,9 @@
   }
   /* Full (desktop pane) variant centers a wider column */
   .home:not(.compact) {
-    max-width: 720px;
+    max-width: 1040px;
     margin: 0 auto;
-    padding: 9vh 32px 32px;
+    padding: 7vh 32px 40px;
     width: 100%;
   }
   .hello h1 {
@@ -896,5 +988,187 @@
   .chip.browse {
     color: var(--text-3);
     border-style: dashed;
+  }
+
+  /* --- the adaptive hero -------------------------------------------------- */
+  /* The dot carries the app's whole status language in one mark: amber while a
+     session is stuck on you, green while work is happening, grey when idle. */
+  .lede {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .ltop {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .ldot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-4);
+  }
+  .lede.working .ldot {
+    background: var(--live);
+  }
+  .lede.needs .ldot {
+    background: var(--busy);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    50% {
+      opacity: 0.3;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .lede.needs .ldot {
+      animation: none;
+    }
+  }
+  .lede h1 {
+    margin: 0;
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .compact .lede h1 {
+    font-size: 21px;
+  }
+  .lsub {
+    margin: 0;
+    font-size: 14px;
+    color: var(--text-2);
+  }
+  /* The one call to action on the page, so the only thing allowed to read as a
+     link rather than a label. */
+  .lact {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .lact:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .larr {
+    color: var(--text-3);
+  }
+  .lmeta {
+    margin: 2px 0 0;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+  .lmeta .dim {
+    color: var(--text-4);
+  }
+
+  /* --- two columns -------------------------------------------------------- */
+  .cols {
+    display: grid;
+    gap: 24px 40px;
+    grid-template-columns: 1fr;
+  }
+  /* Split only when there is genuinely room for two readable columns. A phone
+     stacks act-then-know, the same priority the hero follows -- two columns at
+     390px is two cramped ones, not a layout. */
+  @media (min-width: 900px) {
+    .home:not(.compact) .cols {
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+      align-items: start;
+    }
+  }
+  .col {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    min-width: 0;
+  }
+  .blk {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+  .blabel {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-4);
+  }
+
+  /* --- running session rows ----------------------------------------------- */
+  .rows {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .srow {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 7px 9px;
+    border-radius: var(--r-sm);
+    text-align: left;
+    font-size: 13.5px;
+    color: var(--text-2);
+  }
+  .srow:hover {
+    background: var(--panel);
+    color: var(--text);
+  }
+  .sd {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-4);
+  }
+  .sd.live {
+    background: var(--live);
+  }
+  .stitle {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .srsp {
+    flex: 1;
+    min-width: 8px;
+  }
+  .scwd {
+    flex: none;
+    font-size: 11.5px;
+    color: var(--text-4);
+  }
+
+  /* Capacity: the fill is remaining headroom, so a long bar is good news. It stays
+     a low-contrast wash rather than a colour, because "how much is left" is a
+     quantity to read, not an alarm. */
+  .qhead {
+    margin-bottom: 1px;
+  }
+  .qrow .qfill {
+    background: rgba(255, 255, 255, 0.05);
+  }
+  /* A spent account is not an error, it is simply unavailable: no bar, dimmed, and
+     the only thing it still owes you is when it comes back. */
+  .qrow.spent {
+    background: transparent;
+  }
+  .qrow.spent .qname,
+  .qrow.spent .qpct {
+    color: var(--text-4);
+  }
+  .qrow.spent .qwhen {
+    color: var(--text-3);
   }
 </style>
