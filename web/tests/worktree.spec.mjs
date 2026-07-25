@@ -11,7 +11,7 @@
 
 import { chromium } from 'playwright'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 
 const ORIGIN = process.env.KUNAI_ORIGIN || 'http://localhost:8899'
 const REPO = process.argv[2] || '/tmp/e2erepo'
@@ -34,9 +34,30 @@ async function shot(page, name) {
   await page.screenshot({ path: `${SHOT_DIR}/${name}.png`, fullPage: false })
 }
 
+// The fixture is built here rather than by hand. Two of the checks below read
+// what the launcher suggests, and a suggestion is derived from what is in the
+// repository: a repo missing its lockfile or its .env produces a different (and
+// correct) answer, which then looks exactly like a regression.
+function buildFixture() {
+  if (REPO !== '/tmp/e2erepo') return // a repo the caller chose; leave it alone
+  rmSync(REPO, { recursive: true, force: true })
+  mkdirSync(REPO, { recursive: true })
+  git(['init', '-q', '-b', 'main'])
+  git(['config', 'user.email', 'test@localhost'])
+  git(['config', 'user.name', 'test'])
+  writeFileSync(`${REPO}/README.md`, 'hello\n')
+  writeFileSync(`${REPO}/package.json`, '{"name":"fixture","version":"1.0.0"}\n')
+  writeFileSync(`${REPO}/package-lock.json`, '{"lockfileVersion":3}\n') // -> npm ci
+  writeFileSync(`${REPO}/.gitignore`, '.env\n')
+  writeFileSync(`${REPO}/.env`, 'SECRET=1\n') // ignored, so it is carried by a symlink
+  git(['add', '-A'])
+  git(['commit', '-q', '-m', 'fixture'])
+}
+
 async function main() {
   rmSync(SHOT_DIR, { recursive: true, force: true })
   mkdirSync(SHOT_DIR, { recursive: true })
+  buildFixture()
 
   // Seed a session in the repository under test so the launcher lists it. Done
   // here rather than by hand so the run is repeatable from a clean data dir.

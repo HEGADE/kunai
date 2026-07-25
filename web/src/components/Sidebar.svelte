@@ -202,13 +202,17 @@
            or a name is what the launcher's picker is for. -->
       {#if !notRepo[target.cwd]}
         <button
-          class="gadd"
+          class="gadd wt"
           disabled={starting[group.key]}
           onclick={() => startInGroup(group.key, target.machineId, target.cwd, justAWorktree())}
           title="New session in a worktree of {target.cwd}"
           aria-label="New worktree session in {group.label}"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v12M6 21a2 2 0 100-4 2 2 0 000 4zM6 7a2 2 0 100-4 2 2 0 000 4zM18 11a2 2 0 100-4 2 2 0 000 4zM18 9v2a4 4 0 01-4 4H6" /></svg>
+          <!-- A tooltip is a cursor affordance, so on a touch screen this button
+               would be an unexplained icon. The heading row has the space going
+               spare, so the word goes there instead. -->
+          <span class="wtlbl mono">worktree</span>
         </button>
       {/if}
       <button
@@ -874,6 +878,36 @@
     background: var(--panel);
     color: var(--text-2);
     transition: color 0.12s, background 0.12s;
+  }
+  /* Only the first button pushes. Left on every one, each claims a share of the
+     free space and they spread out across the row instead of sitting together
+     at its end: with two buttons the first landed in the middle of the heading. */
+  .gadd + .gadd {
+    margin-left: 0;
+  }
+  /* A finger is not a cursor. These are the smallest targets in the sidebar and
+     there are now two of them side by side, so a touch screen gets room to hit
+     the one it meant. */
+  /* The label is hidden wherever a tooltip works, so the desktop heading stays
+     as spare as it was. */
+  .wtlbl {
+    display: none;
+  }
+  @media (pointer: coarse) {
+    .gadd {
+      width: 34px;
+      height: 34px;
+    }
+    .gadd.wt {
+      width: auto;
+      gap: 6px;
+      padding: 0 10px;
+    }
+    .wtlbl {
+      display: inline;
+      font-size: 10.5px;
+      color: var(--text-4);
+    }
   }
   .gadd:hover,
   .gadd:focus-visible {
