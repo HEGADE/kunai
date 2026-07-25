@@ -182,7 +182,11 @@ func (s *stream) push(ctx context.Context, final bool) error {
 	if text == "" {
 		return nil
 	}
-	if unchanged && !(final && drafting && id == 0) {
+	// A final push whose text does not fit one message still has work to do even
+	// when nothing has changed: the message already in the chat holds only what
+	// fitted, and the rest of the reply has never been delivered.
+	oversized := final && runeLen(text) > s.richLimit()
+	if unchanged && !oversized && !(final && drafting && id == 0) {
 		return nil
 	}
 
@@ -199,7 +203,7 @@ func (s *stream) push(ctx context.Context, final bool) error {
 	// Post the first fragment, or the finished reply. Everything shown as a
 	// draft was ephemeral, so this is what actually stays in the chat.
 	if id == 0 {
-		newID, err := s.post(ctx, text)
+		newID, err := s.post(ctx, text, final)
 		if err != nil {
 			return err
 		}
@@ -211,11 +215,29 @@ func (s *stream) push(ctx context.Context, final bool) error {
 	}
 	// An edit only happens on the fallback path, where the message was posted
 	// as plain text in the first place.
-	if err := s.api.Edit(ctx, s.chatID, id, text, nil); err != nil {
+	//
+	// A finished reply that has outgrown one message cannot be delivered by
+	// editing, so the existing message takes the first piece and the rest follow
+	// as new ones. Without this the split could never happen here at all: the
+	// first fragment posts, every later push edits, and the reply that arrives is
+	// whatever fits in one message.
+	pieces := []string{text}
+	if final {
+		pieces = splitRich(text, s.richLimit())
+	}
+	if err := s.api.Edit(ctx, s.chatID, id, pieces[0], nil); err != nil {
 		return err
 	}
+	lastID, lastText := id, pieces[0]
+	for _, piece := range pieces[1:] {
+		newID, err := s.postOne(ctx, piece)
+		if err != nil {
+			return err
+		}
+		lastID, lastText = newID, piece
+	}
 	s.mu.Lock()
-	s.sentText, s.lastPush = text, s.clock()
+	s.messageID, s.sentText, s.lastPush = lastID, lastText, s.clock()
 	s.mu.Unlock()
 	return nil
 }
@@ -271,7 +293,43 @@ func (s *stream) giveUp(flag *bool, what string, err error) {
 // turn, so a rejected rich message would lose the reply outright. It falls back
 // to plain text within the same call, which costs a wasted request once and
 // never a lost answer.
-func (s *stream) post(ctx context.Context, text string) (int64, error) {
+//
+// A reply too long for one message is split rather than cut, so its conclusion
+// arrives instead of a "truncated" notice. Only the finished reply is split: an
+// unfinished one is still growing and later pushes edit it in place, which
+// cannot span messages. The id returned is the last piece's, so that edit
+// extends the end of the reply rather than the middle of it.
+func (s *stream) post(ctx context.Context, text string, final bool) (int64, error) {
+	if !final {
+		return s.postOne(ctx, text)
+	}
+	pieces := splitRich(text, s.richLimit())
+	var last int64
+	for _, piece := range pieces {
+		id, err := s.postOne(ctx, piece)
+		if err != nil {
+			// Anything already sent stays sent; losing the rest beats losing all
+			// of it, and the error still reaches the caller.
+			return last, err
+		}
+		last = id
+	}
+	return last, nil
+}
+
+// richLimit is the per-message ceiling to split against: the rich limit while
+// rich messages still work here, the plain one once they do not.
+func (s *stream) richLimit() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.rich {
+		return maxRichRunes
+	}
+	return maxMessageRunes
+}
+
+// postOne sends a single message, degrading from rich to plain if it must.
+func (s *stream) postOne(ctx context.Context, text string) (int64, error) {
 	s.mu.Lock()
 	rich := s.rich
 	s.mu.Unlock()

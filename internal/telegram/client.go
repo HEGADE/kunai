@@ -276,7 +276,7 @@ func (c *Client) AnswerCallback(ctx context.Context, id, text string) error {
 func (c *Client) SendRich(ctx context.Context, chatID int64, markdown string, opts *SendOptions) (int64, error) {
 	params := map[string]any{
 		"chat_id":      chatID,
-		"rich_message": InputRichMessage{Markdown: clampRich(markdown)},
+		"rich_message": InputRichMessage{Markdown: clampRich(safeLinks(markdown))},
 	}
 	if opts != nil && opts.Keyboard != nil {
 		params["reply_markup"] = opts.Keyboard
@@ -294,7 +294,7 @@ func (c *Client) DraftRich(ctx context.Context, chatID, draftID int64, markdown 
 	return c.call(ctx, "sendRichMessageDraft", map[string]any{
 		"chat_id":      chatID,
 		"draft_id":     draftID,
-		"rich_message": InputRichMessage{Markdown: clampRich(markdown)},
+		"rich_message": InputRichMessage{Markdown: clampRich(safeLinks(markdown))},
 	}, nil)
 }
 
