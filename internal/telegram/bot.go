@@ -157,6 +157,13 @@ func displayName(u *User) string {
 }
 
 func (b *Bot) handleMessage(ctx context.Context, m *Message) {
+	// A message carrying a file has no Text -- what the sender typed is the Caption
+	// -- so this has to be checked before the command parse, which would otherwise
+	// read a screenshot as an empty prompt and silently drop it.
+	if files := inboundFiles(m); len(files) > 0 {
+		b.promptWithFiles(ctx, m.Chat.ID, strings.TrimSpace(m.Caption), files)
+		return
+	}
 	cmd := ParseCommand(m.Text)
 	if cmd.IsPrompt() {
 		b.prompt(ctx, m.Chat.ID, cmd.Arg)
@@ -353,6 +360,62 @@ func (b *Bot) endSession(ctx context.Context, chatID int64) {
 	// chat offer the session back instead of pretending it never existed.
 	out := resumeOffer("Closed. The conversation is kept, so you can pick it up later.", id)
 	b.sayWith(ctx, chatID, out.Text, out.Keyboard)
+}
+
+// fileRef is one thing to fetch out of a chat message.
+type fileRef struct {
+	id       string
+	name     string
+	mimeType string
+}
+
+// inboundFiles names the files worth pulling from a message. A photo arrives in
+// several sizes ascending, so the last is the largest, and that is the one worth
+// showing a model. A document is taken as sent, including an image sent "as a file"
+// -- which Telegram does not recompress, so it keeps detail a photo would lose.
+func inboundFiles(m *Message) []fileRef {
+	var out []fileRef
+	if n := len(m.Photo); n > 0 {
+		big := m.Photo[n-1]
+		out = append(out, fileRef{id: big.FileID, name: "photo.jpg", mimeType: "image/jpeg"})
+	}
+	if d := m.Document; d != nil {
+		name := d.FileName
+		if name == "" {
+			name = "file"
+		}
+		out = append(out, fileRef{id: d.FileID, name: name, mimeType: d.MimeType})
+	}
+	return out
+}
+
+// promptWithFiles downloads what the chat sent and hands it to the session. A
+// failure is reported into the chat rather than swallowed: someone who just sent a
+// screenshot is owed an answer either way, and silence was the old behaviour.
+func (b *Bot) promptWithFiles(ctx context.Context, chatID int64, caption string, refs []fileRef) {
+	api, _ := b.client()
+	if api == nil {
+		return // no token configured; nothing to fetch with
+	}
+	files := make([]InboundFile, 0, len(refs))
+	for _, r := range refs {
+		f, err := api.GetFile(ctx, r.id)
+		if err != nil {
+			b.say(ctx, chatID, "Could not fetch that file: "+err.Error())
+			return
+		}
+		data, err := api.DownloadFile(ctx, f.FilePath)
+		if err != nil {
+			b.say(ctx, chatID, "Could not download that file: "+err.Error())
+			return
+		}
+		files = append(files, InboundFile{Name: r.name, MediaType: r.mimeType, Data: data})
+	}
+	b.withSession(ctx, chatID, func(s *session.Session) {
+		if err := b.mgr.SendFiles(s, caption, files); err != nil {
+			b.say(ctx, chatID, "Could not send it: "+err.Error())
+		}
+	})
 }
 
 func (b *Bot) prompt(ctx context.Context, chatID int64, text string) {

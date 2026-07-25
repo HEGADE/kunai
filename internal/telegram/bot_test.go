@@ -89,6 +89,18 @@ type fakeSessions struct {
 	resumed []string
 	closed  []string
 	past    []Past
+	// What SendFiles was handed, so a test can assert the caption and the bytes
+	// that came out of the chat.
+	sentText  string
+	sentFiles []InboundFile
+}
+
+func (f *fakeSessions) SendFiles(_ *session.Session, text string, files []InboundFile) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sentText = text
+	f.sentFiles = files
+	return nil
 }
 
 func (f *fakeSessions) Start(_ context.Context, cwd string) (*session.Session, error) {

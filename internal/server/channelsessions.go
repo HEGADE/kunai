@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 
+	"fmt"
 	"github.com/hegade/kunai/internal/session"
 	"github.com/hegade/kunai/internal/telegram"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 // The one place a chat channel is allowed to create a session.
@@ -76,6 +80,47 @@ func (c channelSessions) Recent(limit int) []telegram.Past {
 	}
 	return out
 }
+
+// SendFiles stores files a chat sent in and delivers them with the prompt. It goes
+// through the SAME uploads dir and the same buildContent as an upload from the app,
+// so an image arrives inline and any other file is copied into the project for the
+// agent to Read -- a channel gets the app's behaviour rather than its own dialect.
+// A bare file with no caption is a clear request on its own, so it supplies the
+// words instead of sending an empty prompt (which the CLI rejects, and which used
+// to strand a turn on "Working...").
+func (c channelSessions) SendFiles(s *session.Session, text string, files []telegram.InboundFile) error {
+	atts, prompt := c.stageFiles(text, files)
+	if len(atts) == 0 && len(files) > 0 {
+		return fmt.Errorf("could not store the file(s)")
+	}
+	return s.Prompt(prompt, c.srv.buildContent(s.Cwd, prompt, atts), atts)
+}
+
+// stageFiles writes inbound bytes into the uploads dir and returns the attachments
+// plus the prompt to send. Split out from SendFiles so the storage rules are
+// testable without a live session: which dir, what a missing media type defaults
+// to, and what a caption-less file says.
+func (c channelSessions) stageFiles(text string, files []telegram.InboundFile) ([]session.Attachment, string) {
+	atts := make([]session.Attachment, 0, len(files))
+	for _, f := range files {
+		id := hexID()
+		if err := os.WriteFile(filepath.Join(c.srv.uploadsDir, id), f.Data, 0o600); err != nil {
+			continue // one unreadable file must not lose the others
+		}
+		media := f.MediaType
+		if media == "" {
+			media = "application/octet-stream"
+		}
+		atts = append(atts, session.Attachment{ID: id, Name: f.Name, MediaType: media})
+	}
+	if strings.TrimSpace(text) == "" {
+		text = channelFileOnlyPrompt
+	}
+	return atts, text
+}
+
+// channelFileOnlyPrompt is what a file with no caption means.
+const channelFileOnlyPrompt = "Take a look at the attached file(s)."
 
 func (c channelSessions) Get(id string) (*session.Session, bool) { return c.srv.mgr.Get(id) }
 func (c channelSessions) List() []session.Meta                   { return c.srv.mgr.List() }

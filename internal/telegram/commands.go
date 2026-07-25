@@ -83,7 +83,8 @@ func ParseCallback(data string) (action, id string, ok bool) {
 // drifting in a handler somewhere.
 const HelpText = `kunai
 
-Send any message to prompt the current session.
+Send any message to prompt the current session. Send a photo or a file and it
+goes to the session too, with your caption as the prompt.
 
 /new <path>    start a session in a directory
 /sessions      list running sessions

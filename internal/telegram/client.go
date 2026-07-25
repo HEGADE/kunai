@@ -307,3 +307,53 @@ func clampText(s string) string {
 	keep := maxMessageRunes - len([]rune(notice))
 	return strings.TrimRight(string(r[:keep]), " \n") + notice
 }
+
+// maxInboundFile caps what the bot will pull out of a chat. Telegram's own bot-API
+// download limit is 20MB; this sits under it so a caption-plus-photo turn can never
+// balloon the request we hand to the model, and a hostile-sized file is refused
+// before it is read rather than after.
+const maxInboundFile = 12 << 20 // 12 MiB
+
+// GetFile resolves a file_id to a downloadable path. Telegram deliberately makes
+// this two steps: the path is short-lived, so it cannot be cached.
+func (c *Client) GetFile(ctx context.Context, fileID string) (File, error) {
+	var out File
+	err := c.call(ctx, "getFile", map[string]any{"file_id": fileID}, &out)
+	if err != nil {
+		return File{}, err
+	}
+	if out.FilePath == "" {
+		return File{}, fmt.Errorf("telegram: getFile returned no path for %s", fileID)
+	}
+	return out, nil
+}
+
+// DownloadFile fetches a resolved file's bytes. The token is in the URL here just
+// as it is for every other call, so a transport error is redacted the same way
+// before it can reach a log.
+func (c *Client) DownloadFile(ctx context.Context, filePath string) ([]byte, error) {
+	url := fmt.Sprintf("%s/file/bot%s/%s", apiBase, c.token, filePath)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		c.brokenRoute()
+		return nil, redact(err, c.token)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("telegram: download %d", resp.StatusCode)
+	}
+	// LimitReader plus one extra byte, so an oversize file is detected rather than
+	// silently truncated into a corrupt image.
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxInboundFile+1))
+	if err != nil {
+		return nil, redact(err, c.token)
+	}
+	if len(data) > maxInboundFile {
+		return nil, fmt.Errorf("telegram: file is larger than %d MiB", maxInboundFile>>20)
+	}
+	return data, nil
+}

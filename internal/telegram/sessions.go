@@ -21,6 +21,16 @@ import (
 // rediscovering how a session is made.
 
 // Sessions is the channel-facing view of kunai's sessions.
+// InboundFile is a file a chat sent in. The channel carries the bytes and what
+// they claim to be; it deliberately does not know where uploads are stored or what
+// shape the model expects them in, because that is the session layer's business and
+// the next channel should not have to rediscover either.
+type InboundFile struct {
+	Name      string
+	MediaType string
+	Data      []byte
+}
+
 type Sessions interface {
 	// Start opens a new session in a directory.
 	Start(ctx context.Context, cwd string) (*session.Session, error)
@@ -33,6 +43,11 @@ type Sessions interface {
 	Get(id string) (*session.Session, bool)
 	// List reports the live sessions.
 	List() []session.Meta
+	// SendFiles delivers a prompt carrying files received from a chat, storing them
+	// exactly as an upload from the app is stored and building the content the CLI
+	// expects. text may be empty: a bare screenshot is a perfectly clear request,
+	// and the adapter supplies the words.
+	SendFiles(s *session.Session, text string, files []InboundFile) error
 	// Close ends a live session. Its transcript survives, so Resume still works.
 	Close(id string)
 }

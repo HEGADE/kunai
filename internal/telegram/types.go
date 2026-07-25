@@ -36,6 +36,37 @@ type Message struct {
 	Chat      Chat   `json:"chat"`
 	From      *User  `json:"from,omitempty"`
 	Text      string `json:"text,omitempty"`
+	// A message carrying a file has no Text at all: whatever the sender typed
+	// arrives as Caption instead. Reading only Text is why sending a screenshot to
+	// the bot used to do nothing whatsoever.
+	Caption  string      `json:"caption,omitempty"`
+	Photo    []PhotoSize `json:"photo,omitempty"`
+	Document *Document   `json:"document,omitempty"`
+}
+
+// PhotoSize is one rendition of a photo. Telegram sends several, ascending by
+// size, so the last entry is the largest available.
+type PhotoSize struct {
+	FileID   string `json:"file_id"`
+	Width    int    `json:"width"`
+	Height   int    `json:"height"`
+	FileSize int64  `json:"file_size,omitempty"`
+}
+
+// Document is any non-photo file (including an image sent "as a file", which
+// Telegram does not recompress -- so a screenshot sent this way keeps its detail).
+type Document struct {
+	FileID   string `json:"file_id"`
+	FileName string `json:"file_name,omitempty"`
+	MimeType string `json:"mime_type,omitempty"`
+	FileSize int64  `json:"file_size,omitempty"`
+}
+
+// File is getFile's answer: the path to fetch the bytes from.
+type File struct {
+	FileID   string `json:"file_id"`
+	FilePath string `json:"file_path,omitempty"`
+	FileSize int64  `json:"file_size,omitempty"`
 }
 
 type Chat struct {
