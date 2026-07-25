@@ -148,7 +148,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	s.codexUC = &codexUsageCache{}
 	s.grokUC = &grokUsageCache{}
 	s.failover = newFailoverController(s)
-	s.failover.load() // re-apply the persisted opt-in on boot (default off)
+	s.failover.load()            // re-apply the persisted opt-in on boot (default off)
 	go s.discoverModelVersions() // warm the model-version cache off the request path
 	s.sched = schedule.New(filepath.Join(cfg.DataDir, "schedule.json"), s.fireJob)
 	if cfg.DataDir != "" {
