@@ -134,6 +134,13 @@
   </div>
 
   {#if value.on && isRepo}
+    <!-- Said in text rather than on hover, because this is where the choice is
+         made and a phone has no hover to explain it with. -->
+    <p class="why">
+      A separate checkout of this repository on its own branch, so another agent
+      can work here while the main checkout stays as you left it. It is git's own
+      worktree feature.
+    </p>
     <!-- Two fields and a line about setup. Anything more here is configuration
          standing between a thought and the work. -->
     <div class="fields">

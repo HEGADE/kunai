@@ -8,6 +8,7 @@
   import Wordmark from './Wordmark.svelte'
   import Home from './Home.svelte'
   import SessionMenu from './SessionMenu.svelte'
+  import Hint from './Hint.svelte'
 
   // The nightly channel gets a night-sky header, so you can tell a nightly build
   // from a stable one at a glance. This is the one place the "no gradients" rule
@@ -222,11 +223,14 @@
            (the repository's own base and its own setup command). Choosing a base
            or a name is what the launcher's picker is for. -->
       {#if isRepo[target.cwd]}
+        <Hint
+          title="Another agent, no collisions"
+          body="Starts in a separate checkout of this repository on its own branch, so an agent can work here while the main checkout stays exactly as you left it. It is git's own worktree feature, so the repository itself is untouched."
+        >
         <button
           class="gadd wt"
           disabled={starting[group.key]}
           onclick={() => startInGroup(group.key, target.machineId, target.cwd, justAWorktree())}
-          title="New session in a worktree of {target.cwd}"
           aria-label="New worktree session in {group.label}"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v12M6 21a2 2 0 100-4 2 2 0 000 4zM6 7a2 2 0 100-4 2 2 0 000 4zM18 11a2 2 0 100-4 2 2 0 000 4zM18 9v2a4 4 0 01-4 4H6" /></svg>
@@ -235,6 +239,7 @@
                spare, so the word goes there instead. -->
           <span class="wtlbl mono">worktree</span>
         </button>
+        </Hint>
       {/if}
       <button
         class="gadd"
