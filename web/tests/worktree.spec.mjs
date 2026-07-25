@@ -11,10 +11,16 @@
 
 import { chromium } from 'playwright'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 
 const ORIGIN = process.env.KUNAI_ORIGIN || 'http://localhost:8899'
 const REPO = process.argv[2] || '/tmp/e2erepo'
+// A second repository, so the sidebar has more than one group and therefore
+// renders headings. It used to get that from whatever history happened to be
+// lying around, which stopped being true once this suite started clearing up
+// after itself.
+const REPO_B = '/tmp/kunai-e2e-other'
 const SHOT_DIR = '/tmp/kunai-wt-shots'
 
 const results = []
@@ -52,6 +58,15 @@ function buildFixture() {
   writeFileSync(`${REPO}/.env`, 'SECRET=1\n') // ignored, so it is carried by a symlink
   git(['add', '-A'])
   git(['commit', '-q', '-m', 'fixture'])
+
+  rmSync(REPO_B, { recursive: true, force: true })
+  mkdirSync(REPO_B, { recursive: true })
+  git(['init', '-q', '-b', 'main'], REPO_B)
+  git(['config', 'user.email', 'test@localhost'], REPO_B)
+  git(['config', 'user.name', 'test'], REPO_B)
+  writeFileSync(`${REPO_B}/README.md`, 'second\n')
+  git(['add', '-A'], REPO_B)
+  git(['commit', '-q', '-m', 'fixture'], REPO_B)
 }
 
 async function main() {
@@ -66,6 +81,12 @@ async function main() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cwd: REPO }),
   }).then((r) => r.json())
+  // The second one only exists so the sidebar has two groups and shows headings.
+  await fetch(`${ORIGIN}/api/sessions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cwd: REPO_B }),
+  })
   check('seeded a session in the repository under test', !!seeded.id, seeded.id || JSON.stringify(seeded))
 
   const browser = await chromium.launch()
@@ -86,7 +107,7 @@ async function main() {
   // and a suggestion read off the wrong folder looks exactly like a bug.
   await home.locator('.lbar .pick').first().click()
   await home.locator('.dirpop').first().waitFor({ timeout: 5000 })
-  const repoOption = home.locator('.dirpop .dp', { hasText: REPO })
+  const repoOption = home.locator('.dirpop .dp').filter({ hasText: new RegExp(`^${REPO}$`) })
   if ((await repoOption.count()) === 0) {
     console.log(`the launcher does not know ${REPO}; start a session there first`)
     await browser.close()
@@ -288,7 +309,7 @@ async function main() {
   await home.locator('.launch').waitFor({ state: 'visible', timeout: 15000 })
   await home.locator('.lbar .pick').first().click()
   await home.locator('.dirpop').first().waitFor({ timeout: 5000 })
-  await home.locator('.dirpop .dp', { hasText: REPO }).first().click()
+  await home.locator('.dirpop .dp').filter({ hasText: new RegExp(`^${REPO}$`) }).first().click()
 
   await home.locator('.lbar .wtpick').first().click()
   await home.locator('.wtpop .mode', { hasText: 'New worktree' }).click()
@@ -320,15 +341,26 @@ async function main() {
 }
 
 // cleanup closes every session in a worktree and removes the worktrees kunai
-// made, through the same API a user would.
+// made, through the same API a user would, then removes the transcripts those
+// sessions left behind.
+//
+// The transcripts matter. A session's cwd decides where the CLI writes its
+// transcript, and the throwaway data dir has no account config, so these land in
+// the real ~/.claude alongside actual work and show up in Recent. Twenty-three
+// rows of "say hello and stop" in someone's session list is this test's mess, and
+// it is this test's job to clear it.
 async function cleanup() {
+  const paths = new Set([REPO, REPO_B])
   try {
+    const worktrees = await fetch(`${ORIGIN}/api/worktrees`).then((r) => r.json())
+    for (const w of worktrees) paths.add(w.path)
+
     const sessions = await fetch(`${ORIGIN}/api/sessions`).then((r) => r.json())
     for (const m of sessions) {
+      paths.add(m.cwd)
       await fetch(`${ORIGIN}/api/sessions/${m.id}`, { method: 'DELETE' })
     }
     await new Promise((r) => setTimeout(r, 800))
-    const worktrees = await fetch(`${ORIGIN}/api/worktrees`).then((r) => r.json())
     for (const w of worktrees) {
       const q = new URLSearchParams({ path: w.path, force: '1' })
       await fetch(`${ORIGIN}/api/worktrees?${q}`, { method: 'DELETE' })
@@ -337,6 +369,24 @@ async function cleanup() {
   } catch (e) {
     console.log('cleanup failed:', e.message)
   }
+  removeTranscripts(paths)
+}
+
+// removeTranscripts deletes the CLI transcript folders belonging to directories
+// this run used. Scoped by exact path, and refuses anything outside /tmp, so it
+// can only ever remove what a throwaway directory produced.
+function removeTranscripts(paths) {
+  const root = `${homedir()}/.claude/projects`
+  let gone = 0
+  for (const p of paths) {
+    if (!p || !p.startsWith('/tmp/')) continue // never a real project
+    const folder = `${root}/${p.replace(/\//g, '-')}`
+    if (existsSync(folder)) {
+      rmSync(folder, { recursive: true, force: true })
+      gone++
+    }
+  }
+  if (gone) console.log(`removed ${gone} transcript folder(s) this run created`)
 }
 
 function report() {
