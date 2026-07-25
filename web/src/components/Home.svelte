@@ -3,7 +3,9 @@
   import { usage } from '../lib/api'
   import type { Usage, UsageWindow } from '../lib/types'
   import { updateAvailable } from '../lib/update'
+  import { noWorktree, type WorktreeChoice } from '../lib/worktrees'
   import Schedules from './Schedules.svelte'
+  import WorktreeChoicePicker from './WorktreeChoice.svelte'
 
   let { compact = false }: { compact?: boolean } = $props()
 
@@ -230,15 +232,20 @@
   // the machine name (that's stated once in the section header).
   const selProjects = $derived.by(() => {
     if (!sel) return []
-    const active = new Set(app.sessions.filter((s) => s.machineId === sel.id).map((s) => s.cwd))
     const seen = new Set<string>()
     const out: { cwd: string; name: string }[] = []
-    for (const h of app.history) {
-      if (h.machineId !== sel.id || active.has(h.cwd) || seen.has(h.cwd)) continue
-      seen.add(h.cwd)
-      out.push({ cwd: h.cwd, name: h.cwd.replace(/\/+$/, '').split('/').slice(-1)[0] || h.cwd })
-      if (out.length >= 8) break
+    const add = (cwd: string) => {
+      if (seen.has(cwd) || out.length >= 8) return
+      seen.add(cwd)
+      out.push({ cwd, name: cwd.replace(/\/+$/, '').split('/').slice(-1)[0] || cwd })
     }
+    // Folders with a session already open are listed rather than hidden. They
+    // used to be filtered out to avoid offering what was already on screen, but
+    // a second agent on a repository you are already working in is the case
+    // worktrees exist for, and it was unreachable from here: the folder
+    // disappeared from the launcher exactly when you had it open.
+    for (const s of app.sessions) if (s.machineId === sel.id) add(s.cwd)
+    for (const h of app.history) if (h.machineId === sel.id) add(h.cwd)
     return out
   })
 
@@ -260,13 +267,31 @@
   // Where the work runs: whatever you last picked, else the most recent project.
   const targetDir = $derived(dir || selProjects[0]?.cwd || '')
   const targetName = $derived(targetDir.replace(/\/+$/, '').split('/').slice(-1)[0] || targetDir)
+
+  // Whether this work gets a checkout of its own. Off by default, and reset when
+  // the folder changes: a base branch and a name chosen for one repository mean
+  // nothing in the next.
+  let wt = $state<WorktreeChoice>(noWorktree())
+  let wtOpen = $state(false)
+  let lastDir = ''
+  $effect(() => {
+    if (targetDir !== lastDir) {
+      lastDir = targetDir
+      wt = noWorktree()
+    }
+  })
+  const wtLabel = $derived(
+    wt.on ? (wt.base ? `worktree of ${wt.base}` : 'new worktree') : 'this checkout',
+  )
+
   async function launch() {
     const text = brief.trim()
     if (!text || !sel || !targetDir || launching) return
     launching = true
     try {
-      await app.startWork(sel.id, targetDir, text, acct)
+      await app.startWork(sel.id, targetDir, text, acct, wt)
       brief = ''
+      wt = noWorktree()
     } finally {
       launching = false
     }
@@ -450,6 +475,30 @@
           {/if}
         </div>
       {/if}
+      <span class="lsep" aria-hidden="true"></span>
+      <div class="dirwrap">
+        <button
+          class="pick"
+          class:on={wtOpen}
+          class:armed={wt.on}
+          onclick={() => (wtOpen = !wtOpen)}
+          title="Where this work happens"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 3v12M6 21a2 2 0 100-4 2 2 0 000 4zM6 7a2 2 0 100-4 2 2 0 000 4zM18 11a2 2 0 100-4 2 2 0 000 4zM18 9v2a4 4 0 01-4 4H6" /></svg>
+          <span class="pname">{wtLabel}</span>
+        </button>
+        {#if wtOpen}
+          <button class="scrim2" onclick={() => (wtOpen = false)} aria-label="Close"></button>
+          <div class="dirpop wtpop">
+            <WorktreeChoicePicker
+              base={app.baseForMachine(sel?.id ?? '')}
+              repo={targetDir}
+              bind:value={wt}
+              ondone={() => (wtOpen = false)}
+            />
+          </div>
+        {/if}
+      </div>
       <span class="lspacer"></span>
       <button class="go" disabled={!brief.trim() || !targetDir || launching} onclick={launch}>
         {launching ? 'Starting…' : 'Start'}
@@ -1357,6 +1406,20 @@
     white-space: nowrap;
     unicode-bidi: plaintext;
   }
+  /* The worktree popover holds a control rather than a list, so it does not
+     scroll and it sizes to its contents. */
+  .wtpop {
+    min-width: 320px;
+    padding: 12px;
+    overflow: visible;
+  }
+  /* An armed pill states the choice rather than merely looking selected: this is
+     the one pill whose value changes where the work lands. */
+  .pick.armed {
+    color: var(--text);
+    border-color: var(--border-2);
+  }
+
   .browse2 {
     flex: none;
     margin-top: 4px;

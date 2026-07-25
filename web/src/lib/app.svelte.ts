@@ -22,6 +22,7 @@ import { ChatConnection } from './chat.svelte'
 import { DEFAULT_MODEL, DEFAULT_EFFORT } from './models'
 import { learnModel, setDiscovered } from './modelVersions.svelte'
 import { fetchLatestVersion } from './update'
+import { startWorktree, type WorktreeChoice } from './worktrees'
 import type { Job, Machine, Meta, TaggedHistoryEntry, TaggedJob, TaggedMeta } from './types'
 
 // Top-level app state. One installed client can drive Claude sessions across
@@ -642,17 +643,29 @@ class AppStore {
   // folder, land in a session, type), which is two more than the thought deserves.
   // The prompt waits for the connection's backlog rather than firing blind, since a
   // send on a socket that has not opened yet is silently dropped.
-  async startWork(machineId: string, cwd: string, prompt: string, cli?: string) {
+  async startWork(
+    machineId: string,
+    cwd: string,
+    prompt: string,
+    cli?: string,
+    wt?: WorktreeChoice,
+  ) {
     const text = prompt.trim()
     if (!text) return
     try {
-      const meta = await createSession(this.baseForMachine(machineId), {
+      const base = this.baseForMachine(machineId)
+      // A worktree is made first and handed to the session as a path. It has to
+      // exist before the CLI is spawned, since the whole isolation mechanism is
+      // that the session's cwd is the worktree.
+      const worktree = wt ? await startWorktree(base, cwd, wt) : ''
+      const meta = await createSession(base, {
         cwd,
         model: DEFAULT_MODEL,
         effort: DEFAULT_EFFORT,
         // Which account or provider runs it. Omitted means the machine's default,
         // which is what a single-account machine always wants.
         cli: cli || undefined,
+        worktree: worktree || undefined,
       })
       this.open(machineId, meta.id)
       const conn = this.conns.get(tabKey(machineId, meta.id))
@@ -666,17 +679,27 @@ class AppStore {
     }
   }
 
-  async quickStart(machineId: string, cwd: string) {
+  // quickStart is the sidebar's one-tap "work here now": no prompt, no questions.
+  // wt is optional so the same path serves the branch button beside it, which is
+  // the same one tap with a different destination.
+  async quickStart(machineId: string, cwd: string, wt?: WorktreeChoice) {
     try {
-      const meta = await createSession(this.baseForMachine(machineId), {
+      const base = this.baseForMachine(machineId)
+      const worktree = wt ? await startWorktree(base, cwd, wt) : ''
+      const meta = await createSession(base, {
         cwd,
         model: DEFAULT_MODEL,
         effort: DEFAULT_EFFORT,
+        worktree: worktree || undefined,
       })
       this.open(machineId, meta.id)
       this.refresh()
     } catch (e) {
       this.listError = (e as Error).message
+      // Rethrown as well as reported, because the caller may need to act on the
+      // reason rather than only show it: the sidebar's worktree button stops
+      // offering itself for a folder that turns out not to be a repository.
+      throw e
     }
   }
 

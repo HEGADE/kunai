@@ -1,0 +1,289 @@
+// Drives the worktree UI against a real kunai and a real git repository.
+//
+// This is here rather than as a unit test because the thing worth checking is
+// the seam: that what the launcher shows matches what the server would do, and
+// that a session started from it actually lands in a separate checkout. Both
+// halves are already unit-tested on their own; only the join is not.
+//
+// Run against a dev server (never the 8443 stable service):
+//   kunai -addr 127.0.0.1:8899 -data /tmp/kunai-wt
+//   node web/tests/worktree.spec.mjs [repoPath]
+
+import { chromium } from 'playwright'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, rmSync } from 'node:fs'
+
+const ORIGIN = process.env.KUNAI_ORIGIN || 'http://localhost:8899'
+const REPO = process.argv[2] || '/tmp/e2erepo'
+const SHOT_DIR = '/tmp/kunai-wt-shots'
+
+const results = []
+function check(name, ok, detail = '') {
+  results.push({ name, ok, detail })
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
+}
+
+const git = (args, cwd = REPO) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+
+const worktreeCount = () =>
+  git(['worktree', 'list', '--porcelain'])
+    .split('\n')
+    .filter((l) => l.startsWith('worktree ')).length
+
+async function shot(page, name) {
+  await page.screenshot({ path: `${SHOT_DIR}/${name}.png`, fullPage: false })
+}
+
+async function main() {
+  rmSync(SHOT_DIR, { recursive: true, force: true })
+  mkdirSync(SHOT_DIR, { recursive: true })
+
+  // Seed a session in the repository under test so the launcher lists it. Done
+  // here rather than by hand so the run is repeatable from a clean data dir.
+  const seeded = await fetch(`${ORIGIN}/api/sessions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cwd: REPO }),
+  }).then((r) => r.json())
+  check('seeded a session in the repository under test', !!seeded.id, seeded.id || JSON.stringify(seeded))
+
+  const browser = await chromium.launch()
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  page.on('console', (m) => {
+    if (m.type() === 'error') console.log('  [console error]', m.text())
+  })
+
+  await page.goto(ORIGIN)
+  // The sidebar renders its own compact Home, so every selector below is scoped
+  // to the full one. Measuring the compact instance by accident is a mistake this
+  // repo has made before, and it fails in a way that looks like a real bug.
+  const home = page.locator('.home:not(.compact)')
+  await home.locator('.launch').waitFor({ state: 'visible', timeout: 15000 })
+
+  // Pick the test repository explicitly. The recent list is the real account's
+  // history, so whatever happens to be most recent is not the repo under test,
+  // and a suggestion read off the wrong folder looks exactly like a bug.
+  await home.locator('.lbar .pick').first().click()
+  await home.locator('.dirpop').first().waitFor({ timeout: 5000 })
+  const repoOption = home.locator('.dirpop .dp', { hasText: REPO })
+  if ((await repoOption.count()) === 0) {
+    console.log(`the launcher does not know ${REPO}; start a session there first`)
+    await browser.close()
+    return report()
+  }
+  await repoOption.first().click()
+  check('the launcher is pointed at the repository under test', true, REPO)
+
+  // --- the pill exists and is off by default ---------------------------------
+  const pill = home.locator('.lbar .pick', { hasText: 'this checkout' })
+  check('launcher shows the worktree pill, defaulting to the current checkout', await pill.count() > 0)
+  await shot(page, '01-launcher')
+
+  if ((await pill.count()) === 0) {
+    await browser.close()
+    return report()
+  }
+
+  // --- open it and read what it offers ---------------------------------------
+  await pill.first().click()
+  await home.locator('.wtpop').waitFor({ timeout: 5000 })
+  await shot(page, '02-picker-closed-state')
+
+  const modes = home.locator('.wtpop .mode')
+  const modeLabels = await modes.allInnerTexts()
+  check(
+    'the choice reads as two places, not a checkbox',
+    modeLabels.join('|').includes('Current checkout') && modeLabels.join('|').includes('New worktree'),
+    modeLabels.join(' / '),
+  )
+
+  await home.locator('.wtpop .mode', { hasText: 'New worktree' }).click()
+  await home.locator('.wtpop .fields').waitFor({ timeout: 5000 })
+  await shot(page, '03-picker-open')
+
+  const baseBtn = home.locator('.wtpop .basebtn')
+  const baseText = (await baseBtn.innerText()).trim()
+  check('a base branch is preselected, so the fast path needs no choice', baseText.length > 0, baseText)
+
+  const setupLine = home.locator('.wtpop .setupline')
+  const setupText = (await setupLine.count()) ? (await setupLine.innerText()).trim() : ''
+  check(
+    'the setup command is shown before it can run',
+    setupText.includes('npm ci') || setupText.includes('ln -sf'),
+    setupText,
+  )
+
+  // The branch preview is what makes the choice concrete rather than abstract.
+  await home.locator('.wtpop .nameinput').fill('Fix Login')
+  const preview = await home.locator('.wtpop .branchprev').innerText()
+  check('the branch name is previewed from what you typed', preview === 'kunai/fix-login', preview)
+  await shot(page, '04-picker-named')
+
+  // Enter finishes the form. Without it the scrim the popover opened sits over
+  // the Start button, so the primary action needs a stray click on empty space
+  // first: fine for picking one item from a list, wrong after filling in a form.
+  await home.locator('.wtpop .nameinput').press('Enter')
+  await home.locator('.wtpop').waitFor({ state: 'detached', timeout: 5000 })
+  check('Enter closes the picker so Start is reachable', true)
+
+  const armed = (await home.locator('.lbar .pick.armed').innerText()).trim()
+  check('the pill states the choice once armed', armed.includes('worktree of'), armed)
+
+  // --- start the work ---------------------------------------------------------
+  const before = git(['worktree', 'list', '--porcelain']).split('\n').filter((l) => l.startsWith('worktree ')).length
+  await home.locator('.launch .brief').fill('say hello and stop')
+  await home.locator('.launch .go').click()
+
+  // The session opens; the card under the header is the proof it landed in a
+  // worktree rather than the main checkout.
+  await page.waitForSelector('.wtcard', { timeout: 30000 })
+  await shot(page, '05-session-card')
+
+  // The branch may carry a collision suffix if an earlier run left one behind,
+  // which is correct behaviour rather than a failure, so assert the shape.
+  const cardBranch = (await page.locator('.wtcard .branch').innerText()).trim()
+  check('the session says which worktree it is in', /^fix-login(-\d+)?$/.test(cardBranch), cardBranch)
+
+  const after = git(['worktree', 'list', '--porcelain']).split('\n').filter((l) => l.startsWith('worktree ')).length
+  check('git actually gained a worktree', after === before + 1, `${before} -> ${after}`)
+
+  const branches = git(['branch', '--list', 'kunai/*'])
+  check('the branch exists and is namespaced', branches.includes(`kunai/${cardBranch}`), `kunai/${cardBranch}`)
+
+  // The main checkout must be untouched by any of this: that is the whole point.
+  const mainStatus = git(['status', '--porcelain'])
+  check('the main checkout is still clean', mainStatus === '', mainStatus || '(clean)')
+  const mainBranch = git(['rev-parse', '--abbrev-ref', 'HEAD'])
+  check('the main checkout is still on its own branch', mainBranch === 'main', mainBranch)
+
+  // --- the card's detail ------------------------------------------------------
+  await page.locator('.wtcard .head').click()
+  await page.waitForSelector('.wtcard .body', { timeout: 5000 })
+  await shot(page, '06-card-open')
+
+  const bodyText = await page.locator('.wtcard .body').innerText()
+  check(
+    'the card names both checkouts',
+    bodyText.includes(REPO) && bodyText.includes('worktrees'),
+  )
+  check(
+    'the card flags what is shared with the main checkout',
+    bodyText.toLowerCase().includes('shared with the main checkout'),
+  )
+
+  // --- the sidebar groups it under its repository -----------------------------
+  // A worktree lives in kunai's data directory, so grouping by its own folder
+  // would give every worktree a heading of its own and scatter one repository
+  // across the list. It belongs to the codebase it came from.
+  const repoLeaf = REPO.replace(/\/+$/, '').split('/').slice(-1)[0]
+  const groupLabels = (await page.locator('.sb .grp .glabel').allInnerTexts()).map((t) => t.trim())
+  check(
+    'the sidebar groups the worktree session under its repository',
+    groupLabels.includes(repoLeaf),
+    groupLabels.join(' / '),
+  )
+  check(
+    'the worktree does not get a heading of its own',
+    !groupLabels.includes('fix-login'),
+    groupLabels.join(' / '),
+  )
+  // The chip earns its place only when it adds something. An untitled session is
+  // already named after its worktree directory, so a chip there would say the
+  // same word twice; give the session a title and the branch becomes the thing
+  // that tells it apart from a session in the main checkout.
+  const untitled = await page.locator('.sb .wtchip').allInnerTexts()
+  check(
+    'no branch chip while the row is already named after the worktree',
+    !untitled.includes(cardBranch),
+    untitled.join(',') || '(none)',
+  )
+
+  const sessions = await fetch(`${ORIGIN}/api/sessions`).then((r) => r.json())
+  const wtSession = sessions.find((m) => m.cwd.includes('/worktrees/'))
+  await fetch(`${ORIGIN}/api/sessions/${wtSession.id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Login rework' }),
+  })
+  await page.reload()
+  await page.waitForSelector('.sb .row', { timeout: 15000 })
+  const titled = await page.locator('.sb .wtchip').allInnerTexts()
+  check('a titled worktree row carries its branch', titled.includes(cardBranch), titled.join(','))
+  await shot(page, '08-sidebar-grouping')
+
+  // Discard is confirmed by naming what it destroys, not by asking "are you sure".
+  // The reload above collapsed the card, so open it again first.
+  if ((await page.locator('.wtcard .body').count()) === 0) {
+    await page.locator('.wtcard .head').click()
+    await page.waitForSelector('.wtcard .body', { timeout: 5000 })
+  }
+  await page.locator('.wtcard .quiet', { hasText: 'Discard' }).click()
+  const danger = await page.locator('.wtcard .danger').innerText()
+  check('discard says what would be lost', danger.includes('Delete this worktree'), danger.trim())
+  await shot(page, '07-discard-confirm')
+
+  // --- the sidebar's one-tap worktree ----------------------------------------
+  // The plus keeps its promise of starting work here with no questions asked, so
+  // the worktree is a second button beside it rather than a dialog in front of
+  // it: same single tap, different destination, every default taken.
+  await page.goto(ORIGIN)
+  await home.locator('.launch').waitFor({ state: 'visible', timeout: 15000 })
+  const heading = page.locator('.sb .grp', { hasText: repoLeaf }).first()
+  await heading.waitFor({ timeout: 15000 })
+  const buttons = heading.locator('.gadd')
+  await buttons.first().waitFor({ timeout: 15000 })
+  const buttonCount = await buttons.count()
+  check('a group heading offers both a plus and a worktree button', buttonCount === 2, `${buttonCount}`)
+
+  const wtBefore = worktreeCount()
+  await buttons.first().click() // the worktree one sits before the plus
+  await page.waitForSelector('.wtcard', { timeout: 30000 })
+  check('one tap on the branch button lands in a worktree', worktreeCount() === wtBefore + 1, `${wtBefore} -> ${worktreeCount()}`)
+
+  const oneTapSetup = await page
+    .locator('.wtcard .head')
+    .innerText()
+    .then((t) => t.trim())
+  check('the one-tap worktree still ran the repository\'s own setup', !oneTapSetup.includes('Setup failed'), oneTapSetup)
+  await shot(page, '09-one-tap-worktree')
+
+  await browser.close()
+
+  // Leave nothing behind, so the next run starts from the same state this one
+  // did. A test that accumulates worktrees fails on its second run for reasons
+  // that have nothing to do with the code.
+  await cleanup()
+  report()
+}
+
+// cleanup closes every session in a worktree and removes the worktrees kunai
+// made, through the same API a user would.
+async function cleanup() {
+  try {
+    const sessions = await fetch(`${ORIGIN}/api/sessions`).then((r) => r.json())
+    for (const m of sessions) {
+      await fetch(`${ORIGIN}/api/sessions/${m.id}`, { method: 'DELETE' })
+    }
+    await new Promise((r) => setTimeout(r, 800))
+    const worktrees = await fetch(`${ORIGIN}/api/worktrees`).then((r) => r.json())
+    for (const w of worktrees) {
+      const q = new URLSearchParams({ path: w.path, force: '1' })
+      await fetch(`${ORIGIN}/api/worktrees?${q}`, { method: 'DELETE' })
+    }
+    console.log(`cleaned up ${worktrees.length} worktree(s)`)
+  } catch (e) {
+    console.log('cleanup failed:', e.message)
+  }
+}
+
+function report() {
+  const failed = results.filter((r) => !r.ok)
+  console.log(`\n${results.length - failed.length}/${results.length} passed`)
+  console.log(`screenshots in ${SHOT_DIR}`)
+  process.exit(failed.length ? 1 : 0)
+}
+
+main().catch((e) => {
+  console.error(e)
+  process.exit(1)
+})

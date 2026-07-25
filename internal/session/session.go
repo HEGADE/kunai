@@ -873,6 +873,12 @@ type Meta struct {
 	// signal the client uses to offer naming it. The session does know this, so
 	// unlike Pinned and Workspace it is filled in here.
 	Projects int `json:"projects,omitempty"`
+	// Repo is the main checkout when Cwd is a git worktree of it. Like Pinned and
+	// Workspace it is merged in by the server, because only the server knows which
+	// worktrees it made. It exists so the sidebar groups a worktree session under
+	// the codebase it belongs to: grouping by its own directory would give every
+	// worktree a heading of its own and scatter one repository across the list.
+	Repo string `json:"repo,omitempty"`
 }
 
 func (s *Session) Meta() Meta {

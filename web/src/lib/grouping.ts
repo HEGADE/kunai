@@ -18,6 +18,12 @@ export interface Groupable {
   cwd: string
   workspace?: string
   projects?: number
+  // repo is the main checkout when cwd is a git worktree of it. A worktree
+  // session belongs to the codebase it came from, not to the directory it
+  // happens to live in: grouping by that directory would give every worktree a
+  // heading of its own and scatter one repository across the sidebar, which is
+  // the opposite of what grouping is for.
+  repo?: string
 }
 
 export interface SessionGroup<T> {
@@ -42,7 +48,7 @@ export function projectName(cwd: string): string {
 // wins, because they set it precisely to override the directory.
 export function groupLabel(s: Groupable): string {
   const named = s.workspace?.trim()
-  return named || projectName(s.cwd)
+  return named || projectName(s.repo || s.cwd)
 }
 
 // isWorkspace reports whether a session holds more than one codebase, which is
@@ -91,9 +97,14 @@ export function groupStartTarget<T extends Groupable & { machineId: string }>(
   group: SessionGroup<T>,
 ): { machineId: string; cwd: string } | null {
   const first = group.items[0]
-  if (!first?.cwd) return null
+  // A worktree session's home is the repository, so that is what starting from
+  // this heading means. Without this, one worktree in a group would make its
+  // members' directories disagree and the heading would lose its start button
+  // exactly when the repository had the most work going on in it.
+  const home = (s: T) => s.repo || s.cwd
+  if (!first || !home(first)) return null
   for (const item of group.items) {
-    if (item.cwd !== first.cwd || item.machineId !== first.machineId) return null
+    if (home(item) !== home(first) || item.machineId !== first.machineId) return null
   }
-  return { machineId: first.machineId, cwd: first.cwd }
+  return { machineId: first.machineId, cwd: home(first) }
 }

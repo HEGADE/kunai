@@ -23,6 +23,7 @@
   import ToolGroup from './ToolGroup.svelte'
   import Tabs from './Tabs.svelte'
   import SessionInfo from './SessionInfo.svelte'
+  import WorktreeCard from './WorktreeCard.svelte'
   import TurnFooter from './TurnFooter.svelte'
   import TurnChanges from './TurnChanges.svelte'
 
@@ -387,6 +388,12 @@
       <SessionInfo {chat} onClose={() => (infoOpen = false)} />
     {/if}
   </header>
+
+  <!-- A session in a worktree says so, and offers the ways out of it. It sits
+       under the chrome rather than inside SessionInfo because merging and
+       discarding are actions, and the header holds what you act on. It renders
+       nothing at all for an ordinary session, so nothing changes for one. -->
+  <WorktreeCard base={chat.apiBase} cwd={chat.cwd} />
 
   <div class="scroll" bind:this={scroller} onscroll={onScroll}>
     <!-- Wait for the backlog to fully arrive, then mount it in one paint (see the

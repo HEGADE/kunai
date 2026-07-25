@@ -83,7 +83,7 @@ func TestStoreCreateRunsSetupAndRecordsIt(t *testing.T) {
 
 	rec, err := r.store.create(createRequest{
 		Repo: r.dir, Name: "fix auth", Base: "main",
-		Setup: `ln -sf "$KUNAI_PROJECT_ROOT/.env" .env && echo prepared > prepared.txt`,
+		Setup: strptr(`ln -sf "$KUNAI_PROJECT_ROOT/.env" .env && echo prepared > prepared.txt`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +118,7 @@ func TestBriefCarriesSetupOutcomeAndSharedPaths(t *testing.T) {
 
 	rec, err := r.store.create(createRequest{
 		Repo: r.dir, Name: "w", Base: "main",
-		Setup: `ln -sf "$KUNAI_PROJECT_ROOT/.env" .env; echo "boom" 1>&2; exit 2`,
+		Setup: strptr(`ln -sf "$KUNAI_PROJECT_ROOT/.env" .env; echo "boom" 1>&2; exit 2`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +147,7 @@ func TestApplyWorktreeWaitsForSetup(t *testing.T) {
 	r := newWTRepo(t)
 	rec, err := r.store.create(createRequest{
 		Repo: r.dir, Name: "w", Base: "main",
-		Setup: "sleep 0.4 && echo done > installed.txt",
+		Setup: strptr("sleep 0.4 && echo done > installed.txt"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +176,7 @@ func TestApplyWorktreeWaitsForSetup(t *testing.T) {
 func TestApplyWorktreeGivesUpWithItsContext(t *testing.T) {
 	r := newWTRepo(t)
 	rec, err := r.store.create(createRequest{
-		Repo: r.dir, Name: "w", Base: "main", Setup: "sleep 5",
+		Repo: r.dir, Name: "w", Base: "main", Setup: strptr("sleep 5"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -224,7 +224,17 @@ func TestDeleteRefusesWhileASessionIsWorkingThere(t *testing.T) {
 		t.Error("the worktree directory survived the delete")
 	}
 	if _, ok := r.store.get(rec.Path); ok {
-		t.Error("the record survived the delete")
+		t.Error("a deleted worktree is still offered as one")
+	}
+	if got := r.store.all(); len(got) != 0 {
+		t.Errorf("a deleted worktree is still listed: %+v", got)
+	}
+	// But what it knew outlives it: the sessions that ran there are still on
+	// disk, and this record is the only thing that says which repository they
+	// belonged to. Dropping it stranded them under a heading named after a
+	// directory that no longer exists.
+	if got := r.store.repoFor(rec.Path); got != r.dir {
+		t.Errorf("repoFor after delete = %q, want %q", got, r.dir)
 	}
 }
 
@@ -273,7 +283,7 @@ func TestSetupIsRememberedPerRepo(t *testing.T) {
 	}
 
 	if _, err := r.store.create(createRequest{
-		Repo: r.dir, Name: "w", Base: "main", Setup: "make bootstrap", Remember: true,
+		Repo: r.dir, Name: "w", Base: "main", Setup: strptr("make bootstrap"), Remember: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -332,3 +342,8 @@ func TestListReportsStatusAndDropsWorktreesThatAreGone(t *testing.T) {
 		t.Errorf("a worktree removed from disk is still listed: %+v", got)
 	}
 }
+
+// strptr is the pointer form the create request needs, since absent and empty
+// mean different things there: absent resolves the repository's own command,
+// empty means the user looked at it and chose none.
+func strptr(s string) *string { return &s }

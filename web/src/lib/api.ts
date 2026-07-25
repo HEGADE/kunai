@@ -27,7 +27,17 @@ export function listSessions(base: string): Promise<Meta[]> {
 
 export function createSession(
   base: string,
-  body: { cwd: string; title?: string; model?: string; effort?: string; resume?: string; cli?: string },
+  body: {
+    cwd: string
+    title?: string
+    model?: string
+    effort?: string
+    resume?: string
+    cli?: string
+    // worktree is the path of a worktree created by POST /api/worktrees. The
+    // server makes it the session's cwd, which is the whole isolation mechanism.
+    worktree?: string
+  },
 ): Promise<Meta> {
   return fetch(at(base, '/api/sessions'), {
     method: 'POST',

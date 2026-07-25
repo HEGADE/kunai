@@ -55,7 +55,10 @@ func StatusOf(info Info) (Status, error) {
 // uncommitted, de-duplicated and in a stable order.
 func changedFiles(info Info) []string {
 	seen := map[string]bool{}
-	var out []string
+	// Non-nil so the JSON is [] rather than null. A nil slice marshals to null,
+	// and a client reading .files.length off it throws rather than seeing zero
+	// files, which is the ordinary case for a worktree nobody has edited yet.
+	out := []string{}
 	add := func(p string) {
 		if p != "" && !seen[p] {
 			seen[p] = true

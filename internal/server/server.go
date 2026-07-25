@@ -333,6 +333,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	metas := s.mgr.List()
+	s.worktrees.tagRepos(metas)
 	if s.sessionMeta != nil {
 		mergeMeta(metas, s.sessionMeta.all())
 	}

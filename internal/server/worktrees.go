@@ -31,11 +31,19 @@ type worktreeRecord struct {
 	CreatedAt int64                `json:"created_at"`
 	Setup     worktree.SetupResult `json:"setup"`
 	Shared    []string             `json:"shared,omitempty"`
+	// Removed marks a worktree that has been deleted. The record outlives it so
+	// the sessions that ran there still know which repository they belonged to;
+	// their transcripts outlive the worktree and nothing else records that.
+	Removed bool `json:"removed,omitempty"`
 	// ready is closed once setup has finished, so a session create can wait for a
 	// worktree to be fit to work in rather than starting an agent against a
 	// half-installed tree. Nil for a record loaded from disk, whose setup is over.
 	ready chan struct{}
 }
+
+// removedKeep bounds how many deleted worktrees are remembered for the sake of
+// grouping their past sessions.
+const removedKeep = 100
 
 // repoConfig is the per-repository configuration kunai keeps on this machine. It
 // is the fallback for a repository that has no checked-in kunai.json, so nothing
@@ -191,7 +199,9 @@ func (s *worktreeStore) get(path string) (worktreeRecord, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.records[path]
-	if !ok {
+	// A tombstone is not a worktree. It still answers repoFor, so past sessions
+	// group correctly, but nothing may start a session in it or merge it.
+	if !ok || rec.Removed {
 		return worktreeRecord{}, false
 	}
 	return rec.snapshot(), true
@@ -213,11 +223,41 @@ func (s *worktreeStore) put(rec *worktreeRecord) {
 	s.mu.Unlock()
 }
 
+// forget marks a worktree as gone without dropping what it knew.
+//
+// The record is kept because the sessions that ran in it are not: their
+// transcripts outlive the worktree, and the only thing that still says which
+// repository they belonged to is this record. Deleting it stranded every past
+// session of a discarded worktree under a heading named after a directory that
+// no longer exists. Removed records are filtered out of every listing and pruned
+// once there are more than a few, so the file does not grow without bound.
 func (s *worktreeStore) forget(path string) {
 	s.mu.Lock()
-	delete(s.records, path)
+	if rec, ok := s.records[path]; ok {
+		rec.Removed = true
+	}
+	s.pruneRemovedLocked()
 	s.saveLocked()
 	s.mu.Unlock()
+}
+
+// pruneRemovedLocked keeps the newest removedKeep tombstones and drops the rest.
+// A session old enough to fall off this list is old enough that its heading no
+// longer matters.
+func (s *worktreeStore) pruneRemovedLocked() {
+	var removed []*worktreeRecord
+	for _, rec := range s.records {
+		if rec.Removed {
+			removed = append(removed, rec)
+		}
+	}
+	if len(removed) <= removedKeep {
+		return
+	}
+	sort.Slice(removed, func(i, j int) bool { return removed[i].CreatedAt > removed[j].CreatedAt })
+	for _, rec := range removed[removedKeep:] {
+		delete(s.records, rec.Path)
+	}
 }
 
 // all returns every record, newest first, dropping any whose directory has gone
@@ -225,24 +265,53 @@ func (s *worktreeStore) forget(path string) {
 func (s *worktreeStore) all() []worktreeRecord {
 	s.mu.Lock()
 	out := make([]worktreeRecord, 0, len(s.records))
-	var gone []string
+	changed := false
 	for path, rec := range s.records {
+		if rec.Removed {
+			continue
+		}
+		// git is the truth about what exists: a worktree deleted from a terminal
+		// is gone, but its record is kept as a tombstone for the same reason a
+		// discarded one is.
 		if _, err := os.Stat(path); err != nil {
-			gone = append(gone, path)
+			rec.Removed = true
+			changed = true
 			continue
 		}
 		out = append(out, rec.snapshot())
 	}
-	for _, path := range gone {
-		delete(s.records, path)
-	}
-	if len(gone) > 0 {
+	if changed {
+		s.pruneRemovedLocked()
 		s.saveLocked()
 	}
 	s.mu.Unlock()
 
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt > out[j].CreatedAt })
 	return out
+}
+
+// repoFor returns the main checkout a path is a worktree of, or "" when the path
+// is not a worktree kunai made. Cheap: a map lookup, because it is called once
+// per row of every session and history listing.
+func (s *worktreeStore) repoFor(cwd string) string {
+	if s == nil || cwd == "" {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rec, ok := s.records[cwd]; ok {
+		return rec.Repo
+	}
+	return ""
+}
+
+// tagRepos marks the entries whose directory is a worktree with the repository
+// they belong to, so the sidebar groups them under that codebase rather than
+// giving each worktree a heading of its own.
+func (s *worktreeStore) tagRepos(metas []session.Meta) {
+	for i := range metas {
+		metas[i].Repo = s.repoFor(metas[i].Cwd)
+	}
 }
 
 // sessionsIn lists the live sessions whose cwd is this worktree. A worktree may
@@ -265,12 +334,24 @@ func (s *worktreeStore) sessionsIn(path string) []string {
 
 // createRequest is what the API accepts and what create needs.
 type createRequest struct {
-	Repo  string `json:"repo"`
-	Name  string `json:"name"`
-	Base  string `json:"base"`
-	Setup string `json:"setup"`
+	Repo string `json:"repo"`
+	Name string `json:"name"`
+	Base string `json:"base"`
+	// Setup is a pointer so absent and empty mean different things. Absent means
+	// "use whatever this repository resolves to", which is what a one-tap start
+	// needs: it never showed the user a command, so it must not silently decide
+	// there isn't one. An explicit "" means the user looked and chose none.
+	Setup *string `json:"setup"`
 	// Remember stores Setup as this repository's command for next time.
 	Remember bool `json:"remember"`
+}
+
+// setupCommand resolves what this request should actually run.
+func (req createRequest) setupCommand(store *worktreeStore, repo string) string {
+	if req.Setup != nil {
+		return *req.Setup
+	}
+	return store.setupFor(repo).Command
 }
 
 // create makes the worktree and starts its setup, returning as soon as the
@@ -292,21 +373,24 @@ func (s *worktreeStore) create(req createRequest) (worktreeRecord, error) {
 	if err != nil {
 		return worktreeRecord{}, err
 	}
-	if req.Remember {
-		s.rememberSetup(info.Repo, req.Setup)
+	// Resolved after Create, because the repository path is only canonical once
+	// git has told us where its main checkout is.
+	setup := req.setupCommand(s, info.Repo)
+	if req.Remember && req.Setup != nil {
+		s.rememberSetup(info.Repo, setup)
 	}
 
 	rec := &worktreeRecord{Info: info, CreatedAt: time.Now().Unix()}
-	if req.Setup == "" {
+	if setup == "" {
 		rec.Setup = worktree.SetupResult{State: worktree.SetupNone}
 		s.put(rec)
 		return *rec, nil
 	}
 
-	rec.Setup = worktree.SetupResult{State: worktree.SetupRunning, Command: req.Setup}
+	rec.Setup = worktree.SetupResult{State: worktree.SetupRunning, Command: setup}
 	rec.ready = make(chan struct{})
 	s.put(rec)
-	go s.runSetup(rec, req.Setup)
+	go s.runSetup(rec, setup)
 
 	s.mu.Lock()
 	out := rec.snapshot()

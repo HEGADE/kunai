@@ -1,6 +1,8 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
   import { browse, createSession } from '../lib/api'
+  import { noWorktree, startWorktree, type WorktreeChoice } from '../lib/worktrees'
+  import WorktreeChoicePicker from './WorktreeChoice.svelte'
   import { MODELS, EFFORTS, DEFAULT_MODEL, DEFAULT_EFFORT, modelOptionLabel } from '../lib/models'
   import type { Listing } from '../lib/types'
 
@@ -12,6 +14,9 @@
   // Which Claude account (CLI) to run on, offered only when the chosen machine
   // has more than one configured. Empty means the machine's default (the first).
   let cli = $state('')
+  // Reset whenever the browsed folder changes: a base branch and a name chosen
+  // for one repository mean nothing in the next.
+  let wt = $state<WorktreeChoice>(noWorktree())
   const clis = $derived(app.machines.find((m) => m.id === machineId)?.stats?.clis ?? [])
 
   let listing = $state<Listing | null>(null)
@@ -63,6 +68,14 @@
       loading = false
     }
   }
+  let lastPath = ''
+  $effect(() => {
+    const path = listing?.path ?? ''
+    if (path !== lastPath) {
+      lastPath = path
+      wt = noWorktree()
+    }
+  })
   function startEdit() {
     typed = listing?.path ?? ''
     editing = true
@@ -77,13 +90,17 @@
     creating = true
     error = ''
     try {
-      const meta = await createSession(app.baseForMachine(machineId), {
+      const base = app.baseForMachine(machineId)
+      // The worktree is made first, since the session's cwd is what isolates it.
+      const worktree = await startWorktree(base, listing.path, wt)
+      const meta = await createSession(base, {
         cwd: listing.path,
         model: model || undefined,
         effort: effort || undefined,
         // Only send a choice the machine actually offers; switching machines can
         // strand a name that machine doesn't have, and empty just means default.
         cli: clis.includes(cli) ? cli : undefined,
+        worktree: worktree || undefined,
       })
       app.open(machineId, meta.id)
     } catch (e) {
@@ -189,6 +206,18 @@
     </div>
 
     <div class="opts">
+      {#if listing}
+        <div class="orow wtrow">
+          <span class="olabel">Where</span>
+          <div class="wtslot">
+            <WorktreeChoicePicker
+              base={app.baseForMachine(machineId)}
+              repo={listing.path}
+              bind:value={wt}
+            />
+          </div>
+        </div>
+      {/if}
       {#if clis.length > 1}
         <div class="orow">
           <span class="olabel">Account</span>
@@ -512,6 +541,16 @@
     padding: 12px 20px;
     border-top: 1px solid var(--border);
   }
+  /* The worktree control is taller than a segmented row, so it stacks its label
+     above rather than fighting for the same line. */
+  .wtrow {
+    align-items: flex-start;
+  }
+  .wtslot {
+    flex: 1;
+    min-width: 0;
+  }
+
   .orow {
     display: flex;
     align-items: center;

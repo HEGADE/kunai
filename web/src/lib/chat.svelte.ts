@@ -146,6 +146,13 @@ export class ChatConnection {
     }
   }
 
+  // apiBase is the owning machine's origin, for the REST calls a view makes
+  // alongside this socket. Exposed read-only rather than making base public: a
+  // session's machine is fixed at construction and nothing may reassign it.
+  get apiBase(): string {
+    return this.base
+  }
+
   // Force an immediate reconnect if the socket is not healthy, bypassing the
   // backoff. A CONNECTING socket is left alone; an OPEN one is assumed live (a
   // dead one fires onclose on resume, which routes here via the CLOSED branch).

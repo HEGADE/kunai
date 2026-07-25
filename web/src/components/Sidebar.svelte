@@ -4,6 +4,7 @@
   import { enablePush, pushState } from '../lib/push'
   import type { TaggedHistoryEntry, TaggedMeta } from '../lib/types'
   import { groupSessions, groupStartTarget } from '../lib/grouping'
+  import { justAWorktree, type WorktreeChoice } from '../lib/worktrees'
   import Wordmark from './Wordmark.svelte'
   import Home from './Home.svelte'
   import SessionMenu from './SessionMenu.svelte'
@@ -65,17 +66,29 @@
   // spinner never disables the others, and guarded because a double tap would
   // otherwise start two sessions in the same folder.
   let starting = $state<Record<string, boolean>>({})
-  async function startInGroup(key: string, machineId: string, cwd: string) {
+  // Folders that turned out not to be git repositories, so the worktree button
+  // beside the plus stops offering something that cannot work. Learned from the
+  // one failure rather than probed up front, which would cost a request per
+  // heading on every render to answer a question that is almost always yes.
+  let notRepo = $state<Record<string, boolean>>({})
+  async function startInGroup(key: string, machineId: string, cwd: string, wt?: WorktreeChoice) {
     if (starting[key]) return
     starting = { ...starting, [key]: true }
     try {
-      await app.quickStart(machineId, cwd)
+      await app.quickStart(machineId, cwd, wt)
+    } catch (e) {
+      if (wt && /not a git repository/i.test((e as Error).message)) {
+        notRepo = { ...notRepo, [cwd]: true }
+      }
     } finally {
       const next = { ...starting }
       delete next[key]
       starting = next
     }
   }
+
+  // The worktree's directory name, which is its branch without the kunai/ prefix.
+  const leafOf = (cwd: string) => cwd.replace(/\/+$/, '').split('/').slice(-1)[0] || cwd
 
   const activeGroups = $derived(groupSessions(activeUnpinned))
   const recentGroups = $derived(groupSessions(recentDisplay))
@@ -148,6 +161,14 @@
         <span class="live" data-state={m.state}></span>
       </span>
       <span class="name">{shortName(m)}</span>
+      <!-- A worktree session sits under its repository's heading like any other,
+           so the branch is what tells it apart from a session in the main
+           checkout. Skipped when the session has no title of its own yet, since
+           the name is then already the worktree's directory and the chip would
+           just say it twice. -->
+      {#if m.repo && leafOf(m.cwd) !== shortName(m)}
+        <span class="wtchip mono" title="In a worktree on {m.cwd}">{leafOf(m.cwd)}</span>
+      {/if}
     </button>
     <SessionMenu
       machineId={m.machineId}
@@ -174,6 +195,22 @@
          question you just answered. Absent when the group spans directories, since
          there is then no single folder to mean. -->
     {#if target}
+      <!-- Two buttons rather than one that asks. The plus keeps its promise of
+           starting work in this folder with no questions; the branch beside it is
+           the same single tap into a checkout of its own, taking every default
+           (the repository's own base and its own setup command). Choosing a base
+           or a name is what the launcher's picker is for. -->
+      {#if !notRepo[target.cwd]}
+        <button
+          class="gadd"
+          disabled={starting[group.key]}
+          onclick={() => startInGroup(group.key, target.machineId, target.cwd, justAWorktree())}
+          title="New session in a worktree of {target.cwd}"
+          aria-label="New worktree session in {group.label}"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v12M6 21a2 2 0 100-4 2 2 0 000 4zM6 7a2 2 0 100-4 2 2 0 000 4zM18 11a2 2 0 100-4 2 2 0 000 4zM18 9v2a4 4 0 01-4 4H6" /></svg>
+        </button>
+      {/if}
       <button
         class="gadd"
         disabled={starting[group.key]}
@@ -569,6 +606,22 @@
     color: var(--text-4);
     padding: 12px 6px 8px;
   }
+  /* The branch a worktree session is on: data, so mono, and quiet, since the
+     name beside it is what you are reading. */
+  .wtchip {
+    flex: none;
+    margin-left: 6px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--panel-2);
+    color: var(--text-4);
+    font-size: 10px;
+    max-width: 92px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   /* A project or workspace heading sits under a section heading, so it is
      quieter than one: sentence case, not uppercase, and indented to the row
      text so the sessions below read as belonging to it. */

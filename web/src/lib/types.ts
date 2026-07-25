@@ -116,6 +116,9 @@ export interface Job {
 export type TaggedJob = Job & { machineId: string }
 
 export interface Meta {
+  // repo is the main checkout when cwd is a git worktree of it, filled in by the
+  // server; see internal/session Meta.Repo.
+  repo?: string
   id: string
   cwd: string
   model: string
@@ -325,6 +328,7 @@ export interface HistoryEntry {
   mtime: string
   pinned?: boolean // user override, merged from the server's session-metadata store
   workspace?: string // user-set group; a closed session has no project list to infer one
+  repo?: string // the main checkout, when cwd is a git worktree of it
 }
 
 // --- multi-machine ---
