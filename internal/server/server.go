@@ -102,6 +102,7 @@ type Server struct {
 	checkpoints   *checkpointManager       // per-turn git snapshots for undo/revert
 	failover      *failoverController      // opt-in: roll a walled session onto another account
 	modelVers     modelVersionCache        // newest model version per family, read from the claude binary
+	worktrees     *worktreeStore           // git worktrees, so several agents share one repo safely
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -120,6 +121,11 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	machines := newMachineStore(filepath.Join(cfg.DataDir, "machines.json"))
 
 	s := &Server{cfg: cfg, mgr: mgr, pwa: webui.FS(), uploadsDir: uploads, machines: machines, awake: awake.New(), lid: newLidKeeper(), usage: newUsageCache(), checkpoints: newCheckpointManager()}
+	// Worktrees derive "who is using this one" from the live session list rather
+	// than persisting it, since a persisted copy goes stale the moment a session
+	// ends and the only thing it is used for is refusing to delete a worktree
+	// somebody is working in.
+	s.worktrees = newWorktreeStore(cfg.DataDir, mgr.List)
 	s.loadAwake() // re-apply a persisted keep-awake preference on boot
 	s.loadLid()   // re-apply a persisted lid-closed preference (after boot-time unstick)
 	s.guardian = newGuardian(mgr, s.awake, clampGuardConfig(guardConfig{
@@ -198,6 +204,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/history", s.handleOlderTurns)
 	mux.HandleFunc("GET /api/sessions/{id}/checkpoints", s.handleListCheckpoints)
 	mux.HandleFunc("POST /api/sessions/{id}/revert", s.handleRevert)
+	mux.HandleFunc("GET /api/worktrees", s.handleWorktrees)
+	mux.HandleFunc("POST /api/worktrees", s.handleCreateWorktree)
+	mux.HandleFunc("DELETE /api/worktrees", s.handleDeleteWorktree)
+	mux.HandleFunc("GET /api/worktrees/setup", s.handleWorktreeSetup)
+	mux.HandleFunc("GET /api/worktrees/branches", s.handleWorktreeBranches)
+	mux.HandleFunc("POST /api/worktrees/merge", s.handleMergeWorktree)
+	mux.HandleFunc("POST /api/worktrees/pr", s.handlePullRequestWorktree)
+	mux.HandleFunc("GET /api/worktrees/settings", s.handleWorktreeSettings)
+	mux.HandleFunc("POST /api/worktrees/settings", s.handleWorktreeSettings)
 	mux.HandleFunc("GET /api/browse", s.handleBrowse)
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("DELETE /api/history/{id}", s.handleDeleteHistory)
@@ -332,6 +347,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Effort string `json:"effort"`
 		Resume string `json:"resume"`
 		CLI    string `json:"cli"` // which Claude account; empty = the default
+		// Worktree, when set, is the path of a worktree created earlier by
+		// POST /api/worktrees. It becomes the session's cwd, which is the whole
+		// isolation mechanism: nothing else about the session changes.
+		Worktree string `json:"worktree"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -356,6 +375,12 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	opts := session.CreateOptions{
 		Cwd: req.Cwd, Title: req.Title, Model: req.Model, Effort: req.Effort, Resume: req.Resume,
 		CLIName: cli.Name, Bin: cli.Bin, Env: cli.effectiveEnv(),
+	}
+	if req.Worktree != "" {
+		if err := s.applyWorktree(ctx, &opts, req.Worktree); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	if isProxyProfile(cli) {
 		// Provider sessions deliberately use their own default. It currently matches
