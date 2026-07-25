@@ -248,6 +248,14 @@
   let brief = $state('')
   let dir = $state('')
   let dirOpen = $state(false)
+  let dirQuery = $state('')
+  // Matching on the whole path, not just the leaf: two checkouts can share a name
+  // ("work"), and the thing that tells them apart is the path.
+  const dirMatches = $derived.by(() => {
+    const q = dirQuery.trim().toLowerCase()
+    if (!q) return selProjects
+    return selProjects.filter((pr) => (pr.name + ' ' + pr.cwd).toLowerCase().includes(q))
+  })
   let launching = $state(false)
   // Where the work runs: whatever you last picked, else the most recent project.
   const targetDir = $derived(dir || selProjects[0]?.cwd || '')
@@ -350,13 +358,34 @@
         {#if dirOpen}
           <button class="scrim2" onclick={() => (dirOpen = false)} aria-label="Close"></button>
           <div class="dirpop">
-            {#each selProjects as pr (pr.cwd)}
-              <button class:active={pr.cwd === targetDir} onclick={() => { dir = pr.cwd; dirOpen = false }}>
-                <span class="dn">{pr.name}</span>
-                <span class="dp mono">{pr.cwd}</span>
-              </button>
-            {/each}
-            <button class="browse2" onclick={() => { dirOpen = false; app.newSession() }}>Browse…</button>
+            <!-- Typing beats scrolling once there are more folders than fit, and the
+                 filter matches the path as well as the name because two checkouts
+                 can share a leaf ("work") and only the path distinguishes them. -->
+            {#if selProjects.length > 5}
+              <input
+                class="dirq"
+                bind:value={dirQuery}
+                placeholder="Filter folders"
+                aria-label="Filter folders"
+                autocomplete="off"
+              />
+            {/if}
+            <div class="dirlist">
+              {#each dirMatches as pr (pr.cwd)}
+                <button class:active={pr.cwd === targetDir} onclick={() => { dir = pr.cwd; dirOpen = false; dirQuery = '' }}>
+                  <span class="dn">{pr.name}</span>
+                  <span class="dp mono">{pr.cwd}</span>
+                </button>
+              {/each}
+              {#if dirMatches.length === 0}
+                <p class="dirempty">Nothing matches “{dirQuery}”. Browse for it below.</p>
+              {/if}
+            </div>
+            <!-- Pinned, never scrolled away: it is the escape hatch for every folder
+                 the list does not know about, and it used to sit under all of them. -->
+            <button class="browse2" onclick={() => { dirOpen = false; dirQuery = ''; app.newSession() }}>
+              Browse for a folder…
+            </button>
           </div>
         {/if}
       </div>
@@ -1230,15 +1259,19 @@
     inset: 0;
     z-index: 30;
   }
+  /* Three bands: an optional filter, the scrolling list, and a pinned action. Only
+     the middle one scrolls, so Browse is always one tap away. */
   .dirpop {
     position: absolute;
     z-index: 31;
     bottom: calc(100% + 8px);
     left: 0;
-    min-width: 250px;
+    display: flex;
+    flex-direction: column;
+    min-width: 280px;
     max-width: calc(100vw - 32px);
-    max-height: 300px;
-    overflow-y: auto;
+    max-height: min(60vh, 380px);
+    overflow: hidden;
     padding: 5px;
     background: var(--panel-2);
     border: 1px solid var(--border-2);
@@ -1271,10 +1304,16 @@
     unicode-bidi: plaintext;
   }
   .browse2 {
+    flex: none;
     margin-top: 4px;
-    border-top: 1px solid var(--border);
-    color: var(--text-3);
+    padding-top: 8px;
+    border-top: 1px solid var(--border-2);
+    color: var(--text-2);
     font-size: 12.5px;
+    font-weight: 500;
+  }
+  .browse2:hover {
+    color: var(--text);
   }
 
   /* --- reference: dense, quiet ---------------------------------------------- */
@@ -1334,5 +1373,36 @@
   }
   .vline .warn {
     color: var(--alert);
+  }
+
+  .dirlist {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .dirq {
+    flex: none;
+    width: 100%;
+    margin-bottom: 4px;
+    padding: 7px 10px;
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-sm);
+    background: var(--panel);
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
+  }
+  .dirq:focus {
+    border-color: var(--text-4);
+  }
+  .dirq::placeholder {
+    color: var(--text-4);
+  }
+  .dirempty {
+    margin: 0;
+    padding: 10px;
+    font-size: 12.5px;
+    color: var(--text-3);
   }
 </style>
