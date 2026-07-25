@@ -391,8 +391,11 @@
     z-index: 0;
     pointer-events: none;
     background:
-      radial-gradient(60rem 40rem at 18% 8%, rgba(255, 255, 255, 0.035), transparent 70%),
-      radial-gradient(48rem 34rem at 88% 82%, rgba(255, 255, 255, 0.022), transparent 72%);
+      /* The pool the launcher sits in. Centred and widest, so the hero is lifted off
+         the canvas by light rather than by a heavier border. */
+      radial-gradient(46rem 30rem at 50% 42%, rgba(255, 255, 255, 0.055), transparent 68%),
+      radial-gradient(58rem 38rem at 14% 6%, rgba(255, 255, 255, 0.03), transparent 70%),
+      radial-gradient(48rem 34rem at 90% 88%, rgba(255, 255, 255, 0.022), transparent 72%);
     animation: drift 42s ease-in-out infinite alternate;
   }
   @keyframes drift {
@@ -1048,15 +1051,15 @@
     align-items: center;
     gap: 9px;
     margin: 0;
-    font-size: 13.5px;
-    color: var(--text-2);
+    font-size: 14px;
+    color: var(--text);
   }
   .pdot2 {
     flex: none;
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: var(--text-4);
+    background: var(--text-3);
   }
   .pulse.working .pdot2 {
     background: var(--live);
@@ -1090,14 +1093,15 @@
   .launch {
     display: flex;
     flex-direction: column;
-    background: var(--panel);
-    border: 1px solid var(--border-2);
+    background: var(--panel-2);
+    border: 1px solid #64666c; /* ~3:1 against the canvas: WCAG 1.4.11 floor for a UI boundary, and this is the hero */
     border-radius: 18px;
     padding: 15px 16px 10px;
     transition: border-color 0.14s;
   }
   .launch:focus-within {
-    border-color: var(--text-4);
+    border-color: var(--text-3);
+    background: var(--panel-3);
   }
   .launch.busy {
     opacity: 0.65;
@@ -1116,7 +1120,7 @@
     max-height: 220px;
   }
   .brief::placeholder {
-    color: var(--text-4);
+    color: var(--text-3);
   }
   .lbar {
     display: flex;
@@ -1143,7 +1147,7 @@
     height: 30px;
     padding: 0 9px;
     border-radius: 8px;
-    color: var(--text-3);
+    color: var(--text-2);
     font-size: 12.5px;
     font-weight: 500;
   }
@@ -1181,8 +1185,9 @@
     font-weight: 600;
   }
   .go:disabled {
-    background: var(--panel-3);
-    color: var(--text-4);
+    background: transparent;
+    border: 1px solid var(--border-2);
+    color: var(--text-3);
   }
   .dirwrap {
     position: relative;
@@ -1259,11 +1264,11 @@
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    font-size: 12px;
-    color: var(--text-2);
+    font-size: 12.5px;
+    color: var(--text);
   }
   .cap.spent {
-    color: var(--text-4);
+    color: var(--text-3);
   }
   .cname {
     max-width: 130px;
@@ -1274,27 +1279,27 @@
   .cbar {
     flex: none;
     width: 46px;
-    height: 3px;
+    height: 4px;
     border-radius: 2px;
-    background: var(--panel-3);
+    background: #34363b;
     overflow: hidden;
   }
   .cbar i {
     display: block;
     height: 100%;
-    background: var(--text-3);
+    background: var(--text-2);
   }
   .cnum {
-    font-size: 11.5px;
-    color: var(--text-3);
+    font-size: 12px;
+    color: var(--text-2);
   }
   .cap.spent .cnum {
-    color: var(--text-4);
+    color: var(--text-3);
   }
   .vline {
     margin: 0;
-    font-size: 11.5px;
-    color: var(--text-4);
+    font-size: 12px;
+    color: var(--text-3);
   }
   .vline .warn {
     color: var(--alert);

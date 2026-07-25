@@ -311,10 +311,10 @@
   .sched-cta {
     align-self: flex-start;
     padding: 0 2px;
-    font-size: 12px;
-    color: var(--text-4);
+    font-size: 12.5px;
+    color: var(--text-3);
   }
-  .sched-cta:hover { color: var(--text-2); }
+  .sched-cta:hover { color: var(--text); }
 
   /* --- create form ---
      One layout rule keeps this tidy: every control is full-width and label-above,
