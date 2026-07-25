@@ -642,7 +642,7 @@ class AppStore {
   // folder, land in a session, type), which is two more than the thought deserves.
   // The prompt waits for the connection's backlog rather than firing blind, since a
   // send on a socket that has not opened yet is silently dropped.
-  async startWork(machineId: string, cwd: string, prompt: string) {
+  async startWork(machineId: string, cwd: string, prompt: string, cli?: string) {
     const text = prompt.trim()
     if (!text) return
     try {
@@ -650,6 +650,9 @@ class AppStore {
         cwd,
         model: DEFAULT_MODEL,
         effort: DEFAULT_EFFORT,
+        // Which account or provider runs it. Omitted means the machine's default,
+        // which is what a single-account machine always wants.
+        cli: cli || undefined,
       })
       this.open(machineId, meta.id)
       const conn = this.conns.get(tabKey(machineId, meta.id))

@@ -265,7 +265,7 @@
     if (!text || !sel || !targetDir || launching) return
     launching = true
     try {
-      await app.startWork(sel.id, targetDir, text)
+      await app.startWork(sel.id, targetDir, text, acct)
       brief = ''
     } finally {
       launching = false
@@ -283,6 +283,21 @@
   // and useless for ten: you cannot see what you are choosing between, and reaching
   // the last one takes nine taps.
   let machOpen = $state(false)
+  // Which account (or provider) the work runs on. Empty means the machine's default.
+  // Worth choosing at the start rather than switching after: accounts differ in what
+  // they have left, and a session started on a spent one stops on its first turn.
+  let acct = $state('')
+  let acctOpen = $state(false)
+  const acctNames = $derived<string[]>(st?.clis ?? [])
+  const acctLabel = $derived(acct || acctNames[0] || '')
+  // Remaining headroom per account, so the choice is made with the number that
+  // decides it rather than by remembering which one you burned this morning.
+  function acctLeft(name: string): string {
+    const b = binding(uses[name] ?? null)
+    if (!b) return ''
+    const left = Math.max(0, 100 - b.pct)
+    return left < 2 ? 'spent' : Math.round(left) + '% left'
+  }
 </script>
 
 <!-- An ambient wash behind the home screen: two very low-contrast radial pools that
@@ -407,6 +422,27 @@
                       {m.label}{m.online ? '' : ' · offline'}
                     </span>
                     <span class="dp mono">{m.url}</span>
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/if}
+      {#if acctNames.length > 1}
+        <span class="lsep" aria-hidden="true"></span>
+        <div class="dirwrap">
+          <button class="pick" class:on={acctOpen} onclick={() => (acctOpen = !acctOpen)} title="Account or provider">
+            <span class="pname">{acctLabel}</span>
+          </button>
+          {#if acctOpen}
+            <button class="scrim2" onclick={() => (acctOpen = false)} aria-label="Close"></button>
+            <div class="dirpop">
+              <div class="dirlist">
+                {#each acctNames as name (name)}
+                  <button class:active={name === acctLabel} onclick={() => { acct = name; acctOpen = false }}>
+                    <span class="dn">{name}</span>
+                    <span class="dp mono">{acctLeft(name) || 'no quota reported'}</span>
                   </button>
                 {/each}
               </div>
