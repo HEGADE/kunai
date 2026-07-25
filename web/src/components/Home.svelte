@@ -204,6 +204,12 @@
   })
 </script>
 
+<!-- An ambient wash behind the home screen: two very low-contrast radial pools that
+     drift on a slow cycle. It is the one gradient in the app, deliberately kept
+     under the content and near-invisible (a few percent of white on the near-black
+     canvas), so the page still reads as flat monochrome and nothing competes with
+     the data. Fixed and pointer-transparent, so it never intercepts a tap. -->
+<div class="ambient" aria-hidden="true"></div>
 <div class="home" class:compact>
   <div class="hello">
     <h1>{greeting}.</h1>
@@ -420,10 +426,41 @@
 </div>
 
 <style>
+  /* The ambient wash. Two pools, offset and drifting on different periods so the
+     motion never reads as a loop you can count. Amplitude is tiny on purpose: this
+     is atmosphere, not decoration, and the theme stays near-monochrome. */
+  .ambient {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(60rem 40rem at 18% 8%, rgba(255, 255, 255, 0.035), transparent 70%),
+      radial-gradient(48rem 34rem at 88% 82%, rgba(255, 255, 255, 0.022), transparent 72%);
+    animation: drift 42s ease-in-out infinite alternate;
+  }
+  @keyframes drift {
+    from {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+    to {
+      transform: translate3d(-2.5%, 1.5%, 0) scale(1.06);
+    }
+  }
+  /* Motion is atmosphere, so it is the first thing to go when it is unwelcome.
+     The wash itself stays: it costs nothing and carries no information. */
+  @media (prefers-reduced-motion: reduce) {
+    .ambient {
+      animation: none;
+    }
+  }
   .home {
     display: flex;
     flex-direction: column;
     gap: 18px;
+    /* Sit above the wash. */
+    position: relative;
+    z-index: 1;
   }
   /* Full (desktop pane) variant centers a wider column */
   .home:not(.compact) {

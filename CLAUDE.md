@@ -825,8 +825,14 @@ a placeholder), so the shape matters more than the one implementation.
 
 ## UI conventions
 
-Dark near-monochrome theme; tokens in `web/src/app.css`. No gradients, glows, or
-emojis in the UI. White is the only accent (primary buttons); amber and green are
+Dark near-monochrome theme; tokens in `web/src/app.css`. No glows or emojis in the
+UI, and no gradients except **one**: the home screen's ambient wash
+(`.ambient` in `Home.svelte`), two radial pools at a few percent white that drift on
+a slow 42s cycle. It is deliberately near-invisible and sits under the content at
+`z-index: 0` with `pointer-events: none`, so the page still reads as flat monochrome
+and nothing competes with the data; `prefers-reduced-motion` drops the motion and
+keeps the wash. Do not spend this exception anywhere else.
+White is the only accent (primary buttons); amber and green are
 reserved for status dots and the permission gate. Fonts: Geist (UI), Geist Mono
 (paths and code), Source Serif 4 (Claude's rendered markdown only). Paths use the
 rtl-ellipsis trick and need `unicode-bidi: plaintext` to keep the leading slash from
