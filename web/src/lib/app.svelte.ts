@@ -637,6 +637,32 @@ class AppStore {
   }
 
   // quickStart opens a fresh session in a known project dir on a given machine.
+  // startWork is the home screen's one action: create a session in cwd and send the
+  // first prompt straight into it. Starting work used to take three steps (pick a
+  // folder, land in a session, type), which is two more than the thought deserves.
+  // The prompt waits for the connection's backlog rather than firing blind, since a
+  // send on a socket that has not opened yet is silently dropped.
+  async startWork(machineId: string, cwd: string, prompt: string) {
+    const text = prompt.trim()
+    if (!text) return
+    try {
+      const meta = await createSession(this.baseForMachine(machineId), {
+        cwd,
+        model: DEFAULT_MODEL,
+        effort: DEFAULT_EFFORT,
+      })
+      this.open(machineId, meta.id)
+      const conn = this.conns.get(tabKey(machineId, meta.id))
+      if (conn) {
+        await conn.whenReady()
+        conn.sendPrompt(text)
+      }
+      this.refresh()
+    } catch (e) {
+      this.listError = (e as Error).message
+    }
+  }
+
   async quickStart(machineId: string, cwd: string) {
     try {
       const meta = await createSession(this.baseForMachine(machineId), {

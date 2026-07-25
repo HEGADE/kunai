@@ -153,10 +153,17 @@
 </script>
 
 <div class="sched">
-  <div class="s-head">
-    <span class="s-label">Schedules</span>
-    <button class="add" onclick={() => (show ? (show = false) : openForm())}>{show ? 'Cancel' : '+ New'}</button>
-  </div>
+  <!-- With nothing scheduled and the form shut, this whole block was a heading, a
+       button and a sentence all reporting "nothing". One line that is itself the
+       affordance says the same thing and takes the space it deserves. -->
+  {#if app.schedules.length === 0 && !show}
+    <button class="sched-cta" onclick={openForm}>Schedule a run for later →</button>
+  {:else}
+    <div class="s-head">
+      <span class="s-label">Schedules</span>
+      <button class="add" onclick={() => (show ? (show = false) : openForm())}>{show ? 'Cancel' : '+ New'}</button>
+    </div>
+  {/if}
 
   {#if show}
     <div class="form">
@@ -265,9 +272,6 @@
       <button class="del" onclick={() => app.removeSchedule(job)} aria-label="Delete">✕</button>
     </div>
   {/each}
-  {#if app.schedules.length === 0 && !show}
-    <p class="empty">Run a prompt at a set time, or right after your quota resets.</p>
-  {/if}
 </div>
 
 <style>
@@ -302,6 +306,15 @@
   .del { flex: none; width: 24px; height: 24px; border-radius: 50%; color: var(--text-4); font-size: 11px; }
   .del:hover { color: var(--text-2); background: var(--panel-3); }
   .empty { margin: 0; padding: 4px 2px; font-size: 12px; color: var(--text-4); }
+  /* The empty state IS the call to action: one quiet line, aligned with the other
+     reference lines rather than announcing itself as a section. */
+  .sched-cta {
+    align-self: flex-start;
+    padding: 0 2px;
+    font-size: 12px;
+    color: var(--text-4);
+  }
+  .sched-cta:hover { color: var(--text-2); }
 
   /* --- create form ---
      One layout rule keeps this tidy: every control is full-width and label-above,

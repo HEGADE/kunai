@@ -241,6 +241,40 @@
     }
     return out
   })
+
+  // The launcher. Starting work is the reason this screen exists, so the screen is
+  // mostly an input: type the task, pick where it runs, go. The old flow (choose a
+  // folder, land in a session, then type) was three steps for one thought.
+  let brief = $state('')
+  let dir = $state('')
+  let dirOpen = $state(false)
+  let launching = $state(false)
+  // Where the work runs: whatever you last picked, else the most recent project.
+  const targetDir = $derived(dir || selProjects[0]?.cwd || '')
+  const targetName = $derived(targetDir.replace(/\/+$/, '').split('/').slice(-1)[0] || targetDir)
+  async function launch() {
+    const text = brief.trim()
+    if (!text || !sel || !targetDir || launching) return
+    launching = true
+    try {
+      await app.startWork(sel.id, targetDir, text)
+      brief = ''
+    } finally {
+      launching = false
+    }
+  }
+  // Enter sends, Shift+Enter is a newline: the same contract as the composer, so
+  // the muscle memory carries over.
+  function onBriefKey(e: KeyboardEvent) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault()
+      launch()
+    }
+  }
+  function cycleMachine() {
+    const i = app.machines.findIndex((m) => m.id === sel?.id)
+    picked = app.machines[(i + 1) % app.machines.length]?.id ?? ''
+  }
 </script>
 
 <!-- An ambient wash behind the home screen: two very low-contrast radial pools that
@@ -250,270 +284,100 @@
      the data. Fixed and pointer-transparent, so it never intercepts a tap. -->
 <div class="ambient" aria-hidden="true"></div>
 <div class="home" class:compact>
-  <!-- The hero answers whichever question is actually live, because that is what
-       you opened the page to ask. A session stuck on a permission gate is the worst
-       state this product has (an agent you believe is working while it waits on a
-       click you never saw), so it outranks everything else. -->
-  <div class="lede" class:needs={!!waiting} class:working={!waiting && liveSessions.length > 0}>
-    <div class="ltop">
-      <span class="ldot" aria-hidden="true"></span>
-      <h1>{hero.head}</h1>
-    </div>
-    <p class="lsub">
-      {#if waiting}
-        <button class="lact" onclick={() => app.open(waiting.machineId, waiting.id)}>
-          {waiting.title || waiting.cwd.split('/').slice(-1)[0]} is waiting on you<span class="larr">→</span>
-        </button>
-      {:else}
-        <span>{hero.sub}</span>
-      {/if}
-    </p>
-    <p class="lmeta mono">
-      {#if st?.hostname}{st.hostname}{:else if sel}{sel.label}{/if}
-      <span class="dim">· direct over tailnet</span>
-      {#if st?.claude_version}<span class="dim">· claude {st.claude_version}</span>{/if}
-    </p>
-  </div>
-
-  {#if multi}
-    <div class="mpick">
-      {#each app.machines as m (m.id)}
-        <button
-          class="mp"
-          class:on={sel?.id === m.id}
-          class:off={!m.online}
-          title={m.url}
-          onclick={() => (picked = m.id)}
-        >
-          <span class="pdot" class:live={m.online}></span>
-          <span class="plabel">{m.label}</span>
-        </button>
-      {/each}
-    </div>
-  {/if}
-
-  {#if !st && sel}
-    <div class="offline">
-      <span class="odot"></span>
-      {sel.label} is offline — no stats to show.
-    </div>
-  {/if}
-
-  {#if outdated && sel}
-    <div class="update">
-      <span class="udot"></span>
-      <div class="utext">
-        <span class="uhead">Update available</span>
-        <span class="mono usub">{st?.kunai_version} → {app.latestVersion} · restarts {sel.label}, sessions resume</span>
-        {#if updateErr}
-          <span class="mono uerr" title={updateErr}>update failed: {updateErr}</span>
-        {/if}
-        {#if updating && updateProg >= 0 && updateProg < 1}
-          <div class="ubar"><div class="ubar-fill" style="width: {Math.round(updateProg * 100)}%"></div></div>
-        {/if}
-      </div>
-      <button class="ubtn" disabled={updating} onclick={() => sel && app.updateMachine(sel.id)}>
-        {updateLabel}
+  <!-- Status is a sentence, not a panel: it answers "can I work" in one line. A
+       session stuck on a permission gate takes the line over, because an agent
+       waiting on a click you never saw is the worst state this product has. -->
+  <p class="pulse" class:needs={!!waiting} class:working={!waiting && liveSessions.length > 0}>
+    <span class="pdot2" aria-hidden="true"></span>
+    {#if waiting}
+      <button class="plink" onclick={() => app.open(waiting.machineId, waiting.id)}>
+        {waiting.title || waiting.cwd.split('/').slice(-1)[0]} is waiting on you →
       </button>
-    </div>
-  {/if}
+    {:else}
+      <span>{hero.head}{hero.sub ? ` · ${hero.sub}` : ''}</span>
+    {/if}
+  </p>
 
-  <!-- Two columns, because the page has two jobs: acting (left) and knowing
-       (right). One narrow column left half the viewport empty and kept the
-       sessions off the page entirely. Stacks act-first on a phone. -->
-  <div class="cols">
-    <div class="col main">
-      {#if liveSessions.length}
-        <section class="blk">
-          <h2 class="blabel">Working</h2>
-          <div class="rows">
-            {#each liveSessions as s (s.id)}
-              <button class="srow" onclick={() => app.open(s.machineId, s.id)} title={s.cwd}>
-                <span class="sd live" aria-hidden="true"></span>
-                <span class="stitle">{s.title || s.cwd.split('/').slice(-1)[0]}</span>
-                <span class="srsp"></span>
-                <span class="scwd mono">{s.cwd.split('/').slice(-1)[0]}</span>
+  <!-- The launcher IS the page: one field, plus the two things a task needs to run
+       (where, and on which machine). Given real presence, it fills the canvas the
+       way a stack of small sections never could. -->
+  <div class="launch" class:busy={launching}>
+    <textarea
+      class="brief"
+      bind:value={brief}
+      onkeydown={onBriefKey}
+      rows="2"
+      placeholder="What should Claude work on?"
+      aria-label="Describe the task to start"
+    ></textarea>
+    <div class="lbar">
+      <div class="dirwrap">
+        <button class="pick" class:on={dirOpen} onclick={() => (dirOpen = !dirOpen)} title={targetDir}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
+          <span class="pname">{targetName || 'Choose a folder'}</span>
+        </button>
+        {#if dirOpen}
+          <button class="scrim2" onclick={() => (dirOpen = false)} aria-label="Close"></button>
+          <div class="dirpop">
+            {#each selProjects as pr (pr.cwd)}
+              <button class:active={pr.cwd === targetDir} onclick={() => { dir = pr.cwd; dirOpen = false }}>
+                <span class="dn">{pr.name}</span>
+                <span class="dp mono">{pr.cwd}</span>
               </button>
             {/each}
+            <button class="browse2" onclick={() => { dirOpen = false; app.newSession() }}>Browse…</button>
           </div>
-        </section>
-      {/if}
-
-    <div class="start">
-      <span class="s-label">{multi && sel ? `Start on ${sel.label}` : 'Start in'}</span>
-      <div class="chips">
-        {#each selProjects as p (p.cwd)}
-          <button class="chip" title={p.cwd} onclick={() => sel && app.quickStart(sel.id, p.cwd)}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
-            {p.name}
-          </button>
-        {/each}
-        <button class="chip browse" onclick={() => app.newSession()}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
-          Browse…
-        </button>
+        {/if}
       </div>
-    </div>
-
-    </div>
-
-    <div class="col side">
-    {#if st}
-      <!-- Quota first, and close to alone. It is the only thing on this page that
-           can stop you working, so it is the only thing that gets any weight. -->
-      {#if !usageLoaded}
-        <!-- Hold the rows' exact height while the CLI is asked. The quota takes a
-             couple of seconds to arrive, and appearing from nothing shoved the
-             whole page down; this reserves the space and fills it in place. -->
-        <div class="quota" aria-hidden="true">
-          {#each ['Session', 'Weekly'] as k (k)}
-            <div class="q skel">
-              <span class="q-k">{k}</span>
-              <div class="q-track"></div>
-              <span class="q-pct mono">—</span>
-              <span class="q-when mono"></span>
-            </div>
-          {/each}
-        </div>
-      {:else if accounts.length > 1}
-        <!-- Several accounts: one line each, the binding window only. Six bars that
-             mostly say "fine" is not a dashboard, and on a phone it is a wall. -->
-        <div class="qroster">
-          <h2 class="blabel qhead">Capacity</h2>
-          {#each accounts as cli (cli)}
-            {@const u = uses[cli] ?? null}
-            {@const b = binding(u)}
-            {@const err = usageErrs[cli] ?? ''}
-            {@const open = openAcct === cli}
-            {@const left = b ? Math.max(0, 100 - b.pct) : null}
-            {@const spent = left !== null && left < 2}
-            <!-- The bar is what you have LEFT, not what you spent: longer is better,
-                 which is the only reading that needs no explaining. A spent account
-                 cannot be worked on, so it drops its bar and says when it is back. -->
-            <button
-              class="qrow"
-              class:spent
-              class:open
-              onclick={() => (openAcct = open ? '' : cli)}
-              aria-expanded={open}
-              title="{cli} — tap for both windows"
-            >
-              {#if !spent && left !== null}
-                <i class="qfill" style="width:{Math.max(2, left)}%"></i>
-              {/if}
-              <span class="qname">{cli || 'Claude'}</span>
-              {#if spent}
-                <span class="qwhen mono">spent{b?.when ? ` · back in ${b.when.replace(/^resets in /, '')}` : ''}</span>
-                <span class="qpct mono">0<small>%</small></span>
-              {:else if b && left !== null}
-                <span class="qwhen mono">{b.window}{b.when ? ` · ${b.when}` : ''}</span>
-                <span class="qpct mono">{Math.round(left)}<small>%</small></span>
-              {:else}
-                <span class="qwhen mono">{err ? 'no quota' : '—'}</span>
-                <span class="qpct mono">—</span>
-              {/if}
-            </button>
-            {#if open && u}
-              <!-- Both windows, on demand. -->
-              <div class="qdetail">
-                {#each [{ k: 'Session', w: u.session }, { k: 'Weekly', w: u.weekly }] as { k, w } (k)}
-                  {#if w}
-                    <div class="q">
-                      <span class="q-k">{k}</span>
-                      <div class="q-track">
-                        <i class:hot={w.percent >= 80} style="width:{Math.max(1.5, Math.min(100, w.percent))}%"></i>
-                      </div>
-                      <span class="q-pct mono" class:hot={w.percent >= 80}>{Math.round(w.percent)}<small>%</small></span>
-                      <span class="q-when mono">{resetsIn(w)}</span>
-                    </div>
-                  {/if}
-                {/each}
-              </div>
-            {/if}
-          {/each}
-        </div>
-      {:else}
-        <!-- One account: two rows was never the clutter, and it says more. -->
-        {#each accounts as cli (cli)}
-          {@const u = uses[cli] ?? null}
-          {@const session = u?.session ?? null}
-          {@const weekly = u?.weekly ?? null}
-          {@const err = usageErrs[cli] ?? ''}
-          <div class="quota">
-            {#if err && !session && !weekly}
-              {#each ['Session', 'Weekly'] as k (k)}
-                <div class="q skel">
-                  <span class="q-k">{k}</span>
-                  <div class="q-track"></div>
-                  <span class="q-pct mono">—</span>
-                  <span class="q-when mono">{err === 'unavailable' ? 'no quota reported' : 'unavailable'}</span>
-                </div>
-              {/each}
-            {:else}
-              {#if session}
-                <div class="q">
-                  <span class="q-k">Session</span>
-                  <div class="q-track">
-                    <i class:hot={session.percent >= 80} style="width:{Math.max(1.5, Math.min(100, session.percent))}%"></i>
-                  </div>
-                  <span class="q-pct mono" class:hot={session.percent >= 80}
-                    >{Math.round(session.percent)}<small>%</small></span
-                  >
-                  <span class="q-when mono">{resetsIn(session)}</span>
-                </div>
-              {/if}
-              {#if weekly}
-                <div class="q">
-                  <span class="q-k">Weekly</span>
-                  <div class="q-track">
-                    <i class:hot={weekly.percent >= 80} style="width:{Math.max(1.5, Math.min(100, weekly.percent))}%"></i>
-                  </div>
-                  <span class="q-pct mono" class:hot={weekly.percent >= 80}
-                    >{Math.round(weekly.percent)}<small>%</small></span
-                  >
-                  <span class="q-when mono">{resetsIn(weekly)}</span>
-                </div>
-              {/if}
-            {/if}
-          </div>
-        {/each}
+      {#if multi}
+        <span class="lsep" aria-hidden="true"></span>
+        <button class="pick" onclick={cycleMachine} title="Switch machine">
+          <span class="mdot2" class:live={sel?.online}></span>
+          <span class="pname">{sel?.label}</span>
+        </button>
       {/if}
+      <span class="lspacer"></span>
+      <button class="go" disabled={!brief.trim() || !targetDir || launching} onclick={launch}>
+        {launching ? 'Starting…' : 'Start'}
+      </button>
+    </div>
+  </div>
 
-      <!-- The machine, by exception. A vital that is fine is not news, so it stays
-           one quiet line; the guard tripping is news, so it says so in words. The
-           silence is the signal. -->
+  <!-- Reference below: dense and quiet, one line each. These answer questions you
+       ask occasionally, so they take the space that deserves. -->
+  <div class="ref">
+    {#if st}
       {#if st.thermal_trip}
         <p class="alarm">Ran too hot — the guard stopped every session here.</p>
       {/if}
-      <div class="status">
-        <p class="state" class:live={selSessions > 0}>
-          <span class="sdot" class:live={selSessions > 0} aria-hidden="true"></span>
-          {running}
-          <!-- A count of what you could reopen is navigation, not status, so it
-               rides along quietly rather than sharing the sentence's weight. -->
-          {#if selSessions === 0 && selResumable}<span class="sresume">· {selResumable} to resume</span>{/if}
-        </p>
-        <div class="vitals mono">
-        {#if st.cpu_temp_c > 0}
-          <span class:warn={tempHot}>{Math.round(st.cpu_temp_c)}°C</span>
-        {:else if st.thermal_pressure}
-          <span class:warn={tempHot}>{capitalize(st.thermal_pressure)}</span>
-        {/if}
-        {#if st.mem_total}
-          <span class:warn={memHigh} title="{gb(st.mem_total - st.mem_available)} of {gb(st.mem_total)}"
-            >{memUsedPct}% memory</span
-          >
-        {/if}
-        {#if st.disk_total}
-          <span class:warn={diskLow} title="of {gbDisk(st.disk_total)}">{gbDisk(st.disk_free)} free</span>
-        {/if}
-          {#if st.uptime_sec}<span>up {dur(st.uptime_sec)}</span>{/if}
-        </div>
+      <div class="caps">
+        {#each accounts as cli (cli)}
+          {@const b = binding(uses[cli] ?? null)}
+          {@const err = usageErrs[cli] ?? ''}
+          {@const left = b ? Math.max(0, 100 - b.pct) : null}
+          {@const spent = left !== null && left < 2}
+          <span class="cap" class:spent title="{cli || 'Claude'} — {b ? b.window + ' window' : err || 'no quota'}">
+            <span class="cname">{cli || 'Claude'}</span>
+            {#if left !== null}
+              <span class="cbar" aria-hidden="true"><i style="width:{spent ? 0 : Math.max(4, left)}%"></i></span>
+              <span class="cnum mono">{spent ? (b?.when ? b.when.replace(/^resets in /, '') : 'spent') : Math.round(left) + '%'}</span>
+            {:else}
+              <span class="cnum mono">{err ? 'no quota' : '—'}</span>
+            {/if}
+          </span>
+        {/each}
       </div>
+      <p class="vline mono">
+        {#if st.hostname}{st.hostname}{/if}
+        {#if st.cpu_temp_c > 0}<span class:warn={tempHot}> · {Math.round(st.cpu_temp_c)}°C</span>
+        {:else if st.thermal_pressure}<span class:warn={tempHot}> · {capitalize(st.thermal_pressure)}</span>{/if}
+        {#if st.mem_total}<span class:warn={memHigh}> · {memUsedPct}% memory</span>{/if}
+        {#if st.disk_total}<span class:warn={diskLow}> · {gbDisk(st.disk_free)} free</span>{/if}
+        {#if st.uptime_sec}<span> · up {dur(st.uptime_sec)}</span>{/if}
+        {#if st.claude_version}<span> · claude {st.claude_version}</span>{/if}
+      </p>
     {/if}
-
-      <Schedules />
-    </div>
+    <Schedules />
   </div>
 </div>
 
@@ -556,10 +420,16 @@
   }
   /* Full (desktop pane) variant centers a wider column */
   .home:not(.compact) {
-    max-width: 1040px;
+    max-width: 660px;
     margin: 0 auto;
-    padding: 7vh 32px 40px;
     width: 100%;
+    padding: 32px;
+    gap: 20px;
+    /* Center the column in the pane. The previous layout pinned everything to the
+       top and left a screenful of void underneath, which reads as unfinished;
+       space distributed evenly reads as composed. */
+    min-height: 100%;
+    justify-content: center;
   }
   .hello h1 {
     font-size: 26px;
@@ -1170,5 +1040,263 @@
   }
   .qrow.spent .qwhen {
     color: var(--text-3);
+  }
+
+  /* --- status: one line ---------------------------------------------------- */
+  .pulse {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin: 0;
+    font-size: 13.5px;
+    color: var(--text-2);
+  }
+  .pdot2 {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-4);
+  }
+  .pulse.working .pdot2 {
+    background: var(--live);
+  }
+  .pulse.needs .pdot2 {
+    background: var(--busy);
+    animation: hpulse 1.6s ease-in-out infinite;
+  }
+  @keyframes hpulse {
+    50% {
+      opacity: 0.3;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pulse.needs .pdot2 {
+      animation: none;
+    }
+  }
+  .plink {
+    padding: 0;
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .plink:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  /* --- the launcher: the one element with real presence -------------------- */
+  .launch {
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--border-2);
+    border-radius: 18px;
+    padding: 15px 16px 10px;
+    transition: border-color 0.14s;
+  }
+  .launch:focus-within {
+    border-color: var(--text-4);
+  }
+  .launch.busy {
+    opacity: 0.65;
+  }
+  .brief {
+    width: 100%;
+    resize: none;
+    background: none;
+    border: none;
+    outline: none;
+    padding: 0;
+    color: var(--text);
+    font-size: 17px;
+    line-height: 1.5;
+    min-height: 58px;
+    max-height: 220px;
+  }
+  .brief::placeholder {
+    color: var(--text-4);
+  }
+  .lbar {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding-top: 8px;
+  }
+  .lspacer {
+    flex: 1;
+    min-width: 6px;
+  }
+  .lsep {
+    flex: none;
+    width: 1px;
+    height: 14px;
+    margin: 0 5px;
+    background: var(--border-2);
+  }
+  .pick {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    height: 30px;
+    padding: 0 9px;
+    border-radius: 8px;
+    color: var(--text-3);
+    font-size: 12.5px;
+    font-weight: 500;
+  }
+  .pick:hover,
+  .pick.on {
+    color: var(--text);
+    background: var(--panel-2);
+  }
+  .pname {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mdot2 {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-4);
+  }
+  .mdot2.live {
+    background: var(--live);
+  }
+  /* Start is the only filled control on the page, because it is the only thing the
+     page is for. */
+  .go {
+    flex: none;
+    height: 30px;
+    padding: 0 16px;
+    border-radius: 8px;
+    background: var(--text);
+    color: #0b0b0c;
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .go:disabled {
+    background: var(--panel-3);
+    color: var(--text-4);
+  }
+  .dirwrap {
+    position: relative;
+    display: inline-flex;
+    min-width: 0;
+  }
+  .scrim2 {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+  }
+  .dirpop {
+    position: absolute;
+    z-index: 31;
+    bottom: calc(100% + 8px);
+    left: 0;
+    min-width: 250px;
+    max-width: calc(100vw - 32px);
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 5px;
+    background: var(--panel-2);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r);
+    box-shadow: 0 16px 40px -14px rgba(0, 0, 0, 0.7);
+  }
+  .dirpop button {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 7px 10px;
+    border-radius: var(--r-sm);
+    text-align: left;
+  }
+  .dirpop button:hover,
+  .dirpop button.active {
+    background: var(--panel-3);
+  }
+  .dn {
+    font-size: 13px;
+    color: var(--text);
+  }
+  .dp {
+    font-size: 11px;
+    color: var(--text-4);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    unicode-bidi: plaintext;
+  }
+  .browse2 {
+    margin-top: 4px;
+    border-top: 1px solid var(--border);
+    color: var(--text-3);
+    font-size: 12.5px;
+  }
+
+  /* --- reference: dense, quiet ---------------------------------------------- */
+  .ref {
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+  }
+  /* Capacity as inline chips, each bar showing what is LEFT, so a longer bar is
+     good news and a spent account simply says when it is back. Every account in
+     one glance, instead of a stack of full-width slabs that read like alarms. */
+  .caps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px 16px;
+  }
+  .cap {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--text-2);
+  }
+  .cap.spent {
+    color: var(--text-4);
+  }
+  .cname {
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cbar {
+    flex: none;
+    width: 46px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--panel-3);
+    overflow: hidden;
+  }
+  .cbar i {
+    display: block;
+    height: 100%;
+    background: var(--text-3);
+  }
+  .cnum {
+    font-size: 11.5px;
+    color: var(--text-3);
+  }
+  .cap.spent .cnum {
+    color: var(--text-4);
+  }
+  .vline {
+    margin: 0;
+    font-size: 11.5px;
+    color: var(--text-4);
+  }
+  .vline .warn {
+    color: var(--alert);
   }
 </style>
