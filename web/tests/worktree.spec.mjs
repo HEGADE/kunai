@@ -122,10 +122,11 @@ async function main() {
   await shot(page, '02-picker-closed-state')
 
   const modes = home.locator('.wtpop .mode')
-  const modeLabels = await modes.allInnerTexts()
+  await modes.nth(1).waitFor({ timeout: 5000 })
+  const modeLabels = (await modes.allInnerTexts()).map((t) => t.split('\n')[0].trim())
   check(
     'the choice reads as two places, not a checkbox',
-    modeLabels.join('|').includes('Current checkout') && modeLabels.join('|').includes('New worktree'),
+    modeLabels.includes('This checkout') && modeLabels.includes('New worktree'),
     modeLabels.join(' / '),
   )
 

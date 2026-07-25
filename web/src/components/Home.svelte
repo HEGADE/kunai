@@ -534,23 +534,27 @@
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 3v12M6 21a2 2 0 100-4 2 2 0 000 4zM6 7a2 2 0 100-4 2 2 0 000 4zM18 11a2 2 0 100-4 2 2 0 000 4zM18 9v2a4 4 0 01-4 4H6" /></svg>
           <span class="pname" class:mono={!wt.on && !!onBranch}>{wtLabel}</span>
         </button>
-        {#if wtOpen}
-          <button class="scrim2" onclick={() => (wtOpen = false)} aria-label="Close"></button>
-          <div class="dirpop wtpop">
-            <WorktreeChoicePicker
-              base={app.baseForMachine(sel?.id ?? '')}
-              repo={targetDir}
-              bind:value={wt}
-              ondone={() => (wtOpen = false)}
-            />
-          </div>
-        {/if}
       </div>
       <span class="lspacer"></span>
       <button class="go" disabled={!brief.trim() || !targetDir || launching} onclick={launch}>
         {launching ? 'Starting…' : 'Start'}
       </button>
     </div>
+    <!-- Hung off the card rather than off the pill. Anchored to the pill it
+         overflowed whichever edge it was pointed at: right on a narrow window,
+         left on a wide one, because the pill sits in the middle of a row whose
+         width changes. The card is the thing with a known edge. -->
+    {#if wtOpen}
+      <button class="scrim2" onclick={() => (wtOpen = false)} aria-label="Close"></button>
+      <div class="dirpop wtpop">
+        <WorktreeChoicePicker
+          base={app.baseForMachine(sel?.id ?? '')}
+          repo={targetDir}
+          bind:value={wt}
+          ondone={() => (wtOpen = false)}
+        />
+      </div>
+    {/if}
   </div>
 
   <!-- Reference below: dense and quiet, one line each. These answer questions you
@@ -1331,6 +1335,7 @@
 
   /* --- the launcher: the one element with real presence -------------------- */
   .launch {
+    position: relative; /* the worktree popover anchors to the card, not the pill */
     display: flex;
     flex-direction: column;
     background: var(--panel-2);
@@ -1490,11 +1495,17 @@
     white-space: nowrap;
     unicode-bidi: plaintext;
   }
-  /* The worktree popover holds a control rather than a list, so it does not
-     scroll and it sizes to its contents. */
+  /* Anchored to the pill's right edge, because this pill sits at the right of the
+     bar and a left-anchored popover hung out past the card. Same width and
+     padding as the folder and account popovers it sits beside: it is a menu, not
+     a dialog. */
   .wtpop {
-    min-width: 320px;
-    padding: 12px;
+    left: auto;
+    right: 10px;
+    bottom: calc(100% - 6px);
+    min-width: 260px;
+    max-width: min(320px, calc(100% - 20px));
+    padding: 5px;
     overflow: visible;
   }
   /* An armed pill states the choice rather than merely looking selected: this is

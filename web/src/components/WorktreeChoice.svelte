@@ -77,6 +77,8 @@
   })
 
   const isRepo = $derived(!loading && !error)
+  // The branch this folder is on, so "This checkout" says which one it means.
+  const current = $derived(refs.find((r) => r.current)?.name ?? '')
   const baseLabel = $derived(value.base || defaultBranch || 'default branch')
   // What the branch will actually be called, so the choice is not abstract.
   const previewName = $derived(
@@ -110,6 +112,9 @@
 </script>
 
 <div class="wtc">
+  <!-- Two rows, like every other picker on this bar. A segmented control for a
+       binary choice was the largest thing on the screen for the smallest decision
+       on it, and it read as a dialog rather than a menu. -->
   <div class="modes" role="radiogroup" aria-label="Where should this work happen">
     <button
       class="mode"
@@ -118,7 +123,8 @@
       aria-checked={!value.on}
       onclick={() => setMode(false)}
     >
-      Current checkout
+      <span class="mn">This checkout</span>
+      {#if current}<span class="md mono">{current}</span>{/if}
     </button>
     <button
       class="mode"
@@ -126,10 +132,10 @@
       role="radio"
       aria-checked={value.on}
       disabled={!isRepo}
-      title={error ? error : 'A separate checkout on its own branch'}
       onclick={() => setMode(true)}
     >
-      New worktree
+      <span class="mn">New worktree</span>
+      <span class="md">{error ? 'not a git repository' : 'its own branch, in parallel'}</span>
     </button>
   </div>
 
@@ -137,9 +143,8 @@
     <!-- Said in text rather than on hover, because this is where the choice is
          made and a phone has no hover to explain it with. -->
     <p class="why">
-      A separate checkout of this repository on its own branch, so another agent
-      can work here while the main checkout stays as you left it. It is git's own
-      worktree feature.
+      Its own checkout of this repository, so another agent can work here without
+      touching the main one. git's own worktree feature.
     </p>
     <!-- Two fields and a line about setup. Anything more here is configuration
          standing between a thought and the work. -->
@@ -231,38 +236,45 @@
     gap: 10px;
   }
 
-  /* Two states, one control. A segmented pair reads as a choice between places;
-     a checkbox would read as a setting. */
+  /* Rows, matching the folder and account pickers on the same bar. */
   .modes {
     display: flex;
-    gap: 2px;
-    padding: 2px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    flex-direction: column;
+    gap: 1px;
   }
   .mode {
-    flex: 1;
-    padding: 6px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    width: 100%;
+    padding: 6px 9px;
     border: 0;
     border-radius: var(--r-sm);
     background: transparent;
-    color: var(--text-4);
+    color: var(--text-2);
     font: inherit;
-    font-size: 12.5px;
+    text-align: left;
     cursor: pointer;
-    white-space: nowrap;
   }
-  .mode:hover:not(:disabled) {
-    color: var(--text);
-  }
+  .mode:hover:not(:disabled),
   .mode.on {
     background: var(--panel-3);
+  }
+  .mode.on .mn {
     color: var(--text);
   }
   .mode:disabled {
-    opacity: 0.4;
     cursor: default;
+  }
+  .mn {
+    font-size: 12.5px;
+  }
+  .md {
+    font-size: 11px;
+    color: var(--text-4);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .fields {
