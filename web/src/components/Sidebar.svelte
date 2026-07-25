@@ -181,7 +181,7 @@
         title="New session in {target.cwd}"
         aria-label="New session in {group.label}"
       >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
       </button>
     {/if}
   </div>
@@ -577,8 +577,8 @@
     align-items: center;
     gap: 6px;
     font-size: 11px;
-    color: var(--text-4);
-    padding: 9px 10px 3px;
+    color: var(--text-3);
+    padding: 7px 8px 3px 10px;
     min-width: 0;
   }
   .glabel {
@@ -804,37 +804,31 @@
     background: var(--live);
   }
 
-  /* The start action on a group heading: invisible until the heading is hovered or
-     the button itself is focused, so a column of headings does not turn into a
-     column of buttons. It still reaches full size for touch. */
+  /* The start action on a group heading. Hiding it until hover was a mistake: an
+     action you cannot see is an action nobody uses, and on touch there is no hover
+     to reveal it with. So it rests visible and quiet -- a real 26px hit target with
+     its own surface, one text tier up from the heading it sits beside -- and lights
+     up fully on hover. Quiet is achieved with contrast, not with invisibility. */
   .gadd {
     flex: none;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
-    height: 20px;
+    width: 26px;
+    height: 26px;
     margin-left: auto;
     border-radius: var(--r-sm);
-    color: var(--text-4);
-    opacity: 0;
-    transition: opacity 0.12s, color 0.12s, background 0.12s;
+    background: var(--panel);
+    color: var(--text-2);
+    transition: color 0.12s, background 0.12s;
   }
-  .grp:hover .gadd,
+  .gadd:hover,
   .gadd:focus-visible {
-    opacity: 1;
-  }
-  .gadd:hover {
     color: var(--text);
-    background: var(--panel-2);
+    background: var(--panel-3);
   }
   .gadd:disabled {
-    opacity: 0.4;
-  }
-  /* Touch has no hover, so the affordance has to be permanent there. */
-  @media (hover: none) {
-    .gadd {
-      opacity: 1;
-    }
+    color: var(--text-4);
+    background: transparent;
   }
 </style>
