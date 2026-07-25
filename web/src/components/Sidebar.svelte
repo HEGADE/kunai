@@ -367,28 +367,34 @@
         Enable notifications
       </button>
     {/if}
+    <!-- Four destinations, all of them configuration you visit rarely. As a
+         stacked list they cost 188px, which is nearly a third of a phone screen
+         permanently spent on things you are not looking at. On a phone they
+         become one row instead; see .nav below. -->
+    <nav class="nav">
     <button class="navitem" onclick={() => app.openChannels()}>
       <span class="ic">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 01-9 8.4 8.5 8.5 0 01-3.9-.9L3 20.5l1.5-4.4a8.4 8.4 0 01-.9-3.9 8.5 8.5 0 018.4-8.7h.5a8.5 8.5 0 018.5 8.5z" /></svg>
       </span>
-      Channels
+      <span class="nlbl">Channels</span>
     </button>
     <button class="navitem" onclick={() => app.openAccounts()}>
       <span class="ic">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 00-3-3.87" /><path d="M16 3.13a4 4 0 010 7.75" /></svg>
       </span>
-      Accounts
+      <span class="nlbl">Accounts</span>
     </button>
     <button class="navitem" onclick={() => app.openProviders()}>
       <span class="ic">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /></svg>
       </span>
-      Providers
+      <span class="nlbl">Providers</span>
     </button>
     <button class="navitem" onclick={() => app.openSettings()}>
       <span class="ic">{@render gear()}</span>
       Settings
     </button>
+    </nav>
   </div>
 </div>
 
@@ -806,6 +812,30 @@
     border-radius: var(--r-sm);
     font-size: 13.5px;
     color: var(--text-2);
+  }
+  /* A phone lays them side by side: icon over label, the shape of a tab bar.
+     The labels stay, because an unexplained icon is the problem this is not
+     meant to trade for. Desktop keeps the stacked list, where the room exists. */
+  @media (max-width: 860px) {
+    .nav {
+      display: flex;
+      gap: 2px;
+    }
+    .navitem {
+      flex: 1;
+      min-width: 0;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px 2px 6px;
+      font-size: 10.5px;
+      color: var(--text-3);
+    }
+    .navitem .nlbl {
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   }
   .navitem:hover {
     color: var(--text);
