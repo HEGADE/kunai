@@ -91,11 +91,28 @@ func (s *Server) buildContent(cwd, text string, atts []session.Attachment) any {
 	}
 
 	if len(blocks) == 0 {
-		return extraText // only non-image files; a plain string with paths
+		// Only non-image files (referenced by path), or nothing readable at all. An
+		// empty string would stall the turn just like an empty text block does, so
+		// say something rather than nothing.
+		if strings.TrimSpace(extraText) == "" {
+			return attachOnlyPrompt
+		}
+		return extraText
 	}
-	content := []claude.ContentBlock{{Type: "text", Text: extraText}}
+	// An EMPTY text block is rejected by the API, and the turn then hangs on
+	// "Working…" forever -- which is what sending a screenshot with no message did.
+	// So the text block is included only when there is actually text; an
+	// image-only message is just the image blocks, which is valid.
+	content := make([]claude.ContentBlock, 0, len(blocks)+1)
+	if strings.TrimSpace(extraText) != "" {
+		content = append(content, claude.ContentBlock{Type: "text", Text: extraText})
+	}
 	return append(content, blocks...)
 }
+
+// attachOnlyPrompt stands in when a message carries attachments but no words and
+// nothing could be inlined: the model still needs a sentence to act on.
+const attachOnlyPrompt = "Take a look at the attached file(s)."
 
 // safeName keeps the basename but strips path separators; falls back to the id.
 func safeName(name, id string) string {
