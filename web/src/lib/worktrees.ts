@@ -98,6 +98,15 @@ export function worktreeBranches(base: string, repo: string): Promise<BranchList
   )
 }
 
+// isGitRepo answers whether a folder can hold a worktree, so a caller can decide
+// whether to offer one rather than discovering it by failing.
+export function isGitRepo(base: string, path: string): Promise<boolean> {
+  return fetch(at(base, `/api/worktrees/repo?path=${encodeURIComponent(path)}`))
+    .then((r) => json<{ repo: boolean }>(r))
+    .then((v) => v.repo)
+    .catch(() => false)
+}
+
 export function worktreeSetup(base: string, repo: string): Promise<SetupProposal> {
   return fetch(at(base, `/api/worktrees/setup?repo=${encodeURIComponent(repo)}`)).then((r) =>
     json<SetupProposal>(r),

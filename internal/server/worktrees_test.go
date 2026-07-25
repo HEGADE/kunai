@@ -464,3 +464,59 @@ func TestAnUnnameablePromptLeavesThePlaceholder(t *testing.T) {
 		t.Errorf("branch = %q, want the placeholder %q", got.Branch, rec.Branch)
 	}
 }
+
+// --- folders that are not repositories ------------------------------------------
+
+// The sidebar asks before it offers, so a folder that cannot hold a worktree
+// never shows the button. Finding out by failing is what put a raw
+// "worktree: not a git repository" where the session list should be.
+func TestIsRepoAnswersForBothKinds(t *testing.T) {
+	r := newWTRepo(t)
+	plain := t.TempDir()
+
+	for path, want := range map[string]bool{r.dir: true, plain: false} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/worktrees/repo?path="+path, nil)
+		r.server().handleIsRepo(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", path, w.Code)
+		}
+		var body struct {
+			Repo bool `json:"repo"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Repo != want {
+			t.Errorf("%s: repo = %v, want %v", path, body.Repo, want)
+		}
+	}
+}
+
+// If one does slip through, what reaches the user has to read like a sentence.
+// "worktree: not a git repository" is a Go value, and it was being rendered.
+func TestErrorsReachTheUserAsSentences(t *testing.T) {
+	r := newWTRepo(t)
+	plain := t.TempDir()
+
+	w := httptest.NewRecorder()
+	body := strings.NewReader(`{"repo":"` + plain + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/worktrees", body)
+	r.server().handleCreateWorktree(w, req)
+
+	if w.Code == http.StatusOK {
+		t.Fatal("creating a worktree of a non-repository should fail")
+	}
+	var out struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(out.Error, "worktree:") {
+		t.Errorf("a Go error prefix reached the user: %q", out.Error)
+	}
+	if !strings.Contains(out.Error, "not a git repository") {
+		t.Errorf("the message does not say what is wrong: %q", out.Error)
+	}
+}

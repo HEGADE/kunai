@@ -4,7 +4,7 @@
   import { enablePush, pushState } from '../lib/push'
   import type { TaggedHistoryEntry, TaggedMeta } from '../lib/types'
   import { groupSessions, groupStartTarget } from '../lib/grouping'
-  import { justAWorktree, type WorktreeChoice } from '../lib/worktrees'
+  import { isGitRepo, justAWorktree, type WorktreeChoice } from '../lib/worktrees'
   import Wordmark from './Wordmark.svelte'
   import Home from './Home.svelte'
   import SessionMenu from './SessionMenu.svelte'
@@ -66,20 +66,28 @@
   // spinner never disables the others, and guarded because a double tap would
   // otherwise start two sessions in the same folder.
   let starting = $state<Record<string, boolean>>({})
-  // Folders that turned out not to be git repositories, so the worktree button
-  // beside the plus stops offering something that cannot work. Learned from the
-  // one failure rather than probed up front, which would cost a request per
-  // heading on every render to answer a question that is almost always yes.
-  let notRepo = $state<Record<string, boolean>>({})
+  // Which folders can hold a worktree. Asked once per folder rather than learned
+  // from a failure: finding out by failing meant the button appeared beside a
+  // folder that was not a repository, and tapping it put a raw error where the
+  // session list should be.
+  let isRepo = $state<Record<string, boolean>>({})
+  const probed = new Set<string>()
+  function probeRepo(machineId: string, cwd: string) {
+    const key = `${machineId}\u0000${cwd}`
+    if (probed.has(key)) return
+    probed.add(key)
+    isGitRepo(app.baseForMachine(machineId), cwd).then((ok) => {
+      isRepo = { ...isRepo, [cwd]: ok }
+    })
+  }
+
   async function startInGroup(key: string, machineId: string, cwd: string, wt?: WorktreeChoice) {
     if (starting[key]) return
     starting = { ...starting, [key]: true }
     try {
       await app.quickStart(machineId, cwd, wt)
-    } catch (e) {
-      if (wt && /not a git repository/i.test((e as Error).message)) {
-        notRepo = { ...notRepo, [cwd]: true }
-      }
+    } catch {
+      // quickStart has already reported it; nothing to add here.
     } finally {
       const next = { ...starting }
       delete next[key]
@@ -96,6 +104,15 @@
 
   const activeGroups = $derived(groupSessions(activeUnpinned))
   const recentGroups = $derived(groupSessions(recentDisplay))
+  // Ask about each heading's folder as the headings appear, so the worktree
+  // button is only ever offered where it can work. Once per folder, guarded by
+  // `probed`, so re-rendering the list costs nothing.
+  $effect(() => {
+    for (const g of [...activeGroups, ...recentGroups]) {
+      const target = groupStartTarget(g)
+      if (target) probeRepo(target.machineId, target.cwd)
+    }
+  })
   function activeCount(mid: string): number {
     return app.sessions.filter((m) => m.machineId === mid).length
   }
@@ -204,7 +221,7 @@
            the same single tap into a checkout of its own, taking every default
            (the repository's own base and its own setup command). Choosing a base
            or a name is what the launcher's picker is for. -->
-      {#if !notRepo[target.cwd]}
+      {#if isRepo[target.cwd]}
         <button
           class="gadd wt"
           disabled={starting[group.key]}

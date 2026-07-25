@@ -215,6 +215,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/worktrees", s.handleWorktrees)
 	mux.HandleFunc("POST /api/worktrees", s.handleCreateWorktree)
 	mux.HandleFunc("DELETE /api/worktrees", s.handleDeleteWorktree)
+	mux.HandleFunc("GET /api/worktrees/repo", s.handleIsRepo)
 	mux.HandleFunc("GET /api/worktrees/setup", s.handleWorktreeSetup)
 	mux.HandleFunc("GET /api/worktrees/branches", s.handleWorktreeBranches)
 	mux.HandleFunc("POST /api/worktrees/merge", s.handleMergeWorktree)

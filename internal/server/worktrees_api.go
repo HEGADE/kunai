@@ -57,7 +57,7 @@ func (s *Server) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {
 	}
 	rec, err := s.worktrees.create(req)
 	if err != nil {
-		writeErr(w, worktreeErrStatus(err), err.Error())
+		writeErr(w, worktreeErrStatus(err), humanWorktreeError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, worktreeView{worktreeRecord: rec})
@@ -83,6 +83,22 @@ func (s *Server) handleWorktreeSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.worktrees.setupFor(root))
+}
+
+// handleIsRepo answers whether a directory can hold a worktree at all.
+//
+// It exists so the sidebar can decide whether to offer its one-tap worktree
+// button rather than finding out by failing: the button used to appear beside
+// every folder, and tapping it on one that is not a repository put a raw
+// "worktree: not a git repository" into the session list. Cheap enough to ask per
+// folder, being a single git rev-parse.
+func (s *Server) handleIsRepo(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		writeErr(w, http.StatusBadRequest, "path required")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"repo": worktree.IsRepo(path)})
 }
 
 // handleWorktreeBranches lists the branches a new worktree could start from.
@@ -121,7 +137,7 @@ func (s *Server) handleMergeWorktree(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := worktree.Merge(rec.Info)
 	if err != nil {
-		writeErr(w, worktreeErrStatus(err), err.Error())
+		writeErr(w, worktreeErrStatus(err), humanWorktreeError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -251,6 +267,24 @@ func (s *Server) worktreeFromBody(w http.ResponseWriter, r *http.Request) (workt
 		return worktreeRecord{}, false
 	}
 	return rec, true
+}
+
+// humanWorktreeError turns an error into something worth showing a person. The
+// package's own errors are prefixed "worktree:" for a log; a sentence in the UI
+// should not be. Anything git said is passed through, because git's own wording
+// is almost always more specific than a replacement would be.
+func humanWorktreeError(err error) string {
+	switch {
+	case errors.Is(err, worktree.ErrNotGit):
+		return "that folder is not a git repository"
+	case errors.Is(err, worktree.ErrDirtyRepo):
+		return "the main checkout has uncommitted changes; commit or stash them first"
+	case errors.Is(err, worktree.ErrNotOnBase):
+		return strings.TrimPrefix(err.Error(), "worktree: ")
+	case errors.Is(err, worktree.ErrConflict):
+		return strings.TrimPrefix(err.Error(), "worktree: ")
+	}
+	return strings.TrimPrefix(err.Error(), "worktree: ")
 }
 
 // worktreeErrStatus maps the errors a caller acts on differently to status codes,
