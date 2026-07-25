@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
+  import { updateAvailable } from '../lib/update'
   import { enablePush, disablePush, isSubscribed, pushState } from '../lib/push'
   import { setKeepAwake, setThermal, setLid, setFailover, getCLIs, setCLIs } from '../lib/api'
   import type { Machine, CLIProfile } from '../lib/types'
@@ -60,6 +61,24 @@
       discovering = false
     }
   }
+
+  // Updating a machine. This lives here as well as on the home screen on purpose:
+  // the home screen's banner was the ONLY way to update, so a refactor that dropped
+  // it left a machine unable to offer the update that would fix it -- which is
+  // exactly what happened. Settings is where you go to act on a machine, so an
+  // update control belongs here regardless.
+  const selOutdated = $derived(
+    updateAvailable(selM?.stats?.kunai_version, app.latestVersion, selM?.stats?.channel),
+  )
+  const selUpdating = $derived(selM ? !!app.updating[selM.id] : false)
+  const selUpdateErr = $derived(selM ? (app.updateError[selM.id] ?? '') : '')
+  const selUpdateProg = $derived(selM ? (app.updateProgress[selM.id] ?? -1) : -1)
+  const selUpdateLabel = $derived.by(() => {
+    if (!selUpdating) return selUpdateErr ? 'Retry' : 'Update'
+    if (selUpdateProg >= 1) return 'Restarting…'
+    if (selUpdateProg >= 0) return `${Math.round(selUpdateProg * 100)}%`
+    return 'Updating…'
+  })
 
   // Per-machine account auto-failover (opt-in). Rolls a rate-limited session onto
   // the account with the most headroom.
@@ -310,6 +329,28 @@
         {#if !selM.online}
           <p class="hint">Offline — nothing to change here until it is back.</p>
         {:else}
+          <div class="grp">Version</div>
+          <div class="info">
+            <div class="irow awrow">
+              <span class="awk">
+                <span class="awname">
+                  {selOutdated ? 'Update available' : 'Up to date'}
+                </span>
+                <span class="awsub mono">
+                  {selM.stats?.kunai_version ?? 'unknown'}{selOutdated && app.latestVersion ? ` → ${app.latestVersion}` : ''}
+                </span>
+                {#if selUpdateErr}
+                  <span class="awsub warn" title={selUpdateErr}>update failed: {selUpdateErr}</span>
+                {/if}
+              </span>
+              {#if selOutdated}
+                <button class="upbtn" disabled={selUpdating} onclick={() => selM && app.updateMachine(selM.id)}>
+                  {selUpdateLabel}
+                </button>
+              {/if}
+            </div>
+          </div>
+
           {#if selM.stats?.clis && selM.stats.clis.length > 1}
             <div class="grp">Accounts</div>
             <div class="info">
@@ -1015,5 +1056,22 @@
     .body {
       padding-bottom: calc(var(--safe-bottom) + 20px);
     }
+  }
+
+  /* Update is the one action in Settings that changes the running binary, so it is
+     the only filled button here. */
+  .upbtn {
+    flex: none;
+    height: 28px;
+    padding: 0 13px;
+    border-radius: 8px;
+    background: var(--text);
+    color: #0b0b0c;
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .upbtn:disabled {
+    background: var(--panel-3);
+    color: var(--text-3);
   }
 </style>
