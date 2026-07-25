@@ -670,7 +670,14 @@
     padding: 7px 8px 3px 10px;
     min-width: 0;
   }
+  /* The label takes the slack, so the buttons sit together at the end whatever
+     wraps them. They used to push themselves there with margin-left:auto on the
+     first of them, which broke the moment one was wrapped for a hover hint:
+     display:contents keeps the layout but not the sibling relationship, so the
+     adjacency rule stopped matching and both buttons claimed the space again. */
   .glabel {
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -929,17 +936,10 @@
     justify-content: center;
     width: 26px;
     height: 26px;
-    margin-left: auto;
     border-radius: var(--r-sm);
     background: var(--panel);
     color: var(--text-2);
     transition: color 0.12s, background 0.12s;
-  }
-  /* Only the first button pushes. Left on every one, each claims a share of the
-     free space and they spread out across the row instead of sitting together
-     at its end: with two buttons the first landed in the middle of the heading. */
-  .gadd + .gadd {
-    margin-left: 0;
   }
   /* A finger is not a cursor. These are the smallest targets in the sidebar and
      there are now two of them side by side, so a touch screen gets room to hit
