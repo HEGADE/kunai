@@ -160,16 +160,17 @@
             <button class="scrim" onclick={() => (baseOpen = false)} aria-label="Close"></button>
             <div class="basepop">
               {#each refs as ref (ref.name)}
+                <!-- A base is a start point, not a checkout, so a branch that is
+                     already checked out is still a perfectly good one to branch
+                     from. Disabling those made the branch you are on unpickable. -->
                 <button
                   class:active={ref.name === value.base}
-                  disabled={!!ref.in_use}
-                  title={ref.in_use ? `Already checked out in ${ref.in_use}` : ref.name}
+                  title={ref.name}
                   onclick={() => pickBase(ref.name)}
                 >
                   <span class="bn mono">{ref.name}</span>
                   {#if ref.default}<span class="tag">default</span>
-                  {:else if ref.current}<span class="tag">current</span>
-                  {:else if ref.in_use}<span class="tag">in use</span>{/if}
+                  {:else if ref.current}<span class="tag">current</span>{/if}
                 </button>
               {/each}
               {#if refs.length === 0}<p class="empty">No branches to start from.</p>{/if}

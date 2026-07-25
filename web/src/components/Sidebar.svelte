@@ -9,6 +9,7 @@
   import Home from './Home.svelte'
   import SessionMenu from './SessionMenu.svelte'
   import Hint from './Hint.svelte'
+  import BranchMenu from './BranchMenu.svelte'
 
   // The nightly channel gets a night-sky header, so you can tell a nightly build
   // from a stable one at a glance. This is the one place the "no gradients" rule
@@ -80,6 +81,25 @@
     isGitRepo(app.baseForMachine(machineId), cwd).then((ok) => {
       isRepo = { ...isRepo, [cwd]: ok }
     })
+  }
+
+  // Which heading's branch menu is open, and where it hangs from. The branch is
+  // the one thing about a worktree worth choosing, and taking every default meant
+  // always cutting from the repository's default branch however far you were from
+  // it.
+  let branchMenu = $state<{
+    key: string
+    machineId: string
+    cwd: string
+    anchor: HTMLElement
+  } | null>(null)
+
+  function openBranchMenu(
+    key: string,
+    target: { machineId: string; cwd: string },
+    anchor: HTMLElement,
+  ) {
+    branchMenu = { key, machineId: target.machineId, cwd: target.cwd, anchor }
   }
 
   async function startInGroup(key: string, machineId: string, cwd: string, wt?: WorktreeChoice) {
@@ -204,6 +224,20 @@
   </div>
 {/snippet}
 
+{#if branchMenu}
+  <BranchMenu
+    base={app.baseForMachine(branchMenu.machineId)}
+    repo={branchMenu.cwd}
+    anchor={branchMenu.anchor}
+    onclose={() => (branchMenu = null)}
+    onpick={(branch) => {
+      const m = branchMenu!
+      branchMenu = null
+      startInGroup(m.key, m.machineId, m.cwd, { ...justAWorktree(), base: branch })
+    }}
+  />
+{/if}
+
 {#snippet groupHead(group: { key: string; label: string; named: boolean; items: { machineId: string; cwd: string }[] })}
   {@const target = groupStartTarget(group)}
   <!-- Mono, because a project or workspace name is data rather than prose. A
@@ -225,12 +259,12 @@
       {#if isRepo[target.cwd]}
         <Hint
           title="Another agent, no collisions"
-          body="Starts in a separate checkout of this repository on its own branch, so an agent can work here while the main checkout stays exactly as you left it. It is git's own worktree feature, so the repository itself is untouched."
+          body="Pick a branch to cut from, and the work happens in a separate checkout of it. Another agent can work there while this checkout stays exactly as you left it. It is git's own worktree feature, so the repository itself is untouched."
         >
         <button
           class="gadd wt"
           disabled={starting[group.key]}
-          onclick={() => startInGroup(group.key, target.machineId, target.cwd, justAWorktree())}
+          onclick={(e) => openBranchMenu(group.key, target, e.currentTarget)}
           aria-label="New worktree session in {group.label}"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v12M6 21a2 2 0 100-4 2 2 0 000 4zM6 7a2 2 0 100-4 2 2 0 000 4zM18 11a2 2 0 100-4 2 2 0 000 4zM18 9v2a4 4 0 01-4 4H6" /></svg>

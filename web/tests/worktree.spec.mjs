@@ -289,10 +289,19 @@ async function main() {
   const buttonCount = await buttons.count()
   check('a group heading offers both a plus and a worktree button', buttonCount === 2, `${buttonCount}`)
 
+  // The branch button asks which branch to cut from, because that is the one
+  // thing about a worktree worth choosing and taking the default meant always
+  // cutting from the repository's default however far you were from it.
   const wtBefore = worktreeCount()
   await buttons.first().click() // the worktree one sits before the plus
+  await page.waitForSelector('.menu .opt', { timeout: 10000 })
+  const branchOpts = (await page.locator('.menu .opt').allInnerTexts()).map((t) => t.replace(/\n/g, ' '))
+  check('the branch button asks which branch to cut from', branchOpts.length > 0, branchOpts.join(' | '))
+  check('and offers the branch you are on first', /you are here/.test(branchOpts[0] ?? ''), branchOpts[0] ?? '(none)')
+
+  await page.locator('.menu .opt').first().click()
   await page.waitForSelector('.wtcard', { timeout: 30000 })
-  check('one tap on the branch button lands in a worktree', worktreeCount() === wtBefore + 1, `${wtBefore} -> ${worktreeCount()}`)
+  check('picking a branch lands in a worktree of it', worktreeCount() === wtBefore + 1, `${wtBefore} -> ${worktreeCount()}`)
 
   const oneTapSetup = await page
     .locator('.wtcard .head')
@@ -332,10 +341,6 @@ async function main() {
   await shot(page, '10-self-named')
 
   await browser.close()
-
-  // Leave nothing behind, so the next run starts from the same state this one
-  // did. A test that accumulates worktrees fails on its second run for reasons
-  // that have nothing to do with the code.
   await cleanup()
   report()
 }
@@ -396,7 +401,13 @@ function report() {
   process.exit(failed.length ? 1 : 0)
 }
 
-main().catch((e) => {
+// Cleanup runs whether or not the run succeeded. It used to run only on the
+// success path, so every failure left its sessions, worktrees and transcripts
+// behind: the next run then started against the leftovers of the last, and
+// failed for reasons that had nothing to do with the code. A test that only
+// tidies up when it passes is a test that guarantees its own flakiness.
+main().catch(async (e) => {
   console.error(e)
+  await cleanup()
   process.exit(1)
 })
