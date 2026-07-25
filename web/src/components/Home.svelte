@@ -284,6 +284,37 @@
      the data. Fixed and pointer-transparent, so it never intercepts a tap. -->
 <div class="ambient" aria-hidden="true"></div>
 <div class="home" class:compact>
+  <!-- An unreachable machine and an available update are the two things worth
+       interrupting for, so they sit above the status line rather than in the quiet
+       reference block. Both were lost when this screen was restructured; the update
+       banner is the only way to update a machine from the app, so its absence was a
+       dead end, not a cosmetic one. -->
+  {#if !st && sel}
+    <div class="offline">
+      <span class="odot"></span>
+      {sel.label} is offline — no stats to show.
+    </div>
+  {/if}
+
+  {#if outdated && sel}
+    <div class="update">
+      <span class="udot"></span>
+      <div class="utext">
+        <span class="uhead">Update available</span>
+        <span class="mono usub">{st?.kunai_version} → {app.latestVersion} · restarts {sel.label}, sessions resume</span>
+        {#if updateErr}
+          <span class="mono uerr" title={updateErr}>update failed: {updateErr}</span>
+        {/if}
+        {#if updating && updateProg >= 0 && updateProg < 1}
+          <div class="ubar"><div class="ubar-fill" style="width: {Math.round(updateProg * 100)}%"></div></div>
+        {/if}
+      </div>
+      <button class="ubtn" disabled={updating} onclick={() => sel && app.updateMachine(sel.id)}>
+        {updateLabel}
+      </button>
+    </div>
+  {/if}
+
   <!-- Status is a sentence, not a panel: it answers "can I work" in one line. A
        session stuck on a permission gate takes the line over, because an agent
        waiting on a click you never saw is the worst state this product has. -->
