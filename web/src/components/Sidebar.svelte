@@ -3,7 +3,7 @@
   import { createSession } from '../lib/api'
   import { enablePush, pushState } from '../lib/push'
   import type { TaggedHistoryEntry, TaggedMeta } from '../lib/types'
-  import { groupSessions } from '../lib/grouping'
+  import { groupSessions, groupStartTarget } from '../lib/grouping'
   import Wordmark from './Wordmark.svelte'
   import Home from './Home.svelte'
   import SessionMenu from './SessionMenu.svelte'
@@ -61,6 +61,22 @@
   // stays flat, because a pin is a priority list and grouping it would bury the
   // thing you pinned. A single group needs no heading, so a one-project machine
   // looks exactly as it did before.
+  // Starting a session from a group heading. Keyed by the group so one heading's
+  // spinner never disables the others, and guarded because a double tap would
+  // otherwise start two sessions in the same folder.
+  let starting = $state<Record<string, boolean>>({})
+  async function startInGroup(key: string, machineId: string, cwd: string) {
+    if (starting[key]) return
+    starting = { ...starting, [key]: true }
+    try {
+      await app.quickStart(machineId, cwd)
+    } finally {
+      const next = { ...starting }
+      delete next[key]
+      starting = next
+    }
+  }
+
   const activeGroups = $derived(groupSessions(activeUnpinned))
   const recentGroups = $derived(groupSessions(recentDisplay))
   function activeCount(mid: string): number {
@@ -145,13 +161,29 @@
   </div>
 {/snippet}
 
-{#snippet groupHead(label: string, named: boolean)}
+{#snippet groupHead(group: { key: string; label: string; named: boolean; items: { machineId: string; cwd: string }[] })}
+  {@const target = groupStartTarget(group)}
   <!-- Mono, because a project or workspace name is data rather than prose. A
        named workspace gets a leading mark so you can tell at a glance which
        headings you chose and which were derived from a directory. -->
-  <div class="grp mono" class:named title={named ? 'Workspace' : 'Project directory'}>
-    {#if named}<span class="wsmark" aria-hidden="true"></span>{/if}
-    <span class="glabel">{label}</span>
+  <div class="grp mono" class:named={group.named} title={group.named ? 'Workspace' : 'Project directory'}>
+    {#if group.named}<span class="wsmark" aria-hidden="true"></span>{/if}
+    <span class="glabel">{group.label}</span>
+    <!-- One tap starts a session in this folder with the usual defaults: the
+         heading already names the directory, so asking again would be asking a
+         question you just answered. Absent when the group spans directories, since
+         there is then no single folder to mean. -->
+    {#if target}
+      <button
+        class="gadd"
+        disabled={starting[group.key]}
+        onclick={() => startInGroup(group.key, target.machineId, target.cwd)}
+        title="New session in {target.cwd}"
+        aria-label="New session in {group.label}"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+      </button>
+    {/if}
   </div>
 {/snippet}
 
@@ -246,7 +278,7 @@
       <div class="sec">Active</div>
       {#each activeGroups as g (g.key)}
         {#if activeGroups.length > 1}
-          {@render groupHead(g.label, g.named)}
+          {@render groupHead(g)}
         {/if}
         {#each g.items as m (m.machineId + ':' + m.id)}
           {@render activeRow(m)}
@@ -258,7 +290,7 @@
       <div class="sec">Recent</div>
       {#each recentGroups as g (g.key)}
         {#if recentGroups.length > 1}
-          {@render groupHead(g.label, g.named)}
+          {@render groupHead(g)}
         {/if}
         {#each g.items as h (h.machineId + ':' + h.id)}
           {@render recentRow(h)}
@@ -770,5 +802,39 @@
   }
   .ndot.on {
     background: var(--live);
+  }
+
+  /* The start action on a group heading: invisible until the heading is hovered or
+     the button itself is focused, so a column of headings does not turn into a
+     column of buttons. It still reaches full size for touch. */
+  .gadd {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    margin-left: auto;
+    border-radius: var(--r-sm);
+    color: var(--text-4);
+    opacity: 0;
+    transition: opacity 0.12s, color 0.12s, background 0.12s;
+  }
+  .grp:hover .gadd,
+  .gadd:focus-visible {
+    opacity: 1;
+  }
+  .gadd:hover {
+    color: var(--text);
+    background: var(--panel-2);
+  }
+  .gadd:disabled {
+    opacity: 0.4;
+  }
+  /* Touch has no hover, so the affordance has to be permanent there. */
+  @media (hover: none) {
+    .gadd {
+      opacity: 1;
+    }
   }
 </style>

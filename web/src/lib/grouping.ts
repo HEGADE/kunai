@@ -81,3 +81,19 @@ export function groupSessions<T extends Groupable>(sessions: T[]): SessionGroup<
 // Convenience aliases so call sites read as what they are.
 export type MetaGroup = SessionGroup<TaggedMeta>
 export type HistoryGroup = SessionGroup<TaggedHistoryEntry>
+
+// A group's start target: the machine and directory a new session started from
+// this heading would run in. Returns null when the group spans more than one
+// directory (a hand-named workspace can hold several codebases), because there is
+// then no single right answer and guessing would start work in the wrong repo.
+// Kept here rather than in the sidebar so the rule is pure and testable.
+export function groupStartTarget<T extends Groupable & { machineId: string }>(
+  group: SessionGroup<T>,
+): { machineId: string; cwd: string } | null {
+  const first = group.items[0]
+  if (!first?.cwd) return null
+  for (const item of group.items) {
+    if (item.cwd !== first.cwd || item.machineId !== first.machineId) return null
+  }
+  return { machineId: first.machineId, cwd: first.cwd }
+}
