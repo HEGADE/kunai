@@ -108,6 +108,13 @@ type AppEvent struct {
 	Content   string `json:"content,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
 
+	// ParentToolUseID marks an event produced INSIDE a subagent: it is the id of
+	// the Agent tool call that spawned it. Set on "assistant", "delta",
+	// "thinking", and "tool_result". The client nests that work under the Agent's
+	// card rather than showing it as the main agent's own, which is what it looked
+	// like before this was carried.
+	ParentToolUseID string `json:"parent_tool_use_id,omitempty"`
+
 	// "error" / generic message
 	Message string `json:"message,omitempty"`
 

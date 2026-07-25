@@ -256,6 +256,11 @@ export interface AppEvent {
   // tool_result (tool_use_id + is_error reused)
   content?: string
   truncated?: boolean
+
+  // Set on assistant/delta/thinking/tool_result produced INSIDE a subagent: the id
+  // of the Agent tool call that spawned it, so its work renders under that card
+  // instead of looking like the main agent's own.
+  parent_tool_use_id?: string
   // rate_limit
   window?: string
   resets_at?: number

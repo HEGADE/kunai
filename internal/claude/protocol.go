@@ -26,6 +26,12 @@ type Envelope struct {
 	Model     string          `json:"model,omitempty"`
 	Cwd       string          `json:"cwd,omitempty"`
 	UUID      string          `json:"uuid,omitempty"`
+	// ParentToolUseID is set on frames produced INSIDE a subagent: it is the id of
+	// the Agent tool call that spawned it. The CLI streams a subagent's whole inner
+	// life (its thinking, its own tool calls, their results, its answer) as ordinary
+	// assistant/user frames carrying this field, so without reading it those frames
+	// look exactly like the main agent's own work and are misattributed to it.
+	ParentToolUseID string `json:"parent_tool_use_id,omitempty"`
 }
 
 // Message type discriminators (the "type" field).

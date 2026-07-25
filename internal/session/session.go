@@ -284,17 +284,27 @@ func (s *Session) pump() {
 			}
 
 		case claude.EventTextDelta:
-			s.broadcast(AppEvent{T: EvDelta, Text: ev.Text})
+			s.broadcast(AppEvent{T: EvDelta, Text: ev.Text, ParentToolUseID: ev.ParentToolUseID})
 
 		case claude.EventThinking:
-			s.broadcast(AppEvent{T: EvThinking, Text: ev.Text})
+			s.broadcast(AppEvent{T: EvThinking, Text: ev.Text, ParentToolUseID: ev.ParentToolUseID})
 
 		case claude.EventAssistant:
+			// A frame from inside a subagent is that agent's own model call, with its
+			// OWN context window and its own words. Neither belongs to this session:
+			// adopting its usage made the context meter lurch down mid-turn, and
+			// adopting its text let a subagent's "done" satisfy a loop's completion
+			// promise. So a nested frame is broadcast for display only.
+			nested := ev.ParentToolUseID != ""
 			// Each assistant message is one model call, so its usage reports the
 			// context actually sent for that call. Track the newest as the current
 			// context-window occupancy (the result frame's usage is cumulative over
 			// the whole turn and would overcount a long tool loop).
 			ctx := ev.Assistant.Usage.ContextTokens()
+			if nested {
+				s.broadcast(AppEvent{T: EvAssistant, Blocks: toAppBlocks(ev.Assistant), ParentToolUseID: ev.ParentToolUseID})
+				continue
+			}
 			s.mu.Lock()
 			if ctx > 0 {
 				s.contextTokens = ctx
@@ -323,11 +333,12 @@ func (s *Session) pump() {
 		case claude.EventToolResult:
 			tr := ev.ToolResult
 			s.broadcast(AppEvent{
-				T:         EvToolResult,
-				ToolUseID: tr.ToolUseID,
-				Content:   tr.Content,
-				IsError:   tr.IsError,
-				Truncated: tr.Truncated,
+				T:               EvToolResult,
+				ToolUseID:       tr.ToolUseID,
+				Content:         tr.Content,
+				IsError:         tr.IsError,
+				Truncated:       tr.Truncated,
+				ParentToolUseID: ev.ParentToolUseID,
 			})
 
 		case claude.EventCompact:

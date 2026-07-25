@@ -10,7 +10,16 @@
 {#if block.type === 'text' && block.text}
   <Markdown text={block.text} />
 {:else if block.type === 'tool_use'}
-  <ToolCard name={block.name ?? 'tool'} input={block.input} result={block.id ? chat.toolResults[block.id] : undefined} />
+  <!-- An Agent call also carries what its subagent did (keyed by this call's id),
+       so that work threads under the card that spawned it. -->
+  <ToolCard
+    name={block.name ?? 'tool'}
+    input={block.input}
+    result={block.id ? chat.toolResults[block.id] : undefined}
+    nested={block.id ? (chat.agentBlocks[block.id] ?? []) : []}
+    nestedStreaming={block.id ? (chat.agentStreaming[block.id] ?? '') : ''}
+    nestedResults={chat.toolResults}
+  />
 {:else if block.type === 'thinking' && block.text}
   <div class="thinking mono">{block.text}</div>
 {/if}

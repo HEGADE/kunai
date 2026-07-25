@@ -64,6 +64,12 @@ type Event struct {
 	Window      string
 	LimitStatus string
 
+	// ParentToolUseID is non-empty when this event came from INSIDE a subagent: it
+	// is the id of the Agent tool call that spawned it. Set on the assistant, text/
+	// thinking-delta, and tool_result events a subagent produces, so the client can
+	// nest that work under its Agent card instead of showing it as the main agent's.
+	ParentToolUseID string
+
 	// Raw is the original frame (always set for result/system; useful for debugging).
 	Raw json.RawMessage
 }
@@ -435,11 +441,11 @@ func (s *Session) route(env Envelope, raw json.RawMessage) {
 			switch ev.Delta.Type {
 			case "text_delta":
 				if ev.Delta.Text != "" {
-					s.emit(Event{Kind: EventTextDelta, Text: ev.Delta.Text})
+					s.emit(Event{Kind: EventTextDelta, Text: ev.Delta.Text, ParentToolUseID: env.ParentToolUseID})
 				}
 			case "thinking_delta":
 				if ev.Delta.Text != "" {
-					s.emit(Event{Kind: EventThinking, Text: ev.Delta.Text})
+					s.emit(Event{Kind: EventThinking, Text: ev.Delta.Text, ParentToolUseID: env.ParentToolUseID})
 				}
 			}
 		}
@@ -447,7 +453,7 @@ func (s *Session) route(env Envelope, raw json.RawMessage) {
 	case TypeAssistant:
 		var msg AssistantMessage
 		if err := json.Unmarshal(env.Message, &msg); err == nil {
-			s.emit(Event{Kind: EventAssistant, Assistant: &msg, Raw: raw})
+			s.emit(Event{Kind: EventAssistant, Assistant: &msg, Raw: raw, ParentToolUseID: env.ParentToolUseID})
 		}
 
 	case TypeResult:
@@ -455,7 +461,8 @@ func (s *Session) route(env Envelope, raw json.RawMessage) {
 
 	case TypeUser:
 		// The CLI feeds tool outputs back to the model as user frames; surface them.
-		s.emitToolResults(env.Message)
+		// A frame from inside a subagent carries the spawning Agent call's id.
+		s.emitToolResults(env.Message, env.ParentToolUseID)
 
 	case TypeRateLimit:
 		var rl struct {

@@ -40,14 +40,17 @@ type ToolResult struct {
 // emitToolResults decodes tool_result blocks from a live user frame and emits
 // one EventToolResult per block. Non-tool_result content (e.g. an echoed user
 // text message) yields nothing.
-func (s *Session) emitToolResults(msg json.RawMessage) {
+// emitToolResults surfaces the tool outputs the CLI feeds back as user frames.
+// parentToolUseID is non-empty when the frame came from inside a subagent (the id
+// of the Agent call that spawned it), so the result nests under that agent.
+func (s *Session) emitToolResults(msg json.RawMessage, parentToolUseID string) {
 	var um userMessage
 	if json.Unmarshal(msg, &um) != nil {
 		return
 	}
 	for _, r := range ParseToolResultBlocks(um.Content) {
 		r := r
-		s.emit(Event{Kind: EventToolResult, ToolResult: &r})
+		s.emit(Event{Kind: EventToolResult, ToolResult: &r, ParentToolUseID: parentToolUseID})
 	}
 }
 

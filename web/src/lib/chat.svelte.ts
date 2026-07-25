@@ -66,6 +66,12 @@ export class ChatConnection {
   loop = $state<LoopStatus | null>(null)
   // Tool outputs keyed by tool_use_id, looked up by each tool_use block.
   toolResults = $state<Record<string, ToolResult>>({})
+  // What each subagent did, keyed by the Agent tool call that spawned it: the
+  // blocks it produced (its own tool calls and text) in arrival order, plus the
+  // text it is streaming right now. The CLI reports a subagent's whole inner life
+  // tagged with its parent call, so this is real activity, not a reconstruction.
+  agentBlocks = $state<Record<string, Block[]>>({})
+  agentStreaming = $state<Record<string, string>>({})
   status = $state<ConnStatus>('connecting')
   // Flips true once the initial backlog has fully arrived (lastSeq caught up to
   // the hello's high_seq). The view waits for this before mounting history, so a
@@ -227,12 +233,26 @@ export class ChatConnection {
         ]
         break
       case 'delta':
+        // A subagent's tokens belong under its Agent card, not in the main answer
+        // (they used to stream into the reply as if the main agent had written them).
+        if (ev.parent_tool_use_id) {
+          this.appendAgentStream(ev.parent_tool_use_id, ev.text ?? '')
+          break
+        }
         this.streaming += ev.text ?? ''
         break
       case 'thinking':
+        if (ev.parent_tool_use_id) break // the subagent's private reasoning; not the main turn's
         this.thinking += ev.text ?? ''
         break
       case 'assistant':
+        // A nested frame is the subagent's own model call: file it under the Agent
+        // call that spawned it. It is NOT a message in this conversation, and its
+        // usage is a different context window, so it must not touch the meter.
+        if (ev.parent_tool_use_id) {
+          this.addAgentBlocks(ev.parent_tool_use_id, ev.blocks ?? [])
+          break
+        }
         this.items = [...this.items, { role: 'assistant', blocks: ev.blocks ?? [] }]
         // Each assistant message reports the context sent for that model call, so
         // the meter tracks the newest one (and stays live through a long turn).
@@ -441,6 +461,32 @@ export class ChatConnection {
   }
 
   // Deduped by id: hello carries the queue and the replayed backlog repeats it.
+  // addAgentBlocks files a subagent's finished model call under the Agent tool call
+  // that spawned it, and clears the live stream for that agent (the blocks are the
+  // settled version of what was streaming).
+  private addAgentBlocks(parentID: string, blocks: Block[]) {
+    if (!blocks.length) return
+    this.agentBlocks = {
+      ...this.agentBlocks,
+      [parentID]: [...(this.agentBlocks[parentID] ?? []), ...blocks],
+    }
+    if (this.agentStreaming[parentID]) {
+      const next = { ...this.agentStreaming }
+      delete next[parentID]
+      this.agentStreaming = next
+    }
+  }
+
+  // appendAgentStream accumulates a subagent's in-flight text so its progress is
+  // visible while it works, instead of the turn looking stalled on one tool call.
+  private appendAgentStream(parentID: string, text: string) {
+    if (!text) return
+    this.agentStreaming = {
+      ...this.agentStreaming,
+      [parentID]: (this.agentStreaming[parentID] ?? '') + text,
+    }
+  }
+
   private addQueued(ev: AppEvent) {
     if (!ev.queue_id) return
     if (this.queued.some((q) => q.queue_id === ev.queue_id)) return

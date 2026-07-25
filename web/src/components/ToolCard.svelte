@@ -1,12 +1,29 @@
 <script lang="ts">
   import { describe } from '../lib/toolMeta'
-  import type { ToolResult } from '../lib/types'
+  import type { Block, ToolResult } from '../lib/types'
   import ToolIcon from './tools/ToolIcon.svelte'
   import ToolBody from './tools/ToolBody.svelte'
   import ResultView from './tools/ResultView.svelte'
+  import AgentTrace from './AgentTrace.svelte'
   import FileChip from './tools/FileChip.svelte'
 
-  let { name, input, result }: { name: string; input: unknown; result?: ToolResult } = $props()
+  // nested/nestedStreaming/nestedResults carry what a subagent did inside this call
+  // (Agent tool only), so its work shows under the card that spawned it.
+  let {
+    name,
+    input,
+    result,
+    nested = [],
+    nestedStreaming = '',
+    nestedResults = {},
+  }: {
+    name: string
+    input: unknown
+    result?: ToolResult
+    nested?: Block[]
+    nestedStreaming?: string
+    nestedResults?: Record<string, ToolResult>
+  } = $props()
   let open = $state(false)
   const label = $derived(describe(name, input, result))
   // A tool has no result until it reports back. For most tools that window is a
@@ -67,6 +84,7 @@
   {#if open}
     <div class="body">
       <ToolBody {name} {input} />
+      <AgentTrace blocks={nested} streaming={nestedStreaming} results={nestedResults} />
       {#if result}
         <ResultView {result} />
       {:else if running}
