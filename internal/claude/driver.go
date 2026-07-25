@@ -129,6 +129,12 @@ type Options struct {
 	// e.g. a CLAUDE_CONFIG_DIR that points at another account's auth.
 	Bin string
 	Env []string
+	// AppendSystemPrompt is extra text appended to the CLI's own system prompt,
+	// used to state facts the model must not lose (which git worktree it is in).
+	// It is deliberately not sent as a first turn: a turn can be compacted away,
+	// and would be, in exactly the long unattended run where forgetting matters
+	// most. A system prompt stays resident for the life of the process.
+	AppendSystemPrompt string
 	// ReadyTimeout bounds how long Start waits for the init handshake.
 	ReadyTimeout time.Duration
 }
@@ -200,6 +206,9 @@ func (s *Session) args() []string {
 	}
 	if s.opts.Effort != "" {
 		a = append(a, "--effort", s.opts.Effort)
+	}
+	if s.opts.AppendSystemPrompt != "" {
+		a = append(a, "--append-system-prompt", s.opts.AppendSystemPrompt)
 	}
 	if s.opts.SessionID != "" {
 		a = append(a, "--session-id", s.opts.SessionID)

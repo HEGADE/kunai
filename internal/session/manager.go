@@ -72,6 +72,10 @@ type CreateOptions struct {
 	CLIName string
 	Bin     string
 	Env     map[string]string
+	// AppendSystemPrompt is extra system prompt baked in at spawn, used to tell
+	// the model which git worktree it is working in. Spawn-time only, so restart
+	// carries it over the same way it carries the account and the effort.
+	AppendSystemPrompt string
 }
 
 // Create registers a new claude session and returns immediately; the CLI boots
@@ -107,7 +111,10 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 		mode = DefaultPermissionMode
 	}
 
-	drvOpts := claude.Options{Cwd: opts.Cwd, Model: opts.Model, Effort: opts.Effort, PermissionMode: mode, Bin: opts.Bin, Env: envKV(opts.Env)}
+	drvOpts := claude.Options{
+		Cwd: opts.Cwd, Model: opts.Model, Effort: opts.Effort, PermissionMode: mode,
+		Bin: opts.Bin, Env: envKV(opts.Env), AppendSystemPrompt: opts.AppendSystemPrompt,
+	}
 	if opts.Resume != "" {
 		drvOpts.Resume = opts.Resume
 	} else {
@@ -122,6 +129,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	s.cliName = opts.CLIName
 	s.cliBin = opts.Bin
 	s.cliEnv = opts.Env
+	s.appendPrompt = opts.AppendSystemPrompt
 	s.contextTokens = opts.ContextTokens
 	s.overhead = opts.Overhead
 	s.histBefore = opts.HistBefore
@@ -273,24 +281,10 @@ func (m *Manager) restart(ctx context.Context, id, effort string, acct *acctOver
 	}
 	cid := old.ClaudeSessionID()
 	meta := old.Meta()
-	ctxTokens := old.ContextTokens() // preserve the context meter across the respawn
-	overhead := old.Overhead()       // and the measured overhead, so the meter stays right if it compacts
-	// The account (bin/env) is set once at create and never mutated, so read it
-	// directly to carry it across the respawn; an effort change must not drop a
-	// work session back onto the default account.
-	cliName, cliBin, cliEnv := old.cliName, old.cliBin, old.cliEnv
-	if acct != nil {
-		cliName, cliBin, cliEnv = acct.name, acct.bin, acct.env
-	}
-	eff := meta.Effort
-	if effort != "" {
-		eff = effort
-	}
-	mdl := meta.Model
-	if acct != nil && acct.model != "" {
-		mdl = acct.model // reset the model (e.g. a provider model is invalid for a Claude account)
-	}
-	dir := cliEnv["CLAUDE_CONFIG_DIR"] // where the resumed process reads its transcript
+	// Everything spawn-time carries over unless this restart is explicitly
+	// changing it; see spawnSpec for why that decision lives in one place.
+	spec := specOf(old).withOverrides(effort, acct)
+	dir := spec.configDir() // where the resumed process reads its transcript
 
 	old.Close()
 	<-old.Done()
@@ -306,16 +300,8 @@ func (m *Manager) restart(ctx context.Context, id, effort string, acct *acctOver
 	//     refuses to start).
 	//   - brand-new session, no turns and no transcript: respawn fresh under the
 	//     same handle id.
-	opts := CreateOptions{
-		Cwd: meta.Cwd, Title: meta.Title, Model: mdl, Effort: eff, ContextTokens: ctxTokens, Overhead: overhead,
-		CLIName: cliName, Bin: cliBin, Env: cliEnv,
-	}
-	// A proxy-backed (provider) account keeps the provider default across a
-	// respawn (effort, account, or model change). Keyed on the env the same way
-	// the server's isProxyProfile is, so the two never disagree.
-	if cliEnv["ANTHROPIC_BASE_URL"] != "" {
-		opts.Mode = ProviderPermissionMode
-	}
+	opts := CreateOptions{Cwd: meta.Cwd, Title: meta.Title}
+	spec.apply(&opts)
 	if cid != "" {
 		opts.Resume, opts.Seed = cid, seedFn(dir, cid)
 	} else if seed := seedFn(dir, id); len(seed) > 0 {

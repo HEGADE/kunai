@@ -47,14 +47,18 @@ type Session struct {
 
 	drv driver
 
-	mu              sync.Mutex
-	seq             uint64
-	model           string
-	mode            string            // permission mode
-	effort          string            // reasoning effort (spawn-time; changed by restart)
-	cliName         string            // which Claude CLI/account this session runs on
-	cliBin          string            // the binary that account runs (persisted so a resumed loop stays on it)
-	cliEnv          map[string]string // extra env that account needs
+	mu      sync.Mutex
+	seq     uint64
+	model   string
+	mode    string            // permission mode
+	effort  string            // reasoning effort (spawn-time; changed by restart)
+	cliName string            // which Claude CLI/account this session runs on
+	cliBin  string            // the binary that account runs (persisted so a resumed loop stays on it)
+	cliEnv  map[string]string // extra env that account needs
+	// appendPrompt is extra system prompt baked in at spawn (a worktree brief).
+	// It is spawn-time only, so like effort it has to be carried across a restart
+	// or an effort/account change would silently drop it.
+	appendPrompt    string
 	title           string
 	claudeSessionID string // CLI-assigned id, for --resume cold-start
 	state           string
