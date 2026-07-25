@@ -279,10 +279,10 @@
       launch()
     }
   }
-  function cycleMachine() {
-    const i = app.machines.findIndex((m) => m.id === sel?.id)
-    picked = app.machines[(i + 1) % app.machines.length]?.id ?? ''
-  }
+  // Machines are chosen from a list, not cycled through. Cycling was fine for two
+  // and useless for ten: you cannot see what you are choosing between, and reaching
+  // the last one takes nine taps.
+  let machOpen = $state(false)
 </script>
 
 <!-- An ambient wash behind the home screen: two very low-contrast radial pools that
@@ -391,10 +391,28 @@
       </div>
       {#if multi}
         <span class="lsep" aria-hidden="true"></span>
-        <button class="pick" onclick={cycleMachine} title="Switch machine">
-          <span class="mdot2" class:live={sel?.online}></span>
-          <span class="pname">{sel?.label}</span>
-        </button>
+        <div class="dirwrap">
+          <button class="pick" class:on={machOpen} onclick={() => (machOpen = !machOpen)} title={sel?.url}>
+            <span class="mdot2" class:live={sel?.online}></span>
+            <span class="pname">{sel?.label}</span>
+          </button>
+          {#if machOpen}
+            <button class="scrim2" onclick={() => (machOpen = false)} aria-label="Close"></button>
+            <div class="dirpop">
+              <div class="dirlist">
+                {#each app.machines as m (m.id)}
+                  <button class:active={m.id === sel?.id} onclick={() => { picked = m.id; machOpen = false }}>
+                    <span class="dn">
+                      <span class="mdot2" class:live={m.online}></span>
+                      {m.label}{m.online ? '' : ' · offline'}
+                    </span>
+                    <span class="dp mono">{m.url}</span>
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
       {/if}
       <span class="lspacer"></span>
       <button class="go" disabled={!brief.trim() || !targetDir || launching} onclick={launch}>
@@ -1404,5 +1422,13 @@
     padding: 10px;
     font-size: 12.5px;
     color: var(--text-3);
+  }
+
+  /* A machine row carries its status dot inline with the name, so "which machine"
+     and "is it reachable" are one glance rather than two. */
+  .dirpop .dn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
   }
 </style>
