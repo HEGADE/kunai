@@ -226,7 +226,28 @@
     return s <= 0 ? 'resetting' : dur(s)
   }
   // Which account's detail is open. One at a time: this is a glance, not a table.
-  let openAcct = $state('')
+  // null rather than '' for "none", because the default account's own key IS the
+  // empty string, so an empty sentinel meant that account could never open.
+  let openAcct = $state<string | null>(null)
+
+  // Every window an account reports, in the order they bind: the short one first,
+  // because it is the one that stops you today. Named here rather than in the
+  // wire type, since what "session" and "weekly" mean is a presentation question:
+  // a provider's plan may have one long window and no short one at all.
+  function windowsOf(u: Usage | null): { name: string; w: UsageWindow }[] {
+    const out: { name: string; w: UsageWindow }[] = []
+    if (u?.session) out.push({ name: 'session', w: u.session })
+    if (u?.weekly) out.push({ name: 'weekly', w: u.weekly })
+    return out
+  }
+
+  // The reset as a sentence, for the expanded rows where there is room for one.
+  function fullReset(w: UsageWindow): string {
+    if (!w.resets_at) return w.percent > 0 ? 'reset time unknown' : 'unused'
+    const s = w.resets_at - Math.floor(Date.now() / 1000)
+    if (s <= 0) return 'resetting now'
+    return `back in ${dur(s)}`
+  }
 
   // Quick-start dirs for the selected machine only — so chips don't each repeat
   // the machine name (that's stated once in the section header).
@@ -519,17 +540,47 @@
           {@const err = usageErrs[cli] ?? ''}
           {@const left = b ? Math.max(0, 100 - b.pct) : null}
           {@const spent = left !== null && left < 2}
-          <span class="cap" class:spent title="{cli || 'Claude'} — {b ? b.window + ' window' : err || 'no quota'}">
+          {@const rows = windowsOf(uses[cli] ?? null)}
+          <!-- Collapsed, an account is one line about the limit that stops you
+               first, because several accounts times two windows is a wall of bars
+               that mostly say "fine". Both windows are a tap away rather than
+               hidden: the reset that matters is often the other one. -->
+          <button
+            class="cap"
+            class:spent
+            class:on={openAcct === cli}
+            disabled={rows.length === 0}
+            aria-expanded={openAcct === cli}
+            onclick={() => (openAcct = openAcct === cli ? null : cli)}
+          >
             <span class="cname">{cli || 'Claude'}</span>
             {#if left !== null}
               <span class="cbar" aria-hidden="true"><i style="width:{spent ? 0 : Math.max(4, left)}%"></i></span>
-              <span class="cnum mono">{spent ? (b?.when ? b.when.replace(/^resets in /, '') : 'spent') : Math.round(left) + '%'}</span>
+              <span class="cnum mono">{spent ? 'spent' : Math.round(left) + '%'}</span>
+              <!-- When it frees up, on the line rather than in a tooltip: a phone
+                   has no hover, and "39%" without a time is half an answer. -->
+              {#if b?.when}<span class="cwhen mono">{b.when}</span>{/if}
             {:else}
               <span class="cnum mono">{err ? 'no quota' : '—'}</span>
             {/if}
-          </span>
+          </button>
         {/each}
       </div>
+      {#if openAcct !== null && windowsOf(uses[openAcct] ?? null).length > 0}
+        <!-- Every window this account has, named, with what is left and when it
+             comes back. One account at a time: this is a glance, not a table. -->
+        <dl class="capdetail mono">
+          {#each windowsOf(uses[openAcct] ?? null) as row (row.name)}
+            {@const wleft = Math.max(0, 100 - row.w.percent)}
+            <div class:spent={wleft < 2}>
+              <dt>{row.name}</dt>
+              <dd class="dbar" aria-hidden="true"><i style="width:{wleft < 2 ? 0 : Math.max(4, wleft)}%"></i></dd>
+              <dd class="dnum">{Math.round(wleft)}% left</dd>
+              <dd class="dwhen">{fullReset(row.w)}</dd>
+            </div>
+          {/each}
+        </dl>
+      {/if}
       <p class="vline mono">
         {#if st.hostname}{st.hostname}{/if}
         {#if st.cpu_temp_c > 0}<span class:warn={tempHot}> · {Math.round(st.cpu_temp_c)}°C</span>
@@ -1451,11 +1502,82 @@
     display: inline-flex;
     align-items: center;
     gap: 7px;
+    padding: 3px 6px;
+    margin: -3px -6px;
+    border: 0;
+    border-radius: var(--r-sm);
+    background: transparent;
+    font: inherit;
     font-size: 12.5px;
     color: var(--text);
+    cursor: pointer;
+    text-align: left;
+  }
+  .cap:hover:not(:disabled),
+  .cap.on {
+    background: var(--panel);
+  }
+  .cap:disabled {
+    cursor: default;
   }
   .cap.spent {
     color: var(--text-3);
+  }
+  /* When it frees up, quieter than the number: the number is the state, the time
+     is the consequence. */
+  .cwhen {
+    font-size: 11px;
+    color: var(--text-4);
+  }
+
+  /* Both windows, only for the account you asked about. A table for three
+     accounts at once is the wall the collapsed line exists to avoid. */
+  .capdetail {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 8px 0 0;
+    padding: 8px 10px;
+    border-left: 1px solid var(--border);
+    font-size: 11.5px;
+  }
+  .capdetail div {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .capdetail dt {
+    width: 54px;
+    flex: none;
+    color: var(--text-3);
+  }
+  .capdetail dd {
+    margin: 0;
+    color: var(--text-2);
+  }
+  .capdetail .dbar {
+    flex: none;
+    width: 60px;
+    height: 4px;
+    border-radius: 2px;
+    background: #34363b;
+    overflow: hidden;
+  }
+  .capdetail .dbar i {
+    display: block;
+    height: 100%;
+    background: var(--text-2);
+  }
+  .capdetail .dnum {
+    width: 62px;
+    flex: none;
+  }
+  .capdetail .dwhen {
+    color: var(--text-4);
+  }
+  .capdetail div.spent .dnum,
+  .capdetail div.spent dt {
+    color: var(--text-4);
   }
   .cname {
     max-width: 130px;
