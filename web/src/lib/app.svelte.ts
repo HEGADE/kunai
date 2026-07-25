@@ -94,6 +94,14 @@ class AppStore {
   listError = $state('')
   // Sidebar machine filter: 'all' or a machine id. Lets you focus one machine.
   machineFilter = $state('all')
+
+  // Which release channel the build serving this app is on. Read from our own
+  // machine's stats, and absent both before stats load and on stable. Lives here
+  // rather than in each component so the sidebar's night-sky header and the
+  // browser chrome behind the notch cannot disagree about which build this is.
+  get isNightly(): boolean {
+    return this.machines.find((m) => m.self)?.stats?.channel === 'nightly'
+  }
   sidebarOpen = $state(localStorage.getItem('kunai-sidebar') !== '0')
   // Latest release tag from GitHub (client-side check), and per-machine
   // in-flight update flags so the dashboard can show "Updating…".

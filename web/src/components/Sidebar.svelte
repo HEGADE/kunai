@@ -12,7 +12,7 @@
   // The nightly channel gets a night-sky header, so you can tell a nightly build
   // from a stable one at a glance. This is the one place the "no gradients" rule
   // is broken, and only when the build serving the app is nightly.
-  const nightly = $derived(app.machines.find((m) => m.self)?.stats?.channel === 'nightly')
+  const nightly = $derived(app.isNightly)
 
   let notif = $state(pushState())
   let notifHint = $state('')

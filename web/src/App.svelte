@@ -10,6 +10,15 @@
   import Providers from './components/Providers.svelte'
   import Channels from './components/Channels.svelte'
   import AllSessions from './components/AllSessions.svelte'
+  import { applyThemeColor, themeColorFor } from './lib/themeColor'
+
+  // Keep the browser's own chrome (the status bar behind the notch, the address
+  // bar below) matching whatever is actually at the top of the screen. On the
+  // nightly channel the sidebar header is a night-sky purple, and a black status
+  // bar above it read as a rendering fault rather than a design.
+  $effect(() => {
+    applyThemeColor(themeColorFor({ nightly: app.isNightly, chatOpen: !!app.chat }))
+  })
 
   onMount(() => {
     app.startPolling()
