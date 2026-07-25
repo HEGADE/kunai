@@ -35,6 +35,7 @@ export interface Stats {
   rate_resets?: Record<string, number> // window -> unix seconds it resets
   clis?: string[] // Claude accounts a new session can pick (first is the default)
   provider_models?: Record<string, string> // provider name -> real model, to label a provider session truthfully
+  model_versions?: Record<string, string> // Claude family -> newest version the CLI can serve (opus -> "5")
 }
 
 // One subscription quota window's fill, read from the CLI's own /usage. A

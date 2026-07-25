@@ -28,6 +28,12 @@ function load(): Record<string, string> {
 
 const learned = $state<Record<string, string>>(load())
 
+// discovered holds the authoritative versions a machine read straight from its
+// claude binary (Stats.model_versions). It takes priority over lazy learning and
+// the seed, so a new model (Opus 5) labels correctly the instant stats load, with
+// no session needed. Merged newest-wins across a possibly mixed-version fleet.
+const discovered = $state<Record<string, string>>({})
+
 // parseModelId pulls the family and version out of a resolved id like
 // "claude-opus-4-8" or "claude-haiku-4-5-20251001" -> {opus, 4.8} / {haiku, 4.5}.
 export function parseModelId(id: string): { family: string; version: string } | null {
@@ -57,9 +63,21 @@ export function learnModel(id: string | undefined | null) {
   }
 }
 
-// familyVersion is the version to show for a family: learned from real usage
-// first, else the built-in seed. Reactive -- reading it in a component tracks the
-// learned store, so a label updates the moment a newer version is observed.
+// setDiscovered merges a machine's CLI-read versions (Stats.model_versions),
+// keeping the newest across the fleet.
+export function setDiscovered(map: Record<string, string> | undefined | null) {
+  if (!map) return
+  for (const [fam, ver] of Object.entries(map)) {
+    if (ver && (!discovered[fam] || asNumber(ver) > asNumber(discovered[fam]))) {
+      discovered[fam] = ver
+    }
+  }
+}
+
+// familyVersion is the version to show for a family: the CLI-discovered version
+// first (authoritative, no session needed), else learned from real usage, else the
+// built-in seed. Reactive -- reading it in a component tracks the stores, so a
+// label updates the moment a newer version is known.
 export function familyVersion(family: string): string {
-  return learned[family] ?? FALLBACK[family] ?? ''
+  return discovered[family] ?? learned[family] ?? FALLBACK[family] ?? ''
 }

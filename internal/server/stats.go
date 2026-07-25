@@ -68,6 +68,10 @@ type Stats struct {
 	// Failover is the per-machine account auto-failover opt-in, so the Settings
 	// fan-out can render the toggle without a second fetch.
 	Failover bool `json:"failover"`
+	// ModelVersions maps a Claude family (opus/sonnet/haiku/fable) to the newest
+	// version the CLI can serve, read from the claude binary. The picker labels
+	// from it, so a new model shows up without a kunai release.
+	ModelVersions map[string]string `json:"model_versions,omitempty"`
 }
 
 var (
@@ -107,6 +111,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	if s.failover != nil {
 		st.Failover = s.failover.Enabled()
 	}
+	st.ModelVersions = s.discoverModelVersions()
 	if names := s.cliNames(); len(names) > 1 {
 		st.CLIs = names // only worth sending when there is a real choice (accounts + providers)
 	}

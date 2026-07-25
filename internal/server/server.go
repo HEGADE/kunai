@@ -101,6 +101,7 @@ type Server struct {
 	login         *loginManager            // in-app account login flows (nil without a data dir)
 	checkpoints   *checkpointManager       // per-turn git snapshots for undo/revert
 	failover      *failoverController      // opt-in: roll a walled session onto another account
+	modelVers     modelVersionCache        // newest model version per family, read from the claude binary
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -148,6 +149,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	s.grokUC = &grokUsageCache{}
 	s.failover = newFailoverController(s)
 	s.failover.load() // re-apply the persisted opt-in on boot (default off)
+	go s.discoverModelVersions() // warm the model-version cache off the request path
 	s.sched = schedule.New(filepath.Join(cfg.DataDir, "schedule.json"), s.fireJob)
 	if cfg.DataDir != "" {
 		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))

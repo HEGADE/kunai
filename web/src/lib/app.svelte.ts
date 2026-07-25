@@ -20,7 +20,7 @@ import {
 } from './api'
 import { ChatConnection } from './chat.svelte'
 import { DEFAULT_MODEL, DEFAULT_EFFORT } from './models'
-import { learnModel } from './modelVersions.svelte'
+import { learnModel, setDiscovered } from './modelVersions.svelte'
 import { fetchLatestVersion } from './update'
 import type { Job, Machine, Meta, TaggedHistoryEntry, TaggedJob, TaggedMeta } from './types'
 
@@ -228,8 +228,10 @@ class AppStore {
       return { ...m, online: false }
     })
 
-    // Learn the latest model version per family from every resolved session id we
-    // see, so the picker labels self-heal when a new model ships (no release).
+    // Model versions: the authoritative set each machine read from its claude
+    // binary (so a new model shows the instant stats load), plus a fallback learned
+    // from resolved session ids. Both feed the picker labels.
+    for (const m of nextMachines) setDiscovered(m.stats?.model_versions)
     for (const s of nextSessions) learnModel(s.model)
 
     // Rune reactivity: build locally, assign once (never mutate in place).
