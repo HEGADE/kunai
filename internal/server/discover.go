@@ -68,7 +68,7 @@ func (d *discoveryCache) currentLocked() []MachineInfo {
 // transient CLI failure. A successful scan refreshes the last-seen of every peer
 // it found and drops only peers unseen for the whole grace window, so a peer
 // that blipped for one round keeps its recent last-seen and survives.
-func (d *discoveryCache) merge(found []MachineInfo, ok bool, now time.Time) {
+func (d *discoveryCache) merge(found []MachineInfo, onlineOnTailnet map[string]bool, ok bool, now time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.inflight = false
@@ -81,6 +81,19 @@ func (d *discoveryCache) merge(found []MachineInfo, ok bool, now time.Time) {
 	for _, m := range found {
 		d.peers[m.ID] = seenPeer{info: m, seen: now}
 	}
+	// A peer tailscale still reports ONLINE has not gone anywhere just because it
+	// did not answer this round's probe -- and a machine mid-turn frequently will
+	// not. Keep it listed and let the client's own per-machine fetch decide the
+	// status dot, which is what that dot is for. Dropping the entry instead is what
+	// made a live machine vanish from the fleet for minutes at a time, since the
+	// client mirrors this list and only a reload rebuilt it.
+	for id, sp := range d.peers {
+		if onlineOnTailnet[id] {
+			sp.seen = now
+			d.peers[id] = sp
+		}
+	}
+	// Only a peer the tailnet has stopped reporting is allowed to age out.
 	for id, sp := range d.peers {
 		if now.Sub(sp.seen) > peerTTL {
 			delete(d.peers, id)
@@ -122,8 +135,8 @@ func (s *Server) discover(force bool) []MachineInfo {
 
 // runScan scans once and folds the result into the sticky cache.
 func (s *Server) runScan() {
-	found, ok := s.scanPeers()
-	s.disco.merge(found, ok, time.Now())
+	found, online, ok := s.scanPeers()
+	s.disco.merge(found, online, ok, time.Now())
 }
 
 // scanPeers lists online tailnet peers and keeps those that answer as Kunai. The
@@ -131,11 +144,15 @@ func (s *Server) runScan() {
 // timeout, parse error): the caller must treat that as "unknown", not "empty",
 // so a transient failure never prunes a live peer. A true with no peers is a
 // real answer (nothing on the tailnet runs Kunai).
-func (s *Server) scanPeers() ([]MachineInfo, bool) {
+func (s *Server) scanPeers() ([]MachineInfo, map[string]bool, bool) {
 	peers, ok := tailscalePeers()
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
+	// Every peer tailscale reports up, whether or not it answers as kunai. A peer
+	// in this set is demonstrably reachable, so a failed probe says something about
+	// our probe, not about the machine's existence.
+	onlineOnTailnet := map[string]bool{}
 	port := s.probePort()
 	selfSlug := slugFromURL(s.cfg.PublicURL)
 
@@ -151,6 +168,7 @@ func (s *Server) scanPeers() ([]MachineInfo, bool) {
 		if slug == selfSlug {
 			continue // don't rediscover ourselves
 		}
+		onlineOnTailnet[slug] = true
 		origin := "https://" + net.JoinHostPort(host, port)
 		label := p.HostName
 		if label == "" {
@@ -167,7 +185,7 @@ func (s *Server) scanPeers() ([]MachineInfo, bool) {
 		}(origin, slug, label)
 	}
 	wg.Wait()
-	return out, true
+	return out, onlineOnTailnet, true
 }
 
 // --- tailscale CLI -----------------------------------------------------------
@@ -221,9 +239,25 @@ func tailscaleBin() string {
 }
 
 // probeKunai returns true if origin serves Kunai's stats endpoint.
+// probeTimeout is generous on purpose. The probe is an HTTPS GET (TLS handshake
+// included) to a peer that is very likely busy running an agent turn, and the cost
+// of being wrong is asymmetric: a slow answer that we give up on used to remove the
+// machine from the fleet entirely, while waiting a few extra seconds costs nothing
+// (peers are probed concurrently, off the request path).
+const probeTimeout = 4 * time.Second
+
+// probeKunai reports whether a kunai is answering at origin. One retry, because a
+// single dropped packet or a WireGuard rekey is not evidence that kunai is gone.
 func probeKunai(origin string) bool {
+	if probeKunaiOnce(origin) {
+		return true
+	}
+	return probeKunaiOnce(origin)
+}
+
+func probeKunaiOnce(origin string) bool {
 	client := &http.Client{
-		Timeout: 1500 * time.Millisecond,
+		Timeout: probeTimeout,
 		Transport: &http.Transport{
 			TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12},
 			DisableKeepAlives: true,
