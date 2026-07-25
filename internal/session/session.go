@@ -151,6 +151,15 @@ func (s *Session) LastLimit() (window string, resetsAt int64) {
 	return s.limitWindow, s.limitResetsAt
 }
 
+// Mode is the session's current permission mode. Meta does not carry it (the app
+// learns it from the hello frame), but a channel showing a mode picker needs to say
+// which one you are on.
+func (s *Session) Mode() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mode
+}
+
 // InLoop reports whether a self-prompting loop is currently running, so failover
 // can leave loops to their own limit handling (loop failover is not yet wired).
 func (s *Session) InLoop() bool {

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/hegade/kunai/internal/session"
+	"os"
+	"path/filepath"
 )
 
 // pollBackoff is how long to wait after a failed poll. Telegram being briefly
@@ -190,6 +192,12 @@ func (b *Bot) handleMessage(ctx context.Context, m *Message) {
 			}
 			b.say(ctx, m.Chat.ID, "Stopped.")
 		})
+	case CmdModel:
+		b.offerModels(ctx, m.Chat.ID)
+	case CmdMode:
+		b.offerModes(ctx, m.Chat.ID)
+	case CmdGet:
+		b.sendFileToChat(ctx, m.Chat.ID, cmd.Arg)
 	case CmdEnd:
 		b.endSession(ctx, m.Chat.ID)
 	default:
@@ -222,6 +230,10 @@ func (b *Bot) handleCallback(ctx context.Context, q *CallbackQuery) {
 		b.answerPermission(ctx, chatID, q, action, arg)
 	case CallbackResume:
 		b.resumeFromButton(ctx, chatID, q, arg)
+	case CallbackModel:
+		b.applyModel(ctx, chatID, q, arg)
+	case CallbackMode:
+		b.applyMode(ctx, chatID, q, arg)
 	}
 }
 
@@ -360,6 +372,140 @@ func (b *Bot) endSession(ctx context.Context, chatID int64) {
 	// chat offer the session back instead of pretending it never existed.
 	out := resumeOffer("Closed. The conversation is kept, so you can pick it up later.", id)
 	b.sayWith(ctx, chatID, out.Text, out.Keyboard)
+}
+
+// offerModels shows the model choices as buttons. Switching by tapping beats
+// remembering an alias, which is the whole reason these are buttons and not an
+// argument to a command.
+func (b *Bot) offerModels(ctx context.Context, chatID int64) {
+	b.withSession(ctx, chatID, func(s *session.Session) {
+		cur := s.Meta().Model
+		rows := make([][]InlineButton, 0, len(ChatModels))
+		for _, m := range ChatModels {
+			label := m
+			if strings.Contains(strings.ToLower(cur), m) {
+				label = "* " + m // the one you are on, marked without colour
+			}
+			rows = append(rows, []InlineButton{{Text: label, Data: callbackData(CallbackModel, m)}})
+		}
+		b.sayWith(ctx, chatID, "Model for this session (now: "+cur+")", &InlineKeyboard{Rows: rows})
+	})
+}
+
+// offerModes shows what will need your approval. The labels say what each mode does
+// rather than naming it, because this is the setting most likely to strand a turn
+// waiting on a tap nobody saw.
+func (b *Bot) offerModes(ctx context.Context, chatID int64) {
+	b.withSession(ctx, chatID, func(s *session.Session) {
+		cur := s.Mode()
+		rows := make([][]InlineButton, 0, len(ChatModes))
+		for _, m := range ChatModes {
+			label := m.Label
+			if m.ID == cur {
+				label = "* " + label
+			}
+			rows = append(rows, []InlineButton{{Text: label, Data: callbackData(CallbackMode, m.ID)}})
+		}
+		b.sayWith(ctx, chatID, "What needs your approval (now: "+cur+")", &InlineKeyboard{Rows: rows})
+	})
+}
+
+func (b *Bot) applyModel(ctx context.Context, chatID int64, q *CallbackQuery, model string) {
+	_ = b.mustAPI().AnswerCallback(ctx, q.ID, model)
+	b.withSession(ctx, chatID, func(s *session.Session) {
+		if err := s.SetModel(model); err != nil {
+			b.say(ctx, chatID, "Could not switch model: "+err.Error())
+			return
+		}
+		b.say(ctx, chatID, "Model is now "+model+".")
+	})
+}
+
+func (b *Bot) applyMode(ctx context.Context, chatID int64, q *CallbackQuery, mode string) {
+	_ = b.mustAPI().AnswerCallback(ctx, q.ID, mode)
+	b.withSession(ctx, chatID, func(s *session.Session) {
+		if err := s.SetPermissionMode(mode); err != nil {
+			b.say(ctx, chatID, "Could not switch mode: "+err.Error())
+			return
+		}
+		b.say(ctx, chatID, "Mode is now "+mode+".")
+	})
+}
+
+// maxOutboundFile caps what leaves the machine in one message. Telegram allows far
+// more, but a tailnet upload of tens of megabytes from a phone-driven chat is a
+// worse experience than a clear refusal.
+const maxOutboundFile = 12 << 20 // 12 MiB
+
+// sendFileToChat answers /get: it sends a file from the session's directory into the
+// chat, so the chart or screenshot the agent just wrote can actually be looked at.
+//
+// Why this is not gated on the detail policy: that policy guards INCIDENTAL spill --
+// a config file the agent happened to read, a token a test echoed -- and a path you
+// typed yourself is the opposite of incidental. What it IS gated on is location: the
+// path is resolved inside the session's own directory and anything that escapes is
+// refused, so a chat cannot reach for ~/.claude credentials or /etc no matter how
+// the argument is written.
+func (b *Bot) sendFileToChat(ctx context.Context, chatID int64, arg string) {
+	rel := strings.TrimSpace(arg)
+	if rel == "" {
+		b.say(ctx, chatID, "Which file? Send /get <path>, relative to the session's folder.")
+		return
+	}
+	b.withSession(ctx, chatID, func(s *session.Session) {
+		path, err := resolveInside(s.Cwd, rel)
+		if err != nil {
+			b.say(ctx, chatID, err.Error())
+			return
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			b.say(ctx, chatID, "No such file in this session's folder: "+rel)
+			return
+		}
+		if info.IsDir() {
+			b.say(ctx, chatID, rel+" is a folder, not a file.")
+			return
+		}
+		if info.Size() > maxOutboundFile {
+			b.say(ctx, chatID, fmt.Sprintf("%s is %d MiB; the limit for a chat is %d MiB.",
+				rel, info.Size()>>20, maxOutboundFile>>20))
+			return
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			b.say(ctx, chatID, "Could not read it: "+err.Error())
+			return
+		}
+		if err := b.mustAPI().SendDocument(ctx, chatID, filepath.Base(path), data, rel); err != nil {
+			b.say(ctx, chatID, "Could not send it: "+err.Error())
+		}
+	})
+}
+
+// resolveInside turns a chat-supplied path into an absolute one inside root, or
+// refuses. Symlinks are resolved before the check where they exist, so a link
+// pointing out of the project cannot be used to walk out of it either.
+func resolveInside(root, rel string) (string, error) {
+	if root == "" {
+		return "", fmt.Errorf("this session has no folder to read from")
+	}
+	base, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		base = filepath.Clean(root)
+	}
+	target := rel
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(base, target)
+	}
+	target = filepath.Clean(target)
+	if resolved, err := filepath.EvalSymlinks(target); err == nil {
+		target = resolved
+	}
+	if target != base && !strings.HasPrefix(target, base+string(filepath.Separator)) {
+		return "", fmt.Errorf("that path is outside this session's folder, so it is not readable from a chat")
+	}
+	return target, nil
 }
 
 // fileRef is one thing to fetch out of a chat message.

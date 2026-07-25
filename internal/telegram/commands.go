@@ -8,7 +8,24 @@ const (
 	CallbackApprove = "ok"
 	CallbackDeny    = "no"
 	CallbackResume  = "rs" // bring a closed session back; the arg is its id
+	CallbackModel   = "md" // switch the session's model; the arg is the alias
+	CallbackMode    = "pm" // switch the permission mode; the arg is the mode
 )
+
+// ChatModels are the model aliases offered as buttons. Aliases, not pinned ids,
+// so the newest model of each family is what you get -- the same reason the app's
+// picker sends an alias (see web/src/lib/models.ts).
+var ChatModels = []string{"opus", "sonnet", "haiku", "fable"}
+
+// ChatModes are the permission modes offered as buttons, with the plain-language
+// label first: a chat is where you are least able to babysit a prompt, so what each
+// mode will DO to you matters more than its internal name.
+var ChatModes = []struct{ ID, Label string }{
+	{"auto", "Auto - run safe things, ask otherwise"},
+	{"acceptEdits", "Edits - auto-approve file edits"},
+	{"default", "Ask - stop for every tool"},
+	{"plan", "Plan - read-only, no changes"},
+}
 
 // Command names the bot understands.
 const (
@@ -21,6 +38,9 @@ const (
 	CmdStatus   = "status"
 	CmdStop     = "stop"
 	CmdEnd      = "end"
+	CmdModel    = "model"
+	CmdMode     = "mode"
+	CmdGet      = "get"
 )
 
 // callbackData builds the payload for an inline button. Telegram caps it at 64
@@ -92,6 +112,9 @@ goes to the session too, with your caption as the prompt.
 /resume <id>   bring a closed session back, with its conversation
 /resume        list sessions you can bring back
 /status        what the current session is doing
+/model         switch the model for this session
+/mode          switch what needs your approval
+/get <path>    send a file from the session's machine to this chat
 /stop          interrupt the running turn
 /end           close the current session
 

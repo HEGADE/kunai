@@ -717,6 +717,22 @@ a placeholder), so the shape matters more than the one implementation.
   output. The risk being guarded is not really your source, it is the incidental
   spill: a config file the agent read, a token a test echoed. `Detail` turns it on
   deliberately and is off by default.
+- **Files go both ways, and each direction has its own rule.** Inbound: a message
+  carrying a photo or document has no `Text` at all (what you typed arrives as
+  `Caption`), so reading only `Text` made a screenshot sent to the bot vanish
+  silently. The largest photo rendition is taken, a document is taken as sent (which
+  covers an image sent "as a file", uncompressed), and the bytes are handed to
+  `Sessions.SendFiles` -- the channel never learns where uploads live or what shape
+  the model wants, so the adapter stores them in the SAME uploads dir and builds
+  content with the SAME `buildContent` as an app upload. A caption-less file supplies
+  its own words, because an empty prompt is rejected and strands the turn on
+  "Working...". Outbound (`/get <path>`) is deliberately NOT gated on `Detail`: that
+  policy guards *incidental* spill, and a path you typed is the opposite of
+  incidental. It is gated on **location** instead -- `resolveInside` resolves the path
+  within the session's own folder, following symlinks BEFORE the check, so no
+  spelling of the argument reaches `~/.claude` credentials or `/etc`. Always
+  `sendDocument`, never `sendPhoto`: the reason to look at a file the agent made is
+  usually to read it, and `sendPhoto` recompresses.
 - **The channel never creates a session itself.** `internal/server/channelsessions.go`
   is the adapter and the only place a chat-born session is made, so it goes through
   `armSession` (notifications, rate-limit handling), the configured model/effort,

@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -356,4 +358,51 @@ func (c *Client) DownloadFile(ctx context.Context, filePath string) ([]byte, err
 		return nil, fmt.Errorf("telegram: file is larger than %d MiB", maxInboundFile>>20)
 	}
 	return data, nil
+}
+
+// SendDocument uploads a file into a chat. Always sendDocument, never sendPhoto:
+// sendPhoto recompresses, and the reason to look at a file the agent produced is
+// usually to READ it (a screenshot, a chart, a diff), which compression ruins.
+// Telegram still previews images sent this way, so nothing is lost by being exact.
+func (c *Client) SendDocument(ctx context.Context, chatID int64, filename string, data []byte, caption string) error {
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	_ = w.WriteField("chat_id", strconv.FormatInt(chatID, 10))
+	if caption != "" {
+		_ = w.WriteField("caption", clampText(caption))
+	}
+	part, err := w.CreateFormFile("document", filename)
+	if err != nil {
+		return err
+	}
+	if _, err := part.Write(data); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("%s/bot%s/sendDocument", apiBase, c.token)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	resp, err := c.http.Do(req)
+	if err != nil {
+		c.brokenRoute()
+		return redact(err, c.token)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&out) == nil && !out.OK {
+		return fmt.Errorf("telegram: sendDocument: %s", out.Description)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("telegram: sendDocument %d", resp.StatusCode)
+	}
+	return nil
 }
