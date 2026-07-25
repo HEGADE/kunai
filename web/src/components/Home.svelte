@@ -3,7 +3,7 @@
   import { usage } from '../lib/api'
   import type { Usage, UsageWindow } from '../lib/types'
   import { updateAvailable } from '../lib/update'
-  import { noWorktree, type WorktreeChoice } from '../lib/worktrees'
+  import { noWorktree, worktreeBranches, type WorktreeChoice } from '../lib/worktrees'
   import Schedules from './Schedules.svelte'
   import WorktreeChoicePicker from './WorktreeChoice.svelte'
 
@@ -301,8 +301,34 @@
       wt = noWorktree()
     }
   })
+  // The folder's current branch, so the launcher bar states it the way it states
+  // the folder and the account. It used to be reachable only by opening the
+  // worktree picker, which meant the one fact you check before starting work was
+  // the one thing the bar did not say.
+  let onBranch = $state('')
+  let branchFor = ''
+  $effect(() => {
+    const dir = targetDir
+    if (!dir || branchFor === dir) return
+    branchFor = dir
+    onBranch = ''
+    worktreeBranches(app.baseForMachine(sel?.id ?? ''), dir)
+      .then((b) => {
+        if (branchFor === dir) onBranch = b.refs.find((r) => r.current)?.name ?? b.default
+      })
+      .catch(() => {
+        // Not a repository, or a machine that cannot answer. The pill then says
+        // where the work happens without naming a branch there is not.
+      })
+  })
+
+  // What the pill says. Armed, it names the branch the new worktree comes off,
+  // because that is the choice that was made; otherwise it names the branch the
+  // work will actually run on, which is what you would check before starting.
   const wtLabel = $derived(
-    wt.on ? (wt.base ? `worktree of ${wt.base}` : 'new worktree') : 'this checkout',
+    wt.on
+      ? `worktree of ${wt.base || onBranch || 'the default branch'}`
+      : onBranch || 'this checkout',
   )
 
   async function launch() {
@@ -499,14 +525,14 @@
       <span class="lsep" aria-hidden="true"></span>
       <div class="dirwrap">
         <button
-          class="pick"
+          class="pick wtpick"
           class:on={wtOpen}
           class:armed={wt.on}
           onclick={() => (wtOpen = !wtOpen)}
-          title="Where this work happens"
+          title={wt.on ? 'A checkout of its own' : 'Runs on this branch, in this checkout'}
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 3v12M6 21a2 2 0 100-4 2 2 0 000 4zM6 7a2 2 0 100-4 2 2 0 000 4zM18 11a2 2 0 100-4 2 2 0 000 4zM18 9v2a4 4 0 01-4 4H6" /></svg>
-          <span class="pname">{wtLabel}</span>
+          <span class="pname" class:mono={!wt.on && !!onBranch}>{wtLabel}</span>
         </button>
         {#if wtOpen}
           <button class="scrim2" onclick={() => (wtOpen = false)} aria-label="Close"></button>
@@ -1375,6 +1401,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* A branch name is one word you need whole: "feat-rule-builder…" and
+     "feat-rule-builder-v2…" are the same string until they are not. Mono is
+     narrower per character, so this costs less width than it reads. */
+  .pname.mono {
+    max-width: 220px;
+    font-size: 12px;
   }
   .mdot2 {
     flex: none;

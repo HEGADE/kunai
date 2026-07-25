@@ -96,8 +96,19 @@ async function main() {
   check('the launcher is pointed at the repository under test', true, REPO)
 
   // --- the pill exists and is off by default ---------------------------------
-  const pill = home.locator('.lbar .pick', { hasText: 'this checkout' })
-  check('launcher shows the worktree pill, defaulting to the current checkout', await pill.count() > 0)
+  // Unarmed, the pill names the branch the work will run on, which is the thing
+  // you would check before starting. It falls back to "this checkout" only for a
+  // folder whose branch could not be read.
+  // The branch is fetched after the folder is chosen, so wait for it rather than
+  // racing it.
+  const pill = home.locator('.lbar .wtpick')
+  await pill.first().waitFor({ timeout: 10000 })
+  await page.waitForFunction(
+    () => document.querySelector('.home:not(.compact) .lbar .wtpick')?.textContent?.includes('main'),
+    { timeout: 10000 },
+  ).catch(() => {})
+  const pillText = (await pill.first().innerText()).trim()
+  check('the launcher names the branch the work will run on', pillText === 'main', pillText || '(no pill)')
   await shot(page, '01-launcher')
 
   if ((await pill.count()) === 0) {
@@ -278,7 +289,7 @@ async function main() {
   await home.locator('.dirpop').first().waitFor({ timeout: 5000 })
   await home.locator('.dirpop .dp', { hasText: REPO }).first().click()
 
-  await home.locator('.lbar .pick', { hasText: 'this checkout' }).first().click()
+  await home.locator('.lbar .wtpick').first().click()
   await home.locator('.wtpop .mode', { hasText: 'New worktree' }).click()
   await home.locator('.wtpop .fields').waitFor({ timeout: 5000 })
   await home.locator('.wtpop .nameinput').press('Enter') // left empty on purpose
