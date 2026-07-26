@@ -59,6 +59,10 @@ export interface StartSpec {
   // mode is the permission mode, also spawn-time: set afterwards it arrives too
   // late to govern the first tool call.
   mode?: PermissionMode
+  // providerModel is the upstream model when cli names a provider. A Claude tier
+  // (model, above) means nothing there: the provider serves one real model id,
+  // baked into the spawn env.
+  providerModel?: string
   wt?: WorktreeChoice
 }
 
@@ -742,6 +746,7 @@ class AppStore {
         // Omitted means the server's default. Sent, it is a spawn flag, which is
         // the only way it can govern the first tool call.
         mode: spec.mode,
+        provider_model: spec.providerModel,
       })
       this.open(machineId, meta.id)
       const conn = this.conns.get(tabKey(machineId, meta.id))
@@ -770,6 +775,7 @@ class AppStore {
         cli: spec.cli || undefined,
         worktree: worktree || undefined,
         mode: spec.mode,
+        provider_model: spec.providerModel,
       })
       this.open(machineId, meta.id)
       this.refresh()

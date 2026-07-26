@@ -257,6 +257,22 @@ func (s *Server) handleDeleteProvider(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// pinProviderModel points every slot of a provider at one model and persists it.
+//
+// Every slot, because the CLI decides which of opus/sonnet/haiku it spawns under
+// and we do not: leaving the others unset would mean the model you picked
+// applied or not depending on a tier the provider does not have. Persisted,
+// because the mapping is the provider's configuration rather than one session's
+// -- so choosing a model here is also choosing it for this provider's next
+// session, which is the same rule the composer's switcher has always followed.
+//
+// Shared by the composer's switch and by session create, so the two cannot mean
+// different things by "run this provider on that model".
+func (s *Server) pinProviderModel(p *Provider, model string) {
+	p.Models = map[string]string{"opus": model, "sonnet": model, "haiku": model}
+	s.providers.save(*p)
+}
+
 // handleSetProviderModel changes which upstream model a provider session runs on.
 // The model is baked into the spawn env (the slot mapping), so this updates the
 // provider's saved mapping and respawns the session under it -- the conversation
@@ -286,10 +302,7 @@ func (s *Server) handleSetProviderModel(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "this session is not on a provider")
 		return
 	}
-	// Map every slot to the new model, so whatever slot the CLI spawns under lands
-	// on it, and persist so the provider's next session uses it too.
-	p.Models = map[string]string{"opus": model, "sonnet": model, "haiku": model}
-	s.providers.save(*p)
+	s.pinProviderModel(p, model)
 	s.ensureCLIProxyReady()
 	prof := s.providerProfile(*p)
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)

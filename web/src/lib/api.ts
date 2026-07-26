@@ -41,6 +41,11 @@ export function createSession(
     // than set on the running session: the CLI takes it as a spawn flag, so sent
     // afterwards it misses the first tool call.
     mode?: PermissionMode
+    // provider_model is the real upstream model, when cli names a provider
+    // rather than a Claude account. Distinct from model, which is a Claude tier:
+    // this one is baked into the spawn env, so it has to be known before the
+    // process starts.
+    provider_model?: string
   },
 ): Promise<Meta> {
   return fetch(at(base, '/api/sessions'), {

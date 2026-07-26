@@ -313,6 +313,51 @@ async function main() {
     armedMode.includes('Accept edits'),
     armedMode.join(' / '),
   )
+
+  // The model row has to follow the account, because they are not independent:
+  // a provider serves one real upstream model id and knows nothing about
+  // Claude's tiers, so offering Opus/Sonnet/Haiku beside a Codex account was
+  // four buttons that all did the same nothing. Only checked when the machine
+  // actually has a provider -- a test that invented one would be writing a fake
+  // account into somebody's config to prove a point.
+  const stats = await fetch(`${ORIGIN}/api/stats`).then((r) => r.json())
+  const providers = Object.keys(stats.provider_models ?? {})
+  const modelRow = page.locator('.wtstart .line', { hasText: 'Model' })
+  const modelChips = async () => (await modelRow.locator('.chip').allInnerTexts()).map((t) => t.trim())
+  const claudeTiers = await modelChips()
+  check('a Claude account offers Claude tiers', claudeTiers.includes('Opus 5'), claudeTiers.join(' | '))
+  if (providers.length === 0) {
+    console.log('SKIP  provider model row — this machine has no providers configured')
+  } else {
+    const prov = providers[0]
+    await page.locator('.wtstart .line', { hasText: 'Account' }).locator('.chip', { hasText: prov }).click()
+    await page.waitForFunction(
+      (tier) =>
+        ![...document.querySelectorAll('.wtstart .line')]
+          .find((l) => l.querySelector('.lbl')?.textContent?.trim() === 'Model')
+          ?.textContent?.includes(tier),
+      'Opus 5',
+      { timeout: 10000 },
+    ).catch(() => {})
+    const provChips = await modelChips()
+    check(
+      `picking ${prov} swaps the model row to what it actually serves`,
+      provChips.length > 0 && !provChips.includes('Opus 5'),
+      provChips.join(' | '),
+    )
+    check(
+      `and preselects the model ${prov} is already on`,
+      (await modelRow.locator('.chip.on').innerText()).trim() === stats.provider_models[prov],
+      `${(await modelRow.locator('.chip.on').allInnerTexts()).join('|')} vs ${stats.provider_models[prov]}`,
+    )
+    // Effort is a Claude reasoning level the provider's model never sees.
+    const provRows = (await page.locator('.wtstart .line .lbl').allInnerTexts()).map((t) => t.trim())
+    check('and drops the effort row, which means nothing there', !provRows.includes('Effort'), provRows.join(' / '))
+    await shot(page, '11-provider-models')
+    // Back to Claude for the rest of the run.
+    await page.locator('.wtstart .line', { hasText: 'Account' }).locator('.chip', { hasText: 'Claude' }).first().click()
+    await page.waitForTimeout(300)
+  }
   // Preselected to where you are standing. Silently cutting from main while you
   // worked on a feature branch is the complaint this panel exists to answer, so
   // the preselection is the check that matters, not merely that a picker exists.

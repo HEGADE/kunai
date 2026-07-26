@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -367,6 +368,13 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// govern the first tool call, which for an unattended start is the one
 		// that matters.
 		Mode string `json:"mode"`
+		// ProviderModel is the upstream model to run, when CLI names a provider
+		// rather than a Claude account. It is separate from Model because the two
+		// are different things: Model is a Claude tier the CLI resolves, while
+		// this is a real upstream model id that has to be baked into the spawn env
+		// before the process starts. Ignored for a Claude account, which has no
+		// such mapping.
+		ProviderModel string `json:"provider_model"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -386,6 +394,14 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// env, or claude would spawn with no proxy to reach.
 	if s.isProviderName(req.CLI) && !s.providerUsesNative(req.CLI) && !s.providerUsesNativeGrok(req.CLI) {
 		s.ensureCLIProxyReady()
+	}
+	// Pin the provider's model before the profile is compiled, since the model is
+	// carried in the spawn env: chosen after resolveCLI it would be saved for next
+	// time but not applied to the session that asked for it.
+	if m := strings.TrimSpace(req.ProviderModel); m != "" {
+		if p := s.providerNamed(req.CLI); p != nil {
+			s.pinProviderModel(p, m)
+		}
 	}
 	cli := s.resolveCLI(req.CLI)
 	opts := session.CreateOptions{

@@ -19,6 +19,7 @@
   //
   // Centred rather than anchored for the same reason: this is a decision you stop
   // and make, not a menu you flick through.
+  import { getProviderModels } from '../lib/api'
   import { app, type StartSpec } from '../lib/app.svelte'
   import { projectName } from '../lib/grouping'
   import { DEFAULT_EFFORT, DEFAULT_MODEL, EFFORTS, MODELS, modelOptionLabel } from '../lib/models'
@@ -75,7 +76,43 @@
   // Accounts and providers come from the machine's stats as one list, because
   // from here they are one decision: which brain runs this. Only offered when the
   // machine has a real choice to make.
-  const clis = $derived(app.machines.find((m) => m.id === machineId)?.stats?.clis ?? [])
+  const stats = $derived(app.machines.find((m) => m.id === machineId)?.stats ?? null)
+  const clis = $derived(stats?.clis ?? [])
+  // Which of those names are proxy-backed providers. The map is keyed by provider
+  // name, so it is the discriminator already on the wire; nothing new is needed
+  // to tell a Codex from a Claude account.
+  const providerModelOf = $derived(stats?.provider_models ?? {})
+  const chosenCli = $derived(cli || clis[0] || '')
+  const onProvider = $derived(chosenCli in providerModelOf)
+
+  // A provider serves real upstream model ids, not Claude tiers, so the Claude
+  // tier row means nothing there: picking "Opus 5" for a Codex account chose
+  // nothing at all, it just left whatever the provider was already mapped to.
+  // The models are fetched per provider because only the proxy knows what that
+  // login can actually serve.
+  let providerModels = $state<string[]>([])
+  let providerModel = $state('')
+  let modelsFor = ''
+  $effect(() => {
+    const name = chosenCli
+    if (!onProvider || modelsFor === name) return
+    modelsFor = name
+    // Preselect what the provider is already on, so the row opens on the truth
+    // rather than on nothing.
+    providerModel = providerModelOf[name] ?? ''
+    providerModels = []
+    getProviderModels(base, name)
+      .then((ms) => (providerModels = ms))
+      .catch(() => (providerModels = []))
+  })
+  // What to offer: whatever the proxy listed, plus the current model if the list
+  // came back without it (or came back empty, which is what a provider whose
+  // login has lapsed looks like). Never an empty row.
+  const modelChoices = $derived(
+    providerModel && !providerModels.includes(providerModel)
+      ? [providerModel, ...providerModels]
+      : providerModels,
+  )
 
   const repoLabel = $derived(projectName(repo))
   const defaultBranch = $derived(refs.find((r) => r.default)?.name ?? '')
@@ -116,6 +153,13 @@
       model,
       effort,
       mode,
+      // Only on a provider, and only when it differs from what that provider is
+      // already mapped to: sending it pins the mapping for the provider's next
+      // session too, so it should not be written back when nothing was chosen.
+      providerModel:
+        onProvider && providerModel && providerModel !== providerModelOf[chosenCli]
+          ? providerModel
+          : undefined,
       wt: {
         on: true,
         base: baseBranch,
@@ -245,27 +289,47 @@
           </div>
         {/if}
 
+        <!-- The model row follows the account, because they are not independent
+             choices. A provider serves one real model id and knows nothing about
+             Claude's tiers, so offering Opus/Sonnet/Haiku beside a Codex account
+             was offering four buttons that all did the same nothing. -->
         <div class="line">
           <span class="lbl">Model</span>
           <div class="chips">
-            {#each MODELS as m (m.id)}
-              <button class="chip" class:on={model === m.id} title={m.hint ?? ''} onclick={() => (model = m.id)}>
-                {modelOptionLabel(m.id)}
-              </button>
-            {/each}
+            {#if onProvider}
+              {#each modelChoices as m (m)}
+                <button class="chip mono sm" class:on={providerModel === m} onclick={() => (providerModel = m)}>
+                  {m}
+                </button>
+              {/each}
+              {#if modelChoices.length === 0}
+                <span class="quiet">Reading what {chosenCli} can serve…</span>
+              {/if}
+            {:else}
+              {#each MODELS as m (m.id)}
+                <button class="chip" class:on={model === m.id} title={m.hint ?? ''} onclick={() => (model = m.id)}>
+                  {modelOptionLabel(m.id)}
+                </button>
+              {/each}
+            {/if}
           </div>
         </div>
 
-        <div class="line">
-          <span class="lbl">Effort</span>
-          <div class="chips">
-            {#each EFFORTS as e (e.id)}
-              <button class="chip" class:on={effort === e.id} title={e.hint ?? ''} onclick={() => (effort = e.id)}>
-                {e.label}
-              </button>
-            {/each}
+        <!-- Effort is a Claude reasoning level. A provider's model does its own
+             thinking and never sees this flag, so the row would be four buttons
+             that change nothing. -->
+        {#if !onProvider}
+          <div class="line">
+            <span class="lbl">Effort</span>
+            <div class="chips">
+              {#each EFFORTS as e (e.id)}
+                <button class="chip" class:on={effort === e.id} title={e.hint ?? ''} onclick={() => (effort = e.id)}>
+                  {e.label}
+                </button>
+              {/each}
+            </div>
           </div>
-        </div>
+        {/if}
 
         <div class="line">
           <span class="lbl">Permission</span>
@@ -446,6 +510,15 @@
     background: var(--text);
     border-color: var(--text);
     color: var(--bg);
+  }
+  /* A provider's model is a real id like gpt-5.5-codex, which is longer than a
+     tier name and is data rather than a label. */
+  .chip.sm {
+    font-size: 11px;
+  }
+  .quiet {
+    font-size: 11.5px;
+    color: var(--text-4);
   }
 
   .basewrap {
