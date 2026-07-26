@@ -298,80 +298,98 @@ async function main() {
     'the worktree button opens a composer, not a bare branch list',
     (await page.locator('.wtstart textarea').count()) === 1,
   )
-  // Every choice a worktree needs is spawn-time, so all of them are here. Effort
-  // and permission mode in particular cannot usefully be set afterwards: the CLI
-  // takes both as spawn flags, so a mode chosen later misses the first tool call.
-  const settings = (await page.locator('.wtstart .line .lbl').allInnerTexts()).map((t) => t.trim())
+  // Every choice a worktree needs is spawn-time, so all of them are here, and
+  // they read as one strip of dropdowns under the prompt the way the session
+  // composer does. Rows of chips stated every option at once, which is only
+  // worth the space when choosing is the task; here writing the prompt is.
+  const segs = async () =>
+    (await page.locator('.wtstart .controls .seg').allInnerTexts()).map((t) => t.trim())
+  const strip = await segs()
   check(
-    'the dialog asks how the agent should run, not just where',
-    ['Model', 'Effort', 'Permission'].every((l) => settings.includes(l)),
-    settings.join(' / '),
+    'the settings read as a composer strip, not rows of chips',
+    (await page.locator('.wtstart .chip').count()) === 0 && strip.length >= 3,
+    strip.join(' | '),
   )
-  const armedMode = (await page.locator('.wtstart .chips .chip.on').allInnerTexts()).map((t) => t.trim())
   check(
-    'and defaults an isolated agent to accepting its own edits',
-    armedMode.includes('Accept edits'),
-    armedMode.join(' / '),
+    'and it shows the choices themselves, not just their names',
+    strip.includes('Opus 5') && strip.includes('High') && strip.includes('Accept edits'),
+    strip.join(' | '),
+  )
+  check(
+    'defaulting an isolated agent to accepting its own edits',
+    strip.includes('Accept edits'),
+    strip.join(' | '),
   )
 
-  // The model row has to follow the account, because they are not independent:
-  // a provider serves one real upstream model id and knows nothing about
-  // Claude's tiers, so offering Opus/Sonnet/Haiku beside a Codex account was
-  // four buttons that all did the same nothing. Only checked when the machine
-  // actually has a provider -- a test that invented one would be writing a fake
-  // account into somebody's config to prove a point.
+  // Escape must close an open menu and stop there. It shares a key with "close
+  // the dialog", and closing the dialog throws away everything typed into it.
+  await page.locator('.wtstart textarea').fill('keep me')
+  await page.locator('.wtstart .controls .seg').last().click()
+  await page.waitForSelector('.wtstart .pop', { timeout: 5000 })
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(250)
+  check(
+    'escape closes an open menu without closing the dialog',
+    (await page.locator('.wtstart .pop').count()) === 0 &&
+      (await page.locator('.wtstart textarea').inputValue()) === 'keep me',
+  )
+  await page.locator('.wtstart textarea').fill('')
+
+  // The model control has to follow the account, because they are not
+  // independent: a provider serves one real upstream model id and knows nothing
+  // about Claude's tiers, so offering Opus/Sonnet/Haiku beside a Codex account
+  // was four buttons that all did the same nothing. Only checked when the
+  // machine actually has a provider -- a test that invented one would be writing
+  // a fake account into somebody's config to prove a point.
   const stats = await fetch(`${ORIGIN}/api/stats`).then((r) => r.json())
   const providers = Object.keys(stats.provider_models ?? {})
-  const modelRow = page.locator('.wtstart .line', { hasText: 'Model' })
-  const modelChips = async () => (await modelRow.locator('.chip').allInnerTexts()).map((t) => t.trim())
-  const claudeTiers = await modelChips()
-  check('a Claude account offers Claude tiers', claudeTiers.includes('Opus 5'), claudeTiers.join(' | '))
   if (providers.length === 0) {
-    console.log('SKIP  provider model row — this machine has no providers configured')
+    console.log('SKIP  provider model control - this machine has no providers configured')
   } else {
     const prov = providers[0]
-    await page.locator('.wtstart .line', { hasText: 'Account' }).locator('.chip', { hasText: prov }).click()
+    await page.locator('.wtstart .controls .seg').first().click()
+    await page.locator('.wtstart .pop button', { hasText: prov }).first().click()
     await page.waitForFunction(
       (tier) =>
-        ![...document.querySelectorAll('.wtstart .line')]
-          .find((l) => l.querySelector('.lbl')?.textContent?.trim() === 'Model')
-          ?.textContent?.includes(tier),
+        ![...document.querySelectorAll('.wtstart .controls .seg')].some((el) =>
+          el.textContent?.includes(tier),
+        ),
       'Opus 5',
       { timeout: 10000 },
     ).catch(() => {})
-    const provChips = await modelChips()
+    const provStrip = await segs()
     check(
-      `picking ${prov} swaps the model row to what it actually serves`,
-      provChips.length > 0 && !provChips.includes('Opus 5'),
-      provChips.join(' | '),
-    )
-    check(
-      `and preselects the model ${prov} is already on`,
-      (await modelRow.locator('.chip.on').innerText()).trim() === stats.provider_models[prov],
-      `${(await modelRow.locator('.chip.on').allInnerTexts()).join('|')} vs ${stats.provider_models[prov]}`,
+      `picking ${prov} swaps the model control to what it actually serves`,
+      provStrip.includes(stats.provider_models[prov]) && !provStrip.includes('Opus 5'),
+      provStrip.join(' | '),
     )
     // Effort is a Claude reasoning level the provider's model never sees.
-    const provRows = (await page.locator('.wtstart .line .lbl').allInnerTexts()).map((t) => t.trim())
-    check('and drops the effort row, which means nothing there', !provRows.includes('Effort'), provRows.join(' / '))
+    check(
+      'and drops the effort control, which means nothing there',
+      !provStrip.includes('High'),
+      provStrip.join(' | '),
+    )
     await shot(page, '11-provider-models')
     // Back to Claude for the rest of the run.
-    await page.locator('.wtstart .line', { hasText: 'Account' }).locator('.chip', { hasText: 'Claude' }).first().click()
-    await page.waitForTimeout(300)
+    await page.locator('.wtstart .controls .seg').first().click()
+    await page.locator('.wtstart .pop button', { hasText: 'Claude' }).first().click()
+    await page.waitForTimeout(400)
   }
+
   // Preselected to where you are standing. Silently cutting from main while you
-  // worked on a feature branch is the complaint this panel exists to answer, so
+  // worked on a feature branch is the complaint this dialog exists to answer, so
   // the preselection is the check that matters, not merely that a picker exists.
   const onBranch = git(['rev-parse', '--abbrev-ref', 'HEAD'])
-  const shownBase = (await page.locator('.wtstart .basebtn .bl').innerText()).trim()
-  check('the panel offers to cut from the branch you are on', shownBase === onBranch, `${shownBase} vs ${onBranch}`)
+  const shownBase = (await page.locator('.wtstart .addr .seg').innerText()).trim()
+  check('the dialog offers to cut from the branch you are on', shownBase === `from ${onBranch}`, `${shownBase} vs from ${onBranch}`)
 
-  await page.locator('.wtstart .basebtn').click()
-  await page.waitForSelector('.wtstart .pop .opt', { timeout: 10000 })
-  const branchOpts = (await page.locator('.wtstart .pop .opt').allInnerTexts()).map((t) => t.replace(/\n/g, ' '))
-  check('the base can still be changed from the header', branchOpts.length > 0, branchOpts.join(' | '))
+  await page.locator('.wtstart .addr .seg').click()
+  await page.waitForSelector('.wtstart .pop button', { timeout: 10000 })
+  const branchOpts = (await page.locator('.wtstart .pop button').allInnerTexts()).map((t) => t.replace(/\n/g, ' '))
+  check('the base can still be changed', branchOpts.length > 0, branchOpts.join(' | '))
   check('and the branch you are on is listed first', /you are here/.test(branchOpts[0] ?? ''), branchOpts[0] ?? '(none)')
-  await page.keyboard.press('Escape') // closes the picker, keeps the composer
-  check('escape closes the picker before the panel', (await page.locator('.wtstart textarea').count()) === 1)
+  await page.keyboard.press('Escape')
+  check('escape closes the branch menu, not the dialog', (await page.locator('.wtstart textarea').count()) === 1)
   await shot(page, '09-worktree-composer')
 
   // The prompt names the branch: nobody should have to name a branch before

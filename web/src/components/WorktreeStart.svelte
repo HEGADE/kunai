@@ -24,6 +24,7 @@
   import { projectName } from '../lib/grouping'
   import { DEFAULT_EFFORT, DEFAULT_MODEL, EFFORTS, MODELS, modelOptionLabel } from '../lib/models'
   import { PERMISSION_MODES } from '../lib/permissions'
+  import SegMenu, { type SegOption } from './SegMenu.svelte'
   import type { PermissionMode } from '../lib/types'
   import {
     slugPreview,
@@ -70,7 +71,6 @@
   let proposal = $state<SetupProposal | null>(null)
   let error = $state('')
   let loading = $state(true)
-  let pickerOpen = $state(false)
   let box: HTMLDivElement | null = $state(null)
 
   // Accounts and providers come from the machine's stats as one list, because
@@ -112,6 +112,38 @@
     providerModel && !providerModels.includes(providerModel)
       ? [providerModel, ...providerModels]
       : providerModels,
+  )
+
+  // The four control strips, each built where its data is rather than inline in
+  // the markup, so the bar reads as a bar.
+  const branchOptions = $derived<SegOption[]>(
+    // Nothing is disabled. A base is a start point, not a checkout: the new
+    // worktree gets a new branch, so branching from one already checked out is
+    // fine and git is happy to do it.
+    refs.map((r) => ({
+      id: r.name,
+      label: r.name,
+      mono: true,
+      hint: r.current ? 'you are here' : r.default ? 'default' : undefined,
+    })),
+  )
+  const accountOptions = $derived<SegOption[]>(
+    clis.map((c) => ({
+      id: c,
+      label: c,
+      hint: c in providerModelOf ? providerModelOf[c] : undefined,
+    })),
+  )
+  const modelOptions = $derived<SegOption[]>(
+    onProvider
+      ? modelChoices.map((m) => ({ id: m, label: m, mono: true }))
+      : MODELS.map((m) => ({ id: m.id, label: modelOptionLabel(m.id), hint: m.hint })),
+  )
+  const effortOptions = $derived<SegOption[]>(
+    EFFORTS.map((e) => ({ id: e.id, label: e.label, hint: e.hint })),
+  )
+  const permissionOptions = $derived<SegOption[]>(
+    PERMISSION_MODES.map((m) => ({ id: m.id, label: m.label, hint: m.hint })),
   )
 
   const repoLabel = $derived(projectName(repo))
@@ -175,7 +207,7 @@
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       e.preventDefault()
-      pickerOpen ? (pickerOpen = false) : onclose()
+      onclose()
       return
     }
     // Enter in the prompt starts; Shift+Enter is a newline. A task is usually one
@@ -210,141 +242,98 @@
     {#if error}
       <p class="note err">{error}</p>
     {:else}
+      <!-- One box holding the prompt and a bar of settings under it: the shape
+           the session composer already has, because these are settings on the
+           thing you are writing rather than a form to fill in. Rows of chips
+           state every option at once, which is only worth the space when
+           choosing is the task; here writing the prompt is the task. -->
       <div class="body">
-        <textarea
-          bind:value={prompt}
-          placeholder="What should this agent work on?"
-          rows="3"
-          aria-label="First prompt"
-        ></textarea>
+        <!-- What the worktree IS: where it cuts from, what it is called. A slim
+             line of its own above the prompt, because it is addressing rather
+             than composing, and because crowding it into the settings bar
+             truncated every label on that bar down to "Cla…" and "Op…". -->
+        <div class="addr">
+          <SegMenu
+            value={baseBranch}
+            options={branchOptions}
+            label={loading ? 'reading branches…' : `from ${baseLabel}`}
+            title="Which branch to cut from"
+            mono
+            up={false}
+            disabled={loading}
+            onpick={(b) => (baseBranch = b)}
+          />
+          <input
+            class="name mono"
+            bind:value={name}
+            placeholder="name (optional)"
+            title={preview ? `Creates kunai/${preview}` : 'Left empty, the prompt names the branch'}
+            aria-label="Worktree name"
+            autocomplete="off"
+          />
+          {#if preview}<span class="prev mono">kunai/{preview}</span>{/if}
+        </div>
 
-        <!-- Where the branch comes from and what it is called: the two facts that
-             are about the worktree itself rather than about the agent. -->
-        <div class="line">
-          <span class="lbl">Branch</span>
-          <div class="grow">
-            <div class="basewrap">
-              <button
-                class="basebtn"
-                disabled={loading}
-                onclick={() => (pickerOpen = !pickerOpen)}
-                title="Which branch to cut from"
-              >
-                <span class="from">from</span>
-                <span class="bl mono">{loading ? '…' : baseLabel}</span>
-                <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-              </button>
-              {#if pickerOpen}
-                <button class="pscrim" onclick={() => (pickerOpen = false)} aria-label="Close"></button>
-                <div class="pop">
-                  {#each refs as ref (ref.name)}
-                    <!-- Nothing is disabled. A base is a start point, not a
-                         checkout: the new worktree gets a new branch, so
-                         branching from one already checked out is fine. -->
-                    <button
-                      class="opt"
-                      class:active={ref.name === baseBranch}
-                      onclick={() => {
-                        baseBranch = ref.name
-                        pickerOpen = false
-                      }}
-                    >
-                      <span class="bn mono">{ref.name}</span>
-                      {#if ref.current}<span class="tag">you are here</span>
-                      {:else if ref.default}<span class="tag">default</span>{/if}
-                    </button>
-                  {/each}
-                  {#if refs.length === 0}<p class="note">No branches to start from.</p>{/if}
-                </div>
+        <!-- One box holding the prompt and a bar of settings under it: the shape
+             the session composer already has, because these are settings on the
+             thing you are writing rather than a form to fill in. Rows of chips
+             stated every option at once, which is only worth the space when
+             choosing is the task; here writing the prompt is the task. -->
+        <div class="composer">
+          <textarea
+            bind:value={prompt}
+            placeholder="What should this agent work on?"
+            rows="3"
+            aria-label="First prompt"
+          ></textarea>
+
+          <div class="bar">
+            <!-- How the agent runs. Every one of these is spawn-time, which is
+                 why they are asked here rather than left to the composer. -->
+            <div class="controls">
+              {#if clis.length > 1}
+                <SegMenu
+                  value={chosenCli}
+                  options={accountOptions}
+                  title="Which account or provider runs it"
+                  onpick={(c) => (cli = c)}
+                />
               {/if}
-            </div>
-            <input
-              class="name mono"
-              bind:value={name}
-              placeholder="name (optional)"
-              aria-label="Worktree name"
-              autocomplete="off"
-            />
-            <!-- Said only when there is something to say. With no name typed the
-                 placeholder already carries it, and a line repeating "optional"
-                 under a field marked optional is noise. -->
-            {#if preview}<span class="prev mono">kunai/{preview}</span>{/if}
-          </div>
-        </div>
-
-        <!-- And how the agent runs. All four are spawn-time, which is why they
-             are asked here rather than left to the composer. -->
-        {#if clis.length > 1}
-          <div class="line">
-            <span class="lbl">Account</span>
-            <div class="chips">
-              {#each clis as c (c)}
-                <!-- The first is the machine's default, so it reads as selected
-                     before anything is chosen. -->
-                <button class="chip" class:on={(cli || clis[0]) === c} onclick={() => (cli = c)}>
-                  {c}
-                </button>
-              {/each}
-            </div>
-          </div>
-        {/if}
-
-        <!-- The model row follows the account, because they are not independent
-             choices. A provider serves one real model id and knows nothing about
-             Claude's tiers, so offering Opus/Sonnet/Haiku beside a Codex account
-             was offering four buttons that all did the same nothing. -->
-        <div class="line">
-          <span class="lbl">Model</span>
-          <div class="chips">
-            {#if onProvider}
-              {#each modelChoices as m (m)}
-                <button class="chip mono sm" class:on={providerModel === m} onclick={() => (providerModel = m)}>
-                  {m}
-                </button>
-              {/each}
-              {#if modelChoices.length === 0}
-                <span class="quiet">Reading what {chosenCli} can serve…</span>
+              <SegMenu
+                value={onProvider ? providerModel : model}
+                options={modelOptions}
+                label={onProvider && !providerModel ? 'reading models…' : undefined}
+                title="Model"
+                mono={onProvider}
+                onpick={(m) => (onProvider ? (providerModel = m) : (model = m))}
+              />
+              <!-- Effort is a Claude reasoning level. A provider's model does its
+                   own thinking and never sees the flag, so the control would
+                   change nothing. -->
+              {#if !onProvider}
+                <SegMenu
+                  value={effort}
+                  options={effortOptions}
+                  title="Reasoning effort"
+                  onpick={(e) => (effort = e)}
+                />
               {/if}
-            {:else}
-              {#each MODELS as m (m.id)}
-                <button class="chip" class:on={model === m.id} title={m.hint ?? ''} onclick={() => (model = m.id)}>
-                  {modelOptionLabel(m.id)}
-                </button>
-              {/each}
-            {/if}
-          </div>
-        </div>
-
-        <!-- Effort is a Claude reasoning level. A provider's model does its own
-             thinking and never sees this flag, so the row would be four buttons
-             that change nothing. -->
-        {#if !onProvider}
-          <div class="line">
-            <span class="lbl">Effort</span>
-            <div class="chips">
-              {#each EFFORTS as e (e.id)}
-                <button class="chip" class:on={effort === e.id} title={e.hint ?? ''} onclick={() => (effort = e.id)}>
-                  {e.label}
-                </button>
-              {/each}
+              <SegMenu
+                value={mode}
+                options={permissionOptions}
+                title="Permission mode"
+                note="It runs in its own checkout on its own branch, so this one is untouched whatever it does."
+                onpick={(m) => (mode = m as PermissionMode)}
+              />
             </div>
-          </div>
-        {/if}
 
-        <div class="line">
-          <span class="lbl">Permission</span>
-          <div class="chips">
-            {#each PERMISSION_MODES as p (p.id)}
-              <button class="chip" class:on={mode === p.id} title={p.hint} onclick={() => (mode = p.id)}>
-                {p.label}
-              </button>
-            {/each}
+            <span class="spacer"></span>
+
+            <button class="go" disabled={!canStart} onclick={start}>
+              {busy ? 'Starting…' : 'Start'}
+            </button>
           </div>
         </div>
-        <p class="why">
-          {PERMISSION_MODES.find((p) => p.id === mode)?.hint}. It runs in its own
-          checkout on its own branch, so this one is untouched whatever it does.
-        </p>
 
         <!-- The setup command is arbitrary shell run with the server's
              privileges, so it is never a surprise. Reported, not edited: the
@@ -356,12 +345,6 @@
         {/if}
       </div>
 
-      <footer>
-        <button class="ghost" onclick={onclose}>Cancel</button>
-        <button class="go" disabled={!canStart} onclick={start}>
-          {busy ? 'Starting…' : 'Start'}
-        </button>
-      </footer>
     {/if}
   </div>
 </div>
@@ -382,14 +365,13 @@
     display: flex;
     flex-direction: column;
     width: 100%;
-    max-width: 540px;
+    max-width: 580px;
     max-height: 100%;
     font-family: var(--sans);
     background: var(--panel-2);
     border: 1px solid var(--border-2);
     border-radius: var(--r-lg, 14px);
     box-shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.8);
-    overflow: hidden;
   }
   .modal:focus {
     outline: none;
@@ -440,213 +422,132 @@
   .body {
     display: flex;
     flex-direction: column;
-    gap: 11px;
-    padding: 13px 14px;
-    overflow-y: auto;
+    gap: 9px;
+    padding: 13px 14px 14px;
   }
 
+  /* Addressing, not composing: which branch and what to call it. Quiet, and on
+     its own line, because crowding it into the settings bar truncated every
+     label on that bar to "Cla…" and "Op…". */
+  .addr {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    padding: 0 2px;
+  }
+
+  /* The session composer's shape: one rounded field whose own edge defines it,
+     with the settings on a bar inside it rather than stacked underneath. */
+  .composer {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: var(--r, 12px);
+    background: transparent;
+  }
+  .composer:focus-within {
+    border-color: var(--border-2);
+  }
   textarea {
     width: 100%;
     box-sizing: border-box;
-    padding: 9px 10px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    padding: 11px 12px 4px;
+    border: 0;
     background: transparent;
     color: var(--text);
     font: inherit;
     font-size: 13.5px;
     line-height: 1.5;
-    resize: vertical;
+    resize: none;
   }
   textarea::placeholder {
     color: var(--text-4);
   }
   textarea:focus {
     outline: none;
-    border-color: var(--border-2);
   }
 
-  /* One label column, so the four settings read as a list of decisions rather
-     than a wall of chips. */
-  .line {
+  .bar {
     display: flex;
-    align-items: baseline;
-    gap: 10px;
+    align-items: center;
+    gap: 3px;
+    padding: 5px 6px 6px;
     min-width: 0;
   }
-  .lbl {
-    flex: none;
-    width: 74px;
-    padding-top: 5px;
-    font-size: 11.5px;
-    color: var(--text-4);
-  }
-  .grow,
-  .chips {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 5px;
+  .spacer {
     flex: 1;
     min-width: 0;
   }
-
-  .chip {
-    padding: 4px 10px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: transparent;
-    color: var(--text-3, var(--text-2));
-    font: inherit;
-    font-size: 11.5px;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .chip:hover {
-    background: var(--panel-3);
-    color: var(--text);
-  }
-  .chip.on {
-    background: var(--text);
-    border-color: var(--text);
-    color: var(--bg);
-  }
-  /* A provider's model is a real id like gpt-5.5-codex, which is longer than a
-     tier name and is data rather than a label. */
-  .chip.sm {
-    font-size: 11px;
-  }
-  .quiet {
-    font-size: 11.5px;
-    color: var(--text-4);
-  }
-
-  .basewrap {
-    position: relative;
-    flex: none;
-  }
-  .basebtn {
+  .controls {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    max-width: 100%;
-    padding: 4px 9px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    background: transparent;
-    color: var(--text);
-    font: inherit;
-    font-size: 11.5px;
-    cursor: pointer;
+    min-width: 0;
   }
-  .basebtn:hover:not(:disabled) {
-    background: var(--panel-3);
-  }
-  .basebtn:disabled {
-    color: var(--text-4);
-    cursor: default;
-  }
-  .from {
-    color: var(--text-4);
-  }
-  .bl {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .chev {
-    flex: none;
-    color: var(--text-4);
-  }
-
-  .pscrim {
-    position: fixed;
-    inset: 0;
-    z-index: 61;
-    border: 0;
-    background: transparent;
-    cursor: default;
-  }
-  .pop {
-    position: absolute;
-    z-index: 62;
-    top: calc(100% + 5px);
-    left: 0;
-    min-width: 230px;
-    max-height: 220px;
-    overflow-y: auto;
-    padding: 4px;
-    background: var(--panel-2);
-    border: 1px solid var(--border-2);
-    border-radius: var(--r);
-    box-shadow: 0 16px 40px -14px rgba(0, 0, 0, 0.7);
-  }
-  .opt {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    width: 100%;
-    padding: 6px 8px;
-    border: 0;
-    border-radius: var(--r-sm);
-    background: transparent;
-    color: var(--text-2);
-    font: inherit;
-    font-size: 12px;
-    text-align: left;
-    cursor: pointer;
-  }
-  .opt:hover,
-  .opt.active {
-    background: var(--panel-3);
-    color: var(--text);
-  }
-  .bn {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .tag {
-    flex: none;
-    font-size: 10.5px;
-    color: var(--text-4);
+  /* Hairlines between the settings, so the strip reads as one control rather
+     than as loose buttons. Same rule the composer uses. */
+  .controls > :global(.segwrap + .segwrap)::before {
+    content: '';
+    width: 1px;
+    height: 13px;
+    margin: 0 2px;
+    background: var(--border-2);
   }
 
   .name {
     flex: 1;
-    min-width: 90px;
-    padding: 4px 9px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    min-width: 80px;
+    padding: 4px 8px;
+    border: 0;
+    border-radius: 8px;
     background: transparent;
     color: var(--text);
     font-size: 11.5px;
   }
+  .name::placeholder {
+    color: var(--text-4);
+  }
+  .name:hover,
   .name:focus {
+    background: var(--panel-3);
     outline: none;
-    border-color: var(--border-2);
   }
   .prev {
     flex: none;
-    font-size: 11px;
+    font-size: 10.5px;
     color: var(--text-4);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 150px;
   }
 
-  .why,
-  .setup {
-    margin: -4px 0 0 84px;
-    font-size: 11px;
-    color: var(--text-4);
-    line-height: 1.45;
+  .go {
+    flex: none;
+    margin-left: 5px;
+    padding: 6px 14px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--text);
+    color: var(--bg);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
   }
+  .go:disabled {
+    background: var(--panel-3);
+    color: var(--text-4);
+    cursor: default;
+  }
+
   .setup {
     display: flex;
     gap: 7px;
-    margin-left: 0;
-    padding-top: 2px;
-    border-top: 1px solid var(--border);
+    margin: 0;
+    padding: 0 3px;
     font-size: 10.5px;
+    color: var(--text-4);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -654,42 +555,6 @@
   .slbl {
     flex: none;
     opacity: 0.7;
-  }
-
-  footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: 11px 14px;
-    border-top: 1px solid var(--border);
-  }
-  .ghost,
-  .go {
-    padding: 6px 15px;
-    border-radius: var(--r-sm);
-    font: inherit;
-    font-size: 12.5px;
-    cursor: pointer;
-  }
-  .ghost {
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text-2);
-  }
-  .ghost:hover {
-    background: var(--panel-3);
-    color: var(--text);
-  }
-  .go {
-    border: 0;
-    background: var(--text);
-    color: var(--bg);
-    font-weight: 500;
-  }
-  .go:disabled {
-    background: var(--panel-3);
-    color: var(--text-4);
-    cursor: default;
   }
 
   .note {
@@ -701,20 +566,21 @@
     color: var(--alert);
   }
 
-  /* On a phone the label column costs more than it explains, so the settings
-     stack and the chips get the full width. */
+  /* On a phone the bar cannot hold the branch, the name and four settings on one
+     line, so it wraps: the worktree's own facts first, then how it runs, with
+     Start claiming the end of the second row. */
+  /* On a phone the settings do not fit beside Start on one line, so the bar
+     wraps and Start claims the end of the second row. */
   @media (max-width: 560px) {
-    .line {
-      flex-direction: column;
-      align-items: stretch;
-      gap: 5px;
+    .bar {
+      flex-wrap: wrap;
+      row-gap: 4px;
     }
-    .lbl {
-      width: auto;
-      padding-top: 0;
+    .controls {
+      flex-wrap: wrap;
     }
-    .why {
-      margin-left: 0;
+    .prev {
+      display: none;
     }
   }
 </style>
