@@ -566,28 +566,53 @@ async function main() {
     !sectionLabels.includes('Active') && !sectionLabels.includes('Recent'),
     sectionLabels.join(' / ') || '(none)',
   )
+  // A group's rows are nested in a .kids wrapper now, rather than being siblings
+  // of the heading: the wrapper is what a single stem can be drawn down, which is
+  // how containment is expressed since the per-heading hairlines were removed.
   const repoGroup = page.locator('.sb .grp', { hasText: repoLeaf }).first()
-  const rowsUnderRepo = await repoGroup
-    .evaluate((el) => {
-      let n = 0
-      for (let s = el.nextElementSibling; s && !s.classList.contains('grp') && !s.classList.contains('sec'); s = s.nextElementSibling) {
-        if (s.classList.contains('row')) n++
-      }
-      return n
-    })
+  const rowsUnderRepo = await repoGroup.evaluate((el) => {
+    const kids = el.nextElementSibling
+    return kids && kids.classList.contains('kids') ? kids.querySelectorAll('.row').length : 0
+  })
   check('the repository heading holds its sessions', rowsUnderRepo > 0, `${rowsUnderRepo} rows`)
   // The presence mark is a left edge now rather than a dot on an icon: the icon it
   // replaced was the same chat bubble on every row, which said nothing. What
   // matters is that a live row still carries a state, and that the state is one
   // the server actually reported rather than a blank attribute.
+  // A node on the group's stem, the way a commit sits on a branch line. It replaced
+  // a left edge bar, which itself replaced a dot on a chat-bubble icon; what has to
+  // stay true through all of that is that a live row carries a state the server
+  // actually reported, and that it is centred on the stem rather than sitting in
+  // the text.
   const liveEdges = await repoGroup.evaluate((el) => {
-    const out = []
-    for (let s = el.nextElementSibling; s && !s.classList.contains('grp') && !s.classList.contains('sec'); s = s.nextElementSibling) {
-      const e = s.querySelector('.edge[data-state]')
-      if (e) out.push(e.dataset.state)
-    }
-    return out
+    const kids = el.nextElementSibling
+    if (!kids || !kids.classList.contains('kids')) return []
+    return [...kids.querySelectorAll('.node[data-state]')]
+      .map((e) => e.dataset.state)
+      .filter((s) => s !== 'past')
   })
+  const nodeOnStem = await repoGroup.evaluate((el) => {
+    const kids = el.nextElementSibling
+    const node = kids?.querySelector('.node')
+    const name = kids?.querySelector('.name')
+    if (!node || !name) return null
+    const nr = node.getBoundingClientRect()
+    // Centred on the stem at x=18.5, and clear of the text column at 28. Getting
+    // this wrong drew every node on top of a title's first letter.
+    return {
+      centre: Math.round((nr.left + nr.width / 2) * 10) / 10,
+      clearOfText: Math.round(name.getBoundingClientRect().left - nr.right),
+    }
+  })
+  check(
+    'a state node sits on the stem, clear of the text column',
+    !!nodeOnStem && nodeOnStem.centre === 18.5 && nodeOnStem.clearOfText >= 4,
+    JSON.stringify(nodeOnStem),
+  )
+  check(
+    'and no heading trails a hairline rule',
+    (await page.locator('.sb .gline').count()) === 0,
+  )
   // The row's own menu trigger sits at the right edge, and it used to draw straight
   // through the last characters of the time. Measured rather than eyeballed: at a
   // glance it read as a font artifact ("nqw", "2Ø0h") rather than as two elements
@@ -635,7 +660,7 @@ async function main() {
   )
   await touch.close()
   check(
-    'and a live row still carries its state as a left edge',
+    'and a live row still carries the state the server reported',
     liveEdges.length > 0 && liveEdges.every((s) => ['starting', 'idle', 'running', 'awaiting_permission'].includes(s)),
     liveEdges.join(',') || '(none)',
   )

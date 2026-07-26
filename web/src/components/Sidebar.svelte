@@ -295,17 +295,17 @@
 {/snippet}
 
 {#snippet activeRow(m: TaggedMeta)}
-  <!-- State is a left edge, not a dot on an icon. The icon it replaced was the
-       same chat bubble on every row, which said nothing (they are all sessions)
-       and spent 28px of the left edge saying it. An edge reads at a glance,
-       survives the collapsed rail, and leaves the row's brightness free to mean
-       something else. -->
+  <!-- A node on the group's stem, the way a commit sits on a branch line. This is
+       the whole state display: colour says what the session is doing, and the
+       active session's node is the one white mark in the list. It replaced a
+       filled pill plus a left bar plus bold text, which was three signals for one
+       state, and the pill was the only rounded shape in a list of text. -->
   <div
     class="row"
     class:current={app.activeId === m.id && app.activeMachineId === m.machineId}
     class:waiting={isAwaiting(stateful(m))}
   >
-    <span class="edge" data-state={app.liveState(m)} aria-hidden="true"></span>
+    <span class="node" data-state={app.liveState(m)} aria-hidden="true"></span>
     <button class="hit" onclick={() => app.open(m.machineId, m.id)}>
       <span class="name">{shortName(m)}</span>
       <!-- A worktree session sits under its repository's heading like any other,
@@ -364,14 +364,15 @@
   {@const state = summarise(live)}
   {@const attention = needsAttention(live)}
   {@const shut = collapsed[group.key] && !attention}
-  <!-- The label comes first, at exactly the left edge its rows use, and a hairline
-       rule carries the eye across to the controls on the right. It used to lead
-       with the chevron, which pushed the name fourteen pixels right of the titles
-       underneath it: a heading outdented from its own children, which is what read
-       as crooked. The rule is what makes this a heading now, rather than a larger
-       font would.
-       The chevron sits outermost so nothing moves when the hover actions appear
-       beside it. A folder holding a question stays open however you left it. -->
+  <!-- The heading carries a name and nothing decorative. It used to trail a
+       hairline rule from the label to the chevron: six of those in a 288px column,
+       each starting at a different x because label lengths differ, all brighter
+       than the titles they were subordinate to. A line to nowhere. Containment is
+       expressed by the stem down the group's rows instead, which is one line per
+       group rather than six across it, runs with the reading rather than against
+       it, and has a length that means something.
+       The chevron sits in the gutter, so the label still starts exactly where the
+       titles below it do. -->
   <div class="grp" class:named={group.named} class:shut>
     <button
       class="gtoggle"
@@ -379,18 +380,20 @@
       title={group.named ? 'Workspace' : 'Project directory'}
       aria-expanded={!shut}
     >
+      <svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
       {#if group.named}<span class="wsmark" aria-hidden="true"></span>{/if}
       <!-- Mono, because a project or workspace name is data rather than prose. A
            named workspace gets a leading mark so you can tell at a glance which
            headings you chose and which were derived from a directory. -->
       <span class="glabel mono">{group.label}</span>
-      {#if shut}<span class="gcount mono">{group.items.length}</span>{/if}
       {#if state}
         <span class="gstate" class:alert={attention}>{state}</span>
-      {:else if shut && hasWork(live)}
-        <span class="gdot" aria-hidden="true"></span>
       {/if}
-      <span class="gline" aria-hidden="true"></span>
+      <span class="gfill" aria-hidden="true"></span>
+      <!-- The count sits in the same right-hand column as the rows' times, so the
+           numbers in this list line up with each other instead of trailing the
+           label at whatever x it happens to end. -->
+      {#if shut}<span class="gcount mono">{group.items.length}</span>{/if}
     </button>
     <!-- The two start actions wait for the pointer, so the right edge of the list
          is not four buttons deep. A touch screen has no pointer to wait for, so
@@ -423,14 +426,6 @@
         </button>
       </span>
     {/if}
-    <button
-      class="gchev"
-      onclick={() => toggleGroup(group.key)}
-      aria-label={shut ? 'Expand {group.label}' : 'Collapse {group.label}'}
-      tabindex="-1"
-    >
-      <svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-    </button>
   </div>
 {/snippet}
 
@@ -439,8 +434,11 @@
        session from two minutes ago and one from three weeks ago read identically.
        It costs no extra row, and the title dims past a day so brightness carries
        the same information a second way. -->
+  <!-- A past session gets no node: the stem simply passes it. Marks are for
+       sessions with something to say, so a folder of finished work reads as a
+       quiet line rather than a column of dots. -->
   <div class="row" class:stale={isStale(h.mtime)}>
-    <span class="edge" aria-hidden="true"></span>
+    <span class="node" data-state="past" aria-hidden="true"></span>
     <button class="hit" onclick={() => resume(h)} disabled={!!resuming}>
       <span class="name">{resuming === h.id ? 'Resuming…' : h.title}</span>
       {#if h.repo && wtName(h) && wtName(h) !== h.title}
@@ -537,13 +535,18 @@
         {@render groupHead(g)}
       {/if}
       {#if sessionGroups.length === 1 || !collapsed[g.key] || attention}
-        {#each g.items as it (it.kind + ':' + it.machineId + ':' + rowId(it))}
-          {#if it.kind === 'live'}
-            {@render activeRow(it.m)}
-          {:else}
-            {@render recentRow(it.h)}
-          {/if}
-        {/each}
+        <!-- The group's rows are wrapped so a single stem can run down them: the
+             branch line, with each session a node on it. That is where this list's
+             structure lives now, and it is the one place any line is spent. -->
+        <div class="kids" class:stemmed={sessionGroups.length > 1}>
+          {#each g.items as it (it.kind + ':' + it.machineId + ':' + rowId(it))}
+            {#if it.kind === 'live'}
+              {@render activeRow(it.m)}
+            {:else}
+              {@render recentRow(it.h)}
+            {/if}
+          {/each}
+        </div>
       {/if}
     {/each}
 
@@ -872,16 +875,15 @@
   /* A project or workspace heading sits under a section heading, so it is
      quieter than one: sentence case, not uppercase, and indented to the row
      text so the sessions below read as belonging to it. */
-  /* One text column. The heading's label starts exactly where its rows' titles
-     start (14px of list padding plus 14px of gutter), and the gutter holds the
-     marks: a row's state edge, nothing for a heading. Before this there were five
-     different left edges in this sidebar and the label sat fourteen pixels right
-     of the titles it headed. */
+  /* One text column at 28px: list padding of 14 plus a 14px gutter. The gutter is
+     where every mark in this list lives -- a heading's chevron, and the stem with
+     its nodes -- so nothing structural ever pushes the text around. */
   .grp {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 12px 4px 4px 0;
+    padding: 14px 4px 3px 0;
   }
   .gtoggle {
     display: flex;
@@ -895,6 +897,24 @@
     font: inherit;
     text-align: left;
     cursor: pointer;
+  }
+  /* In the gutter, not in the flow: leading with it in the flow pushed the label
+     fourteen pixels right of the titles underneath, so the heading was outdented
+     from its own children. */
+  .chev {
+    position: absolute;
+    left: 2px;
+    top: 50%;
+    margin-top: -5px;
+    color: var(--text-4);
+    transform: rotate(0deg);
+    transition: transform var(--t) var(--ease);
+  }
+  .grp.shut .chev {
+    transform: rotate(-90deg);
+  }
+  .grp:hover .chev {
+    color: var(--text-3);
   }
   .glabel {
     flex: none;
@@ -919,14 +939,12 @@
     border-radius: 50%;
     background: var(--text-3);
   }
-  /* The rule is what makes a heading a heading, rather than a bigger font: it
-     carries the eye from the name to the controls and separates the group above
-     from the one below without a full-width divider. */
-  .gline {
+  /* Empty, and that is the point: it pushes the count to the same right-hand
+     column the rows' times occupy. A hairline used to live here and it was the
+     loudest thing in the sidebar. */
+  .gfill {
     flex: 1;
     min-width: 8px;
-    height: 1px;
-    background: var(--border);
   }
   /* What the folder reports. Only running and awaiting_permission are ever
      counted; see lib/sidebar.ts for why `starting` is not. */
@@ -944,38 +962,12 @@
   }
   .gcount {
     flex: none;
+    min-width: 30px;
+    padding-left: 6px;
     font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
     color: var(--text-4);
-  }
-  .gdot {
-    flex: none;
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: var(--live);
-  }
-  /* Outermost, so the hover actions appear inboard of it and nothing shifts. */
-  .gchev {
-    flex: none;
-    display: grid;
-    place-items: center;
-    width: 22px;
-    height: 22px;
-    border: 0;
-    border-radius: var(--r-sm);
-    background: transparent;
-    color: var(--text-4);
-    cursor: pointer;
-  }
-  .grp:hover .gchev {
-    color: var(--text-3);
-  }
-  .chev {
-    transform: rotate(0deg);
-    transition: transform 0.14s ease;
-  }
-  .grp.shut .chev {
-    transform: rotate(-90deg);
+    text-align: right;
   }
   /* Hidden until the pointer arrives, but only where there is a pointer: a touch
      screen never hovers, so on one the actions simply stay. */
@@ -996,6 +988,44 @@
     }
   }
 
+  /* The stem: one hairline down a group's rows, with each session a node on it.
+     A branch line, which is this product's own vernacular -- the worktree control
+     is a branch glyph and the changed-files card reads as `git diff --stat` -- used
+     structurally rather than as decoration. It replaced a hairline trailing every
+     heading: this is one line per group instead of six across the list, it runs
+     with the reading rather than against it, and its length says how much work is
+     in the folder.
+     It stops short at top and bottom so it reads as a segment belonging to this
+     group rather than a rule dividing the whole column. */
+  .kids {
+    position: relative;
+  }
+  /* Only where there are two rows to connect. A one-session folder drew a stem a
+     few pixels long, which is a line pretending to join one thing; its node says
+     everything the stem would have. */
+  .kids.stemmed:has(.row + .row)::before {
+    content: '';
+    position: absolute;
+    /* .kids already begins at the list's 14px padding, so the 14px gutter is 0-14
+       in ITS coordinates: the stem belongs at 4, not 18. Setting 18 here put the
+       line at absolute 32, past where the text starts at 28, and drew every node
+       on top of a title's first letter. */
+    left: 4px;
+    top: 2px;
+    bottom: 6px;
+    width: 1px;
+    background: var(--border);
+    /* Drawn from the top on expand: the one orchestrated moment in this list, and
+       it belongs to the disclosure that caused it. */
+    transform-origin: top;
+    animation: stem var(--t-slow) var(--ease);
+  }
+  @keyframes stem {
+    from {
+      transform: scaleY(0);
+    }
+  }
+
   .row {
     position: relative;
     border-radius: var(--r);
@@ -1003,11 +1033,16 @@
   .row:hover {
     background: var(--panel);
   }
-  .row.current {
-    background: var(--panel-2);
+  /* The active session is one signal, not three. It was a filled pill plus a left
+     bar plus bold text; the pill was the only rounded shape in a column of text,
+     so it read as a button dropped into the list. Now the node goes white and the
+     title brightens -- selection expressed IN the structure rather than layered
+     over it. */
+  .row.current .name {
+    color: var(--text);
   }
-  /* An awaiting row is the one thing in this list that is actually blocked on
-     you, so it is the only row allowed to speak up. */
+  /* An awaiting row is the one thing in this list actually blocked on you, so it
+     is the only row allowed a fill. */
   .row.waiting {
     background: color-mix(in srgb, var(--busy) 9%, transparent);
   }
@@ -1022,38 +1057,52 @@
   .hit:disabled {
     opacity: 0.55;
   }
-  /* State as a left edge. Absent (transparent) for a past session, so the
-     column only carries marks where there is something to mark. */
-  .edge {
+  /* A node on the stem, the way a commit sits on a branch line. Centred on the
+     stem's 1px at x=18, so the line appears to pass through it.
+     A past session gets no node and the line simply passes: marks are for
+     sessions with something to say, so a folder of finished work reads as a quiet
+     line rather than a column of dots. */
+  .node {
     position: absolute;
-    left: 4px;
+    /* Centred on the stem: the row shares .kids' origin, so 1px + half of 7 puts
+       the centre at 4.5, which is the stem's own centre. */
+    left: 1px;
     top: 50%;
-    transform: translateY(-50%);
-    width: 2px;
-    height: 15px;
-    border-radius: 2px;
+    width: 7px;
+    height: 7px;
+    margin-top: -3.5px;
+    border-radius: 50%;
+    /* Ringed in the list background so the stem is cut rather than crossed, which
+       is what makes it read as a node ON the line. */
+    box-shadow: 0 0 0 2.5px var(--bg-raised);
     background: transparent;
   }
-  .edge[data-state='idle'] {
+  @media (max-width: 860px) {
+    .node {
+      box-shadow: 0 0 0 2.5px var(--bg);
+    }
+  }
+  .node[data-state='idle'],
+  /* `starting` is the same quiet mark as idle rather than a busy one: a resumed
+     session reads `starting` until its first prompt, so animating it would show
+     work that is not happening. */
+  .node[data-state='starting'] {
     background: var(--text-4);
   }
-  .edge[data-state='running'] {
+  .node[data-state='running'] {
     background: var(--live);
     animation: soften 1.6s ease-in-out infinite;
   }
-  .edge[data-state='awaiting_permission'] {
+  .node[data-state='awaiting_permission'] {
     background: var(--busy);
-    height: 19px;
   }
-  /* `starting` is deliberately the same quiet mark as idle rather than a busy
-     one: a resumed session reads `starting` until its first prompt, so animating
-     it would show work that is not happening. */
-  .edge[data-state='starting'] {
-    background: var(--text-4);
+  /* The one white mark in the list. */
+  .row.current .node {
+    background: var(--text);
   }
   @keyframes soften {
     50% {
-      opacity: 0.4;
+      opacity: 0.45;
     }
   }
   .name {
@@ -1066,12 +1115,8 @@
     -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
     mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
   }
-  .row:hover .name,
-  .row.current .name {
+  .row:hover .name {
     color: var(--text);
-  }
-  .row.current .name {
-    font-weight: 500;
   }
   /* Brightness carries recency. Everything used to sit at --text/16.5:1, the
      maximum, so the eye was pulled equally to a session from three weeks ago and
