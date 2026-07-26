@@ -460,25 +460,52 @@ async function main() {
     }
     return out
   })
-  // The row's own menu trigger sits at the right edge, and on a touch screen it is
-  // permanently visible because there is no hover to reveal it with. It used to
-  // draw straight through the last characters of the time. Measured, not eyeballed:
-  // at a glance it reads as a font artifact rather than as two elements colliding.
-  const collisions = await page.locator('.sb .row').evaluateAll((els) =>
+  // The row's own menu trigger sits at the right edge, and it used to draw straight
+  // through the last characters of the time. Measured rather than eyeballed: at a
+  // glance it read as a font artifact ("nqw", "2Ø0h") rather than as two elements
+  // overlapping, which is why it shipped once.
+  //
+  // Run in a TOUCH context, because that is the case that broke: with a pointer the
+  // time fades out and the trigger takes its slot, so only one is ever visible and
+  // an overlap is impossible by construction. A touch screen has no hover to fade
+  // on, so there the row must reserve the space, and this page is the only place
+  // that difference is checked.
+  const touch = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
+  const tp = await touch.newPage()
+  await tp.goto(ORIGIN)
+  await tp.waitForSelector('.sb .row', { timeout: 20000 })
+  await tp.waitForTimeout(1200)
+  const overlaps = await tp.locator('.sb .row').evaluateAll((els) =>
     els
       .map((r) => {
         const t = r.querySelector('.tail')
         const g = r.querySelector('.trigger')
-        if (!t || !g || getComputedStyle(g).opacity === '0') return null
+        if (!t || !g) return null
+        if (getComputedStyle(t).opacity === '0' || getComputedStyle(g).opacity === '0') return null
         return t.getBoundingClientRect().right - g.getBoundingClientRect().left
       })
       .filter((v) => v !== null && v > 0),
   )
   check(
-    'the time column does not run under the row menu trigger',
-    collisions.length === 0,
-    collisions.length ? `${collisions.length} rows overlap by up to ${Math.round(Math.max(...collisions))}px` : 'clear',
+    'on touch, the time column does not run under the row menu trigger',
+    overlaps.length === 0,
+    overlaps.length ? `${overlaps.length} rows overlap by up to ${Math.round(Math.max(...overlaps))}px` : 'clear',
   )
+  // And one text column: a heading whose label sat fourteen pixels right of the
+  // titles it headed is what made the whole list read as crooked.
+  const textEdges = await tp.evaluate(() => {
+    const set = new Set()
+    document.querySelectorAll('.sb .grp .glabel, .sb .row .name').forEach((e) =>
+      set.add(Math.round(e.getBoundingClientRect().left)),
+    )
+    return [...set]
+  })
+  check(
+    'headings and titles share one left edge',
+    textEdges.length === 1,
+    textEdges.sort((a, b) => a - b).join(', '),
+  )
+  await touch.close()
   check(
     'and a live row still carries its state as a left edge',
     liveEdges.length > 0 && liveEdges.every((s) => ['starting', 'idle', 'running', 'awaiting_permission'].includes(s)),

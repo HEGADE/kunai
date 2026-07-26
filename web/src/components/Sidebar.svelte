@@ -352,36 +352,38 @@
   {@const live = group.items.filter((it) => it.kind === 'live').map((it) => stateful(it.m))}
   {@const state = summarise(live)}
   {@const attention = needsAttention(live)}
-  <!-- The folder reports the state of the work inside it, rather than that work
-       being lifted into a section of its own. A folder holding a question opens
-       itself however you left it: a collapsed folder hiding an agent stopped on a
-       click you never saw is worse than one you have to close again. -->
-  <div class="grp" class:named={group.named} class:shut={collapsed[group.key] && !attention}>
+  {@const shut = collapsed[group.key] && !attention}
+  <!-- The label comes first, at exactly the left edge its rows use, and a hairline
+       rule carries the eye across to the controls on the right. It used to lead
+       with the chevron, which pushed the name fourteen pixels right of the titles
+       underneath it: a heading outdented from its own children, which is what read
+       as crooked. The rule is what makes this a heading now, rather than a larger
+       font would.
+       The chevron sits outermost so nothing moves when the hover actions appear
+       beside it. A folder holding a question stays open however you left it. -->
+  <div class="grp" class:named={group.named} class:shut>
     <button
       class="gtoggle"
       onclick={() => toggleGroup(group.key)}
       title={group.named ? 'Workspace' : 'Project directory'}
-      aria-expanded={!collapsed[group.key] || attention}
+      aria-expanded={!shut}
     >
-      <svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
       {#if group.named}<span class="wsmark" aria-hidden="true"></span>{/if}
       <!-- Mono, because a project or workspace name is data rather than prose. A
            named workspace gets a leading mark so you can tell at a glance which
            headings you chose and which were derived from a directory. -->
       <span class="glabel mono">{group.label}</span>
+      {#if shut}<span class="gcount mono">{group.items.length}</span>{/if}
       {#if state}
         <span class="gstate" class:alert={attention}>{state}</span>
-      {:else if collapsed[group.key]}
-        <span class="gcount mono">{group.items.length}</span>
-      {/if}
-      {#if collapsed[group.key] && !state && hasWork(live)}
+      {:else if shut && hasWork(live)}
         <span class="gdot" aria-hidden="true"></span>
       {/if}
+      <span class="gline" aria-hidden="true"></span>
     </button>
-    <!-- The two start actions. They used to sit visible on every heading, which
-         stacked four buttons down the right edge of the list; they are chrome for
-         a thing you do occasionally, so they wait for the pointer. A touch screen
-         has no pointer to wait for, so there they stay put (see .gacts). -->
+    <!-- The two start actions wait for the pointer, so the right edge of the list
+         is not four buttons deep. A touch screen has no pointer to wait for, so
+         there they stay (see .gacts). -->
     {#if target}
       <span class="gacts">
         {#if isRepo[target.cwd]}
@@ -410,6 +412,14 @@
         </button>
       </span>
     {/if}
+    <button
+      class="gchev"
+      onclick={() => toggleGroup(group.key)}
+      aria-label={shut ? 'Expand {group.label}' : 'Collapse {group.label}'}
+      tabindex="-1"
+    >
+      <svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+    </button>
   </div>
 {/snippet}
 
@@ -527,10 +537,10 @@
     {/each}
 
     {#if app.history.length > 0}
-      <button class="viewall" onclick={() => app.openAllSessions()}>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></svg>
-        View all sessions
-      </button>
+      <!-- No icon: the gutter is 14px wide and holds row state marks, so an icon
+           here would have to sit outside the text column and make a fourth left
+           edge out of a link. The words are the affordance. -->
+      <button class="viewall" onclick={() => app.openAllSessions()}>View all sessions →</button>
     {/if}
 
     {#if activeList.length === 0 && recentList.length === 0 && !app.listError}
@@ -851,15 +861,16 @@
   /* A project or workspace heading sits under a section heading, so it is
      quieter than one: sentence case, not uppercase, and indented to the row
      text so the sessions below read as belonging to it. */
-  /* The heading is the structure of this list, so it is a real row now: a toggle
-     you can hit, a name at --text-2 (8.0:1, was --text-3 at 5.1) and a state line
-     beside it. Its actions wait for the pointer instead of stacking buttons down
-     the right edge of every group. */
+  /* One text column. The heading's label starts exactly where its rows' titles
+     start (14px of list padding plus 14px of gutter), and the gutter holds the
+     marks: a row's state edge, nothing for a heading. Before this there were five
+     different left edges in this sidebar and the label sat fourteen pixels right
+     of the titles it headed. */
   .grp {
     display: flex;
     align-items: center;
-    gap: 2px;
-    padding: 10px 6px 3px 6px;
+    gap: 4px;
+    padding: 12px 4px 4px 0;
   }
   .gtoggle {
     display: flex;
@@ -867,34 +878,24 @@
     gap: 7px;
     flex: 1;
     min-width: 0;
-    padding: 5px 4px;
+    padding: 4px 0 4px 14px;
     border: 0;
-    border-radius: var(--r-sm);
     background: transparent;
     font: inherit;
     text-align: left;
     cursor: pointer;
   }
-  .gtoggle:hover {
-    background: var(--panel);
-  }
-  .chev {
-    flex: none;
-    color: var(--text-4);
-    transform: rotate(90deg);
-    transition: transform 0.14s ease;
-  }
-  .grp.shut .chev {
-    transform: rotate(0deg);
-  }
   .glabel {
     flex: none;
-    max-width: 60%;
+    max-width: 62%;
     font-size: 12.5px;
     color: var(--text-2);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .grp:hover .glabel {
+    color: var(--text);
   }
   .grp.named .glabel {
     font-family: var(--sans);
@@ -907,11 +908,20 @@
     border-radius: 50%;
     background: var(--text-3);
   }
+  /* The rule is what makes a heading a heading, rather than a bigger font: it
+     carries the eye from the name to the controls and separates the group above
+     from the one below without a full-width divider. */
+  .gline {
+    flex: 1;
+    min-width: 8px;
+    height: 1px;
+    background: var(--border);
+  }
   /* What the folder reports. Only running and awaiting_permission are ever
      counted; see lib/sidebar.ts for why `starting` is not. */
   .gstate {
-    flex: 1;
-    min-width: 0;
+    flex: none;
+    max-width: 50%;
     font-size: 11.5px;
     color: var(--text-3);
     overflow: hidden;
@@ -933,6 +943,29 @@
     border-radius: 50%;
     background: var(--live);
   }
+  /* Outermost, so the hover actions appear inboard of it and nothing shifts. */
+  .gchev {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border: 0;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--text-4);
+    cursor: pointer;
+  }
+  .grp:hover .gchev {
+    color: var(--text-3);
+  }
+  .chev {
+    transform: rotate(0deg);
+    transition: transform 0.14s ease;
+  }
+  .grp.shut .chev {
+    transform: rotate(-90deg);
+  }
   /* Hidden until the pointer arrives, but only where there is a pointer: a touch
      screen never hovers, so on one the actions simply stay. */
   .gacts {
@@ -952,13 +985,6 @@
     }
   }
 
-  .note {
-    color: var(--text-3);
-    font-size: 12.5px;
-    padding: 10px;
-  }
-  /* Sessions as single-line rows: a chat-bubble icon + the title, nothing else.
-     Long titles fade at the right edge; the open one highlights. */
   .row {
     position: relative;
     border-radius: var(--r);
@@ -980,13 +1006,7 @@
     align-items: center;
     gap: 8px;
     text-align: left;
-    /* The right padding is room for the row's own menu trigger, which sits 6px
-       from the edge and is 26px wide. Reserved always, not only while the row is
-       hovered: on a touch screen the trigger is permanently visible (there is no
-       hover to reveal it with), so it was drawing straight through the last
-       characters of the time. Reserving on hover only would have hidden the same
-       collision behind a pointer. */
-    padding: 8px 34px 8px 14px;
+    padding: 8px 10px 8px 14px;
   }
   .hit:disabled {
     opacity: 0.55;
@@ -1055,16 +1075,35 @@
      Right-aligned with a floor width so the times line up as a column instead of
      ragged against each title, and padded off the name, whose fade otherwise ran
      straight into it and read as a collision rather than an ellipsis. */
+  /* Tabular figures, so "3h" and "22h" occupy the same width and the column is a
+     column rather than ragged text that happens to be right-aligned.
+     It yields its slot to the row's menu rather than sitting beside it behind a
+     permanent 34px reserve, which cost every title that width forever. The
+     trigger is 26px at 6px from the edge, so the two overlap by design and only
+     one of them is ever visible. */
   .tail {
     flex: none;
     min-width: 30px;
     padding-left: 6px;
     font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
     color: var(--text-4);
     text-align: right;
+    transition: opacity 0.12s;
   }
-  .row:hover .tail {
-    color: var(--text-3);
+  @media (hover: hover) and (pointer: fine) {
+    .row:hover .tail,
+    .row:has(:global(.wrap.open)) .tail {
+      opacity: 0;
+    }
+  }
+  /* A touch screen shows the trigger permanently, because there is no hover to
+     reveal it with, so there the two cannot share a slot and the row reserves the
+     space instead. */
+  @media (pointer: coarse) {
+    .hit {
+      padding-right: 34px;
+    }
   }
   .tail.working {
     color: var(--live);
@@ -1086,26 +1125,18 @@
   }
   .viewall {
     width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 11px;
-    padding: 9px 10px;
-    margin-top: 2px;
+    display: block;
+    padding: 10px 10px 10px 14px;
+    margin-top: 6px;
     border-radius: var(--r);
     color: var(--text-3);
-    font-size: 13.5px;
+    font-size: 13px;
     font-weight: 500;
-  }
-  .viewall svg {
-    flex: none;
-    color: var(--text-4);
+    text-align: left;
   }
   .viewall:hover {
     background: var(--panel);
     color: var(--text);
-  }
-  .viewall:hover svg {
-    color: var(--text-3);
   }
   .empty {
     text-align: center;
