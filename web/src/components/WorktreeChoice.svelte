@@ -14,6 +14,7 @@
   // whatever the repository already declares. So the fast path is one tap.
   import { onMount } from 'svelte'
   import {
+    slugPreview,
     worktreeBranches,
     worktreeSetup,
     type BranchRef,
@@ -81,15 +82,7 @@
   const current = $derived(refs.find((r) => r.current)?.name ?? '')
   const baseLabel = $derived(value.base || defaultBranch || 'default branch')
   // What the branch will actually be called, so the choice is not abstract.
-  const previewName = $derived(
-    value.name.trim()
-      ? value.name
-          .trim()
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/^-+|-+$/g, '')
-      : '',
-  )
+  const previewName = $derived(slugPreview(value.name))
 
   // Enter confirms and gets out of the way. Without it the only way back to the
   // Start button is a click on empty space, which is fine for picking one item

@@ -4,12 +4,12 @@
   import { enablePush, pushState } from '../lib/push'
   import type { TaggedHistoryEntry, TaggedMeta } from '../lib/types'
   import { groupSessions, groupStartTarget } from '../lib/grouping'
-  import { isGitRepo, justAWorktree, type WorktreeChoice } from '../lib/worktrees'
+  import { isGitRepo, type WorktreeChoice } from '../lib/worktrees'
   import Wordmark from './Wordmark.svelte'
   import Home from './Home.svelte'
   import SessionMenu from './SessionMenu.svelte'
   import Hint from './Hint.svelte'
-  import BranchMenu from './BranchMenu.svelte'
+  import WorktreeStart from './WorktreeStart.svelte'
 
   // The nightly channel gets a night-sky header, so you can tell a nightly build
   // from a stable one at a glance. This is the one place the "no gradients" rule
@@ -83,32 +83,42 @@
     })
   }
 
-  // Which heading's branch menu is open, and where it hangs from. The branch is
-  // the one thing about a worktree worth choosing, and taking every default meant
-  // always cutting from the repository's default branch however far you were from
-  // it.
-  let branchMenu = $state<{
+  // Which heading's worktree composer is open, and where it hangs from. A
+  // worktree exists to hold a piece of work, so the panel asks what that work is
+  // and which branch to cut from; both were being decided for you before.
+  let wtPanel = $state<{
     key: string
     machineId: string
     cwd: string
     anchor: HTMLElement
   } | null>(null)
 
-  function openBranchMenu(
+  function openWorktree(
     key: string,
     target: { machineId: string; cwd: string },
     anchor: HTMLElement,
   ) {
-    branchMenu = { key, machineId: target.machineId, cwd: target.cwd, anchor }
+    wtPanel = { key, machineId: target.machineId, cwd: target.cwd, anchor }
   }
 
-  async function startInGroup(key: string, machineId: string, cwd: string, wt?: WorktreeChoice) {
+  // One entry point for both heading buttons. A prompt means the composer was
+  // used, so the session opens with the work already sent; without one this is
+  // the plus button's one tap into an empty session, which is deliberately still
+  // a single tap.
+  async function startInGroup(
+    key: string,
+    machineId: string,
+    cwd: string,
+    wt?: WorktreeChoice,
+    prompt = '',
+  ) {
     if (starting[key]) return
     starting = { ...starting, [key]: true }
     try {
-      await app.quickStart(machineId, cwd, wt)
+      if (prompt) await app.startWork(machineId, cwd, prompt, undefined, wt)
+      else await app.quickStart(machineId, cwd, wt)
     } catch {
-      // quickStart has already reported it; nothing to add here.
+      // Both have already reported it; nothing to add here.
     } finally {
       const next = { ...starting }
       delete next[key]
@@ -123,13 +133,59 @@
     (m.branch ?? '').replace(/^kunai\//, '') ||
     m.cwd.replace(/\/+$/, '').split('/').slice(-1)[0]
 
-  const activeGroups = $derived(groupSessions(activeUnpinned))
-  const recentGroups = $derived(groupSessions(recentDisplay))
+  // One list, grouped by folder, live and past together.
+  //
+  // There used to be an Active section above Recent, which meant a session moved
+  // out of its project the moment it started running and back again when it
+  // stopped. That is exactly backwards for worktrees: you start three agents on
+  // one repository precisely so you can watch them side by side, and the sidebar
+  // was scattering them the moment they had anything to show. A folder is where
+  // its work lives whatever state that work is in, and the presence dot on each
+  // row already says which ones are running.
+  //
+  // Live rows are listed before past ones, and since groupSessions preserves the
+  // order it is given, that also floats the folders with something running to the
+  // top for free.
+  type Row =
+    | { kind: 'live'; m: TaggedMeta }
+    | { kind: 'recent'; h: TaggedHistoryEntry }
+  // The grouping fields are lifted onto the row because groupSessions groups by
+  // what an item says about itself, and it must not have to know which of the two
+  // shapes it is holding.
+  type GroupedRow = Row & {
+    machineId: string
+    cwd: string
+    workspace?: string
+    projects?: number
+    repo?: string
+  }
+  const rowId = (r: Row) => (r.kind === 'live' ? r.m.id : r.h.id)
+  const sessionGroups = $derived(
+    groupSessions<GroupedRow>([
+      ...activeUnpinned.map((m) => ({
+        kind: 'live' as const,
+        m,
+        machineId: m.machineId,
+        cwd: m.cwd,
+        workspace: m.workspace,
+        projects: m.projects,
+        repo: m.repo,
+      })),
+      ...recentDisplay.map((h) => ({
+        kind: 'recent' as const,
+        h,
+        machineId: h.machineId,
+        cwd: h.cwd,
+        workspace: h.workspace,
+        repo: h.repo,
+      })),
+    ]),
+  )
   // Ask about each heading's folder as the headings appear, so the worktree
   // button is only ever offered where it can work. Once per folder, guarded by
   // `probed`, so re-rendering the list costs nothing.
   $effect(() => {
-    for (const g of [...activeGroups, ...recentGroups]) {
+    for (const g of sessionGroups) {
       const target = groupStartTarget(g)
       if (target) probeRepo(target.machineId, target.cwd)
     }
@@ -224,16 +280,22 @@
   </div>
 {/snippet}
 
-{#if branchMenu}
-  <BranchMenu
-    base={app.baseForMachine(branchMenu.machineId)}
-    repo={branchMenu.cwd}
-    anchor={branchMenu.anchor}
-    onclose={() => (branchMenu = null)}
-    onpick={(branch) => {
-      const m = branchMenu!
-      branchMenu = null
-      startInGroup(m.key, m.machineId, m.cwd, { ...justAWorktree(), base: branch })
+{#if wtPanel}
+  <WorktreeStart
+    base={app.baseForMachine(wtPanel.machineId)}
+    repo={wtPanel.cwd}
+    anchor={wtPanel.anchor}
+    busy={!!starting[wtPanel.key]}
+    onclose={() => (wtPanel = null)}
+    onstart={(prompt, choice) => {
+      // Held open until the start resolves rather than closed on the click: a
+      // worktree runs its setup command before the agent may touch the tree, and
+      // that can take a while. A sidebar that went quiet for a minute would read
+      // as a tap that did nothing.
+      const p = wtPanel!
+      startInGroup(p.key, p.machineId, p.cwd, choice, prompt).finally(() => {
+        if (wtPanel === p) wtPanel = null
+      })
     }}
   />
 {/if}
@@ -259,12 +321,12 @@
       {#if isRepo[target.cwd]}
         <Hint
           title="Another agent, no collisions"
-          body="Pick a branch to cut from, and the work happens in a separate checkout of it. Another agent can work there while this checkout stays exactly as you left it. It is git's own worktree feature, so the repository itself is untouched."
+          body="Say what the work is and which branch to cut from, and it happens in a separate checkout of that branch. Another agent can work there while this checkout stays exactly as you left it. It is git's own worktree feature, so the repository itself is untouched."
         >
         <button
           class="gadd wt"
           disabled={starting[group.key]}
-          onclick={(e) => openBranchMenu(group.key, target, e.currentTarget)}
+          onclick={(e) => openWorktree(group.key, target, e.currentTarget)}
           aria-label="New worktree session in {group.label}"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v12M6 21a2 2 0 100-4 2 2 0 000 4zM6 7a2 2 0 100-4 2 2 0 000 4zM18 11a2 2 0 100-4 2 2 0 000 4zM18 9v2a4 4 0 01-4 4H6" /></svg>
@@ -375,26 +437,18 @@
       {/each}
     {/if}
 
-    {#if activeUnpinned.length > 0}
-      <div class="sec">Active</div>
-      {#each activeGroups as g (g.key)}
-        {#if activeGroups.length > 1}
+    {#if sessionGroups.length > 0}
+      <div class="sec">Sessions</div>
+      {#each sessionGroups as g (g.key)}
+        {#if sessionGroups.length > 1}
           {@render groupHead(g)}
         {/if}
-        {#each g.items as m (m.machineId + ':' + m.id)}
-          {@render activeRow(m)}
-        {/each}
-      {/each}
-    {/if}
-
-    {#if recentDisplay.length > 0}
-      <div class="sec">Recent</div>
-      {#each recentGroups as g (g.key)}
-        {#if recentGroups.length > 1}
-          {@render groupHead(g)}
-        {/if}
-        {#each g.items as h (h.machineId + ':' + h.id)}
-          {@render recentRow(h)}
+        {#each g.items as it (it.kind + ':' + it.machineId + ':' + rowId(it))}
+          {#if it.kind === 'live'}
+            {@render activeRow(it.m)}
+          {:else}
+            {@render recentRow(it.h)}
+          {/if}
         {/each}
       {/each}
     {/if}

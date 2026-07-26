@@ -38,7 +38,10 @@
     !!wt && (wt.setup.state === 'failed' || wt.setup.state === 'timed_out'),
   )
   // "No changes yet" is not news, so nothing is said until there is something.
-  const state = $derived.by(() => {
+  // Named standing, not state: a local called `state` in a runes component makes
+  // every `$state(...)` in the file parse as a store subscription to it, so the
+  // whole file silently stops being type-checked.
+  const standing = $derived.by(() => {
     if (!wt) return ''
     const s = summarise(wt)
     return s === 'No changes yet' ? '' : s
@@ -116,9 +119,9 @@
       <span class="branch mono">{basename}</span>
       <span class="sep" aria-hidden="true">·</span>
       <span class="from mono">{wt.base}</span>
-      {#if state}
+      {#if standing}
         <span class="sep" aria-hidden="true">·</span>
-        <span class="sum" class:loud={needsAttention}>{state}</span>
+        <span class="sum" class:loud={needsAttention}>{standing}</span>
       {/if}
       <span class="chev" class:open aria-hidden="true">›</span>
     </button>

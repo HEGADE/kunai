@@ -226,6 +226,19 @@ export function branchName(branch: string): string {
   return branch.replace(/^kunai\//, '')
 }
 
+// slugPreview is what the server will call the branch, shown while you type so
+// the name you give is not a guess. It only previews: the server slugs the name
+// itself and is the authority, and it also has to resolve collisions, which the
+// client cannot see. Shared by every picker so they cannot preview it two
+// different ways.
+export function slugPreview(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
 // summarise is the one line a card or a pill shows about where a worktree stands.
 // It leads with whatever most needs acting on, because a status line that reads
 // "3 ahead" while the setup is broken has buried the thing you needed to know.

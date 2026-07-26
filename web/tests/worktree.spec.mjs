@@ -276,10 +276,12 @@ async function main() {
   check('discard says what would be lost', danger.includes('Delete this worktree'), danger.trim())
   await shot(page, '07-discard-confirm')
 
-  // --- the sidebar's one-tap worktree ----------------------------------------
+  // --- the sidebar's worktree composer ----------------------------------------
   // The plus keeps its promise of starting work here with no questions asked, so
   // the worktree is a second button beside it rather than a dialog in front of
-  // it: same single tap, different destination, every default taken.
+  // it. What it opens is a composer, not a menu: a worktree exists to hold a
+  // piece of work, so the first thing to say about it is what that work is, and
+  // the branch it cuts from is a setting on that rather than the whole question.
   await page.goto(ORIGIN)
   await home.locator('.launch').waitFor({ state: 'visible', timeout: 15000 })
   const heading = page.locator('.sb .grp', { hasText: repoLeaf }).first()
@@ -289,26 +291,87 @@ async function main() {
   const buttonCount = await buttons.count()
   check('a group heading offers both a plus and a worktree button', buttonCount === 2, `${buttonCount}`)
 
-  // The branch button asks which branch to cut from, because that is the one
-  // thing about a worktree worth choosing and taking the default meant always
-  // cutting from the repository's default however far you were from it.
   const wtBefore = worktreeCount()
   await buttons.first().click() // the worktree one sits before the plus
-  await page.waitForSelector('.menu .opt', { timeout: 10000 })
-  const branchOpts = (await page.locator('.menu .opt').allInnerTexts()).map((t) => t.replace(/\n/g, ' '))
-  check('the branch button asks which branch to cut from', branchOpts.length > 0, branchOpts.join(' | '))
-  check('and offers the branch you are on first', /you are here/.test(branchOpts[0] ?? ''), branchOpts[0] ?? '(none)')
+  await page.waitForSelector('.panel textarea', { timeout: 10000 })
+  check(
+    'the worktree button opens a composer, not a bare branch list',
+    (await page.locator('.panel textarea').count()) === 1,
+  )
+  // Preselected to where you are standing. Silently cutting from main while you
+  // worked on a feature branch is the complaint this panel exists to answer, so
+  // the preselection is the check that matters, not merely that a picker exists.
+  const onBranch = git(['rev-parse', '--abbrev-ref', 'HEAD'])
+  const shownBase = (await page.locator('.panel .basebtn .bl').innerText()).trim()
+  check('the panel offers to cut from the branch you are on', shownBase === onBranch, `${shownBase} vs ${onBranch}`)
 
-  await page.locator('.menu .opt').first().click()
-  await page.waitForSelector('.wtcard', { timeout: 30000 })
-  check('picking a branch lands in a worktree of it', worktreeCount() === wtBefore + 1, `${wtBefore} -> ${worktreeCount()}`)
+  await page.locator('.panel .basebtn').click()
+  await page.waitForSelector('.panel .pop .opt', { timeout: 10000 })
+  const branchOpts = (await page.locator('.panel .pop .opt').allInnerTexts()).map((t) => t.replace(/\n/g, ' '))
+  check('the base can still be changed from the header', branchOpts.length > 0, branchOpts.join(' | '))
+  check('and the branch you are on is listed first', /you are here/.test(branchOpts[0] ?? ''), branchOpts[0] ?? '(none)')
+  await page.keyboard.press('Escape') // closes the picker, keeps the composer
+  check('escape closes the picker before the panel', (await page.locator('.panel textarea').count()) === 1)
+  await shot(page, '09-worktree-composer')
 
-  const oneTapSetup = await page
+  // The prompt names the branch: nobody should have to name a branch before
+  // describing the work, because describing the work is the name.
+  await page.locator('.panel textarea').fill('tidy the login form and stop')
+  check(
+    'with no name typed, nothing claims to know the branch yet',
+    (await page.locator('.panel .prev').count()) === 0,
+  )
+  // Type one and the branch it makes is previewed, so the name is not a guess.
+  await page.locator('.panel .name').fill('Login Tidy')
+  const namePreview = (await page.locator('.panel .prev').innerText()).trim()
+  check('a typed name previews the branch it becomes', namePreview === 'kunai/login-tidy', namePreview)
+  await page.locator('.panel .name').fill('')
+  await page.locator('.panel .go').click()
+  await page.waitForSelector('.wtcard', { timeout: 60000 })
+  check('starting from the composer lands in a worktree', worktreeCount() === wtBefore + 1, `${wtBefore} -> ${worktreeCount()}`)
+
+  const composedBranch = (await page.locator('.wtcard .branch').innerText()).trim()
+  check(
+    'and the branch is named from what was typed',
+    /login/.test(composedBranch),
+    composedBranch,
+  )
+  const composedSetup = await page
     .locator('.wtcard .head')
     .innerText()
     .then((t) => t.trim())
-  check('the one-tap worktree still ran the repository\'s own setup', !oneTapSetup.includes('Setup failed'), oneTapSetup)
-  await shot(page, '09-one-tap-worktree')
+  check('the composed worktree still ran the repository\'s own setup', !composedSetup.includes('Setup failed'), composedSetup)
+  await shot(page, '10-worktree-composed')
+
+  // --- one list, grouped by folder --------------------------------------------
+  // A session used to move out of its project into an Active section the moment
+  // it started running, which is exactly backwards for worktrees: you start
+  // several agents on one repository so you can watch them side by side. The
+  // presence dot says which are live; the folder says where they belong.
+  const sectionLabels = (await page.locator('.sb .sec').allInnerTexts()).map((t) => t.trim())
+  check(
+    'running sessions are not split off into their own section',
+    !sectionLabels.includes('Active') && !sectionLabels.includes('Recent'),
+    sectionLabels.join(' / ') || '(none)',
+  )
+  const repoGroup = page.locator('.sb .grp', { hasText: repoLeaf }).first()
+  const rowsUnderRepo = await repoGroup
+    .evaluate((el) => {
+      let n = 0
+      for (let s = el.nextElementSibling; s && !s.classList.contains('grp') && !s.classList.contains('sec'); s = s.nextElementSibling) {
+        if (s.classList.contains('row')) n++
+      }
+      return n
+    })
+  check('the repository heading holds its sessions', rowsUnderRepo > 0, `${rowsUnderRepo} rows`)
+  const liveDots = await repoGroup.evaluate((el) => {
+    let n = 0
+    for (let s = el.nextElementSibling; s && !s.classList.contains('grp') && !s.classList.contains('sec'); s = s.nextElementSibling) {
+      if (s.querySelector('.live')) n++
+    }
+    return n
+  })
+  check('and the live ones keep their presence dot', liveDots > 0, `${liveDots} live`)
 
   // --- the branch names itself -------------------------------------------------
   // Nobody should have to name a branch before describing the work, because
