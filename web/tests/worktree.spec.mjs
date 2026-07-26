@@ -21,6 +21,10 @@ const REPO = process.argv[2] || '/tmp/e2erepo'
 // lying around, which stopped being true once this suite started clearing up
 // after itself.
 const REPO_B = '/tmp/kunai-e2e-other'
+// A folder that is deliberately NOT a git repository, so the picker's error path
+// is exercised. It shipped saying "not a git repository" twice at two different
+// indents, which no check would have caught while every fixture was a repo.
+const PLAIN = '/tmp/kunai-e2e-plain'
 const SHOT_DIR = '/tmp/kunai-wt-shots'
 
 const results = []
@@ -67,6 +71,10 @@ function buildFixture() {
   writeFileSync(`${REPO_B}/README.md`, 'second\n')
   git(['add', '-A'], REPO_B)
   git(['commit', '-q', '-m', 'fixture'], REPO_B)
+
+  rmSync(PLAIN, { recursive: true, force: true })
+  mkdirSync(PLAIN, { recursive: true })
+  writeFileSync(`${PLAIN}/notes.txt`, 'not a repository\n')
 }
 
 async function main() {
@@ -86,6 +94,13 @@ async function main() {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cwd: REPO_B }),
+  })
+  // The third puts a non-repository folder in the launcher's list, so the picker's
+  // "not a git repository" path can be checked.
+  await fetch(`${ORIGIN}/api/sessions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cwd: PLAIN }),
   })
   check('seeded a session in the repository under test', !!seeded.id, seeded.id || JSON.stringify(seeded))
 
@@ -151,6 +166,16 @@ async function main() {
     modeLabels.join(' / '),
   )
 
+  // Where the popover sits, before anything else about it. Hung off the card it
+  // opened a couple of hundred pixels clear of the pill that opened it, with the
+  // prompt field in between; it belongs just above the row it came from.
+  const popGap = await home.evaluate((root) => {
+    const pop = root.querySelector('.wtpop')
+    const pill = root.querySelector('.lbar .wtpick')
+    return Math.round(pill.getBoundingClientRect().top - pop.getBoundingClientRect().bottom)
+  })
+  check('the picker opens next to the pill, not adrift of it', popGap >= 0 && popGap <= 24, `${popGap}px away`)
+
   await home.locator('.wtpop .mode', { hasText: 'New worktree' }).click()
   await home.locator('.wtpop .fields').waitFor({ timeout: 5000 })
   await shot(page, '03-picker-open')
@@ -166,6 +191,56 @@ async function main() {
     setupText.includes('npm ci') || setupText.includes('ln -sf'),
     setupText,
   )
+
+  // --- a folder that is not a repository -------------------------------------
+  // The reason is said once, in the server's own words, aligned with the choice it
+  // belongs to. It used to appear twice: as this subtitle AND as a separate red
+  // line with no horizontal padding, so the same sentence sat at two different
+  // indents nine pixels apart.
+  // The picker closes on its scrim, not on Escape, so pressing Escape here left it
+  // open and every later click fought the scrim it had put over the page.
+  await home.locator('.scrim2').first().click()
+  await page.waitForTimeout(200)
+  await home.locator('.lbar .pick').first().click()
+  await home.locator('.dirpop').first().waitFor({ timeout: 5000 })
+  const plainOption = home.locator('.dirpop .dp').filter({ hasText: new RegExp(`^${PLAIN}$`) })
+  if ((await plainOption.count()) === 0) {
+    console.log(`SKIP  non-repository picker path - ${PLAIN} is not in the launcher list`)
+  } else {
+    await plainOption.first().click()
+    await home.locator('.lbar .wtpick').first().click()
+    await home.locator('.wtpop').waitFor({ timeout: 5000 })
+    await page.waitForFunction(
+      () => !!document.querySelector('.home:not(.compact) .wtpop .err'),
+      { timeout: 10000 },
+    ).catch(() => {})
+    const err = await home.evaluate((root) => {
+      const errs = [...root.querySelectorAll('.wtpop .err')]
+      const label = root.querySelector('.wtpop .mode:last-child .mn')
+      return {
+        count: errs.length,
+        text: errs[0]?.textContent?.trim() ?? '',
+        errLeft: errs[0] ? Math.round(errs[0].getBoundingClientRect().left) : -1,
+        labelLeft: label ? Math.round(label.getBoundingClientRect().left) : -2,
+        worktreeDisabled: !!root.querySelector('.wtpop .mode:last-child')?.disabled,
+      }
+    })
+    check('a non-repository folder says why exactly once', err.count === 1, `${err.count} lines: "${err.text}"`)
+    check('and says it in the server\'s words, not a hardcoded guess', /not a git repository/i.test(err.text), err.text)
+    check('and aligned with the choice it belongs to', err.errLeft === err.labelLeft, `${err.errLeft} vs ${err.labelLeft}`)
+    check('and the worktree option is refused rather than offered', err.worktreeDisabled)
+    await shot(page, '12-not-a-repository')
+    // Back to the repository under test for everything below.
+    await home.locator('.scrim2').first().click()
+    await page.waitForTimeout(200)
+    await home.locator('.lbar .pick').first().click()
+    await home.locator('.dirpop').first().waitFor({ timeout: 5000 })
+    await home.locator('.dirpop .dp').filter({ hasText: new RegExp(`^${REPO}$`) }).first().click()
+    await page.waitForTimeout(800)
+    await home.locator('.lbar .wtpick').first().click()
+    await home.locator('.wtpop .mode', { hasText: 'New worktree' }).click()
+    await home.locator('.wtpop .fields').waitFor({ timeout: 8000 })
+  }
 
   // The branch preview is what makes the choice concrete rather than abstract.
   await home.locator('.wtpop .nameinput').fill('Fix Login')

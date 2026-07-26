@@ -546,22 +546,26 @@
       <button class="go" disabled={!brief.trim() || !targetDir || launching} onclick={launch}>
         {launching ? 'Starting…' : 'Start'}
       </button>
+      <!-- Horizontally it hangs off the row's right edge rather than off the pill:
+           anchored to the pill it overflowed whichever edge it was pointed at,
+           right on a narrow window and left on a wide one, because the pill sits
+           in the middle of a row whose width changes.
+           Vertically it belongs just above the row. It used to be a child of the
+           card, so bottom:100% put it above the CARD -- floating a couple of
+           hundred pixels clear of the control that opened it, with the prompt
+           field in between. -->
+      {#if wtOpen}
+        <button class="scrim2" onclick={() => (wtOpen = false)} aria-label="Close"></button>
+        <div class="dirpop wtpop">
+          <WorktreeChoicePicker
+            base={app.baseForMachine(sel?.id ?? '')}
+            repo={targetDir}
+            bind:value={wt}
+            ondone={() => (wtOpen = false)}
+          />
+        </div>
+      {/if}
     </div>
-    <!-- Hung off the card rather than off the pill. Anchored to the pill it
-         overflowed whichever edge it was pointed at: right on a narrow window,
-         left on a wide one, because the pill sits in the middle of a row whose
-         width changes. The card is the thing with a known edge. -->
-    {#if wtOpen}
-      <button class="scrim2" onclick={() => (wtOpen = false)} aria-label="Close"></button>
-      <div class="dirpop wtpop">
-        <WorktreeChoicePicker
-          base={app.baseForMachine(sel?.id ?? '')}
-          repo={targetDir}
-          bind:value={wt}
-          ondone={() => (wtOpen = false)}
-        />
-      </div>
-    {/if}
   </div>
 
   <!-- Reference below: dense and quiet, one line each. These answer questions you
@@ -1375,6 +1379,7 @@
     color: var(--text-3);
   }
   .lbar {
+    position: relative; /* the worktree popover hangs off this row, not the card */
     display: flex;
     align-items: center;
     gap: 3px;
@@ -1508,8 +1513,8 @@
      a dialog. */
   .wtpop {
     left: auto;
-    right: 10px;
-    bottom: calc(100% - 6px);
+    right: 0;
+    bottom: calc(100% + 6px);
     min-width: 260px;
     max-width: min(320px, calc(100% - 20px));
     padding: 5px;

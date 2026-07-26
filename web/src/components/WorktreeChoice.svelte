@@ -128,7 +128,14 @@
       onclick={() => setMode(true)}
     >
       <span class="mn">New worktree</span>
-      <span class="md">{error ? 'not a git repository' : 'its own branch, in parallel'}</span>
+      <!-- One place, and the server's own words. It used to say "not a git
+           repository" here AND again as a separate red line below, at a different
+           indent because that line had no horizontal padding: the same sentence
+           twice, misaligned with itself. The hardcoded string was also a lie
+           waiting to happen, since a folder can fail for reasons other than not
+           being a repository (gone, unreadable, a machine that stopped
+           answering). -->
+      <span class="md" class:err={!!error}>{error || 'its own branch, in parallel'}</span>
     </button>
   </div>
 
@@ -218,8 +225,6 @@
         </p>
       {/if}
     </div>
-  {:else if error}
-    <p class="why err">{error}</p>
   {/if}
 </div>
 
@@ -269,6 +274,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .md.err {
+    color: var(--alert);
   }
 
   .fields {
@@ -434,13 +442,13 @@
     border-color: var(--border-2);
   }
 
+  /* Padded to the same inset as a mode's label, so a sentence explaining the
+     choice starts where the choice does rather than nine pixels to its left. */
   .why {
     margin: 0;
+    padding: 0 9px;
     color: var(--text-4);
     font-size: 11.5px;
     line-height: 1.45;
-  }
-  .why.err {
-    color: var(--alert);
   }
 </style>
