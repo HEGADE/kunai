@@ -178,6 +178,73 @@ type Snapshot struct {
 // the store. Safety refs (refs/.../safety/...) are excluded; only the per-turn
 // snapshots are returned, ordered by Seq. A non-git dir or a session with none
 // returns an empty slice, never an error the caller must handle.
+// Change is one path a restore would alter, with git's status letter for it:
+// M modified, A added since the snapshot (so the restore deletes it), D deleted
+// since (so the restore brings it back).
+type Change struct {
+	Status string `json:"status"`
+	Path   string `json:"path"`
+}
+
+// Preview reports exactly what Restore would do, which is the only honest basis
+// for asking whether to do it.
+//
+// This exists because Restore is a whole-REPOSITORY operation, not a per-turn
+// one: `read-tree -u --reset` makes every tracked file match the snapshot and
+// deletes tracked files absent from it, and `clean -df` removes every untracked
+// non-ignored file. So reverting one turn also discards every later turn's edits,
+// anything you changed in your editor since, and any new file anywhere in the
+// repo. A confirmation naming only the turn's own files would understate that,
+// and understating it is how someone loses work they did not know was at stake.
+//
+// changed is the tracked difference between the snapshot and the working tree;
+// removed is what clean would delete, asked of git rather than inferred.
+func Preview(dir string, ref Ref) (changed []Change, removed []string, err error) {
+	if !IsRepo(dir) {
+		return nil, nil, ErrNotGit
+	}
+	root, err := repoRoot(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !refExists(root, ref) {
+		return nil, nil, ErrNoRef
+	}
+	// Non-nil so a caller marshalling this gets [] rather than null, which is how a
+	// client ends up calling .length on nothing.
+	changed, removed = []Change{}, []string{}
+
+	out, err := git(root, "diff", "--name-status", string(ref))
+	if err != nil {
+		return nil, nil, fmt.Errorf("checkpoint: diff: %w", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line == "" {
+			continue
+		}
+		// "M\tpath" — a rename reports two paths; the destination is the one that
+		// matters to someone deciding, so take the last field.
+		fields := strings.Split(line, "\t")
+		if len(fields) < 2 {
+			continue
+		}
+		changed = append(changed, Change{Status: fields[0][:1], Path: fields[len(fields)-1]})
+	}
+
+	// -nd is exactly what `clean -df` would remove, reported instead of guessed.
+	out, err = git(root, "clean", "-nd")
+	if err != nil {
+		return nil, nil, fmt.Errorf("checkpoint: clean preview: %w", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line == "" {
+			continue
+		}
+		removed = append(removed, strings.TrimPrefix(line, "Would remove "))
+	}
+	return changed, removed, nil
+}
+
 func List(dir, sessionID string) []Snapshot {
 	root, err := repoRoot(dir)
 	if err != nil {

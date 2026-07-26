@@ -212,6 +212,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/account", s.handleSetAccount)
 	mux.HandleFunc("GET /api/sessions/{id}/history", s.handleOlderTurns)
 	mux.HandleFunc("GET /api/sessions/{id}/checkpoints", s.handleListCheckpoints)
+	mux.HandleFunc("GET /api/sessions/{id}/revert", s.handleRevertPreview)
 	mux.HandleFunc("POST /api/sessions/{id}/revert", s.handleRevert)
 	mux.HandleFunc("GET /api/worktrees", s.handleWorktrees)
 	mux.HandleFunc("POST /api/worktrees", s.handleCreateWorktree)

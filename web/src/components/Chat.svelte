@@ -450,15 +450,10 @@
             </div>
           {/if}
           <!-- What this query changed, right under the reply that changed it.
-               Self-hides when the turn edited no files. The card also offers to
-               revert the turn's file changes (restore the pre-turn snapshot). -->
-          <TurnChanges
-            {turn}
-            canRevert={chat.hasCheckpoint(turn.userSeq)}
-            reverted={turn.userSeq != null && chat.reverted[turn.userSeq] != null}
-            onRevert={() => (turn.userSeq != null ? chat.revert(turn.userSeq) : undefined)}
-            onUndo={() => (turn.userSeq != null ? chat.undo(turn.userSeq) : undefined)}
-          />
+               Self-hides when the turn edited no files. Reverting is not here:
+               it is one control in the turn footer, because a revert resets the
+               whole repository and this card lists only this turn's files. -->
+          <TurnChanges {turn} />
         {/each}
 
         {#if chat.thinking || chat.streaming || running}

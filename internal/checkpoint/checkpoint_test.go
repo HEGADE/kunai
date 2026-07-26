@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -243,5 +244,102 @@ func TestList_EmptyAndNonGit(t *testing.T) {
 	}
 	if got := List(t.TempDir(), "sess"); got != nil {
 		t.Errorf("non-git dir should list nil, got %+v", got)
+	}
+}
+
+// Preview is what a confirmation dialog is built on, so it has to report the full
+// blast radius of a Restore rather than only the files the agent touched. Restore
+// resets the whole repository: it reverts tracked edits made since the snapshot,
+// deletes tracked files added since, restores tracked files deleted since, and
+// removes untracked non-ignored files anywhere in the repo. Every one of those is
+// work somebody could lose without being told.
+func TestPreviewReportsTheWholeBlastRadius(t *testing.T) {
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		if _, err := git(dir, args...); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+	run("init", "-q", "-b", "main")
+	run("config", "user.email", "t@localhost")
+	run("config", "user.name", "t")
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("keep.txt", "one\n")
+	write("gone.txt", "delete me later\n")
+	write(".gitignore", "ignored.txt\n")
+	run("add", "-A")
+	run("commit", "-q", "-m", "base")
+
+	ref, err := Capture(dir, RefFor("s", 1), "snapshot")
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+
+	// Everything a restore would touch, one of each kind.
+	write("keep.txt", "one\ntwo\n")                       // modified since
+	write("added.txt", "new tracked file\n")              // added and staged since
+	run("add", "added.txt")
+	if err := os.Remove(filepath.Join(dir, "gone.txt")); err != nil {
+		t.Fatal(err)
+	}
+	write("untracked/note.md", "not in git at all\n") // clean -df would remove this
+	write("ignored.txt", "must survive\n")            // ignored: clean -df must NOT remove it
+
+	changed, removed, err := Preview(dir, ref)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	byPath := map[string]string{}
+	for _, c := range changed {
+		byPath[c.Path] = c.Status
+	}
+	for path, want := range map[string]string{"keep.txt": "M", "added.txt": "A", "gone.txt": "D"} {
+		if got := byPath[path]; got != want {
+			t.Errorf("changed[%q] = %q, want %q (all of %v)", path, got, want, changed)
+		}
+	}
+
+	var sawUntracked, sawIgnored bool
+	for _, p := range removed {
+		if strings.Contains(p, "untracked") {
+			sawUntracked = true
+		}
+		if strings.Contains(p, "ignored.txt") {
+			sawIgnored = true
+		}
+	}
+	if !sawUntracked {
+		t.Errorf("preview did not warn about the untracked file it would delete: %v", removed)
+	}
+	// An ignored file is not removed by `clean -df`, so promising to remove it would
+	// scare someone off a safe revert.
+	if sawIgnored {
+		t.Errorf("preview claims it would remove an ignored file, which clean -df leaves alone: %v", removed)
+	}
+
+	// A repository with nothing to do reports empty lists, not nil: a client that
+	// gets null where it expected an array throws on .length.
+	run("checkout", "-q", "--", ".")
+	if err := os.RemoveAll(filepath.Join(dir, "untracked")); err != nil {
+		t.Fatal(err)
+	}
+	run("reset", "-q", "HEAD")
+	write("keep.txt", "one\n")
+	write("gone.txt", "delete me later\n")
+	changed, removed, err = Preview(dir, ref)
+	if err != nil {
+		t.Fatalf("preview clean: %v", err)
+	}
+	if changed == nil || removed == nil {
+		t.Errorf("clean preview returned nil slices: changed=%v removed=%v", changed, removed)
 	}
 }

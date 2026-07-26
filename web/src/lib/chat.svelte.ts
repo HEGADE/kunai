@@ -1,4 +1,4 @@
-import { fetchOlderTurns, listCheckpoints, revertTurn, undoRevert } from './api'
+import { fetchOlderTurns, listCheckpoints, revertPreview, revertTurn, undoRevert } from './api'
 import { DEFAULT_MODEL, DEFAULT_EFFORT } from './models'
 import type {
   AppEvent,
@@ -591,6 +591,13 @@ export class ChatConnection {
     } catch {
       /* no checkpoints available */
     }
+  }
+
+  // previewRevert asks the server what reverting this turn would actually change.
+  // The caller shows it before acting, because a revert resets the whole
+  // repository and the turn's own file list understates that.
+  previewRevert(seq: number) {
+    return revertPreview(this.base, this.id, seq)
   }
 
   hasCheckpoint(seq: number | undefined): boolean {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -154,6 +155,46 @@ func (s *Server) handleListCheckpoints(w http.ResponseWriter, r *http.Request) {
 // turn's file changes) or to a raw ref (used to undo a previous revert). It returns
 // the safety ref it captured first, so the revert is itself undoable. It does NOT
 // touch the conversation or un-do a commit the agent made -- only the working tree.
+// handleRevertPreview reports exactly what a revert of this turn would change,
+// so the client can ask the question with the answer in hand.
+//
+// It exists because a revert is a whole-repository operation, not a per-turn one:
+// it also discards every later turn's edits, anything changed in an editor since,
+// and any untracked file in the repo. The client could list the files the turn's
+// own tool calls touched, and that list would be reassuringly short and wrong.
+// Only git knows.
+func (s *Server) handleRevertPreview(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sess, ok := s.mgr.Get(id)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if s.checkpoints == nil {
+		writeErr(w, http.StatusBadRequest, "checkpoints are not available")
+		return
+	}
+	seq, _ := strconv.ParseUint(r.URL.Query().Get("seq"), 10, 64)
+	ref, found := s.checkpoints.refForSeq(id, sess.Cwd, seq)
+	if !found {
+		writeErr(w, http.StatusBadRequest, "no checkpoint for that turn")
+		return
+	}
+	changed, removed, err := checkpoint.Preview(sess.Cwd, ref)
+	if err != nil {
+		if err == checkpoint.ErrNoRef {
+			writeErr(w, http.StatusGone, "that checkpoint no longer exists")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"changed": changed,
+		"removed": removed,
+	})
+}
+
 func (s *Server) handleRevert(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	sess, ok := s.mgr.Get(id)

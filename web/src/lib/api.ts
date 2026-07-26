@@ -113,6 +113,27 @@ export interface RevertResult {
   safety_ref: string
 }
 
+// One path a revert would alter. status is git's letter: M modified, A added
+// since the snapshot (so the revert deletes it), D deleted since (restored).
+export interface RevertChange {
+  status: string
+  path: string
+}
+
+// RevertPreview is exactly what a revert would do, asked of git rather than
+// inferred from the turn's tool calls. It matters that this comes from the server:
+// a revert resets the whole repository, so it also discards later turns' edits,
+// anything changed in an editor since, and untracked files. A list built from the
+// turn's own edits would be short, reassuring and wrong.
+export interface RevertPreview {
+  changed: RevertChange[]
+  removed: string[]
+}
+
+export function revertPreview(base: string, id: string, seq: number): Promise<RevertPreview> {
+  return fetch(at(base, `/api/sessions/${id}/revert?seq=${seq}`)).then((r) => json<RevertPreview>(r))
+}
+
 // revertTurn restores the working tree to a turn's pre-turn snapshot (undo the
 // turn's file changes). The conversation is untouched.
 export function revertTurn(base: string, id: string, seq: number): Promise<RevertResult> {
