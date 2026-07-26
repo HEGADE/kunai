@@ -104,6 +104,7 @@ type Server struct {
 	failover      *failoverController      // opt-in: roll a walled session onto another account
 	modelVers     modelVersionCache        // newest model version per family, read from the claude binary
 	worktrees     *worktreeStore           // git worktrees, so several agents share one repo safely
+	fleet         *fleetHub                // pushes the session list to clients instead of them polling for it
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -127,6 +128,10 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	// ends and the only thing it is used for is refusing to delete a worktree
 	// somebody is working in.
 	s.worktrees = newWorktreeStore(cfg.DataDir, mgr.List)
+	// Anything that changes the session list wakes every connected client. Wired
+	// before the first session can exist.
+	s.fleet = newFleetHub()
+	mgr.SetOnChange(s.fleet.notify)
 	s.loadAwake() // re-apply a persisted keep-awake preference on boot
 	s.loadLid()   // re-apply a persisted lid-closed preference (after boot-time unstick)
 	s.guardian = newGuardian(mgr, s.awake, clampGuardConfig(guardConfig{
@@ -271,6 +276,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/schedule/{id}", s.handleScheduleReplace)
 	mux.HandleFunc("DELETE /api/schedule/{id}", s.handleScheduleDelete)
 	mux.HandleFunc("GET /ws/app/{id}", s.handleWS)
+	// Machine-level pushes: the session list when it changes, stats on a timer the
+	// server owns. Replaces the client polling every machine for both.
+	mux.HandleFunc("GET /ws/fleet", s.handleFleetWS)
 	mux.Handle("GET /", s.spaHandler())
 	return cors(logRequests(mux))
 }

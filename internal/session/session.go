@@ -83,6 +83,9 @@ type Session struct {
 	closed          bool
 	done            chan struct{} // closed when the driver has ended
 	notify          func(kind, detail string)
+	// onListChange fires when this session's row in a listing would look
+	// different, so the server can push rather than have clients poll.
+	onListChange func()
 	onRateLimit     func(window string, resetsAt int64)
 	onTurnEnd       func(rateLimited bool) // fired after every turn; failover reacts to a wall
 	loopPersist     func(LoopPersist)      // save/clear a running loop so it survives a restart
@@ -847,6 +850,24 @@ func (s *Session) setState(state string) {
 	s.state = state
 	sequenced := s.sequenceLocked(AppEvent{T: EvState, State: state})
 	s.emitLocked(sequenced)
+	changed := s.onListChange
+	s.mu.Unlock()
+	// Outside the lock: a listener fans out to every connected client, and doing
+	// that while holding this session's mutex would let a slow socket stall the
+	// turn that caused the change.
+	if changed != nil {
+		changed()
+	}
+}
+
+// SetOnListChange registers a callback fired whenever something a session
+// LISTING would show has changed: today that is the state. It exists so the
+// server can push the session list to clients instead of having them poll for
+// it, which is the difference between a status board that is current and one
+// that is up to eight seconds behind.
+func (s *Session) SetOnListChange(fn func()) {
+	s.mu.Lock()
+	s.onListChange = fn
 	s.mu.Unlock()
 }
 

@@ -83,6 +83,14 @@ var (
 )
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.collectStats())
+}
+
+// collectStats gathers everything GET /api/stats reports. Split out from the
+// handler so the fleet socket can push exactly the same object: two code paths
+// producing subtly different stats would be a bug nobody could see until a client
+// mixed a pushed one with a fetched one.
+func (s *Server) collectStats() *Stats {
 	st := Stats{
 		OS:            runtime.GOOS,
 		Arch:          runtime.GOARCH,
@@ -121,7 +129,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 			st.ProviderModels[p.Name] = providerDisplayModel(p)
 		}
 	}
-	writeJSON(w, http.StatusOK, st)
+	return &st
 }
 
 // buildVersion is injected at build time via -ldflags "-X …server.buildVersion=".

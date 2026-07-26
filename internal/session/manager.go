@@ -16,10 +16,34 @@ import (
 type Manager struct {
 	mu       sync.Mutex
 	sessions map[string]*Session
+	// onChange fires whenever the session LIST would look different: one was
+	// created, one went away, or one changed state. The server uses it to push
+	// the list to connected clients rather than having them ask for it on a
+	// timer, which is what made a status board up to eight seconds stale.
+	onChange func()
 }
 
 func NewManager() *Manager {
 	return &Manager{sessions: make(map[string]*Session)}
+}
+
+// SetOnChange registers the list-changed callback. Called once at wiring time,
+// before any session exists.
+func (m *Manager) SetOnChange(fn func()) {
+	m.mu.Lock()
+	m.onChange = fn
+	m.mu.Unlock()
+}
+
+// changed fires the callback outside the manager's lock, since a listener fans
+// out to sockets and must never be able to stall session bookkeeping.
+func (m *Manager) changed() {
+	m.mu.Lock()
+	fn := m.onChange
+	m.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 // CreateOptions configure a new session.
@@ -140,6 +164,10 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	m.mu.Lock()
 	m.sessions[id] = s
 	m.mu.Unlock()
+	// Every later state change on this session is a change to the list too, so it
+	// reports through the same callback the manager fires for create and remove.
+	s.SetOnListChange(m.changed)
+	m.changed()
 
 	// Reap from the registry when the session ends. Instance-checked so a restart
 	// that re-creates the same id is not reaped by the old session's goroutine.
@@ -218,18 +246,26 @@ func (m *Manager) snapshot() []*Session {
 
 func (m *Manager) remove(id string) {
 	m.mu.Lock()
+	_, existed := m.sessions[id]
 	delete(m.sessions, id)
 	m.mu.Unlock()
+	if existed {
+		m.changed()
+	}
 }
 
 // removeIf deletes id only if it still maps to this exact session, so a stale
 // reap goroutine cannot evict a freshly re-created session with the same id.
 func (m *Manager) removeIf(id string, s *Session) {
 	m.mu.Lock()
-	if m.sessions[id] == s {
+	hit := m.sessions[id] == s
+	if hit {
 		delete(m.sessions, id)
 	}
 	m.mu.Unlock()
+	if hit {
+		m.changed()
+	}
 }
 
 // acctOverride swaps the account (name/bin/env) a session runs on across a

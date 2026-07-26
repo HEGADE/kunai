@@ -29,7 +29,8 @@ import {
   VERSION_TTL,
 } from './update'
 import { startWorktree, type WorktreeChoice } from './worktrees'
-import type { Job, Machine, Meta, PermissionMode, TaggedHistoryEntry, TaggedJob, TaggedMeta } from './types'
+import { FleetSocket } from './fleet'
+import type { Job, Machine, Meta, PermissionMode, Stats, TaggedHistoryEntry, TaggedJob, TaggedMeta } from './types'
 
 // Top-level app state. One installed client can drive Claude sessions across
 // several machines on the tailnet: the machine that served the PWA is the "hub"
@@ -219,7 +220,14 @@ class AppStore {
   async loadMachines() {
     try {
       const infos = await listMachines('')
-      if (infos.length === 0) return
+      // An empty registry is the ordinary single-machine case, not a failure: the
+      // client is already showing the seeded "self" entry. Returning here without
+      // syncing left that machine with no socket, so the push never started and
+      // everything quietly stayed on the poll.
+      if (infos.length === 0) {
+        this.syncFleetSockets()
+        return
+      }
       const prev = new Map(this.machines.map((m) => [m.id, m]))
       const next: Machine[] = infos.map((info) => {
         const old = prev.get(info.id)
@@ -230,6 +238,8 @@ class AppStore {
         next.unshift(this.selfSeed())
       }
       this.machines = next
+      // A machine added or discovered gets a socket; one removed loses its.
+      this.syncFleetSockets()
     } catch {
       /* keep whatever we have; retry next tick */
     }
@@ -327,6 +337,61 @@ class AppStore {
     }
   }
 
+  // --- pushed updates ---------------------------------------------------------
+
+  // One socket per machine. A machine whose socket is live stops being polled for
+  // its session list: its changes arrive in a round trip instead of on the next
+  // beat, which is the difference between a status board that is current and one
+  // that can be eight seconds behind. The poll stays as the fallback, so a machine
+  // that cannot hold a socket (an old server without the route, a proxy in the
+  // way) is exactly as good as it was before.
+  private fleets = new Map<string, FleetSocket>()
+  private pushed = $state<Record<string, boolean>>({})
+
+  private syncFleetSockets() {
+    const want = new Set(this.machines.map((m) => m.id))
+    for (const [id, sock] of this.fleets) {
+      if (!want.has(id)) {
+        sock.stop()
+        this.fleets.delete(id)
+        const next = { ...this.pushed }
+        delete next[id]
+        this.pushed = next
+      }
+    }
+    for (const m of this.machines) {
+      if (this.fleets.has(m.id)) continue
+      const sock = new FleetSocket(m.url, {
+        onSessions: (list) => this.applyPushedSessions(m.id, list),
+        onStats: (stats) => this.applyPushedStats(m.id, stats),
+        onOpen: () => (this.pushed = { ...this.pushed, [m.id]: true }),
+        onClose: () => (this.pushed = { ...this.pushed, [m.id]: false }),
+      })
+      this.fleets.set(m.id, sock)
+      sock.start()
+    }
+  }
+
+  // Replace only this machine's rows, tagging them the way refreshMachine does.
+  // Wire types stay pure; the machine tag is added at the boundary.
+  private applyPushedSessions(machineId: string, list: Meta[]) {
+    const tagged = list.map((s) => ({ ...s, machineId }))
+    for (const s of tagged) learnModel(s.model)
+    this.sessions = [...this.sessions.filter((s) => s.machineId !== machineId), ...tagged]
+    // A machine that just told us something is reachable, whatever the last poll
+    // concluded.
+    this.machines = this.machines.map((m) => (m.id === machineId ? { ...m, online: true } : m))
+    this.listError = this.machines.every((m) => !m.online) ? 'No machines reachable' : ''
+  }
+
+  private applyPushedStats(machineId: string, stats: Stats) {
+    setDiscovered(stats.model_versions)
+    this.machines = this.machines.map((m) =>
+      m.id === machineId ? { ...m, online: true, stats } : m,
+    )
+    if (this.machines.find((m) => m.id === machineId)?.self) this.stats = stats
+  }
+
   startPolling() {
     this.loadMachines().then(() => {
       // Version check rides after refresh: it needs our own stats (hence channel)
@@ -354,6 +419,15 @@ class AppStore {
       // list, and a status board that is eight seconds stale is a status board
       // that tells you an agent is working after it stopped to ask you something.
       // Idle machines pay nothing for this, because idle is when it backs off.
+      // Every machine is pushing, so the only thing left on the timer is history,
+      // which no socket carries and which only moves when a session ends. When a
+      // socket is down for any machine, the old cadence comes straight back for
+      // everything: the push is an accelerator, never the only source.
+      const allPushed = this.machines.length > 0 && this.machines.every((m) => this.pushed[m.id])
+      if (allPushed) {
+        if (t % 10 === 0) this.refresh({ history: true, stats: false })
+        return
+      }
       if (t % 2 === 0 || this.busy) {
         this.refresh({
           stats: t % 4 === 0, // gauges (~16s)
