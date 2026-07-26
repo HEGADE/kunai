@@ -13,6 +13,7 @@
     showEffort,
   } from '../lib/spawnoptions'
   import { getProviderModels } from '../lib/api'
+  import { fetchQuery, keys, peek } from '../lib/query.svelte'
   import SegMenu, { type SegOption } from './SegMenu.svelte'
   import type { Listing, PermissionMode } from '../lib/types'
 
@@ -46,10 +47,14 @@
     if (!onProvider || servedFor === name) return
     servedFor = name
     providerModel = providerModelOf[name] ?? ''
-    served = []
-    getProviderModels(app.baseForMachine(machineId), name)
+    // Through the cache, and seeded from it first: the worktree dialog asks the
+    // same question about the same provider, so switching between the two used to
+    // refetch a model list neither of them had changed.
+    const base = app.baseForMachine(machineId)
+    served = peek<string[]>(keys.providerModels(base, name))?.data ?? []
+    fetchQuery(keys.providerModels(base, name), () => getProviderModels(base, name))
       .then((ms) => (served = ms))
-      .catch(() => (served = []))
+      .catch(() => (served = served.length ? served : []))
   })
 
   // One strip of controls, the same shape the chat composer and the worktree

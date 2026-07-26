@@ -1,9 +1,10 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
   import { usage } from '../lib/api'
+  import { fetchQuery, keys, peek, SLOW_TTL, USAGE_TTL } from '../lib/query.svelte'
   import type { Usage, UsageWindow } from '../lib/types'
   import { updateAvailable } from '../lib/update'
-  import { noWorktree, worktreeBranches, type WorktreeChoice } from '../lib/worktrees'
+  import { noWorktree, worktreeBranches, type BranchList, type WorktreeChoice } from '../lib/worktrees'
   import Schedules from './Schedules.svelte'
   import WorktreeChoicePicker from './WorktreeChoice.svelte'
 
@@ -166,7 +167,13 @@
     const load = () =>
       Promise.all(
         names.map((cli) =>
-          usage(url, cli)
+          // Through the cache: Home is mounted twice (the dashboard and the
+          // sidebar's compact copy), so this fired every usage request twice,
+          // 1-8ms apart, measured. Each one shells the claude CLI for about two
+          // seconds and the server holds a mutex across it, so the duplicate did
+          // not double the work, it blocked a handler waiting for it. Sharing the
+          // key means the two mounts share the request and the answer.
+          fetchQuery(keys.usage(url, cli), () => usage(url, cli), { ttl: USAGE_TTL })
             .then((u) => {
               if (done) return
               // Keep the last good numbers if a later poll comes back empty: a
@@ -311,8 +318,15 @@
     const dir = targetDir
     if (!dir || branchFor === dir) return
     branchFor = dir
-    onBranch = ''
-    worktreeBranches(app.baseForMachine(sel?.id ?? ''), dir)
+    // Cached and keyed, for two reasons. Home is mounted twice, so this fired the
+    // same branch request twice 1ms apart, measured; and the worktree dialog asks
+    // the identical question the moment you open it, so the answer is already here.
+    // Seeded from the cache first, so the pill names the branch on the first paint
+    // instead of appearing blank and filling in.
+    const wtBase = app.baseForMachine(sel?.id ?? '')
+    const known = peek<BranchList>(keys.branches(wtBase, dir))?.data
+    onBranch = known ? (known.refs.find((r) => r.current)?.name ?? known.default) : ''
+    fetchQuery(keys.branches(wtBase, dir), () => worktreeBranches(wtBase, dir), { ttl: SLOW_TTL })
       .then((b) => {
         if (branchFor === dir) onBranch = b.refs.find((r) => r.current)?.name ?? b.default
       })

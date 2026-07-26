@@ -7,6 +7,7 @@
   import { shortAgo } from '../lib/reltime'
   import { hasWork, isAwaiting, isWorking, needsAttention, summarise } from '../lib/sidebar'
   import { isGitRepo } from '../lib/worktrees'
+  import { fetchQuery, keys, peek, SLOW_TTL } from '../lib/query.svelte'
   import Wordmark from './Wordmark.svelte'
   import Home from './Home.svelte'
   import SessionMenu from './SessionMenu.svelte'
@@ -80,7 +81,17 @@
     const key = `${machineId}\u0000${cwd}`
     if (probed.has(key)) return
     probed.add(key)
-    isGitRepo(app.baseForMachine(machineId), cwd).then((ok) => {
+    // Through the shared cache: `probed` only stops this asking twice within one
+    // mount, and the sidebar remounts. Whether a folder is a git repository is
+    // also about the slowest-changing fact in the app, so it gets the long TTL,
+    // and a cached answer applies without a request at all.
+    const base = app.baseForMachine(machineId)
+    const cached = peek<boolean>(keys.isRepo(base, cwd))?.data
+    if (cached !== undefined) {
+      isRepo = { ...isRepo, [cwd]: cached }
+      return
+    }
+    fetchQuery(keys.isRepo(base, cwd), () => isGitRepo(base, cwd), { ttl: SLOW_TTL }).then((ok) => {
       isRepo = { ...isRepo, [cwd]: ok }
     })
   }

@@ -4,6 +4,7 @@
   import type { RevertPreview } from '../lib/api'
   import { formatDuration, formatTokens, formatCost } from '../lib/format'
   import { app } from '../lib/app.svelte'
+  import Skeleton from './Skeleton.svelte'
 
   // isProvider: the session runs a non-Claude model through a proxy. The CLI still
   // prices tokens at Claude's rates, so its cost figure is fiction there and is
@@ -159,7 +160,12 @@
             {#if previewErr}
               <p class="note err">{previewErr}</p>
             {:else if !preview}
-              <p class="note">Asking git what this would change…</p>
+              <!-- The shape of the answer, not a spinner: this is a title plus a
+                   list of paths, so placeholder rows of the right size keep the
+                   panel from jumping when the real list lands. -->
+              <div class="skwrap">
+                <Skeleton rows={4} height={13} gap={7} label="Asking git what this would change" />
+              </div>
             {:else if nothingToDo}
               <p class="note">
                 Nothing to undo: the repository already matches how it was before
@@ -283,6 +289,9 @@
     margin: 0 0 7px;
     font-size: 12.5px;
     color: var(--text);
+  }
+  .skwrap {
+    padding: 4px 2px;
   }
   .rlist {
     display: flex;

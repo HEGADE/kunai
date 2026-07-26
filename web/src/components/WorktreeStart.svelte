@@ -24,6 +24,7 @@
   import { projectName } from '../lib/grouping'
   import { DEFAULT_EFFORT, DEFAULT_MODEL, EFFORTS, MODELS, modelOptionLabel } from '../lib/models'
   import { PERMISSION_MODES } from '../lib/permissions'
+  import { fetchQuery, keys, peek, SLOW_TTL, DEFAULT_TTL } from '../lib/query.svelte'
   import {
     chosenCli as resolveCli,
     isProvider,
@@ -37,6 +38,7 @@
     slugPreview,
     worktreeBranches,
     worktreeSetup,
+    type BranchList,
     type BranchRef,
     type SetupProposal,
   } from '../lib/worktrees'
@@ -73,6 +75,12 @@
   // Empty means the machine's default account, which is what a single-account
   // machine always wants.
   let cli = $state('')
+
+  // The branch you are on first, then the default, then the rest.
+  const sortRefs = (rs: BranchRef[]) =>
+    [...rs].sort(
+      (x, y) => Number(!!y.current) - Number(!!x.current) || Number(!!y.default) - Number(!!x.default),
+    )
 
   let refs = $state<BranchRef[]>([])
   let proposal = $state<SetupProposal | null>(null)
@@ -111,7 +119,9 @@
     // rather than on nothing.
     providerModel = providerModelOf[name] ?? ''
     providerModels = []
-    getProviderModels(base, name)
+    fetchQuery(keys.providerModels(base, name), () => getProviderModels(base, name), {
+      ttl: DEFAULT_TTL,
+    })
       .then((ms) => (providerModels = ms))
       .catch(() => (providerModels = []))
   })
@@ -159,13 +169,23 @@
   const canStart = $derived(!loading && !error && !busy)
 
   $effect(() => {
-    Promise.all([worktreeBranches(base, repo), worktreeSetup(base, repo)])
+    // Seed from whatever the cache already knows, before awaiting anything, so
+    // reopening this on a repository you opened a moment ago shows a real branch
+    // list rather than "reading branches…" for something that has not changed.
+    // Inside the effect rather than at init so it tracks base and repo instead of
+    // capturing whatever they were when the component was created.
+    const seeded = peek<BranchList>(keys.branches(base, repo))?.data
+    if (seeded) {
+      refs = sortRefs(seeded.refs)
+      baseBranch = seeded.refs.find((r) => r.current)?.name || seeded.default
+      loading = false
+    }
+    Promise.all([
+      fetchQuery(keys.branches(base, repo), () => worktreeBranches(base, repo), { ttl: SLOW_TTL }),
+      fetchQuery(keys.setup(base, repo), () => worktreeSetup(base, repo), { ttl: SLOW_TTL }),
+    ])
       .then(([b, s]) => {
-        // The branch you are on first, then the default, then the rest.
-        refs = [...b.refs].sort(
-          (x, y) =>
-            Number(!!y.current) - Number(!!x.current) || Number(!!y.default) - Number(!!x.default),
-        )
+        refs = sortRefs(b.refs)
         // Preselect where you are standing, not the repository's default.
         // Silently cutting from main while you worked on a feature branch was the
         // whole complaint that started this.

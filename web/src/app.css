@@ -42,6 +42,16 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 
   --sidebar-w: 288px;
+
+  /* Motion. Three durations, one curve, so the whole app moves at the same speed
+     instead of every component inventing its own 0.12s. The values are short on
+     purpose: this is feedback, not animation. Anything long enough to watch is
+     long enough to wait for, and the theme is meant to read as flat and quiet.
+     The global prefers-reduced-motion rule below zeroes all of it. */
+  --t-fast: 90ms; /* press feedback, colour on hover */
+  --t: 140ms; /* a control changing state */
+  --t-slow: 220ms; /* something entering or leaving */
+  --ease: cubic-bezier(0.2, 0, 0.2, 1);
 }
 
 * {
@@ -74,6 +84,21 @@ button {
   border: none;
   background: none;
   cursor: pointer;
+  /* Every button acknowledges the press. On a phone there is no hover to tell you
+     a tap landed, and a control that looks identical the instant you touch it is
+     the difference between "it is working" and "did that do anything". A scale
+     rather than a colour, because colour is already carrying state here. */
+  transition: transform var(--t-fast) var(--ease);
+}
+button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+/* Anything spanning the width does not shrink visibly, so it dips instead. */
+button.wide:active:not(:disabled),
+button.start:active:not(:disabled),
+button.go:active:not(:disabled) {
+  transform: scale(0.995);
+  opacity: 0.9;
 }
 input,
 textarea {
