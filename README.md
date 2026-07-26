@@ -32,9 +32,46 @@ it carries none of your conversation.
 
 ---
 
+## New in 1.5
+
+**Several agents on one repository.** Start a session in a git worktree and it
+gets its own checkout, on its own branch, sharing one object store. Three agents
+can work on the same codebase at once without touching each other's files, and
+none of them can derail the branch you have checked out. The agent is told it is
+in a worktree and what is shared, so it does not go reinstalling dependencies that
+are symlinked. Land it from the app: merge, open a pull request, or discard.
+→ [Several agents, one repository](#several-agents-one-repository)
+
+**Undo what a turn did to your files.** Every turn takes a git snapshot before it
+runs. Revert is in the turn's footer, and it tells you exactly what it is about to
+change first, asked of git rather than guessed from the turn: the files, how many
+untracked files get deleted, and that this resets the whole repository. Undo is
+there afterwards too.
+→ [Undo a turn](#undo-a-turn)
+
+**Models that are not Claude.** Point a session at a Codex or Grok subscription
+and every tool, edit and permission keeps working; only the model answering
+changes. Kunai runs the translation in-process, so there is no sidecar to
+download. Authorize from the app.
+→ [Other models](#other-models)
+
+**Runs that start without you.** Schedule a prompt for a time, or for the moment
+your usage window resets, so an agent starts overnight or the second your quota
+comes back.
+→ [Working while you are away](#working-while-you-are-away)
+
+**A sidebar that reports.** Sessions group under the codebase they belong to, and
+a folder says what its agents are doing (how many are working, how many need a
+decision) and opens itself when one of them is waiting on you.
+
+---
+
 **Contents** ·
 [Quick start](#quick-start) ·
 [What you get](#what-you-get) ·
+[Several agents, one repository](#several-agents-one-repository) ·
+[Other models](#other-models) ·
+[Undo a turn](#undo-a-turn) ·
 [How it works](#how-it-works) ·
 [Claude accounts](#claude-accounts) ·
 [Channels](#channels) ·
@@ -101,10 +138,11 @@ Every machine updates itself, so there is no SSH involved.
 ### Nightly channel (run it alongside stable)
 
 There is a second, bleeding-edge channel built from the `nightly` branch on
-every push. It installs **beside** a stable install — its own service
+every push. It installs **beside** a stable install, with its own service
 (`kunai-nightly`), its own port (`8444`), and its own data dir
-(`~/.kunai-nightly`) — so you can run both at once and try new features without
-risking the setup you rely on.
+(`~/.kunai-nightly`), so you can run both at once and try new features without
+risking the setup you rely on. Everything in [New in 1.5](#new-in-15) landed here
+first.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/HEGADE/kunai/nightly/install.sh | KUNAI_CHANNEL=nightly bash
@@ -115,8 +153,8 @@ curl -fsSL https://raw.githubusercontent.com/HEGADE/kunai/nightly/install.sh | K
 Open the stable app at `https://<host>.<tailnet>.ts.net:8443` and nightly at
 `:8444`; they share nothing. A nightly install self-updates from the moving
 `nightly` pre-release (checksum-verified, same one-tap flow), so it always
-tracks the newest build. Nothing on the nightly channel is a stable release —
-expect rough edges, and keep your day-to-day work on the stable install.
+tracks the newest build. Nothing on the nightly channel is a stable release, so
+expect rough edges and keep your day-to-day work on the stable install.
 
 ## What you get
 
@@ -147,8 +185,96 @@ and what it cost. A failed one says it failed. A loop that ended names the limit
 that ended it. None of it carries any of your conversation.
 
 **Work that continues without you.** Loops keep an agent going with nobody at the
-keyboard, bounded so they cannot run forever, with a thermal guard for a laptop
-you left running. See [below](#working-while-you-are-away).
+keyboard, bounded so they cannot run forever, and scheduled runs start one at a
+time you pick or the moment a usage window resets. There is a thermal guard for a
+laptop you left running. See [below](#working-while-you-are-away).
+
+**Sessions that stay findable.** They group under the codebase they came from, so
+a machine with six projects reads as six folders rather than one long list. Name a
+group and that name sticks, which is what you reach for once a session spans more
+than one codebase and the folder it started in stops describing it. A folder tells
+you how many of its agents are working and how many are waiting on a decision, and
+opens itself when one of them needs you.
+
+## Several agents, one repository
+
+Two agents in one checkout overwrite each other. The usual answer is to run one at
+a time, which wastes the thing kunai is for.
+
+A git worktree fixes it at the level git already understands: a second checkout of
+the same repository, on its own branch, sharing one object store. Each session
+gets its own files, its own branch, its own HEAD, and none of them can touch the
+others or the branch you have checked out.
+
+Start one from the sidebar's worktree button, or from the launcher. It asks what
+the work is and which branch to cut from, defaulting to the branch you are standing
+on rather than the repository's default, and names the branch from your prompt if
+you do not name it yourself. Everything else is a choice you can leave alone.
+
+**Dependencies come from a setup command, not a copy.** A worktree starts with
+only what git tracks, so `node_modules` and `.env` are absent. A `kunai.json` at
+the repo root declares one shell command to fix that:
+
+```json
+{ "setup": "pnpm install --frozen-lockfile && ln -sf \"$KUNAI_PROJECT_ROOT/.env\" .env" }
+```
+
+It runs in the new worktree with `KUNAI_PROJECT_ROOT` and `KUNAI_WORKTREE_PATH` in
+the environment. Install fresh, symlink the secrets. Kunai never needs to know
+what a package manager is, the setup travels with the repository, and the first
+prompt waits until it finishes so no agent starts against a half-installed tree. If
+there is no `kunai.json`, kunai suggests a command from the lockfile it finds and
+shows it to you before it runs anything.
+
+**The agent knows where it is.** It gets the worktree path, its branch and base,
+the main checkout's path, whether setup succeeded, and which paths are symlinks
+into the main checkout, read back off disk after setup rather than taken on trust,
+so it does not delete or reinstall something shared. That arrives as a
+system prompt rather than a first message, because a message gets compacted away
+in exactly the long unattended run that most needs the facts.
+
+**Landing it is your choice.** The session's worktree card shows how far ahead or
+behind the branch is and what is uncommitted, and offers merge, a pull request via
+`gh`, or discard. A merge refuses a dirty main checkout rather than stashing your
+work, and a conflict is reported, never auto-resolved. Discard names the
+uncommitted files and unmerged commits it is about to destroy. Nothing is ever
+garbage-collected: removal is always something you asked for.
+
+## Other models
+
+A session can run on a Codex or Grok subscription instead of Claude. Every tool,
+edit, permission prompt and file diff keeps working, because kunai keeps driving the
+same `claude` CLI and only swaps the endpoint it calls out to. Only the model
+answering changes.
+
+Authorize one from Providers in the sidebar: it opens the provider's own sign-in in
+your browser and the credential lands on your machine, never in kunai. The
+translation between Anthropic's API and the provider's runs in-process, so there is
+no sidecar to download. Pick the provider when you start a session, or switch a
+running one, and the composer shows the real model it is on rather than a Claude
+tier that would mean nothing there.
+
+Because the CLI still thinks it is talking to Claude, it packs context to Claude's
+window while the upstream model's may be smaller. Kunai measures each request
+against the real window and drops the oldest whole turns if it would overflow,
+keeping the system prompt and never orphaning a tool result from its call, so a
+long session keeps working instead of failing mid-stream. Codex quota shows on the
+dashboard next to Claude's.
+
+<sub>Codex is verified end to end. Grok rides the same path with its happy path
+unverified. Kimi is not built.</sub>
+
+## Undo a turn
+
+Every turn takes a git snapshot of the working tree before it runs, so a turn's
+file changes can be undone without touching the conversation.
+
+Revert sits in the turn's footer, next to Copy. It asks first, and what it asks
+with comes from git rather than from the turn: the files it will change with git's
+own status letters, how many untracked files it will delete and which, and the fact
+that this resets the whole repository, so anything changed after that turn goes too,
+including edits you made yourself. Afterwards, Undo revert is in the same
+place: the revert captured its own safety snapshot before running.
 
 ## How it works
 
@@ -256,7 +382,17 @@ A loop re-feeds one task every time a turn ends, which is Ralph's technique, so
 an agent keeps working with nobody watching. A session your phone walked away
 from mid-turn also just keeps going. Loops stop at whichever of their iteration
 or spend limits arrives first, or when the model reports the task done, so they
-cannot run forever.
+cannot run forever. A loop survives a restart, too: an auto-update or a crash
+mid-run picks up from the iteration and spend it had reached, because the whole
+point is that nobody is attached to notice it died.
+
+**Runs that start without you.** Schedule a prompt for a time, or for the moment a
+usage window resets, from Schedule on the home screen. The reset trigger is the
+useful one: a 5-hour window that empties at 2am can have an agent waiting on it, so
+the quota is spent while you are asleep instead of expiring. A scheduled run fires
+at most once, since a missed occurrence beats two agents starting the same work, and
+the schedule row records what happened, so "did my job run?" is answerable without
+reading logs.
 
 That is fine on a desktop and less fine on a laptop with the lid shut, where
 hours of pinned CPU cooks the machine. The thermal guard is the safety net that
@@ -396,6 +532,11 @@ cmd/kunai/          entrypoint: flags, TLS, server wiring
 internal/claude/    stream-json driver for the claude CLI, including tool results
 internal/session/   session lifecycle, ring buffer, seq replay, permissions, loops
 internal/server/    HTTP and WebSocket API, history, stats, uploads, machines, discovery, push, thermal guard
+internal/worktree/  git worktrees: create, setup command, status, merge, the agent's brief
+internal/checkpoint/ per-turn git snapshots behind undo, and the preview a revert asks with
+internal/cliproxy/  in-process Anthropic to Codex/Grok translation for provider sessions
+internal/schedule/  runs that fire at a time or after a usage window resets
+internal/telegram/  the Telegram channel: long-poll bot, pairing, what may leave the machine
 internal/push/      Web Push (VAPID) keys, subscriptions, wake-ups
 internal/fsbrowse/  directory listing for the project picker
 internal/webui/     embedded production build of the web app
@@ -411,9 +552,16 @@ stays a one-file fix.
 
 Issues and pull requests are welcome. A few house rules:
 
-- `internal/webui/dist` is committed and embedded, so rebuild the web app before
-  the Go binary when you change the frontend.
-- Run `go test ./...` and `cd web && npm run check` before opening a PR.
+- `internal/webui/dist` is committed and embedded, so rebuild the web app **before**
+  the Go binary when you change the frontend. Build them the other way round and
+  the binary serves the previous UI, which looks exactly like your change not
+  working.
+- Run `go test ./...`, `cd web && npm run check`, and `node web/tests/units.mjs`
+  before opening a PR. The last one needs no test runner: node strips the types off
+  a `.ts` import by itself.
+- `web/tests/worktree.spec.mjs` drives the real UI against a real kunai and a real
+  git repository. It needs a dev server on another port, never the one you rely on:
+  `kunai -addr 127.0.0.1:8899 -data /tmp/kunai-wt`.
 - No emojis and no em dashes in commit messages or docs.
 
 ## License
