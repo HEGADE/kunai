@@ -336,7 +336,7 @@
     if (!text || !sel || !targetDir || launching) return
     launching = true
     try {
-      await app.startWork(sel.id, targetDir, text, acct, wt)
+      await app.startWork(sel.id, targetDir, text, { cli: acct, wt })
       brief = ''
       wt = noWorktree()
     } finally {

@@ -293,40 +293,55 @@ async function main() {
 
   const wtBefore = worktreeCount()
   await buttons.first().click() // the worktree one sits before the plus
-  await page.waitForSelector('.panel textarea', { timeout: 10000 })
+  await page.waitForSelector('.wtstart textarea', { timeout: 10000 })
   check(
     'the worktree button opens a composer, not a bare branch list',
-    (await page.locator('.panel textarea').count()) === 1,
+    (await page.locator('.wtstart textarea').count()) === 1,
+  )
+  // Every choice a worktree needs is spawn-time, so all of them are here. Effort
+  // and permission mode in particular cannot usefully be set afterwards: the CLI
+  // takes both as spawn flags, so a mode chosen later misses the first tool call.
+  const settings = (await page.locator('.wtstart .line .lbl').allInnerTexts()).map((t) => t.trim())
+  check(
+    'the dialog asks how the agent should run, not just where',
+    ['Model', 'Effort', 'Permission'].every((l) => settings.includes(l)),
+    settings.join(' / '),
+  )
+  const armedMode = (await page.locator('.wtstart .chips .chip.on').allInnerTexts()).map((t) => t.trim())
+  check(
+    'and defaults an isolated agent to accepting its own edits',
+    armedMode.includes('Accept edits'),
+    armedMode.join(' / '),
   )
   // Preselected to where you are standing. Silently cutting from main while you
   // worked on a feature branch is the complaint this panel exists to answer, so
   // the preselection is the check that matters, not merely that a picker exists.
   const onBranch = git(['rev-parse', '--abbrev-ref', 'HEAD'])
-  const shownBase = (await page.locator('.panel .basebtn .bl').innerText()).trim()
+  const shownBase = (await page.locator('.wtstart .basebtn .bl').innerText()).trim()
   check('the panel offers to cut from the branch you are on', shownBase === onBranch, `${shownBase} vs ${onBranch}`)
 
-  await page.locator('.panel .basebtn').click()
-  await page.waitForSelector('.panel .pop .opt', { timeout: 10000 })
-  const branchOpts = (await page.locator('.panel .pop .opt').allInnerTexts()).map((t) => t.replace(/\n/g, ' '))
+  await page.locator('.wtstart .basebtn').click()
+  await page.waitForSelector('.wtstart .pop .opt', { timeout: 10000 })
+  const branchOpts = (await page.locator('.wtstart .pop .opt').allInnerTexts()).map((t) => t.replace(/\n/g, ' '))
   check('the base can still be changed from the header', branchOpts.length > 0, branchOpts.join(' | '))
   check('and the branch you are on is listed first', /you are here/.test(branchOpts[0] ?? ''), branchOpts[0] ?? '(none)')
   await page.keyboard.press('Escape') // closes the picker, keeps the composer
-  check('escape closes the picker before the panel', (await page.locator('.panel textarea').count()) === 1)
+  check('escape closes the picker before the panel', (await page.locator('.wtstart textarea').count()) === 1)
   await shot(page, '09-worktree-composer')
 
   // The prompt names the branch: nobody should have to name a branch before
   // describing the work, because describing the work is the name.
-  await page.locator('.panel textarea').fill('tidy the login form and stop')
+  await page.locator('.wtstart textarea').fill('tidy the login form and stop')
   check(
     'with no name typed, nothing claims to know the branch yet',
-    (await page.locator('.panel .prev').count()) === 0,
+    (await page.locator('.wtstart .prev').count()) === 0,
   )
   // Type one and the branch it makes is previewed, so the name is not a guess.
-  await page.locator('.panel .name').fill('Login Tidy')
-  const namePreview = (await page.locator('.panel .prev').innerText()).trim()
+  await page.locator('.wtstart .name').fill('Login Tidy')
+  const namePreview = (await page.locator('.wtstart .prev').innerText()).trim()
   check('a typed name previews the branch it becomes', namePreview === 'kunai/login-tidy', namePreview)
-  await page.locator('.panel .name').fill('')
-  await page.locator('.panel .go').click()
+  await page.locator('.wtstart .name').fill('')
+  await page.locator('.wtstart .go').click()
   await page.waitForSelector('.wtcard', { timeout: 60000 })
   check('starting from the composer lands in a worktree', worktreeCount() === wtBefore + 1, `${wtBefore} -> ${worktreeCount()}`)
 
@@ -336,6 +351,12 @@ async function main() {
     /login/.test(composedBranch),
     composedBranch,
   )
+  // The proof the mode was a spawn flag and not decoration: the session it
+  // started is running in it. Set after the spawn it would have missed the first
+  // tool call, which for an unattended agent is the one that matters.
+  const composedMode = (await page.locator('.modewrap .seg').first().innerText().catch(() => '')).trim()
+  check('the chosen permission mode is the one the session spawned in', /Edits/.test(composedMode), composedMode || '(not found)')
+
   const composedSetup = await page
     .locator('.wtcard .head')
     .innerText()

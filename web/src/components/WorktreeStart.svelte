@@ -1,100 +1,99 @@
 <script lang="ts">
-  // Starting a worktree from a project heading: a small composer, not a menu.
+  // Starting a worktree from a project heading.
   //
-  // This began as a bare list of branches that started a session the moment you
+  // It began as a bare list of branches that started a session the moment you
   // picked one. That got the branch right and everything else wrong: a worktree
-  // exists to hold a piece of work, so the first thing you have to say about it
-  // is what the work IS, and the old flow gave you nowhere to say it. You landed
-  // in an empty session and typed there, which meant the branch had already been
-  // named from nothing.
+  // exists to hold a piece of work, so the first thing to say about it is what
+  // the work IS, and there was nowhere to say it. Then it was a small popover
+  // hanging off the button, which had room for the prompt and nothing else.
   //
-  // So the panel asks for the task first and treats the rest as settings on it:
-  // the base branch sits in the header where it can be changed without leaving,
-  // the name is optional because the prompt already implies one, and Start is the
-  // only commitment. The prompt does double duty, since the server names the
-  // branch from it (worktree.NameFromPrompt) when no name is given.
+  // It is a dialog now because of what a worktree is FOR. You open one to send an
+  // agent off on its own for a while, unattended, and every choice that decides
+  // how that goes is made at spawn: the account or provider that runs it, the
+  // model, the reasoning effort, and the permission mode. Effort and mode in
+  // particular cannot be changed into afterwards in any way that helps -- the CLI
+  // takes both as spawn flags, so a mode set later misses the first tool call,
+  // which for an unattended agent is exactly the one that matters. A popover with
+  // no room for them meant every worktree started on the defaults and stopped on
+  // its first file write.
   //
-  // Fixed-position for the same reason Hint and the old menu were: this hangs off
-  // a button inside the sidebar's scrolling list, and anything positioned within
-  // that list is clipped by the scroll container.
+  // Centred rather than anchored for the same reason: this is a decision you stop
+  // and make, not a menu you flick through.
+  import { app, type StartSpec } from '../lib/app.svelte'
   import { projectName } from '../lib/grouping'
+  import { DEFAULT_EFFORT, DEFAULT_MODEL, EFFORTS, MODELS, modelOptionLabel } from '../lib/models'
+  import { PERMISSION_MODES } from '../lib/permissions'
+  import type { PermissionMode } from '../lib/types'
   import {
     slugPreview,
     worktreeBranches,
     worktreeSetup,
     type BranchRef,
     type SetupProposal,
-    type WorktreeChoice,
   } from '../lib/worktrees'
 
   let {
     base = '',
+    machineId,
     repo,
-    anchor,
     busy = false,
     onstart,
     onclose,
   }: {
     // base is the machine's origin; repo is the main checkout this cuts from.
     base?: string
+    machineId: string
     repo: string
-    // anchor is the button this belongs to, so the panel can be placed against it.
-    anchor: HTMLElement | null
     busy?: boolean
-    onstart: (prompt: string, choice: WorktreeChoice) => void
+    onstart: (prompt: string, spec: StartSpec) => void
     onclose: () => void
   } = $props()
 
   let prompt = $state('')
   let name = $state('')
   let baseBranch = $state('')
+  let model = $state(DEFAULT_MODEL)
+  let effort = $state(DEFAULT_EFFORT)
+  // Worktrees deliberately start in acceptEdits rather than the app-wide Auto.
+  // This is the same trade the scheduler and a loop already make: Auto still
+  // stops to ask about a risky action, and for an agent working alone in its own
+  // checkout that is a hang rather than caution. The isolation is what makes it
+  // safe to be looser here: the edits land on a branch of its own, in a directory
+  // of its own, and your checkout is untouched whatever it does.
+  let mode = $state<PermissionMode>('acceptEdits')
+  // Empty means the machine's default account, which is what a single-account
+  // machine always wants.
+  let cli = $state('')
+
   let refs = $state<BranchRef[]>([])
   let proposal = $state<SetupProposal | null>(null)
   let error = $state('')
   let loading = $state(true)
   let pickerOpen = $state(false)
-  let at = $state<{ top: number; left: number } | null>(null)
   let box: HTMLDivElement | null = $state(null)
 
-  const width = 320
-  const margin = 10
-  // What the panel needs below the anchor before it stops flipping above. Not the
-  // exact height, which depends on whether the repo declares a setup command; the
-  // flip only has to be right about "is there room for a composer here".
-  const roomNeeded = 250
+  // Accounts and providers come from the machine's stats as one list, because
+  // from here they are one decision: which brain runs this. Only offered when the
+  // machine has a real choice to make.
+  const clis = $derived(app.machines.find((m) => m.id === machineId)?.stats?.clis ?? [])
 
   const repoLabel = $derived(projectName(repo))
-  const currentBranch = $derived(refs.find((r) => r.current)?.name ?? '')
   const defaultBranch = $derived(refs.find((r) => r.default)?.name ?? '')
   const baseLabel = $derived(baseBranch || defaultBranch || 'default')
   const preview = $derived(slugPreview(name))
   const canStart = $derived(!loading && !error && !busy)
 
-  function place() {
-    if (!anchor) return
-    const r = anchor.getBoundingClientRect()
-    const below = r.bottom + 6
-    const room = window.innerHeight - below
-    at = {
-      top: room > roomNeeded ? below : Math.max(margin, window.innerHeight - roomNeeded - margin),
-      left: Math.min(Math.max(margin, r.left - width / 2), window.innerWidth - width - margin),
-    }
-  }
-
   $effect(() => {
-    place()
     Promise.all([worktreeBranches(base, repo), worktreeSetup(base, repo)])
       .then(([b, s]) => {
-        // The branch you are on first, then the default, then the rest. Cutting
-        // from where you are is the common case, and it was the case that used to
-        // be impossible here.
+        // The branch you are on first, then the default, then the rest.
         refs = [...b.refs].sort(
           (x, y) =>
             Number(!!y.current) - Number(!!x.current) || Number(!!y.default) - Number(!!x.default),
         )
-        // Preselect where you are standing, not the repository's default. Silently
-        // cutting from main while you worked on a feature branch was the whole
-        // complaint that started this.
+        // Preselect where you are standing, not the repository's default.
+        // Silently cutting from main while you worked on a feature branch was the
+        // whole complaint that started this.
         baseBranch = refs.find((r) => r.current)?.name || b.default
         proposal = s
       })
@@ -102,8 +101,8 @@
       .finally(() => (loading = false))
   })
 
-  // Focus the prompt on open: the panel exists to be typed into, and a composer
-  // you have to click before typing is a composer that wasted the click.
+  // Focus the prompt on open: the dialog exists to be typed into, and one you
+  // have to click before typing has wasted the click.
   $effect(() => {
     box?.querySelector('textarea')?.focus()
   })
@@ -111,13 +110,21 @@
   function start() {
     if (!canStart) return
     onstart(prompt.trim(), {
-      on: true,
-      base: baseBranch,
-      name: name.trim(),
-      // Undefined, not the resolved command: it is shown here but never edited,
-      // so the repository stays the authority and nothing is remembered on its
-      // behalf from a panel that only reported what it found.
-      setup: undefined,
+      // Only send an account the machine actually offers; empty just means its
+      // default, and a name it does not have would strand the create.
+      cli: clis.includes(cli) ? cli : undefined,
+      model,
+      effort,
+      mode,
+      wt: {
+        on: true,
+        base: baseBranch,
+        name: name.trim(),
+        // Undefined, not the resolved command: it is shown here but never edited,
+        // so the repository stays the authority and nothing is remembered on its
+        // behalf from a dialog that only reported what it found.
+        setup: undefined,
+      },
     })
   }
 
@@ -127,176 +134,331 @@
       pickerOpen ? (pickerOpen = false) : onclose()
       return
     }
-    // Enter starts, Shift+Enter is a newline: a task is usually one line, and the
-    // composer everywhere else in kunai already reads this way.
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // Enter in the prompt starts; Shift+Enter is a newline. A task is usually one
+    // line, and every other composer in kunai already reads this way.
+    if (e.key === 'Enter' && !e.shiftKey && (e.target as HTMLElement)?.tagName !== 'BUTTON') {
       e.preventDefault()
       start()
     }
   }
 </script>
 
-<svelte:window on:resize={place} />
-
-<button class="scrim" onclick={onclose} aria-label="Close"></button>
-{#if at}
+<div class="backdrop" onclick={onclose} role="presentation">
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
-    class="panel"
+    class="modal wtstart"
     bind:this={box}
-    style="top:{at.top}px; left:{at.left}px; width:{width}px"
+    onclick={(e) => e.stopPropagation()}
     onkeydown={onKey}
     role="dialog"
+    aria-modal="true"
     aria-label="New worktree in {repoLabel}"
     tabindex="-1"
   >
-    <!-- Header: what this is, and the one setting worth changing without leaving
-         the panel. -->
-    <div class="head">
-      <svg class="fork" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v12M6 21a2 2 0 100-4 2 2 0 000 4zM6 7a2 2 0 100-4 2 2 0 000 4zM18 11a2 2 0 100-4 2 2 0 000 4zM18 9v2a4 4 0 01-4 4H6" /></svg>
-      <span class="repo mono">{repoLabel}</span>
-      <div class="basewrap">
-        <button
-          class="basebtn"
-          disabled={loading || !!error}
-          onclick={() => (pickerOpen = !pickerOpen)}
-          title={loading ? 'Reading branches' : 'Which branch to cut from'}
-        >
-          <span class="from">from</span>
-          <span class="bl mono">{loading ? '…' : baseLabel}</span>
-          <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-        </button>
-        {#if pickerOpen}
-          <button class="pscrim" onclick={() => (pickerOpen = false)} aria-label="Close"></button>
-          <div class="pop">
-            {#each refs as ref (ref.name)}
-              <!-- Nothing is disabled. A base is a start point, not a checkout:
-                   the new worktree gets a new branch, so branching from one that
-                   is already checked out is fine and git is happy to do it. -->
-              <button
-                class="opt"
-                class:active={ref.name === baseBranch}
-                onclick={() => {
-                  baseBranch = ref.name
-                  pickerOpen = false
-                }}
-              >
-                <span class="bn mono">{ref.name}</span>
-                {#if ref.current}<span class="tag">you are here</span>
-                {:else if ref.default}<span class="tag">default</span>{/if}
-              </button>
-            {/each}
-            {#if refs.length === 0}<p class="note">No branches to start from.</p>{/if}
-          </div>
-        {/if}
-      </div>
-    </div>
+    <header>
+      <svg class="fork" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v12M6 21a2 2 0 100-4 2 2 0 000 4zM6 7a2 2 0 100-4 2 2 0 000 4zM18 11a2 2 0 100-4 2 2 0 000 4zM18 9v2a4 4 0 01-4 4H6" /></svg>
+      <h2>New worktree in <span class="mono">{repoLabel}</span></h2>
+      <button class="close" onclick={onclose} aria-label="Close">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+      </button>
+    </header>
 
     {#if error}
       <p class="note err">{error}</p>
     {:else}
-      <textarea
-        bind:value={prompt}
-        placeholder="What should this agent work on?"
-        rows="3"
-        aria-label="First prompt"
-      ></textarea>
+      <div class="body">
+        <textarea
+          bind:value={prompt}
+          placeholder="What should this agent work on?"
+          rows="3"
+          aria-label="First prompt"
+        ></textarea>
 
-      <div class="foot">
-        <!-- Optional, and it looks it. The prompt above already describes the
-             work, and the server names the branch from that, so a name here is
-             for the times you want to call it something else. -->
-        <input
-          class="name mono"
-          bind:value={name}
-          placeholder="name (optional)"
-          aria-label="Worktree name"
-          autocomplete="off"
-        />
+        <!-- Where the branch comes from and what it is called: the two facts that
+             are about the worktree itself rather than about the agent. -->
+        <div class="line">
+          <span class="lbl">Branch</span>
+          <div class="grow">
+            <div class="basewrap">
+              <button
+                class="basebtn"
+                disabled={loading}
+                onclick={() => (pickerOpen = !pickerOpen)}
+                title="Which branch to cut from"
+              >
+                <span class="from">from</span>
+                <span class="bl mono">{loading ? '…' : baseLabel}</span>
+                <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+              </button>
+              {#if pickerOpen}
+                <button class="pscrim" onclick={() => (pickerOpen = false)} aria-label="Close"></button>
+                <div class="pop">
+                  {#each refs as ref (ref.name)}
+                    <!-- Nothing is disabled. A base is a start point, not a
+                         checkout: the new worktree gets a new branch, so
+                         branching from one already checked out is fine. -->
+                    <button
+                      class="opt"
+                      class:active={ref.name === baseBranch}
+                      onclick={() => {
+                        baseBranch = ref.name
+                        pickerOpen = false
+                      }}
+                    >
+                      <span class="bn mono">{ref.name}</span>
+                      {#if ref.current}<span class="tag">you are here</span>
+                      {:else if ref.default}<span class="tag">default</span>{/if}
+                    </button>
+                  {/each}
+                  {#if refs.length === 0}<p class="note">No branches to start from.</p>{/if}
+                </div>
+              {/if}
+            </div>
+            <input
+              class="name mono"
+              bind:value={name}
+              placeholder="name (optional)"
+              aria-label="Worktree name"
+              autocomplete="off"
+            />
+            <!-- Said only when there is something to say. With no name typed the
+                 placeholder already carries it, and a line repeating "optional"
+                 under a field marked optional is noise. -->
+            {#if preview}<span class="prev mono">kunai/{preview}</span>{/if}
+          </div>
+        </div>
+
+        <!-- And how the agent runs. All four are spawn-time, which is why they
+             are asked here rather than left to the composer. -->
+        {#if clis.length > 1}
+          <div class="line">
+            <span class="lbl">Account</span>
+            <div class="chips">
+              {#each clis as c (c)}
+                <!-- The first is the machine's default, so it reads as selected
+                     before anything is chosen. -->
+                <button class="chip" class:on={(cli || clis[0]) === c} onclick={() => (cli = c)}>
+                  {c}
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        <div class="line">
+          <span class="lbl">Model</span>
+          <div class="chips">
+            {#each MODELS as m (m.id)}
+              <button class="chip" class:on={model === m.id} title={m.hint ?? ''} onclick={() => (model = m.id)}>
+                {modelOptionLabel(m.id)}
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        <div class="line">
+          <span class="lbl">Effort</span>
+          <div class="chips">
+            {#each EFFORTS as e (e.id)}
+              <button class="chip" class:on={effort === e.id} title={e.hint ?? ''} onclick={() => (effort = e.id)}>
+                {e.label}
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        <div class="line">
+          <span class="lbl">Permission</span>
+          <div class="chips">
+            {#each PERMISSION_MODES as p (p.id)}
+              <button class="chip" class:on={mode === p.id} title={p.hint} onclick={() => (mode = p.id)}>
+                {p.label}
+              </button>
+            {/each}
+          </div>
+        </div>
+        <p class="why">
+          {PERMISSION_MODES.find((p) => p.id === mode)?.hint}. It runs in its own
+          checkout on its own branch, so this one is untouched whatever it does.
+        </p>
+
+        <!-- The setup command is arbitrary shell run with the server's
+             privileges, so it is never a surprise. Reported, not edited: the
+             launcher's picker is where you change it. -->
+        {#if proposal && proposal.source !== 'none' && proposal.command}
+          <p class="setup mono" title={proposal.command}>
+            <span class="slbl">setup</span>{proposal.command}
+          </p>
+        {/if}
+      </div>
+
+      <footer>
+        <button class="ghost" onclick={onclose}>Cancel</button>
         <button class="go" disabled={!canStart} onclick={start}>
           {busy ? 'Starting…' : 'Start'}
         </button>
-      </div>
-
-      <!-- Said only when there is something to say. With no name typed the
-           placeholder above already carries it, and a line repeating "this is
-           optional" under a field marked optional is noise. -->
-      {#if preview}
-        <p class="prev mono" title="The branch this will create">kunai/{preview}</p>
-      {/if}
-
-      <!-- The setup command is arbitrary shell run with the server's privileges,
-           so it is never a surprise. Reported, not edited: the launcher's picker
-           is where you change it, and repeating that here would make this panel
-           the dialog it exists to avoid. -->
-      {#if proposal && proposal.source !== 'none' && proposal.command}
-        <p class="setup mono" title={proposal.command}>
-          <span class="slbl">setup</span>{proposal.command}
-        </p>
-      {/if}
+      </footer>
     {/if}
   </div>
-{/if}
+</div>
 
 <style>
-  .scrim {
+  .backdrop {
     position: fixed;
     inset: 0;
-    z-index: 59;
-    border: 0;
-    background: transparent;
-    cursor: default;
-  }
-  .panel {
-    position: fixed;
     z-index: 60;
     display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: calc(var(--safe-top) + 16px) 16px 16px;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+  }
+  .modal {
+    display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 9px;
+    width: 100%;
+    max-width: 540px;
+    max-height: 100%;
     font-family: var(--sans);
     background: var(--panel-2);
     border: 1px solid var(--border-2);
-    border-radius: var(--r);
-    box-shadow: 0 18px 44px -14px rgba(0, 0, 0, 0.72);
+    border-radius: var(--r-lg, 14px);
+    box-shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.8);
+    overflow: hidden;
   }
-  .panel:focus {
+  .modal:focus {
     outline: none;
   }
 
-  .head {
+  header {
     display: flex;
     align-items: center;
-    gap: 7px;
-    min-width: 0;
-    padding: 1px 2px 8px;
+    gap: 9px;
+    padding: 13px 14px;
     border-bottom: 1px solid var(--border);
   }
   .fork {
     flex: none;
     color: var(--text-4);
   }
-  .repo {
+  h2 {
     flex: 1;
     min-width: 0;
-    font-size: 12px;
+    margin: 0;
+    font-size: 13.5px;
+    font-weight: 500;
     color: var(--text-2);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  h2 .mono {
+    color: var(--text);
+  }
+  .close {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border: 0;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--text-4);
+    cursor: pointer;
+  }
+  .close:hover {
+    background: var(--panel-3);
+    color: var(--text);
+  }
+
+  .body {
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+    padding: 13px 14px;
+    overflow-y: auto;
+  }
+
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 13.5px;
+    line-height: 1.5;
+    resize: vertical;
+  }
+  textarea::placeholder {
+    color: var(--text-4);
+  }
+  textarea:focus {
+    outline: none;
+    border-color: var(--border-2);
+  }
+
+  /* One label column, so the four settings read as a list of decisions rather
+     than a wall of chips. */
+  .line {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+  }
+  .lbl {
+    flex: none;
+    width: 74px;
+    padding-top: 5px;
+    font-size: 11.5px;
+    color: var(--text-4);
+  }
+  .grow,
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .chip {
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-3, var(--text-2));
+    font: inherit;
+    font-size: 11.5px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .chip:hover {
+    background: var(--panel-3);
+    color: var(--text);
+  }
+  .chip.on {
+    background: var(--text);
+    border-color: var(--text);
+    color: var(--bg);
+  }
 
   .basewrap {
     position: relative;
     flex: none;
-    max-width: 55%;
   }
   .basebtn {
     display: inline-flex;
     align-items: center;
     gap: 5px;
     max-width: 100%;
-    padding: 3px 6px;
-    border: 0;
+    padding: 4px 9px;
+    border: 1px solid var(--border);
     border-radius: var(--r-sm);
     background: transparent;
     color: var(--text);
@@ -336,8 +498,8 @@
     position: absolute;
     z-index: 62;
     top: calc(100% + 5px);
-    right: 0;
-    min-width: 220px;
+    left: 0;
+    min-width: 230px;
     max-height: 220px;
     overflow-y: auto;
     padding: 4px;
@@ -378,36 +540,10 @@
     color: var(--text-4);
   }
 
-  textarea {
-    width: 100%;
-    box-sizing: border-box;
-    padding: 6px 7px;
-    border: 0;
-    border-radius: var(--r-sm);
-    background: transparent;
-    color: var(--text);
-    font: inherit;
-    font-size: 13px;
-    line-height: 1.5;
-    resize: none;
-  }
-  textarea::placeholder {
-    color: var(--text-4);
-  }
-  textarea:focus {
-    outline: none;
-  }
-
-  .foot {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-  }
   .name {
     flex: 1;
-    min-width: 0;
-    padding: 5px 8px;
+    min-width: 90px;
+    padding: 4px 9px;
     border: 1px solid var(--border);
     border-radius: var(--r-sm);
     background: transparent;
@@ -419,39 +555,25 @@
     border-color: var(--border-2);
   }
   .prev {
-    margin: -2px 0 0;
-    padding: 0 2px;
+    flex: none;
     font-size: 11px;
     color: var(--text-4);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .go {
-    flex: none;
-    padding: 5px 13px;
-    border: 0;
-    border-radius: var(--r-sm);
-    background: var(--text);
-    color: var(--bg);
-    font: inherit;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-  }
-  .go:disabled {
-    background: var(--panel-3);
-    color: var(--text-4);
-    cursor: default;
   }
 
+  .why,
+  .setup {
+    margin: -4px 0 0 84px;
+    font-size: 11px;
+    color: var(--text-4);
+    line-height: 1.45;
+  }
   .setup {
     display: flex;
     gap: 7px;
-    margin: 0;
-    padding: 0 2px;
+    margin-left: 0;
+    padding-top: 2px;
+    border-top: 1px solid var(--border);
     font-size: 10.5px;
-    color: var(--text-4);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -461,12 +583,65 @@
     opacity: 0.7;
   }
 
+  footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 11px 14px;
+    border-top: 1px solid var(--border);
+  }
+  .ghost,
+  .go {
+    padding: 6px 15px;
+    border-radius: var(--r-sm);
+    font: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .ghost {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-2);
+  }
+  .ghost:hover {
+    background: var(--panel-3);
+    color: var(--text);
+  }
+  .go {
+    border: 0;
+    background: var(--text);
+    color: var(--bg);
+    font-weight: 500;
+  }
+  .go:disabled {
+    background: var(--panel-3);
+    color: var(--text-4);
+    cursor: default;
+  }
+
   .note {
-    margin: 4px 2px;
-    font-size: 11.5px;
+    margin: 14px;
+    font-size: 12px;
     color: var(--text-4);
   }
   .note.err {
     color: var(--alert);
+  }
+
+  /* On a phone the label column costs more than it explains, so the settings
+     stack and the chips get the full width. */
+  @media (max-width: 560px) {
+    .line {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 5px;
+    }
+    .lbl {
+      width: auto;
+      padding-top: 0;
+    }
+    .why {
+      margin-left: 0;
+    }
   }
 </style>

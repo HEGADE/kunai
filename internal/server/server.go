@@ -361,6 +361,12 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// POST /api/worktrees. It becomes the session's cwd, which is the whole
 		// isolation mechanism: nothing else about the session changes.
 		Worktree string `json:"worktree"`
+		// Mode is the permission mode to spawn in; empty takes the default. It
+		// belongs at create rather than only on the live session because the CLI
+		// applies it as a spawn flag: sent afterwards it arrives too late to
+		// govern the first tool call, which for an unattended start is the one
+		// that matters.
+		Mode string `json:"mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -397,6 +403,14 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// the normal Auto default, but keeping the branch means provider-specific
 		// safety-mode policy stays one constant instead of leaking into create/resume.
 		opts.Mode = session.ProviderPermissionMode
+	}
+	// An explicit choice beats both defaults. This is what lets a worktree be
+	// started in acceptEdits from the app: an unattended agent that stops on its
+	// first file write has not started at all. An unrecognised mode is ignored
+	// rather than refused, so a newer client cannot fail a create on an older
+	// server over a field that only ever chooses a default.
+	if m := session.ValidPermissionMode(req.Mode); m != "" {
+		opts.Mode = m
 	}
 	if req.Resume != "" {
 		// Replay the prior conversation into the buffer so the client doesn't

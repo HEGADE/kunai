@@ -1,4 +1,4 @@
-import type { AccountInfo, ChannelInfo, Attachment, CLIProfile, HistoryEntry, Job, Listing, MachineInfo, Meta, OlderTurns, Provider, Stats, ThermalConfig, Usage } from './types'
+import type { AccountInfo, ChannelInfo, Attachment, CLIProfile, HistoryEntry, Job, Listing, MachineInfo, Meta, OlderTurns, PermissionMode, Provider, Stats, ThermalConfig, Usage } from './types'
 
 // Every call takes a `base` origin so the client can reach any machine directly
 // over the tailnet. base === '' means the current origin (the hub), so the hub's
@@ -37,6 +37,10 @@ export function createSession(
     // worktree is the path of a worktree created by POST /api/worktrees. The
     // server makes it the session's cwd, which is the whole isolation mechanism.
     worktree?: string
+    // mode is the permission mode to spawn in. It has to be chosen here rather
+    // than set on the running session: the CLI takes it as a spawn flag, so sent
+    // afterwards it misses the first tool call.
+    mode?: PermissionMode
   },
 ): Promise<Meta> {
   return fetch(at(base, '/api/sessions'), {

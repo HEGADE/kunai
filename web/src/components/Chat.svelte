@@ -6,6 +6,7 @@
   import type { Attachment } from '../lib/types'
   import { groupTurns } from '../lib/turns'
   import { MODELS, EFFORTS, modelLabel, modelOptionLabel, modelFamily, effortLabel } from '../lib/models'
+  import { PERMISSION_MODES, permissionLabel } from '../lib/permissions'
   import { setReloadGuard } from '../lib/updater'
   import PermissionGate from './PermissionGate.svelte'
   import Context from './Context.svelte'
@@ -300,18 +301,13 @@
     textarea.style.height = Math.min(textarea.scrollHeight, 160) + 'px'
   }
 
-  const modeLabels: Record<string, string> = {
-    default: 'Ask',
-    acceptEdits: 'Edits',
-    auto: 'Auto',
-    plan: 'Plan',
-  }
-  const modes = [
-    { id: 'default', label: 'Ask', hint: 'Approve each tool call' },
-    { id: 'auto', label: 'Auto', hint: 'Approve safe actions automatically' },
-    { id: 'acceptEdits', label: 'Accept edits', hint: 'Auto-approve file edits' },
-    { id: 'plan', label: 'Plan', hint: 'Read-only planning' },
-  ] as const
+  // One table, shared with the worktree dialog, so switching a running session
+  // and spawning one cannot describe the same mode two different ways.
+  const modes = PERMISSION_MODES
+  // The pill has room for a word, not a label: "Accept edits" is the mode, but
+  // "Edits" is what fits beside the model and the effort.
+  const modeLabels: Record<string, string> = { acceptEdits: 'Edits' }
+  const modePill = (id: string) => modeLabels[id] ?? permissionLabel(id)
 
   const running = $derived(chat.sessionState === 'running')
 
@@ -555,7 +551,7 @@
         <div class="controls">
           <div class="modewrap">
             <button class="seg" class:on={chat.mode !== 'default'} class:open={modeOpen} onclick={() => (modeOpen = !modeOpen)} title="Permission mode">
-              {modeLabels[chat.mode] ?? chat.mode}
+              {modePill(chat.mode)}
             </button>
             {#if modeOpen}
               <button class="mode-scrim" onclick={() => (modeOpen = false)} aria-label="Close"></button>

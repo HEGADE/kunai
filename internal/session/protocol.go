@@ -162,6 +162,23 @@ const DefaultPermissionMode = "auto"
 // still switch it.
 const ProviderPermissionMode = "auto"
 
+// PermissionModes are the modes a session may be spawned in or switched to. The
+// CLI rejects anything else, and a rejected mode is a session that starts in a
+// mode nobody asked for, so a caller taking one off the wire has to check.
+var PermissionModes = []string{"default", "auto", "acceptEdits", "plan"}
+
+// ValidPermissionMode returns mode when it is one the CLI understands, and ""
+// otherwise, so a caller reads as "use it if it is real, else keep the default".
+// Empty in means empty out: not choosing is not the same as choosing wrongly.
+func ValidPermissionMode(mode string) string {
+	for _, m := range PermissionModes {
+		if mode == m {
+			return mode
+		}
+	}
+	return ""
+}
+
 // Turn/session states.
 const (
 	StateStarting = "starting" // claude process is booting

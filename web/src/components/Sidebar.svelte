@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { app } from '../lib/app.svelte'
+  import { app, type StartSpec } from '../lib/app.svelte'
   import { createSession } from '../lib/api'
   import { enablePush, pushState } from '../lib/push'
   import type { TaggedHistoryEntry, TaggedMeta } from '../lib/types'
   import { groupSessions, groupStartTarget } from '../lib/grouping'
-  import { isGitRepo, type WorktreeChoice } from '../lib/worktrees'
+  import { isGitRepo } from '../lib/worktrees'
   import Wordmark from './Wordmark.svelte'
   import Home from './Home.svelte'
   import SessionMenu from './SessionMenu.svelte'
@@ -83,25 +83,16 @@
     })
   }
 
-  // Which heading's worktree composer is open, and where it hangs from. A
-  // worktree exists to hold a piece of work, so the panel asks what that work is
-  // and which branch to cut from; both were being decided for you before.
-  let wtPanel = $state<{
-    key: string
-    machineId: string
-    cwd: string
-    anchor: HTMLElement
-  } | null>(null)
+  // Which heading's worktree dialog is open. A worktree exists to hold a piece
+  // of work, so it asks what that work is, which branch to cut from and how to
+  // run it; all of that was being decided for you before.
+  let wtPanel = $state<{ key: string; machineId: string; cwd: string } | null>(null)
 
-  function openWorktree(
-    key: string,
-    target: { machineId: string; cwd: string },
-    anchor: HTMLElement,
-  ) {
-    wtPanel = { key, machineId: target.machineId, cwd: target.cwd, anchor }
+  function openWorktree(key: string, target: { machineId: string; cwd: string }) {
+    wtPanel = { key, machineId: target.machineId, cwd: target.cwd }
   }
 
-  // One entry point for both heading buttons. A prompt means the composer was
+  // One entry point for both heading buttons. A prompt means the dialog was
   // used, so the session opens with the work already sent; without one this is
   // the plus button's one tap into an empty session, which is deliberately still
   // a single tap.
@@ -109,14 +100,14 @@
     key: string,
     machineId: string,
     cwd: string,
-    wt?: WorktreeChoice,
+    spec: StartSpec = {},
     prompt = '',
   ) {
     if (starting[key]) return
     starting = { ...starting, [key]: true }
     try {
-      if (prompt) await app.startWork(machineId, cwd, prompt, undefined, wt)
-      else await app.quickStart(machineId, cwd, wt)
+      if (prompt) await app.startWork(machineId, cwd, prompt, spec)
+      else await app.quickStart(machineId, cwd, spec)
     } catch {
       // Both have already reported it; nothing to add here.
     } finally {
@@ -283,17 +274,17 @@
 {#if wtPanel}
   <WorktreeStart
     base={app.baseForMachine(wtPanel.machineId)}
+    machineId={wtPanel.machineId}
     repo={wtPanel.cwd}
-    anchor={wtPanel.anchor}
     busy={!!starting[wtPanel.key]}
     onclose={() => (wtPanel = null)}
-    onstart={(prompt, choice) => {
+    onstart={(prompt, spec) => {
       // Held open until the start resolves rather than closed on the click: a
       // worktree runs its setup command before the agent may touch the tree, and
-      // that can take a while. A sidebar that went quiet for a minute would read
-      // as a tap that did nothing.
+      // that can take a while. A dialog that vanished into a quiet sidebar for a
+      // minute would read as a click that did nothing.
       const p = wtPanel!
-      startInGroup(p.key, p.machineId, p.cwd, choice, prompt).finally(() => {
+      startInGroup(p.key, p.machineId, p.cwd, spec, prompt).finally(() => {
         if (wtPanel === p) wtPanel = null
       })
     }}
@@ -326,7 +317,7 @@
         <button
           class="gadd wt"
           disabled={starting[group.key]}
-          onclick={(e) => openWorktree(group.key, target, e.currentTarget)}
+          onclick={() => openWorktree(group.key, target)}
           aria-label="New worktree session in {group.label}"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v12M6 21a2 2 0 100-4 2 2 0 000 4zM6 7a2 2 0 100-4 2 2 0 000 4zM18 11a2 2 0 100-4 2 2 0 000 4zM18 9v2a4 4 0 01-4 4H6" /></svg>

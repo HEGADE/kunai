@@ -29,7 +29,7 @@ import {
   VERSION_TTL,
 } from './update'
 import { startWorktree, type WorktreeChoice } from './worktrees'
-import type { Job, Machine, Meta, TaggedHistoryEntry, TaggedJob, TaggedMeta } from './types'
+import type { Job, Machine, Meta, PermissionMode, TaggedHistoryEntry, TaggedJob, TaggedMeta } from './types'
 
 // Top-level app state. One installed client can drive Claude sessions across
 // several machines on the tailnet: the machine that served the PWA is the "hub"
@@ -42,6 +42,25 @@ export interface Tab {
   id: string
 }
 export const tabKey = (machineId: string, id: string) => `${machineId}:${id}`
+
+// StartSpec is everything about a new session other than where it runs and what
+// it is asked to do. Every field is optional and an omitted one takes the app
+// default, so a one-tap start passes nothing at all. It exists as one shape so
+// the launcher, the new-session dialog and the sidebar cannot drift into
+// offering different subsets of the same choice.
+export interface StartSpec {
+  // cli names the Claude account or the provider; the two share one list because
+  // from here they are the same decision: which brain runs this.
+  cli?: string
+  model?: string
+  // effort is spawn-time only, which is why it belongs to starting rather than to
+  // the session.
+  effort?: string
+  // mode is the permission mode, also spawn-time: set afterwards it arrives too
+  // late to govern the first tool call.
+  mode?: PermissionMode
+  wt?: WorktreeChoice
+}
 
 // How many recently-closed tabs to keep warm (connection alive, history already
 // parsed) so reopening one is instant. Small, because each holds a live socket.
@@ -701,13 +720,7 @@ class AppStore {
   // folder, land in a session, type), which is two more than the thought deserves.
   // The prompt waits for the connection's backlog rather than firing blind, since a
   // send on a socket that has not opened yet is silently dropped.
-  async startWork(
-    machineId: string,
-    cwd: string,
-    prompt: string,
-    cli?: string,
-    wt?: WorktreeChoice,
-  ) {
+  async startWork(machineId: string, cwd: string, prompt: string, spec: StartSpec = {}) {
     const text = prompt.trim()
     if (!text) return
     try {
@@ -717,15 +730,18 @@ class AppStore {
       // that the session's cwd is the worktree.
       // The brief names the branch when the picker's name was left empty, which
       // it usually is: you have already said what the work is.
-      const worktree = wt ? await startWorktree(base, cwd, wt, text) : ''
+      const worktree = spec.wt ? await startWorktree(base, cwd, spec.wt, text) : ''
       const meta = await createSession(base, {
         cwd,
-        model: DEFAULT_MODEL,
-        effort: DEFAULT_EFFORT,
+        model: spec.model || DEFAULT_MODEL,
+        effort: spec.effort || DEFAULT_EFFORT,
         // Which account or provider runs it. Omitted means the machine's default,
         // which is what a single-account machine always wants.
-        cli: cli || undefined,
+        cli: spec.cli || undefined,
         worktree: worktree || undefined,
+        // Omitted means the server's default. Sent, it is a spawn flag, which is
+        // the only way it can govern the first tool call.
+        mode: spec.mode,
       })
       this.open(machineId, meta.id)
       const conn = this.conns.get(tabKey(machineId, meta.id))
@@ -740,17 +756,20 @@ class AppStore {
   }
 
   // quickStart is the sidebar's one-tap "work here now": no prompt, no questions.
-  // wt is optional so the same path serves the branch button beside it, which is
-  // the same one tap with a different destination.
-  async quickStart(machineId: string, cwd: string, wt?: WorktreeChoice) {
+  // The spec is optional so the same path serves the worktree button beside it,
+  // which is the same start with somewhere else to run and something to say
+  // about how.
+  async quickStart(machineId: string, cwd: string, spec: StartSpec = {}) {
     try {
       const base = this.baseForMachine(machineId)
-      const worktree = wt ? await startWorktree(base, cwd, wt) : ''
+      const worktree = spec.wt ? await startWorktree(base, cwd, spec.wt) : ''
       const meta = await createSession(base, {
         cwd,
-        model: DEFAULT_MODEL,
-        effort: DEFAULT_EFFORT,
+        model: spec.model || DEFAULT_MODEL,
+        effort: spec.effort || DEFAULT_EFFORT,
+        cli: spec.cli || undefined,
         worktree: worktree || undefined,
+        mode: spec.mode,
       })
       this.open(machineId, meta.id)
       this.refresh()
