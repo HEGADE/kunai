@@ -717,6 +717,23 @@ async function main() {
     escaped.length === 0,
     escaped.join(' / ') || 'none',
   )
+  // The stem is continuous where there is nothing to mark. A node carries a ring in
+  // the background colour so it reads as sitting ON the line rather than crossing
+  // it, and that ring was on every node including a past session's, whose fill is
+  // transparent -- so invisible rings chopped the line into ticks and the stem
+  // looked like a dashed border with no dots on it.
+  const chopped = await tp.evaluate(() =>
+    [...document.querySelectorAll('.kids.stemmed .node')].filter((n) => {
+      const cs = getComputedStyle(n)
+      const invisible = cs.backgroundColor === 'rgba(0, 0, 0, 0)' || cs.backgroundColor === 'transparent'
+      return invisible && cs.boxShadow !== 'none'
+    }).length,
+  )
+  check(
+    'a node with nothing to show does not cut the stem',
+    chopped === 0,
+    `${chopped} invisible nodes carrying a ring`,
+  )
   await touch.close()
   check(
     'and a live row still carries the state the server reported',

@@ -1102,13 +1102,18 @@
     height: 7px;
     margin-top: -3.5px;
     border-radius: 50%;
-    /* Ringed in the list background so the stem is cut rather than crossed, which
-       is what makes it read as a node ON the line. */
-    box-shadow: 0 0 0 2.5px var(--bg-raised);
     background: transparent;
   }
+  /* The ring cuts the stem so a node reads as sitting ON the line rather than
+     crossing it -- but only where there is a node to see. It was on every .node
+     including a past session's, whose fill is transparent, so invisible rings
+     chopped the stem into ticks: a dashed line with no dots on it, which is
+     exactly how it looked. A past session lets the line run straight through. */
+  .node:not([data-state='past']) {
+    box-shadow: 0 0 0 2.5px var(--bg-raised);
+  }
   @media (max-width: 860px) {
-    .node {
+    .node:not([data-state='past']) {
       box-shadow: 0 0 0 2.5px var(--bg);
     }
   }
