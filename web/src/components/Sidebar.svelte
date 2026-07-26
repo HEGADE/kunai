@@ -4,6 +4,8 @@
   import { enablePush, pushState } from '../lib/push'
   import type { TaggedHistoryEntry, TaggedMeta } from '../lib/types'
   import { groupSessions, groupStartTarget } from '../lib/grouping'
+  import { shortAgo } from '../lib/reltime'
+  import { hasWork, isAwaiting, isWorking, needsAttention, summarise } from '../lib/sidebar'
   import { isGitRepo } from '../lib/worktrees'
   import Wordmark from './Wordmark.svelte'
   import Home from './Home.svelte'
@@ -115,6 +117,45 @@
       delete next[key]
       starting = next
     }
+  }
+
+  // Every state read in this file goes through the app's liveState, which prefers
+  // an open session's own socket over the polled list. Reading Meta.state
+  // directly is how the folder summary came to announce "1 working" on a session
+  // that had already stopped to ask a question: the list is refreshed on a slow
+  // beat by design, because a live session is supposed to report itself.
+  const stateful = (m: TaggedMeta) => ({ state: app.liveState(m) })
+
+  // Which folders are collapsed, remembered across reloads. A folder you closed
+  // because you are not working in it today should stay closed tomorrow.
+  let collapsed = $state<Record<string, boolean>>(readCollapsed())
+  function readCollapsed(): Record<string, boolean> {
+    try {
+      const raw = localStorage.getItem('kunai-sb-collapsed')
+      const keys = raw ? (JSON.parse(raw) as string[]) : []
+      return Object.fromEntries(keys.map((k) => [k, true]))
+    } catch {
+      return {}
+    }
+  }
+  function toggleGroup(key: string) {
+    collapsed = { ...collapsed, [key]: !collapsed[key] }
+    try {
+      localStorage.setItem(
+        'kunai-sb-collapsed',
+        JSON.stringify(Object.keys(collapsed).filter((k) => collapsed[k])),
+      )
+    } catch {
+      // A browser refusing storage costs the memory of the choice, not the choice.
+    }
+  }
+
+  // Time is only shown for a session that is not running: a live one has
+  // something better to say about itself. Live sessions carry no mtime anyway.
+  const staleHours = 24
+  const isStale = (iso: string) => {
+    const t = new Date(iso).getTime()
+    return !!t && Date.now() - t > staleHours * 3600_000
   }
 
   // What to call a worktree session: its branch, minus the kunai/ prefix. The
@@ -243,12 +284,18 @@
 {/snippet}
 
 {#snippet activeRow(m: TaggedMeta)}
-  <div class="row" class:current={app.activeId === m.id && app.activeMachineId === m.machineId}>
+  <!-- State is a left edge, not a dot on an icon. The icon it replaced was the
+       same chat bubble on every row, which said nothing (they are all sessions)
+       and spent 28px of the left edge saying it. An edge reads at a glance,
+       survives the collapsed rail, and leaves the row's brightness free to mean
+       something else. -->
+  <div
+    class="row"
+    class:current={app.activeId === m.id && app.activeMachineId === m.machineId}
+    class:waiting={isAwaiting(stateful(m))}
+  >
+    <span class="edge" data-state={app.liveState(m)} aria-hidden="true"></span>
     <button class="hit" onclick={() => app.open(m.machineId, m.id)}>
-      <span class="ic">
-        {@render bubble()}
-        <span class="live" data-state={m.state}></span>
-      </span>
       <span class="name">{shortName(m)}</span>
       <!-- A worktree session sits under its repository's heading like any other,
            so the branch is what tells it apart from a session in the main
@@ -257,6 +304,15 @@
            just say it twice. -->
       {#if m.repo && wtName(m) && wtName(m) !== shortName(m)}
         <span class="wtchip mono" title="On {m.branch} in {m.cwd}">{wtName(m)}</span>
+      {/if}
+      <!-- A live session says what it is doing where a past one says how long
+           ago it was. Only the two states worth trusting are named: a resumed
+           session reports `starting` until its first prompt, so anything built on
+           that would sit there claiming work forever. -->
+      {#if isAwaiting(stateful(m))}
+        <span class="tail needs">needs you</span>
+      {:else if isWorking(stateful(m))}
+        <span class="tail working">working</span>
       {/if}
     </button>
     <SessionMenu
@@ -291,61 +347,85 @@
   />
 {/if}
 
-{#snippet groupHead(group: { key: string; label: string; named: boolean; items: { machineId: string; cwd: string }[] })}
+{#snippet groupHead(group: { key: string; label: string; named: boolean; items: (GroupedRow)[] })}
   {@const target = groupStartTarget(group)}
-  <!-- Mono, because a project or workspace name is data rather than prose. A
-       named workspace gets a leading mark so you can tell at a glance which
-       headings you chose and which were derived from a directory. -->
-  <div class="grp mono" class:named={group.named} title={group.named ? 'Workspace' : 'Project directory'}>
-    {#if group.named}<span class="wsmark" aria-hidden="true"></span>{/if}
-    <span class="glabel">{group.label}</span>
-    <!-- One tap starts a session in this folder with the usual defaults: the
-         heading already names the directory, so asking again would be asking a
-         question you just answered. Absent when the group spans directories, since
-         there is then no single folder to mean. -->
-    {#if target}
-      <!-- Two buttons rather than one that asks. The plus keeps its promise of
-           starting work in this folder with no questions; the branch beside it is
-           the same single tap into a checkout of its own, taking every default
-           (the repository's own base and its own setup command). Choosing a base
-           or a name is what the launcher's picker is for. -->
-      {#if isRepo[target.cwd]}
-        <Hint
-          title="Another agent, no collisions"
-          body="Say what the work is and which branch to cut from, and it happens in a separate checkout of that branch. Another agent can work there while this checkout stays exactly as you left it. It is git's own worktree feature, so the repository itself is untouched."
-        >
-        <button
-          class="gadd wt"
-          disabled={starting[group.key]}
-          onclick={() => openWorktree(group.key, target)}
-          aria-label="New worktree session in {group.label}"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v12M6 21a2 2 0 100-4 2 2 0 000 4zM6 7a2 2 0 100-4 2 2 0 000 4zM18 11a2 2 0 100-4 2 2 0 000 4zM18 9v2a4 4 0 01-4 4H6" /></svg>
-          <!-- A tooltip is a cursor affordance, so on a touch screen this button
-               would be an unexplained icon. The heading row has the space going
-               spare, so the word goes there instead. -->
-          <span class="wtlbl mono">worktree</span>
-        </button>
-        </Hint>
+  {@const live = group.items.filter((it) => it.kind === 'live').map((it) => stateful(it.m))}
+  {@const state = summarise(live)}
+  {@const attention = needsAttention(live)}
+  <!-- The folder reports the state of the work inside it, rather than that work
+       being lifted into a section of its own. A folder holding a question opens
+       itself however you left it: a collapsed folder hiding an agent stopped on a
+       click you never saw is worse than one you have to close again. -->
+  <div class="grp" class:named={group.named} class:shut={collapsed[group.key] && !attention}>
+    <button
+      class="gtoggle"
+      onclick={() => toggleGroup(group.key)}
+      title={group.named ? 'Workspace' : 'Project directory'}
+      aria-expanded={!collapsed[group.key] || attention}
+    >
+      <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
+      {#if group.named}<span class="wsmark" aria-hidden="true"></span>{/if}
+      <!-- Mono, because a project or workspace name is data rather than prose. A
+           named workspace gets a leading mark so you can tell at a glance which
+           headings you chose and which were derived from a directory. -->
+      <span class="glabel mono">{group.label}</span>
+      {#if state}
+        <span class="gstate" class:alert={attention}>{state}</span>
+      {:else if collapsed[group.key]}
+        <span class="gcount mono">{group.items.length}</span>
       {/if}
-      <button
-        class="gadd"
-        disabled={starting[group.key]}
-        onclick={() => startInGroup(group.key, target.machineId, target.cwd)}
-        title="New session in {target.cwd}"
-        aria-label="New session in {group.label}"
-      >
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
-      </button>
+      {#if collapsed[group.key] && !state && hasWork(live)}
+        <span class="gdot" aria-hidden="true"></span>
+      {/if}
+    </button>
+    <!-- The two start actions. They used to sit visible on every heading, which
+         stacked four buttons down the right edge of the list; they are chrome for
+         a thing you do occasionally, so they wait for the pointer. A touch screen
+         has no pointer to wait for, so there they stay put (see .gacts). -->
+    {#if target}
+      <span class="gacts">
+        {#if isRepo[target.cwd]}
+          <Hint
+            title="Another agent, no collisions"
+            body="Say what the work is and which branch to cut from, and it happens in a separate checkout of that branch. Another agent can work there while this checkout stays exactly as you left it. It is git's own worktree feature, so the repository itself is untouched."
+          >
+            <button
+              class="gadd"
+              disabled={starting[group.key]}
+              onclick={() => openWorktree(group.key, target)}
+              aria-label="New worktree session in {group.label}"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v12M6 21a2 2 0 100-4 2 2 0 000 4zM6 7a2 2 0 100-4 2 2 0 000 4zM18 11a2 2 0 100-4 2 2 0 000 4zM18 9v2a4 4 0 01-4 4H6" /></svg>
+            </button>
+          </Hint>
+        {/if}
+        <button
+          class="gadd"
+          disabled={starting[group.key]}
+          onclick={() => startInGroup(group.key, target.machineId, target.cwd)}
+          title="New session in {target.cwd}"
+          aria-label="New session in {group.label}"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+        </button>
+      </span>
     {/if}
   </div>
 {/snippet}
 
 {#snippet recentRow(h: TaggedHistoryEntry)}
-  <div class="row">
+  <!-- Recency is the orientation the list had none of: with no time at all, a
+       session from two minutes ago and one from three weeks ago read identically.
+       It costs no extra row, and the title dims past a day so brightness carries
+       the same information a second way. -->
+  <div class="row" class:stale={isStale(h.mtime)}>
+    <span class="edge" aria-hidden="true"></span>
     <button class="hit" onclick={() => resume(h)} disabled={!!resuming}>
-      <span class="ic">{@render bubble()}</span>
       <span class="name">{resuming === h.id ? 'Resuming…' : h.title}</span>
+      {#if h.repo && wtName(h) && wtName(h) !== h.title}
+        <span class="wtchip mono" title="On {h.branch} in {h.cwd}">{wtName(h)}</span>
+      {/if}
+      <span class="tail mono" title={h.mtime}>{shortAgo(h.mtime)}</span>
     </button>
     <SessionMenu
       machineId={h.machineId}
@@ -428,12 +508,14 @@
       {/each}
     {/if}
 
-    {#if sessionGroups.length > 0}
-      <div class="sec">Sessions</div>
-      {#each sessionGroups as g (g.key)}
-        {#if sessionGroups.length > 1}
-          {@render groupHead(g)}
-        {/if}
+    <!-- No "Sessions" heading. It labelled everything, which is no information,
+         and it was the third level of heading over two levels of structure. -->
+    {#each sessionGroups as g (g.key)}
+      {@const attention = needsAttention(g.items.filter((it) => it.kind === 'live').map((it) => stateful(it.m)))}
+      {#if sessionGroups.length > 1}
+        {@render groupHead(g)}
+      {/if}
+      {#if sessionGroups.length === 1 || !collapsed[g.key] || attention}
         {#each g.items as it (it.kind + ':' + it.machineId + ':' + rowId(it))}
           {#if it.kind === 'live'}
             {@render activeRow(it.m)}
@@ -441,8 +523,8 @@
             {@render recentRow(it.h)}
           {/if}
         {/each}
-      {/each}
-    {/if}
+      {/if}
+    {/each}
 
     {#if app.history.length > 0}
       <button class="viewall" onclick={() => app.openAllSessions()}>
@@ -476,29 +558,23 @@
          stacked list they cost 188px, which is nearly a third of a phone screen
          permanently spent on things you are not looking at. On a phone they
          become one row instead; see .nav below. -->
-    <nav class="nav">
-    <button class="navitem" onclick={() => app.openChannels()}>
-      <span class="ic">
+    <!-- Four destinations you visit rarely. As labelled rows they cost about
+         180px of the list permanently; as one icon row they cost 40. The phone
+         layout already did this, and there was no reason the desktop kept paying.
+         Labels come back on hover, and stay in the aria-labels regardless. -->
+    <nav class="nav" aria-label="Configuration">
+      <button class="navitem" onclick={() => app.openChannels()} title="Channels" aria-label="Channels">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 01-9 8.4 8.5 8.5 0 01-3.9-.9L3 20.5l1.5-4.4a8.4 8.4 0 01-.9-3.9 8.5 8.5 0 018.4-8.7h.5a8.5 8.5 0 018.5 8.5z" /></svg>
-      </span>
-      <span class="nlbl">Channels</span>
-    </button>
-    <button class="navitem" onclick={() => app.openAccounts()}>
-      <span class="ic">
+      </button>
+      <button class="navitem" onclick={() => app.openAccounts()} title="Accounts" aria-label="Accounts">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 00-3-3.87" /><path d="M16 3.13a4 4 0 010 7.75" /></svg>
-      </span>
-      <span class="nlbl">Accounts</span>
-    </button>
-    <button class="navitem" onclick={() => app.openProviders()}>
-      <span class="ic">
+      </button>
+      <button class="navitem" onclick={() => app.openProviders()} title="Providers" aria-label="Providers">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /></svg>
-      </span>
-      <span class="nlbl">Providers</span>
-    </button>
-    <button class="navitem" onclick={() => app.openSettings()}>
-      <span class="ic">{@render gear()}</span>
-      Settings
-    </button>
+      </button>
+      <button class="navitem" onclick={() => app.openSettings()} title="Settings" aria-label="Settings">
+        {@render gear()}
+      </button>
     </nav>
   </div>
 </div>
@@ -713,12 +789,14 @@
       padding: 8px 2px 16px;
     }
   }
+  /* Raised from --text-4 (3.07:1 on the sidebar, under AA for text) to --text-3
+     (5.11:1). It was legible only if you already knew what it said. */
   .sec {
     font-size: 11.5px;
     font-weight: 550;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: var(--text-4);
+    color: var(--text-3);
     padding: 12px 6px 8px;
   }
   /* The branch a worktree session is on: data, so mono, and quiet, since the
@@ -740,41 +818,107 @@
   /* A project or workspace heading sits under a section heading, so it is
      quieter than one: sentence case, not uppercase, and indented to the row
      text so the sessions below read as belonging to it. */
+  /* The heading is the structure of this list, so it is a real row now: a toggle
+     you can hit, a name at --text-2 (8.0:1, was --text-3 at 5.1) and a state line
+     beside it. Its actions wait for the pointer instead of stacking buttons down
+     the right edge of every group. */
   .grp {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    color: var(--text-3);
-    padding: 7px 8px 3px 10px;
-    min-width: 0;
+    gap: 2px;
+    padding: 10px 6px 3px 6px;
   }
-  /* The label takes the slack, so the buttons sit together at the end whatever
-     wraps them. They used to push themselves there with margin-left:auto on the
-     first of them, which broke the moment one was wrapped for a hover hint:
-     display:contents keeps the layout but not the sibling relationship, so the
-     adjacency rule stopped matching and both buttons claimed the space again. */
-  .glabel {
+  .gtoggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     flex: 1;
     min-width: 0;
+    padding: 3px 4px;
+    border: 0;
+    border-radius: var(--r-sm);
+    background: transparent;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .gtoggle:hover {
+    background: var(--panel);
+  }
+  .chev {
+    flex: none;
+    color: var(--text-4);
+    transform: rotate(90deg);
+    transition: transform 0.14s ease;
+  }
+  .grp.shut .chev {
+    transform: rotate(0deg);
+  }
+  .glabel {
+    flex: none;
+    max-width: 60%;
+    font-size: 11.5px;
+    color: var(--text-2);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    unicode-bidi: plaintext;
   }
-  /* Named workspaces read a shade stronger than a derived directory: you chose
-     them, so they are the heading you are actually looking for. */
-  .grp.named {
-    color: var(--text-3);
+  .grp.named .glabel {
+    font-family: var(--sans);
+    font-size: 12px;
   }
   .wsmark {
     flex: none;
     width: 4px;
     height: 4px;
-    border-radius: 1px;
-    background: currentColor;
-    opacity: 0.7;
+    border-radius: 50%;
+    background: var(--text-3);
   }
+  /* What the folder reports. Only running and awaiting_permission are ever
+     counted; see lib/sidebar.ts for why `starting` is not. */
+  .gstate {
+    flex: 1;
+    min-width: 0;
+    font-size: 10.5px;
+    color: var(--text-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .gstate.alert {
+    color: var(--busy);
+  }
+  .gcount {
+    flex: none;
+    font-size: 10.5px;
+    color: var(--text-4);
+  }
+  .gdot {
+    flex: none;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--live);
+  }
+  /* Hidden until the pointer arrives, but only where there is a pointer: a touch
+     screen never hovers, so on one the actions simply stay. */
+  .gacts {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    flex: none;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .gacts {
+      opacity: 0;
+      transition: opacity 0.12s;
+    }
+    .grp:hover .gacts,
+    .gacts:focus-within {
+      opacity: 1;
+    }
+  }
+
   .note {
     color: var(--text-3);
     font-size: 12.5px;
@@ -792,54 +936,50 @@
   .row.current {
     background: var(--panel-2);
   }
+  /* An awaiting row is the one thing in this list that is actually blocked on
+     you, so it is the only row allowed to speak up. */
+  .row.waiting {
+    background: color-mix(in srgb, var(--busy) 9%, transparent);
+  }
   .hit {
     width: 100%;
     display: flex;
     align-items: center;
-    gap: 11px;
+    gap: 8px;
     text-align: left;
-    padding: 8px 10px;
+    padding: 8px 10px 8px 14px;
   }
   .hit:disabled {
     opacity: 0.55;
   }
-  .ic {
-    position: relative;
-    flex: none;
-    display: inline-flex;
-    color: var(--text-4);
-  }
-  .row:hover .ic,
-  .row.current .ic {
-    color: var(--text-3);
-  }
-  /* Small presence dot on the icon for live sessions. */
-  .live {
+  /* State as a left edge. Absent (transparent) for a past session, so the
+     column only carries marks where there is something to mark. */
+  .edge {
     position: absolute;
-    right: -3px;
-    top: -3px;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    border: 2px solid var(--bg);
+    left: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 2px;
+    height: 15px;
+    border-radius: 2px;
+    background: transparent;
+  }
+  .edge[data-state='idle'] {
     background: var(--text-4);
   }
-  .row:hover .live {
-    border-color: var(--panel);
-  }
-  .row.current .live {
-    border-color: var(--panel-2);
-  }
-  .live[data-state='idle'] {
+  .edge[data-state='running'] {
     background: var(--live);
-  }
-  .live[data-state='starting'],
-  .live[data-state='running'] {
-    background: var(--busy);
     animation: soften 1.6s ease-in-out infinite;
   }
-  .live[data-state='awaiting_permission'] {
+  .edge[data-state='awaiting_permission'] {
     background: var(--busy);
+    height: 19px;
+  }
+  /* `starting` is deliberately the same quiet mark as idle rather than a busy
+     one: a resumed session reads `starting` until its first prompt, so animating
+     it would show work that is not happening. */
+  .edge[data-state='starting'] {
+    background: var(--text-4);
   }
   @keyframes soften {
     50% {
@@ -853,8 +993,8 @@
     color: var(--text-2);
     white-space: nowrap;
     overflow: hidden;
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
-    mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
   }
   .row:hover .name,
   .row.current .name {
@@ -862,6 +1002,36 @@
   }
   .row.current .name {
     font-weight: 500;
+  }
+  /* Brightness carries recency. Everything used to sit at --text/16.5:1, the
+     maximum, so the eye was pulled equally to a session from three weeks ago and
+     to one running right now; past a day a row steps back. */
+  .row.stale .name {
+    color: var(--text-3);
+  }
+  .row.stale:hover .name {
+    color: var(--text-2);
+  }
+  /* The right-hand column: a time for a past session, a word for a live one.
+     Right-aligned with a floor width so the times line up as a column instead of
+     ragged against each title, and padded off the name, whose fade otherwise ran
+     straight into it and read as a collision rather than an ellipsis. */
+  .tail {
+    flex: none;
+    min-width: 26px;
+    padding-left: 4px;
+    font-size: 10.5px;
+    color: var(--text-4);
+    text-align: right;
+  }
+  .row:hover .tail {
+    color: var(--text-3);
+  }
+  .tail.working {
+    color: var(--live);
+  }
+  .tail.needs {
+    color: var(--busy);
   }
   /* The per-row menu (SessionMenu) lives where the close button used to; reveal
      its trigger on row hover, matching the old close affordance. */
@@ -915,50 +1085,30 @@
     margin: 0;
     line-height: 1.55;
   }
+  /* One row of icons on every screen, not four labelled rows on desktop and one
+     row on a phone. The labels are in title and aria-label, so a pointer gets
+     them on hover and a screen reader always does; what they are not is 180px of
+     the session list spent permanently on things you open once a week. */
+  .nav {
+    display: flex;
+    gap: 2px;
+  }
   .navitem {
     display: flex;
     align-items: center;
-    gap: 10px;
-    width: 100%;
-    padding: 8px 10px;
+    justify-content: center;
+    flex: 1;
+    min-width: 0;
+    height: 38px;
+    border: 0;
     border-radius: var(--r-sm);
-    font-size: 13.5px;
-    color: var(--text-2);
-  }
-  /* A phone lays them side by side: icon over label, the shape of a tab bar.
-     The labels stay, because an unexplained icon is the problem this is not
-     meant to trade for. Desktop keeps the stacked list, where the room exists. */
-  @media (max-width: 860px) {
-    .nav {
-      display: flex;
-      gap: 2px;
-    }
-    .navitem {
-      flex: 1;
-      min-width: 0;
-      flex-direction: column;
-      gap: 4px;
-      padding: 8px 2px 6px;
-      font-size: 10.5px;
-      color: var(--text-3);
-    }
-    .navitem .nlbl {
-      max-width: 100%;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
+    background: transparent;
+    color: var(--text-3);
+    cursor: pointer;
   }
   .navitem:hover {
     color: var(--text);
     background: var(--panel);
-  }
-  .navitem .ic {
-    display: flex;
-    color: var(--text-3);
-  }
-  .navitem:hover .ic {
-    color: var(--text-2);
   }
   /* Opaque and never-shrinking, sitting above the list: even if the scroll area
      ever runs long on a stubborn browser, the footer covers it cleanly instead
@@ -999,9 +1149,6 @@
     border-radius: 50%;
     background: var(--text-4);
   }
-  .ndot.on {
-    background: var(--live);
-  }
 
   /* The start action on a group heading. Hiding it until hover was a mistake: an
      action you cannot see is an action nobody uses, and on touch there is no hover
@@ -1021,27 +1168,14 @@
     transition: color 0.12s, background 0.12s;
   }
   /* A finger is not a cursor. These are the smallest targets in the sidebar and
-     there are now two of them side by side, so a touch screen gets room to hit
-     the one it meant. */
-  /* The label is hidden wherever a tooltip works, so the desktop heading stays
-     as spare as it was. */
-  .wtlbl {
-    display: none;
-  }
+     there are two of them side by side, so a touch screen gets room to hit the
+     one it meant. The worktree label is gone with them: on touch the actions no
+     longer hide behind a hover, so the icon is reachable without a word to
+     explain a control you can just press. */
   @media (pointer: coarse) {
     .gadd {
-      width: 34px;
-      height: 34px;
-    }
-    .gadd.wt {
-      width: auto;
-      gap: 6px;
-      padding: 0 10px;
-    }
-    .wtlbl {
-      display: inline;
-      font-size: 10.5px;
-      color: var(--text-4);
+      width: 32px;
+      height: 32px;
     }
   }
   .gadd:hover,

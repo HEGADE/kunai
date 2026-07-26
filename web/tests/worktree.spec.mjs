@@ -448,14 +448,23 @@ async function main() {
       return n
     })
   check('the repository heading holds its sessions', rowsUnderRepo > 0, `${rowsUnderRepo} rows`)
-  const liveDots = await repoGroup.evaluate((el) => {
-    let n = 0
+  // The presence mark is a left edge now rather than a dot on an icon: the icon it
+  // replaced was the same chat bubble on every row, which said nothing. What
+  // matters is that a live row still carries a state, and that the state is one
+  // the server actually reported rather than a blank attribute.
+  const liveEdges = await repoGroup.evaluate((el) => {
+    const out = []
     for (let s = el.nextElementSibling; s && !s.classList.contains('grp') && !s.classList.contains('sec'); s = s.nextElementSibling) {
-      if (s.querySelector('.live')) n++
+      const e = s.querySelector('.edge[data-state]')
+      if (e) out.push(e.dataset.state)
     }
-    return n
+    return out
   })
-  check('and the live ones keep their presence dot', liveDots > 0, `${liveDots} live`)
+  check(
+    'and a live row still carries its state as a left edge',
+    liveEdges.length > 0 && liveEdges.every((s) => ['starting', 'idle', 'running', 'awaiting_permission'].includes(s)),
+    liveEdges.join(',') || '(none)',
+  )
 
   // --- the branch names itself -------------------------------------------------
   // Nobody should have to name a branch before describing the work, because

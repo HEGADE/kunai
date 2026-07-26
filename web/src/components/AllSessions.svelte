@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { longAgo } from '../lib/reltime'
   import { onMount } from 'svelte'
   import { app } from '../lib/app.svelte'
   import { createSession } from '../lib/api'
@@ -50,22 +51,6 @@
   function baseName(cwd: string): string {
     return cwd.replace(/\/+$/, '').split('/').slice(-1)[0] || cwd
   }
-  function ago(iso: string): string {
-    const t = new Date(iso).getTime()
-    if (!t) return ''
-    const s = Math.floor((Date.now() - t) / 1000)
-    if (s < 60) return 'just now'
-    const m = Math.floor(s / 60)
-    if (m < 60) return `${m}m ago`
-    const h = Math.floor(m / 60)
-    if (h < 24) return `${h}h ago`
-    const d = Math.floor(h / 24)
-    if (d < 30) return `${d}d ago`
-    const mo = Math.floor(d / 30)
-    if (mo < 12) return `${mo}mo ago`
-    return `${Math.floor(mo / 12)}y ago`
-  }
-
   async function open(h: TaggedHistoryEntry) {
     if (resuming) return
     resuming = h.id
@@ -126,7 +111,7 @@
               {baseName(h.cwd)}
               {#if multi}· {machineLabel(h.machineId)}{/if}
               {#if h.cli}· {h.cli}{/if}
-              · {ago(h.mtime)}
+              · {longAgo(h.mtime)}
             </span>
           </span>
         </button>

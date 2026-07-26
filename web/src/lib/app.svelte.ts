@@ -114,6 +114,32 @@ class AppStore {
     void this.connsVersion
     return this.conns.get(tabKey(t.machineId, t.id)) ?? null
   }
+
+  // liveState is what a session's state actually is, as opposed to what the last
+  // poll said it was.
+  //
+  // The session list is polled, deliberately slowly, because "an open session
+  // reports its own state over its socket" -- so Meta.state can be a whole poll
+  // behind, and anything that displays it prominently will show the wrong thing
+  // for seconds at a time. That was fine while it only drove a small dot; it is
+  // not fine now that a folder announces "1 needs you" from it. An open tab's
+  // socket knows immediately, so prefer it and fall back to the polled value.
+  liveState(m: { machineId: string; id: string; state?: string }): string {
+    void this.connsVersion
+    const conn = this.conns.get(tabKey(m.machineId, m.id))
+    return conn?.sessionState ?? m.state ?? ''
+  }
+
+  // busy reports whether any session is mid-turn or waiting on an answer, by the
+  // freshest reading available. It sets the polling cadence: a status board is
+  // only worth having if it is roughly current, and the cost of asking more often
+  // is only paid while there is something happening.
+  get busy(): boolean {
+    return this.sessions.some((m) => {
+      const st = this.liveState(m)
+      return st === 'running' || st === 'awaiting_permission'
+    })
+  }
   showNew = $state(false)
   showSettings = $state(false)
   showAccounts = $state(false)
@@ -323,9 +349,12 @@ class AppStore {
       if (t % 4 === 0) this.loadSchedules() // next-fire times (~16s)
       if (t % 75 === 0) this.loadLatestVersion() // re-check GitHub ~every 5 min
       // The session list doubles as the per-machine liveness probe, so it sets
-      // the base beat. It no longer has to be quick: an open session reports its
-      // own state over its socket, and anything the user does refreshes at once.
-      if (t % 2 === 0) {
+      // the base beat. Every tick while anything is working, every other tick
+      // when nothing is: the sidebar now reports each folder's state from this
+      // list, and a status board that is eight seconds stale is a status board
+      // that tells you an agent is working after it stopped to ask you something.
+      // Idle machines pay nothing for this, because idle is when it backs off.
+      if (t % 2 === 0 || this.busy) {
         this.refresh({
           stats: t % 4 === 0, // gauges (~16s)
           history: t % 10 === 0, // resumable list; only moves when a session ends (~40s)
