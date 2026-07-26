@@ -5,6 +5,7 @@
   import { formatDuration, formatTokens, formatCost } from '../lib/format'
   import { app } from '../lib/app.svelte'
   import Skeleton from './Skeleton.svelte'
+  import Spinner from './Spinner.svelte'
 
   // isProvider: the session runs a non-Claude model through a proxy. The CLI still
   // prices tokens at Claude's rates, so its cost figure is fiction there and is
@@ -203,6 +204,7 @@
               <div class="ract">
                 <button class="rcancel" onclick={() => (asking = false)}>Cancel</button>
                 <button class="rgo" disabled={busy} onclick={confirmRevert}>
+                  {#if busy}<Spinner size={11} />{/if}
                   {busy ? 'Reverting…' : 'Revert'}
                 </button>
               </div>
@@ -351,6 +353,9 @@
   }
   .rcancel,
   .rgo {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     padding: 5px 12px;
     border-radius: var(--r-sm);
     font: inherit;

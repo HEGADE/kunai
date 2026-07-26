@@ -100,6 +100,58 @@ button.go:active:not(:disabled) {
   transform: scale(0.995);
   opacity: 0.9;
 }
+
+/* Things that appear over the page announce themselves, because appearing is the
+   only chance they get to say where they came from. Before this a dialog and its
+   backdrop were simply there on the next frame, which reads as a hard cut and
+   loses the relationship between the control you pressed and the panel that
+   answered.
+   Done as an animation on mount, not a Svelte transition, so it costs no JS and
+   applies to every popover in the app without each one importing anything. Only
+   opacity and transform, both compositor properties, so none of it can cost a
+   layout pass on a phone. The global reduced-motion rule zeroes the duration,
+   which leaves the end state -- exactly right, since the end state IS the panel.
+   Popovers scale from 0.98 and rise 3px: enough to read as arriving, not enough
+   to look like it bounced. A dialog is more of an event, so it gets the slower
+   duration and a touch more travel. */
+.pop,
+.dirpop,
+.basepop,
+.mode-pop,
+.hint,
+.fpop {
+  animation: pop-in var(--t) var(--ease);
+  transform-origin: top center;
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px) scale(0.98);
+  }
+}
+/* A menu that opens upward should grow from its own bottom edge, or it appears to
+   detach from the control it belongs to. */
+.mode-pop,
+.pop:not(.down) {
+  transform-origin: bottom center;
+}
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+.modal {
+  animation: dialog-in var(--t-slow) var(--ease);
+}
+.backdrop {
+  animation: fade-in var(--t-slow) var(--ease);
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
 input,
 textarea {
   font-family: inherit;

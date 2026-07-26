@@ -15,6 +15,7 @@
   import { getProviderModels } from '../lib/api'
   import { fetchQuery, keys, peek } from '../lib/query.svelte'
   import SegMenu, { type SegOption } from './SegMenu.svelte'
+  import Spinner from './Spinner.svelte'
   import type { Listing, PermissionMode } from '../lib/types'
 
   // Model, effort and permission mode are all spawn-time CLI flags, so they are
@@ -329,6 +330,7 @@
     <footer>
       <button class="ghost" onclick={() => app.closeNew()}>Cancel</button>
       <button class="start" onclick={start} disabled={!listing || creating}>
+        {#if creating}<Spinner />{/if}
         {creating ? 'Starting…' : `Start in ${baseName}`}
       </button>
     </footer>
@@ -678,6 +680,10 @@
   .start {
     flex: 1;
     min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
     padding: 12px;
     border-radius: var(--r);
     background: var(--white);

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { longAgo } from '../lib/reltime'
+  import Skeleton from './Skeleton.svelte'
   import { onMount } from 'svelte'
   import { app } from '../lib/app.svelte'
   import { createSession } from '../lib/api'
@@ -96,7 +97,12 @@
 
   <div class="body">
     {#if loading}
-      <p class="note mono">loading…</p>
+      <!-- Rows of the right height, so the list does not jump when it lands. This
+           view opens onto nothing but a list, which is exactly the case a word
+           like "loading…" describes but does not occupy. -->
+      <div class="skrows">
+        <Skeleton rows={8} height={34} gap={4} widths={[100]} label="Loading past sessions" />
+      </div>
     {:else if filtered.length === 0}
       <p class="note">{query ? 'No matches.' : 'No past sessions.'}</p>
     {:else}
@@ -234,6 +240,9 @@
     max-width: 760px;
     width: 100%;
     margin: 0 auto;
+  }
+  .skrows {
+    padding: 4px 0;
   }
   .note {
     color: var(--text-3);

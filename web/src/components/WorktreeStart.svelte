@@ -33,6 +33,7 @@
     showEffort,
   } from '../lib/spawnoptions'
   import SegMenu, { type SegOption } from './SegMenu.svelte'
+  import Spinner from './Spinner.svelte'
   import type { PermissionMode } from '../lib/types'
   import {
     slugPreview,
@@ -350,6 +351,7 @@
             <span class="spacer"></span>
 
             <button class="go" disabled={!canStart} onclick={start}>
+              {#if busy}<Spinner />{/if}
               {busy ? 'Starting…' : 'Start'}
             </button>
           </div>
@@ -544,6 +546,9 @@
 
   .go {
     flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     margin-left: 5px;
     padding: 6px 14px;
     border: 0;

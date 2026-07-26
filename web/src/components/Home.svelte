@@ -6,6 +6,7 @@
   import { updateAvailable } from '../lib/update'
   import { noWorktree, worktreeBranches, type BranchList, type WorktreeChoice } from '../lib/worktrees'
   import Schedules from './Schedules.svelte'
+  import Spinner from './Spinner.svelte'
   import WorktreeChoicePicker from './WorktreeChoice.svelte'
 
   let { compact = false }: { compact?: boolean } = $props()
@@ -558,6 +559,7 @@
       </div>
       <span class="lspacer"></span>
       <button class="go" disabled={!brief.trim() || !targetDir || launching} onclick={launch}>
+        {#if launching}<Spinner />{/if}
         {launching ? 'Starting…' : 'Start'}
       </button>
       <!-- Horizontally it hangs off the row's right edge rather than off the pill:
@@ -1454,6 +1456,9 @@
      page is for. */
   .go {
     flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     height: 30px;
     padding: 0 16px;
     border-radius: 8px;

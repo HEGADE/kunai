@@ -1,5 +1,6 @@
 <script lang="ts">
   import { browse } from '../lib/api'
+  import Skeleton from './Skeleton.svelte'
   import type { ChatConnection } from '../lib/chat.svelte'
   import type { Listing } from '../lib/types'
 
@@ -76,7 +77,9 @@
     {#if error}
       <p class="err">{error}</p>
     {:else if loading && !listing}
-      <p class="dim">Loading…</p>
+      <!-- Only when there is no listing at all: a folder change keeps the previous
+           one on screen and revalidates, so this is the true first load. -->
+      <Skeleton rows={6} height={26} gap={3} widths={[100]} label="Reading the folder" />
     {:else if listing}
       {#if listing.parent}
         <button class="row up" onclick={() => go(listing!.parent)}>
