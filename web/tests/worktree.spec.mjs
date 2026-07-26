@@ -351,6 +351,59 @@ async function main() {
   check('discard says what would be lost', danger.includes('Delete this worktree'), danger.trim())
   await shot(page, '07-discard-confirm')
 
+  // --- the New Session dialog -------------------------------------------------
+  // This dialog had no idea providers existed: it offered Opus/Sonnet/Haiku beside
+  // a Codex account, four buttons that all did the same nothing, because a provider
+  // serves one real upstream model. The rule lived inline in the worktree dialog,
+  // so it was right there and absent here. It is shared now (lib/spawnoptions), and
+  // this checks the place it was missing.
+  await page.locator('.sb header .add').click()
+  await page.waitForSelector('.modal .ostrip', { timeout: 15000 })
+  await page.waitForTimeout(1200)
+  const nsLabels = (await page.locator('.modal .orow .olabel').allInnerTexts()).map((t) => t.trim())
+  check(
+    'the new-session dialog asks two things, not five rows of chips',
+    nsLabels.join('/') === 'Where/How',
+    nsLabels.join(' / '),
+  )
+  const nsSegs = async () => (await page.locator('.modal .ostrip .seg').allInnerTexts()).map((t) => t.trim())
+  check('and states the choices themselves', (await nsSegs()).includes('Opus 5'), (await nsSegs()).join(' | '))
+  // One label column and one value column: five different left edges is what made
+  // the sidebar read as crooked, and the same rule applies here.
+  const nsEdges = await page.evaluate(() => {
+    const l = (s) => [...new Set([...document.querySelectorAll(s)].map((e) => Math.round(e.getBoundingClientRect().left)))]
+    return { labels: l('.modal .orow .olabel'), values: l('.modal .wtslot > *, .modal .ostrip') }
+  })
+  check(
+    'with the labels in one column and the values in another',
+    nsEdges.labels.length === 1 && nsEdges.values.length === 1,
+    `labels ${nsEdges.labels.join(',')} values ${nsEdges.values.join(',')}`,
+  )
+  const nsStats = await fetch(`${ORIGIN}/api/stats`).then((r) => r.json())
+  const nsProviders = Object.keys(nsStats.provider_models ?? {})
+  if (nsProviders.length === 0) {
+    console.log('SKIP  new-session provider control - this machine has no providers configured')
+  } else {
+    const prov = nsProviders[0]
+    await page.locator('.modal .ostrip .seg').first().click()
+    await page.locator('.modal .pop button', { hasText: prov }).first().click()
+    await page.waitForFunction(
+      (tier) => ![...document.querySelectorAll('.modal .ostrip .seg')].some((e) => e.textContent?.includes(tier)),
+      'Opus 5',
+      { timeout: 10000 },
+    ).catch(() => {})
+    const provSegs = await nsSegs()
+    check(
+      `picking ${prov} here swaps the model control too`,
+      provSegs.includes(nsStats.provider_models[prov]) && !provSegs.includes('Opus 5'),
+      provSegs.join(' | '),
+    )
+    check('and drops the effort control here as well', !provSegs.includes('High'), provSegs.join(' | '))
+    await shot(page, '13-new-session-provider')
+  }
+  await page.locator('.modal .close, .modal .ghost').first().click()
+  await page.waitForTimeout(400)
+
   // --- the sidebar's worktree composer ----------------------------------------
   // The plus keeps its promise of starting work here with no questions asked, so
   // the worktree is a second button beside it rather than a dialog in front of

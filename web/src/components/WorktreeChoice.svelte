@@ -13,6 +13,7 @@
   // derived from what you typed if you leave it empty, and the setup command is
   // whatever the repository already declares. So the fast path is one tap.
   import { onMount } from 'svelte'
+  import SegMenu from './SegMenu.svelte'
   import {
     slugPreview,
     worktreeBranches,
@@ -26,11 +27,17 @@
     base = '',
     repo = '',
     value = $bindable<WorktreeChoice>(),
+    compact = false,
     ondone,
   }: {
     base?: string
     repo?: string
     value: WorktreeChoice
+    // compact renders the choice as one dropdown instead of two rows. A popover
+    // IS the choice, so there two rows are right; embedded in a dialog beside
+    // other settings, two rows made this the only control that did not look like
+    // the others.
+    compact?: boolean
     // ondone fires when the user has finished with the control (Enter in the
     // name field), so a host that opened it in a popover can close it. Without
     // this the only way back to the Start button is a click on empty space,
@@ -104,7 +111,28 @@
   }
 </script>
 
-<div class="wtc">
+<div class="wtc" class:compact>
+  {#if compact}
+    <!-- One dropdown, so this reads like the settings beside it. The reason a
+         folder cannot hold a worktree is said on the option itself, which is where
+         the choice is refused. -->
+    <div class="crow">
+      <SegMenu
+        value={value.on ? 'worktree' : 'checkout'}
+        options={[
+          { id: 'checkout', label: 'This checkout', hint: current || undefined },
+          {
+            id: 'worktree',
+            label: 'New worktree',
+            hint: error || 'its own branch, in parallel',
+          },
+        ]}
+        up={false}
+        onpick={(id) => setMode(id === 'worktree' && isRepo)}
+      />
+      {#if error}<span class="cerr">{error}</span>{/if}
+    </div>
+  {:else}
   <!-- Two rows, like every other picker on this bar. A segmented control for a
        binary choice was the largest thing on the screen for the smallest decision
        on it, and it read as a dialog rather than a menu. -->
@@ -138,6 +166,7 @@
       <span class="md" class:err={!!error}>{error || 'its own branch, in parallel'}</span>
     </button>
   </div>
+  {/if}
 
   {#if value.on && isRepo}
     <!-- Said in text rather than on hover, because this is where the choice is
@@ -233,6 +262,23 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+  }
+  .wtc.compact {
+    gap: 7px;
+  }
+  .crow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  /* Said once, beside the control that is refusing, in the alert colour. */
+  .cerr {
+    font-size: 11px;
+    color: var(--alert);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* Rows, matching the folder and account pickers on the same bar. */

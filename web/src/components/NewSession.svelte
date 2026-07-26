@@ -4,20 +4,71 @@
   import { noWorktree, startWorktree, type WorktreeChoice } from '../lib/worktrees'
   import WorktreeChoicePicker from './WorktreeChoice.svelte'
   import { MODELS, EFFORTS, DEFAULT_MODEL, DEFAULT_EFFORT, modelOptionLabel } from '../lib/models'
-  import type { Listing } from '../lib/types'
+  import { PERMISSION_MODES } from '../lib/permissions'
+  import {
+    chosenCli as resolveCli,
+    isProvider,
+    providerModelChoices,
+    providerModelToSend,
+    showEffort,
+  } from '../lib/spawnoptions'
+  import { getProviderModels } from '../lib/api'
+  import SegMenu, { type SegOption } from './SegMenu.svelte'
+  import type { Listing, PermissionMode } from '../lib/types'
 
-  // Model + reasoning effort are both spawn-time CLI flags, so they are chosen
-  // here (effort cannot change once a session is running).
-  const modelOpts = MODELS
+  // Model, effort and permission mode are all spawn-time CLI flags, so they are
+  // chosen here: none of them can be changed into afterwards in a way that helps,
+  // and a mode set later misses the session's first tool call.
   let model = $state(DEFAULT_MODEL)
   let effort = $state(DEFAULT_EFFORT)
+  let mode = $state<PermissionMode>('auto')
   // Which Claude account (CLI) to run on, offered only when the chosen machine
   // has more than one configured. Empty means the machine's default (the first).
   let cli = $state('')
   // Reset whenever the browsed folder changes: a base branch and a name chosen
   // for one repository mean nothing in the next.
   let wt = $state<WorktreeChoice>(noWorktree())
-  const clis = $derived(app.machines.find((m) => m.id === machineId)?.stats?.clis ?? [])
+  const stats = $derived(app.machines.find((m) => m.id === machineId)?.stats ?? null)
+  const clis = $derived(stats?.clis ?? [])
+  // Providers are keyed by name in this map, so it is also the answer to "is the
+  // chosen account a provider". This dialog had no idea providers existed and
+  // offered Claude tiers beside a Codex account: four buttons that all did the
+  // same nothing, because a provider serves one real upstream model.
+  const providerModelOf = $derived(stats?.provider_models ?? {})
+  const account = $derived(resolveCli(cli, clis))
+  const onProvider = $derived(isProvider(account, providerModelOf))
+
+  let served = $state<string[]>([])
+  let providerModel = $state('')
+  let servedFor = ''
+  $effect(() => {
+    const name = account
+    if (!onProvider || servedFor === name) return
+    servedFor = name
+    providerModel = providerModelOf[name] ?? ''
+    served = []
+    getProviderModels(app.baseForMachine(machineId), name)
+      .then((ms) => (served = ms))
+      .catch(() => (served = []))
+  })
+
+  // One strip of controls, the same shape the chat composer and the worktree
+  // dialog use, so all three read alike. Three labelled rows of chips stated
+  // every option at once for a set of settings nobody comes here to browse.
+  const accountOptions = $derived<SegOption[]>(
+    clis.map((c) => ({ id: c, label: c, hint: providerModelOf[c] })),
+  )
+  const modelOptions = $derived<SegOption[]>(
+    onProvider
+      ? providerModelChoices(providerModel, served).map((m) => ({ id: m, label: m, mono: true }))
+      : MODELS.map((m) => ({ id: m.id, label: modelOptionLabel(m.id), hint: m.hint })),
+  )
+  const effortOptions = $derived<SegOption[]>(
+    EFFORTS.map((e) => ({ id: e.id, label: e.label, hint: e.hint })),
+  )
+  const permissionOptions = $derived<SegOption[]>(
+    PERMISSION_MODES.map((m) => ({ id: m.id, label: m.label, hint: m.hint })),
+  )
 
   let listing = $state<Listing | null>(null)
   let loading = $state(true)
@@ -101,6 +152,8 @@
         // strand a name that machine doesn't have, and empty just means default.
         cli: clis.includes(cli) ? cli : undefined,
         worktree: worktree || undefined,
+        mode,
+        provider_model: providerModelToSend(account, providerModelOf, providerModel),
       })
       app.open(machineId, meta.id)
     } catch (e) {
@@ -214,34 +267,56 @@
               base={app.baseForMachine(machineId)}
               repo={listing.path}
               bind:value={wt}
+              compact
             />
           </div>
         </div>
       {/if}
-      {#if clis.length > 1}
-        <div class="orow">
-          <span class="olabel">Account</span>
-          <div class="oseg">
-            {#each clis as c, i (c)}
-              <button class="oc" class:on={(cli || clis[0]) === c} onclick={() => (cli = c)}>{c}</button>
-            {/each}
-          </div>
-        </div>
-      {/if}
+      <!-- One strip, not three labelled rows of chips: the same shape the chat
+           composer and the worktree dialog use, so the three places that start a
+           session read alike. The model control follows the account, because they
+           were never independent -- a provider serves one real upstream model id
+           and knows nothing about Claude's tiers. -->
       <div class="orow">
-        <span class="olabel">Model</span>
-        <div class="oseg">
-          {#each modelOpts as m (m.id)}
-            <button class="oc" class:on={model === m.id} onclick={() => (model = m.id)} title={m.hint ?? ''}>{modelOptionLabel(m.id)}</button>
-          {/each}
-        </div>
-      </div>
-      <div class="orow">
-        <span class="olabel">Effort</span>
-        <div class="oseg">
-          {#each EFFORTS as e (e.id)}
-            <button class="oc" class:on={effort === e.id} onclick={() => (effort = e.id)} title={e.hint ?? ''}>{e.label}</button>
-          {/each}
+        <span class="olabel">How</span>
+        <div class="ostrip">
+          {#if clis.length > 1}
+            <SegMenu
+              value={account}
+              options={accountOptions}
+              title="Which account or provider runs it"
+              up={false}
+              onpick={(c) => (cli = c)}
+            />
+          {/if}
+          <SegMenu
+            value={onProvider ? providerModel : model}
+            options={modelOptions}
+            label={onProvider && !providerModel ? 'reading models…' : undefined}
+            title="Model"
+            mono={onProvider}
+            up={false}
+            onpick={(m) => (onProvider ? (providerModel = m) : (model = m))}
+          />
+          <!-- Effort is a Claude reasoning level. A provider's model does its own
+               thinking and never sees the flag, so the control would change
+               nothing. -->
+          {#if showEffort(account, providerModelOf)}
+            <SegMenu
+              value={effort}
+              options={effortOptions}
+              title="Reasoning effort"
+              up={false}
+              onpick={(e) => (effort = e)}
+            />
+          {/if}
+          <SegMenu
+            value={mode}
+            options={permissionOptions}
+            title="Permission mode"
+            up={false}
+            onpick={(m) => (mode = m as PermissionMode)}
+          />
         </div>
       </div>
     </div>
@@ -556,34 +631,26 @@
     align-items: center;
     gap: 12px;
   }
+  /* Hairlines between the settings, so the strip reads as one control rather than
+     loose buttons. Same rule the composer uses. */
+  .ostrip {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  .ostrip > :global(.segwrap + .segwrap)::before {
+    content: '';
+    width: 1px;
+    height: 13px;
+    margin: 0 2px;
+    background: var(--border-2);
+  }
   .olabel {
     flex: none;
     width: 46px;
     font-size: 12px;
     color: var(--text-3);
-  }
-  .oseg {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .oc {
-    padding: 5px 11px;
-    border-radius: 100px;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    color: var(--text-3);
-    font-size: 12px;
-    font-weight: 500;
-  }
-  .oc:hover {
-    color: var(--text);
-    border-color: var(--border-2);
-  }
-  .oc.on {
-    color: var(--text);
-    border-color: var(--border-2);
-    background: var(--panel-3);
   }
   footer {
     flex: none;

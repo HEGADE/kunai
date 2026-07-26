@@ -24,6 +24,13 @@
   import { projectName } from '../lib/grouping'
   import { DEFAULT_EFFORT, DEFAULT_MODEL, EFFORTS, MODELS, modelOptionLabel } from '../lib/models'
   import { PERMISSION_MODES } from '../lib/permissions'
+  import {
+    chosenCli as resolveCli,
+    isProvider,
+    providerModelChoices,
+    providerModelToSend,
+    showEffort,
+  } from '../lib/spawnoptions'
   import SegMenu, { type SegOption } from './SegMenu.svelte'
   import type { PermissionMode } from '../lib/types'
   import {
@@ -82,8 +89,11 @@
   // name, so it is the discriminator already on the wire; nothing new is needed
   // to tell a Codex from a Claude account.
   const providerModelOf = $derived(stats?.provider_models ?? {})
-  const chosenCli = $derived(cli || clis[0] || '')
-  const onProvider = $derived(chosenCli in providerModelOf)
+  // The provider rules live in lib/spawnoptions so this dialog and the New Session
+  // dialog cannot answer them differently, which is exactly what happened when
+  // they were written inline here.
+  const chosenCli = $derived(resolveCli(cli, clis))
+  const onProvider = $derived(isProvider(chosenCli, providerModelOf))
 
   // A provider serves real upstream model ids, not Claude tiers, so the Claude
   // tier row means nothing there: picking "Opus 5" for a Codex account chose
@@ -108,11 +118,7 @@
   // What to offer: whatever the proxy listed, plus the current model if the list
   // came back without it (or came back empty, which is what a provider whose
   // login has lapsed looks like). Never an empty row.
-  const modelChoices = $derived(
-    providerModel && !providerModels.includes(providerModel)
-      ? [providerModel, ...providerModels]
-      : providerModels,
-  )
+  const modelChoices = $derived(providerModelChoices(providerModel, providerModels))
 
   // The four control strips, each built where its data is rather than inline in
   // the markup, so the bar reads as a bar.
@@ -185,13 +191,7 @@
       model,
       effort,
       mode,
-      // Only on a provider, and only when it differs from what that provider is
-      // already mapped to: sending it pins the mapping for the provider's next
-      // session too, so it should not be written back when nothing was chosen.
-      providerModel:
-        onProvider && providerModel && providerModel !== providerModelOf[chosenCli]
-          ? providerModel
-          : undefined,
+      providerModel: providerModelToSend(chosenCli, providerModelOf, providerModel),
       wt: {
         on: true,
         base: baseBranch,
@@ -310,7 +310,7 @@
               <!-- Effort is a Claude reasoning level. A provider's model does its
                    own thinking and never sees the flag, so the control would
                    change nothing. -->
-              {#if !onProvider}
+              {#if showEffort(chosenCli, providerModelOf)}
                 <SegMenu
                   value={effort}
                   options={effortOptions}

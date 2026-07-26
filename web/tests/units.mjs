@@ -12,6 +12,9 @@
 import { shortAgo, longAgo, secondsSince } from '../src/lib/reltime.ts'
 import { groupSessions, groupStartTarget, projectName } from '../src/lib/grouping.ts'
 import { summarise, isAwaiting, isWorking } from '../src/lib/sidebar.ts'
+import {
+  chosenCli, isProvider, providerModelChoices, providerModelToSend, showEffort,
+} from '../src/lib/spawnoptions.ts'
 
 let pass = 0
 const fails = []
@@ -93,6 +96,35 @@ eq('needing you alone', summarise([live({ state: 'awaiting_permission' })]), '1 
 eq('past sessions carry no state and count for nothing', summarise([{ machineId: 'm', cwd: '/x' }]), '')
 eq('isAwaiting only for the gate', [isAwaiting(live({ state: 'awaiting_permission' })), isAwaiting(live({ state: 'running' }))], [true, false])
 eq('isWorking only for a live turn', [isWorking(live({ state: 'running' })), isWorking(live({ state: 'starting' }))], [true, false])
+
+// --- spawn options ----------------------------------------------------------
+// The rules that decide what a "start a session" control offers. Written inline
+// once, they ended up correct in the worktree dialog and absent from the New
+// Session dialog, which went on offering Claude tiers beside a Codex account.
+const CLIS = ['Claude', 'work', 'Codex', 'Grok']
+const PM = { Codex: 'gpt-5.4', Grok: 'grok-4.5' }
+
+eq('no account chosen means the machine default', chosenCli('', CLIS), 'Claude')
+eq('an empty machine yields no account', chosenCli('', []), '')
+eq('a provider is recognised from the model map alone', isProvider('Codex', PM), true)
+eq('a Claude account is not', isProvider('work', PM), false)
+eq('and neither is nothing', isProvider('', PM), false)
+eq('a provider drops the effort control', showEffort('Grok', PM), false)
+eq('a Claude account keeps it', showEffort('Claude', PM), true)
+
+// A lapsed login or a proxy still starting returns nothing, and an empty control
+// is the worst outcome there.
+eq('an empty served list still shows the model it is on', providerModelChoices('grok-4.5', []), ['grok-4.5'])
+eq('the current model is not listed twice', providerModelChoices('gpt-5.4', ['gpt-5.5', 'gpt-5.4']), ['gpt-5.5', 'gpt-5.4'])
+eq('one the proxy omitted is put first', providerModelChoices('gpt-5.3', ['gpt-5.5']), ['gpt-5.3', 'gpt-5.5'])
+eq('with nothing chosen, the served list stands', providerModelChoices('', ['a', 'b']), ['a', 'b'])
+
+// Sending the provider model pins it for that provider's NEXT session too, so it
+// must only be sent when something was actually chosen.
+eq('unchanged provider model is not sent back', providerModelToSend('Codex', PM, 'gpt-5.4'), undefined)
+eq('a changed one is', providerModelToSend('Codex', PM, 'gpt-5.5'), 'gpt-5.5')
+eq('and never for a Claude account', providerModelToSend('Claude', PM, 'gpt-5.5'), undefined)
+eq('nor when nothing is chosen', providerModelToSend('Codex', PM, ''), undefined)
 
 console.log(`${pass}/${pass + fails.length} passed`)
 for (const f of fails) console.log(`FAIL ${f}`)
