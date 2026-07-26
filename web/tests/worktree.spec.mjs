@@ -460,6 +460,25 @@ async function main() {
     }
     return out
   })
+  // The row's own menu trigger sits at the right edge, and on a touch screen it is
+  // permanently visible because there is no hover to reveal it with. It used to
+  // draw straight through the last characters of the time. Measured, not eyeballed:
+  // at a glance it reads as a font artifact rather than as two elements colliding.
+  const collisions = await page.locator('.sb .row').evaluateAll((els) =>
+    els
+      .map((r) => {
+        const t = r.querySelector('.tail')
+        const g = r.querySelector('.trigger')
+        if (!t || !g || getComputedStyle(g).opacity === '0') return null
+        return t.getBoundingClientRect().right - g.getBoundingClientRect().left
+      })
+      .filter((v) => v !== null && v > 0),
+  )
+  check(
+    'the time column does not run under the row menu trigger',
+    collisions.length === 0,
+    collisions.length ? `${collisions.length} rows overlap by up to ${Math.round(Math.max(...collisions))}px` : 'clear',
+  )
   check(
     'and a live row still carries its state as a left edge',
     liveEdges.length > 0 && liveEdges.every((s) => ['starting', 'idle', 'running', 'awaiting_permission'].includes(s)),

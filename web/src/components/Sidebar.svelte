@@ -363,7 +363,7 @@
       title={group.named ? 'Workspace' : 'Project directory'}
       aria-expanded={!collapsed[group.key] || attention}
     >
-      <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
+      <svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
       {#if group.named}<span class="wsmark" aria-hidden="true"></span>{/if}
       <!-- Mono, because a project or workspace name is data rather than prose. A
            named workspace gets a leading mark so you can tell at a glance which
@@ -558,23 +558,56 @@
          stacked list they cost 188px, which is nearly a third of a phone screen
          permanently spent on things you are not looking at. On a phone they
          become one row instead; see .nav below. -->
-    <!-- Four destinations you visit rarely. As labelled rows they cost about
-         180px of the list permanently; as one icon row they cost 40. The phone
-         layout already did this, and there was no reason the desktop kept paying.
-         Labels come back on hover, and stay in the aria-labels regardless. -->
+    <!-- Four destinations you visit rarely, as one icon row rather than four
+         labelled rows: as rows they cost about 180px of the session list
+         permanently. But an icon on its own does not say what it opens, and the
+         first version of this leaned on hover to explain it, which is no
+         explanation at all on a phone. So there are two answers, one per input:
+         a Hint on hover for a pointer, and the label itself on a touch screen
+         (see .nlbl), where the room exists because there is no bubble to show. -->
     <nav class="nav" aria-label="Configuration">
-      <button class="navitem" onclick={() => app.openChannels()} title="Channels" aria-label="Channels">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 01-9 8.4 8.5 8.5 0 01-3.9-.9L3 20.5l1.5-4.4a8.4 8.4 0 01-.9-3.9 8.5 8.5 0 018.4-8.7h.5a8.5 8.5 0 018.5 8.5z" /></svg>
-      </button>
-      <button class="navitem" onclick={() => app.openAccounts()} title="Accounts" aria-label="Accounts">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 00-3-3.87" /><path d="M16 3.13a4 4 0 010 7.75" /></svg>
-      </button>
-      <button class="navitem" onclick={() => app.openProviders()} title="Providers" aria-label="Providers">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /></svg>
-      </button>
-      <button class="navitem" onclick={() => app.openSettings()} title="Settings" aria-label="Settings">
-        {@render gear()}
-      </button>
+      <Hint
+        title="Channels"
+        body="Reach a session from somewhere that is not this app. Telegram is set up here: pair a chat, and you can drive an agent from your phone without kunai open."
+      >
+        <button class="navitem" onclick={() => app.openChannels()} aria-label="Channels">
+          <span class="nic">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 01-9 8.4 8.5 8.5 0 01-3.9-.9L3 20.5l1.5-4.4a8.4 8.4 0 01-.9-3.9 8.5 8.5 0 018.4-8.7h.5a8.5 8.5 0 018.5 8.5z" /></svg>
+          </span>
+          <span class="nlbl">Channels</span>
+        </button>
+      </Hint>
+      <Hint
+        title="Accounts"
+        body="The Claude logins this machine can run a session on. Add another and you can work on two subscriptions at once, or hand a session to whichever one still has quota."
+      >
+        <button class="navitem" onclick={() => app.openAccounts()} aria-label="Accounts">
+          <span class="nic">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 00-3-3.87" /><path d="M16 3.13a4 4 0 010 7.75" /></svg>
+          </span>
+          <span class="nlbl">Accounts</span>
+        </button>
+      </Hint>
+      <Hint
+        title="Providers"
+        body="Run the agent on a model that is not Claude. A Codex or Grok subscription is authorised here, and every tool, edit and permission keeps working; only the model answering changes."
+      >
+        <button class="navitem" onclick={() => app.openProviders()} aria-label="Providers">
+          <span class="nic">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /></svg>
+          </span>
+          <span class="nlbl">Providers</span>
+        </button>
+      </Hint>
+      <Hint
+        title="Settings"
+        body="Machines on your tailnet, the thermal guard that stops unattended work before a closed laptop cooks, notifications, and updates."
+      >
+        <button class="navitem" onclick={() => app.openSettings()} aria-label="Settings">
+          <span class="nic">{@render gear()}</span>
+          <span class="nlbl">Settings</span>
+        </button>
+      </Hint>
     </nav>
   </div>
 </div>
@@ -831,10 +864,10 @@
   .gtoggle {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 7px;
     flex: 1;
     min-width: 0;
-    padding: 3px 4px;
+    padding: 5px 4px;
     border: 0;
     border-radius: var(--r-sm);
     background: transparent;
@@ -857,7 +890,7 @@
   .glabel {
     flex: none;
     max-width: 60%;
-    font-size: 11.5px;
+    font-size: 12.5px;
     color: var(--text-2);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -865,7 +898,7 @@
   }
   .grp.named .glabel {
     font-family: var(--sans);
-    font-size: 12px;
+    font-size: 13px;
   }
   .wsmark {
     flex: none;
@@ -879,7 +912,7 @@
   .gstate {
     flex: 1;
     min-width: 0;
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--text-3);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -890,7 +923,7 @@
   }
   .gcount {
     flex: none;
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--text-4);
   }
   .gdot {
@@ -947,7 +980,13 @@
     align-items: center;
     gap: 8px;
     text-align: left;
-    padding: 8px 10px 8px 14px;
+    /* The right padding is room for the row's own menu trigger, which sits 6px
+       from the edge and is 26px wide. Reserved always, not only while the row is
+       hovered: on a touch screen the trigger is permanently visible (there is no
+       hover to reveal it with), so it was drawing straight through the last
+       characters of the time. Reserving on hover only would have hidden the same
+       collision behind a pointer. */
+    padding: 8px 34px 8px 14px;
   }
   .hit:disabled {
     opacity: 0.55;
@@ -989,7 +1028,7 @@
   .name {
     flex: 1;
     min-width: 0;
-    font-size: 14.5px;
+    font-size: 15px;
     color: var(--text-2);
     white-space: nowrap;
     overflow: hidden;
@@ -1018,9 +1057,9 @@
      straight into it and read as a collision rather than an ellipsis. */
   .tail {
     flex: none;
-    min-width: 26px;
-    padding-left: 4px;
-    font-size: 10.5px;
+    min-width: 30px;
+    padding-left: 6px;
+    font-size: 11.5px;
     color: var(--text-4);
     text-align: right;
   }
@@ -1085,21 +1124,21 @@
     margin: 0;
     line-height: 1.55;
   }
-  /* One row of icons on every screen, not four labelled rows on desktop and one
-     row on a phone. The labels are in title and aria-label, so a pointer gets
-     them on hover and a screen reader always does; what they are not is 180px of
-     the session list spent permanently on things you open once a week. */
+  /* One row of icons rather than four labelled rows, but sized like something you
+     are meant to hit: 44px is the touch target these were missing at 38. */
   .nav {
     display: flex;
     gap: 2px;
   }
   .navitem {
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 3px;
     flex: 1;
     min-width: 0;
-    height: 38px;
+    height: 44px;
     border: 0;
     border-radius: var(--r-sm);
     background: transparent;
@@ -1110,6 +1149,29 @@
     color: var(--text);
     background: var(--panel);
   }
+  .nic {
+    display: flex;
+  }
+  /* The label is hidden only where a hover bubble can replace it. A coarse
+     pointer never hovers, so there the word stays: an unexplained icon was the
+     whole complaint, and a tooltip nobody can trigger does not answer it. */
+  .nlbl {
+    display: none;
+  }
+  @media (pointer: coarse) {
+    .navitem {
+      height: 52px;
+      font-size: 10.5px;
+    }
+    .nlbl {
+      display: block;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
   /* Opaque and never-shrinking, sitting above the list: even if the scroll area
      ever runs long on a stubborn browser, the footer covers it cleanly instead
      of letting a session row show through Settings. */
