@@ -695,6 +695,28 @@ async function main() {
     numbers.offCentre === 0,
     `${numbers.offCentre} off centre`,
   )
+  // No icon has escaped its own control. Styles in a Svelte component are scoped
+  // but not unique, so two elements can share a class name: making .chev absolute
+  // for the group headings sent the machine filter's .chev out of its button to the
+  // nearest positioned ancestor, and a stray dropdown arrow appeared at the
+  // sidebar's left edge beside the search field. This catches the whole class of
+  // that rather than the one instance.
+  const escaped = await tp.evaluate(() =>
+    [...document.querySelectorAll('.sb svg')]
+      .filter((s) => {
+        if (getComputedStyle(s).position !== 'absolute') return false
+        const p = s.parentElement.getBoundingClientRect()
+        const r = s.getBoundingClientRect()
+        if (!r.width) return false
+        return r.left < p.left - 1 || r.right > p.right + 1 || r.top < p.top - 1 || r.bottom > p.bottom + 1
+      })
+      .map((s) => `${[...s.classList].join('.') || s.tagName} outside .${[...s.parentElement.classList].join('.')}`),
+  )
+  check(
+    'no icon has escaped the control it belongs to',
+    escaped.length === 0,
+    escaped.join(' / ') || 'none',
+  )
   await touch.close()
   check(
     'and a live row still carries the state the server reported',

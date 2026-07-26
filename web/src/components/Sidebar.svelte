@@ -380,7 +380,7 @@
       title={group.named ? 'Workspace' : 'Project directory'}
       aria-expanded={!shut}
     >
-      <svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+      <svg class="gchev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
       {#if group.named}<span class="wsmark" aria-hidden="true"></span>{/if}
       <!-- Mono, because a project or workspace name is data rather than prose. A
            named workspace gets a leading mark so you can tell at a glance which
@@ -907,8 +907,13 @@
   }
   /* In the gutter, not in the flow: leading with it in the flow pushed the label
      fourteen pixels right of the titles underneath, so the heading was outdented
-     from its own children. */
-  .chev {
+     from its own children.
+     Named gchev, not chev. The machine filter inside the search bar already used
+     .chev, so making that class absolute sent ITS chevron out of its button to the
+     nearest positioned ancestor -- a stray dropdown arrow floating at the sidebar's
+     left edge beside the search field. Styles here are component-scoped, not
+     globally unique, and two elements in one component can share a name. */
+  .gchev {
     position: absolute;
     left: 2px;
     top: 50%;
@@ -917,10 +922,10 @@
     transform: rotate(0deg);
     transition: transform var(--t) var(--ease);
   }
-  .grp.shut .chev {
+  .grp.shut .gchev {
     transform: rotate(-90deg);
   }
-  .grp:hover .chev {
+  .grp:hover .gchev {
     color: var(--text-3);
   }
   .glabel {
