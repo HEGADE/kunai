@@ -391,9 +391,10 @@
       {/if}
       <span class="gfill" aria-hidden="true"></span>
       <!-- The count sits in the same right-hand column as the rows' times, so the
-           numbers in this list line up with each other instead of trailing the
-           label at whatever x it happens to end. -->
-      {#if shut}<span class="gcount mono">{group.items.length}</span>{/if}
+           numbers in this list line up with each other rather than trailing the
+           label at whatever x it happens to end. Skipped when the folder has a
+           state to report: "2 working" is what you needed the count for. -->
+      {#if shut && !state}<span class="gcount mono">{group.items.length}</span>{/if}
     </button>
     <!-- The two start actions wait for the pointer, so the right edge of the list
          is not four buttons deep. A touch screen has no pointer to wait for, so
@@ -883,7 +884,13 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 14px 4px 3px 0;
+    /* The space above a heading is a margin, not top padding. As padding it was
+       asymmetric (14 top, 3 bottom), and anything positioned with top:50% then
+       centres on the padding box while the text centres on the content box -- which
+       sat the count 5.5px above the label it belongs to. Symmetric padding makes
+       50% mean the same thing for both. */
+    margin-top: 11px;
+    padding: 3px 4px 3px 0;
   }
   .gtoggle {
     display: flex;
@@ -960,14 +967,32 @@
   .gstate.alert {
     color: var(--busy);
   }
+  /* Positioned from the list's right edge, not left at the end of a flex row.
+     In the flow it landed wherever .gtoggle happened to end, and .gtoggle's width
+     depends on .gacts -- which still occupies its ~54px while sitting at opacity 0
+     waiting for a hover. So a git repository's count sat 54px left of a plain
+     folder's, and the column was ragged for a reason nothing on screen explained.
+     Absolute puts every count in the same column as the rows' times. */
   .gcount {
-    flex: none;
-    min-width: 30px;
-    padding-left: 6px;
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    /* translateY, not a negative margin: a margin has to guess the line box, and
+       guessing 16px for an 11.5px line sat the number a few pixels above the
+       label it belongs to. */
+    transform: translateY(-50%);
     font-size: 11.5px;
     font-variant-numeric: tabular-nums;
     color: var(--text-4);
     text-align: right;
+  }
+  /* It yields to the actions rather than being overlapped by them, the same trade
+     a row's time makes with its menu. */
+  @media (hover: hover) and (pointer: fine) {
+    .grp:hover .gcount {
+      opacity: 0;
+      transition: opacity var(--t-fast);
+    }
   }
   /* Hidden until the pointer arrives, but only where there is a pointer: a touch
      screen never hovers, so on one the actions simply stay. */

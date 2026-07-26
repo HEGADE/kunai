@@ -658,6 +658,43 @@ async function main() {
     textEdges.length === 1,
     textEdges.sort((a, b) => a - b).join(', '),
   )
+  // And one RIGHT column for every number. This was ragged for a reason nothing on
+  // screen explained: the count sat at the end of a flex row whose width depends on
+  // the hover actions, and those still occupy their ~54px while invisible at
+  // opacity 0 -- so a git repository's count sat 54px left of a plain folder's.
+  // Collapse every group first, or most of the counts are not rendered to compare.
+  const toggles = await tp.locator('.sb .grp .gtoggle').count()
+  for (let i = 0; i < toggles; i++) {
+    await tp.locator('.sb .grp .gtoggle').nth(i).click()
+    await tp.waitForTimeout(90)
+  }
+  await tp.waitForTimeout(300)
+  const numbers = await tp.evaluate(() => {
+    const mid = (e) => { const r = e.getBoundingClientRect(); return (r.top + r.bottom) / 2 }
+    const counts = [...document.querySelectorAll('.sb .gcount')]
+    return {
+      columns: [...new Set([
+        ...counts.map((e) => Math.round(e.getBoundingClientRect().right)),
+        ...[...document.querySelectorAll('.sb .row .tail')].map((e) => Math.round(e.getBoundingClientRect().right)),
+      ])],
+      // Each count on its own label's centre line: positioning against a box with
+      // asymmetric padding put every one of them 5.5px high.
+      offCentre: counts.filter((c) => {
+        const label = c.closest('.gtoggle')?.querySelector('.glabel')
+        return label && Math.abs(mid(c) - mid(label)) > 1
+      }).length,
+    }
+  })
+  check(
+    'every number in the list shares one right column',
+    numbers.columns.length === 1,
+    numbers.columns.sort((a, b) => a - b).join(', '),
+  )
+  check(
+    'and sits on the centre line of the row it belongs to',
+    numbers.offCentre === 0,
+    `${numbers.offCentre} off centre`,
+  )
   await touch.close()
   check(
     'and a live row still carries the state the server reported',
