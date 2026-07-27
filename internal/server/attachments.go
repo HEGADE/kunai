@@ -65,6 +65,9 @@ func (s *Server) buildContent(cwd, text string, atts []session.Attachment) any {
 	extraText := text
 
 	for _, a := range atts {
+		if !stagedID(a.ID) {
+			continue
+		}
 		data, err := os.ReadFile(filepath.Join(s.uploadsDir, a.ID))
 		if err != nil {
 			continue
@@ -83,7 +86,7 @@ func (s *Server) buildContent(cwd, text string, atts []session.Attachment) any {
 		// Non-image: drop it into the project so Claude can open it with Read.
 		dir := filepath.Join(cwd, ".kunai-uploads")
 		if os.MkdirAll(dir, 0o755) == nil {
-			dest := filepath.Join(dir, safeName(a.Name, a.ID))
+			dest := filepath.Join(dir, safeName(a.Name))
 			if os.WriteFile(dest, data, 0o644) == nil {
 				extraText += "\n\n[Attached file: " + dest + "]"
 			}
@@ -114,17 +117,52 @@ func (s *Server) buildContent(cwd, text string, atts []session.Attachment) any {
 // nothing could be inlined: the model still needs a sentence to act on.
 const attachOnlyPrompt = "Take a look at the attached file(s)."
 
-// safeName keeps the basename but strips path separators; falls back to the id.
-func safeName(name, id string) string {
+// stagedID reports whether an attachment id is one this server actually minted,
+// by shape: exactly what hexID produces and nothing else.
+//
+// It has to be checked, because the id arrives verbatim on the websocket and is
+// then joined onto the uploads directory. filepath.Join CLEANS the result, so an
+// id of "../../../../home/you/.ssh/id_rsa" resolves clean out of the uploads dir
+// and buildContent reads whatever is there. Worse than a read: a non-image media
+// type sends it down the branch that copies the bytes into <cwd>/.kunai-uploads
+// and appends the destination to the prompt, so the file lands INSIDE the folder
+// the agent is confined to and the model is told where to find it. No tool
+// restriction can prevent that, because kunai does the read itself, before the
+// model runs.
+//
+// A bare 32-char lowercase hex string cannot contain a separator, a dot, or a
+// leading dash, so this closes the shape rather than blacklisting sequences.
+// history.go:596 guards the identical shape for transcript ids.
+func stagedID(id string) bool {
+	if len(id) != 2*idBytes {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// safeName keeps the basename but strips path separators. The fallback used to be
+// the attachment's id, which is caller-supplied: that made the WRITE destination
+// escape by the same trick as the read, out of a directory at a different depth
+// from the uploads dir. It takes no id at all now, so it cannot come back.
+func safeName(name string) string {
 	name = filepath.Base(strings.TrimSpace(name))
-	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
-		return id
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return "attachment"
 	}
 	return name
 }
 
+// idBytes is the entropy behind an attachment id; the hex form is twice this.
+const idBytes = 16
+
 func hexID() string {
-	b := make([]byte, 16)
+	b := make([]byte, idBytes)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
