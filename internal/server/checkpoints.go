@@ -211,7 +211,16 @@ func (s *Server) handleRevert(w http.ResponseWriter, r *http.Request) {
 	var ref checkpoint.Ref
 	switch {
 	case body.Ref != "":
+		// Only a ref kunai minted for THIS session. Restore is a hard reset of the
+		// whole repository, and this field exists solely so an undo can name the
+		// safety ref the previous revert handed back; it is not a way to ask for an
+		// arbitrary commit-ish. Anything git would resolve used to be accepted here,
+		// including another session's checkpoint, a branch or "HEAD~50".
 		ref = checkpoint.Ref(body.Ref)
+		if !ref.OwnedBy(id) {
+			writeErr(w, http.StatusBadRequest, "that is not a checkpoint of this session")
+			return
+		}
 	case s.checkpoints != nil:
 		if got, found := s.checkpoints.refForSeq(id, sess.Cwd, body.Seq); found {
 			ref = got

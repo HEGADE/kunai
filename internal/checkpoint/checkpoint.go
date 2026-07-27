@@ -46,6 +46,52 @@ func SafetyRefFor(sessionID string, n uint64) Ref {
 	return Ref(fmt.Sprintf("%ssafety/%s/%d", RefPrefix, sanitize(sessionID), n))
 }
 
+// OwnedBy reports whether r is a ref this package minted for sessionID: either a
+// turn checkpoint (RefFor) or the safety ref a revert of that session wrote
+// (SafetyRefFor).
+//
+// It exists because Restore takes a ref and resets the whole repository to it,
+// hard, discarding uncommitted work. The revert endpoint accepts a ref from the
+// client so an undo can name the safety ref it was just handed, and it accepted
+// ANY commit-ish: a branch, a tag, a raw sha, "HEAD~50", something from an
+// unrelated session. Git resolves all of those happily, so one request could
+// reset somebody's repository to an arbitrary point and there was nothing in the
+// path to say no. Nothing guest-reachable ever reached it, but it sat one route
+// registration away from being the worst thing in the codebase.
+//
+// The check belongs here rather than in the handler because this package owns the
+// namespace and is the only thing that knows how a ref is built. A validator that
+// lived beside the handler would drift the first time RefFor changed shape.
+func (r Ref) OwnedBy(sessionID string) bool {
+	sid := sanitize(sessionID)
+	for _, base := range []Ref{
+		Ref(RefPrefix + sid + "/"),
+		Ref(RefPrefix + "safety/" + sid + "/"),
+	} {
+		rest, ok := strings.CutPrefix(string(r), string(base))
+		if ok && isIndex(rest) {
+			return true
+		}
+	}
+	return false
+}
+
+// isIndex reports whether s is the numeric suffix RefFor and SafetyRefFor end
+// with, and nothing else. Requiring digits is what rules out a deeper path, a
+// "..", or a trailing name after the number, so a ref that merely STARTS inside
+// the namespace cannot walk out of it.
+func isIndex(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func sanitize(s string) string {
 	var b strings.Builder
 	for _, r := range s {

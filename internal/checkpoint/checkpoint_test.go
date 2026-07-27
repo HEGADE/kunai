@@ -343,3 +343,48 @@ func TestPreviewReportsTheWholeBlastRadius(t *testing.T) {
 		t.Errorf("clean preview returned nil slices: changed=%v removed=%v", changed, removed)
 	}
 }
+
+// Restore resets the whole repository, hard. The revert endpoint takes a ref from
+// the client so an undo can name the safety ref it was handed, and it used to
+// accept any commit-ish git would resolve. These are the shapes that must not be.
+func TestRefOwnedBy(t *testing.T) {
+	const sid = "9f2c1b7a-0000-4000-8000-abcdefabcdef"
+	other := "11111111-2222-4333-8444-555555555555"
+
+	ok := []Ref{
+		RefFor(sid, 0),
+		RefFor(sid, 42),
+		SafetyRefFor(sid, 1785181457000000000),
+	}
+	for _, r := range ok {
+		if !r.OwnedBy(sid) {
+			t.Errorf("%q is one of ours and was refused", r)
+		}
+	}
+
+	bad := []Ref{
+		"",
+		"HEAD",
+		"HEAD~50",
+		"main",
+		"v1.5.4",
+		"0390ba3",
+		"refs/heads/main",
+		// Another session's checkpoint: inside the namespace, still not ours.
+		RefFor(other, 3),
+		SafetyRefFor(other, 3),
+		// Inside the prefix but not the shape: a name after the number, a deeper
+		// path, or a climb out of it.
+		Ref(RefPrefix + "9f2c1b7a-0000-4000-8000-abcdefabcdef/3/../../../heads/main"),
+		Ref(RefPrefix + "9f2c1b7a-0000-4000-8000-abcdefabcdef/"),
+		Ref(RefPrefix + "9f2c1b7a-0000-4000-8000-abcdefabcdef/3x"),
+		Ref(RefPrefix + "9f2c1b7a-0000-4000-8000-abcdefabcdef/3/4"),
+		Ref(RefPrefix),
+		Ref(RefPrefix + "../../heads/main"),
+	}
+	for _, r := range bad {
+		if r.OwnedBy(sid) {
+			t.Errorf("%q was accepted as this session's checkpoint", r)
+		}
+	}
+}
