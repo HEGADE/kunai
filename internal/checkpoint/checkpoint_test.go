@@ -285,8 +285,8 @@ func TestPreviewReportsTheWholeBlastRadius(t *testing.T) {
 	}
 
 	// Everything a restore would touch, one of each kind.
-	write("keep.txt", "one\ntwo\n")                       // modified since
-	write("added.txt", "new tracked file\n")              // added and staged since
+	write("keep.txt", "one\ntwo\n")          // modified since
+	write("added.txt", "new tracked file\n") // added and staged since
 	run("add", "added.txt")
 	if err := os.Remove(filepath.Join(dir, "gone.txt")); err != nil {
 		t.Fatal(err)

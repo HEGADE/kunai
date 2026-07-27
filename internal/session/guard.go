@@ -1,0 +1,67 @@
+package session
+
+import (
+	"encoding/json"
+
+	"github.com/hegade/kunai/internal/claude"
+)
+
+// The tool-call guard: the second half of confining a shared session, and the
+// only half that can see what the agent is actually about to do.
+//
+// The first half is spawn-time. A shared session runs with --disallowedTools, so
+// Bash and Task are not in the model's toolset at all. That is what makes this
+// half possible: the tools that remain name the files they touch as arguments,
+// and arguments can be read. A shell command cannot, which is why it is removed
+// rather than inspected.
+//
+// This runs before the ask reaches pending or any client, so a call outside the
+// boundary dies without anybody being asked about it, and the model is told why
+// so it corrects itself rather than retrying.
+
+// ToolGuard decides whether a tool call may proceed.
+//
+// Returning a non-empty reason denies the call, and the reason is sent to the
+// model as the denial message. Returning ok=false with an empty reason means the
+// guard has nothing to say and the ordinary permission flow applies.
+type ToolGuard interface {
+	// Check is given the tool and its arguments and reports why it may not run.
+	// An empty string allows it.
+	Check(toolName string, input json.RawMessage) string
+	// AutoMode is the permission mode to apply to calls the guard cleared, so a
+	// guest working while the owner is asleep is not stopped by every write.
+	// Empty means the call goes through the normal permission flow.
+	AutoMode() string
+}
+
+// SetToolGuard installs the guard for a shared session, or clears it with nil.
+func (s *Session) SetToolGuard(g ToolGuard) {
+	s.mu.Lock()
+	s.guard = g
+	s.mu.Unlock()
+}
+
+// guardVerdict is what the guard decided about an incoming ask.
+type guardVerdict struct {
+	denied  bool
+	reason  string
+	autoYes bool
+}
+
+// judge applies the guard to an ask. Called on the permission path with the lock
+// NOT held, because the guard resolves symlinks and touches the filesystem.
+func (s *Session) judge(ask *claude.PermissionAsk) guardVerdict {
+	s.mu.Lock()
+	g, from := s.guard, s.turnFrom
+	s.mu.Unlock()
+	// No guard, or the owner's own turn: nothing to confine. The guard exists to
+	// bound what somebody else's prompt can reach, and the owner already has a
+	// shell on this machine by other means.
+	if g == nil || from == FromOwner {
+		return guardVerdict{}
+	}
+	if reason := g.Check(ask.ToolName, ask.Input); reason != "" {
+		return guardVerdict{denied: true, reason: reason}
+	}
+	return guardVerdict{autoYes: g.AutoMode() != ""}
+}

@@ -103,7 +103,7 @@ func TestSessionMetaHTTPRoundTrip(t *testing.T) {
 	writeTranscript(t, projects, "-x", "sess-1", "/x")
 
 	s := New(Config{DataDir: data}, session.NewManager())
-	s.clis = []CLIProfile{{Name: "T", Bin: "claude", Dir: cfgDir}}
+	s.setCLIs([]CLIProfile{{Name: "T", Bin: "claude", Dir: cfgDir}})
 	srv := httptest.NewServer(s.Handler())
 	defer srv.Close()
 

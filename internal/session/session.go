@@ -113,6 +113,9 @@ type Session struct {
 	// pre-turn state (a later capture would race the agent's first edit). seq is the
 	// turn's user-message Seq, so the client can map the checkpoint to a turn.
 	checkpointHook func(seq uint64)
+	// guard confines what a guest's prompt can reach while this session is
+	// shared. Nil for an ordinary session. See guard.go.
+	guard ToolGuard
 }
 
 // SetCheckpointHook registers the pre-turn working-tree snapshot callback. The hook
@@ -468,6 +471,30 @@ func (s *Session) pump() {
 }
 
 func (s *Session) onPermission(ask *claude.PermissionAsk) {
+	// A shared session's guard runs first, before this ask is recorded or sent to
+	// anybody. A call outside the share's folders is answered here and dies
+	// without a human ever seeing it, which is the point: the owner should not be
+	// asked to adjudicate something the boundary already settles, and every ask
+	// they are shown is one they might approve by reflex.
+	if v := s.judge(ask); v.denied {
+		_ = s.drv.Resolve(ask.RequestID, claude.PermissionResult{
+			Behavior:  "deny",
+			Message:   v.reason,
+			ToolUseID: ask.ToolUseID,
+		})
+		return
+	} else if v.autoYes {
+		// Cleared by the guard, and the share granted a standing yes for exactly
+		// this case, so the guest keeps working instead of waiting for someone who
+		// is asleep. Anything the guard could NOT clear has already been denied
+		// above, so this never waves through something outside the boundary.
+		_ = s.drv.Resolve(ask.RequestID, claude.PermissionResult{
+			Behavior:     "allow",
+			UpdatedInput: ask.Input, // an allow without it runs the tool with empty input
+			ToolUseID:    ask.ToolUseID,
+		})
+		return
+	}
 	ev := AppEvent{
 		T:           EvPermission,
 		RequestID:   ask.RequestID,

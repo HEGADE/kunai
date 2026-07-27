@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hegade/kunai/internal/pathguard"
 	"github.com/hegade/kunai/internal/session"
 	"os"
 	"path/filepath"
@@ -484,28 +485,21 @@ func (b *Bot) sendFileToChat(ctx context.Context, chatID int64, arg string) {
 }
 
 // resolveInside turns a chat-supplied path into an absolute one inside root, or
-// refuses. Symlinks are resolved before the check where they exist, so a link
-// pointing out of the project cannot be used to walk out of it either.
+// refuses.
+//
+// The containment logic moved to internal/pathguard, which a shared session needs
+// for exactly the same question about a tool call's arguments. This keeps the
+// wording a chat should get: the guard's own errors are written for somebody
+// driving a shared link, not somebody typing /get into Telegram.
 func resolveInside(root, rel string) (string, error) {
-	if root == "" {
+	got, err := pathguard.Resolve(root, rel)
+	switch {
+	case errors.Is(err, pathguard.ErrNoRoot):
 		return "", fmt.Errorf("this session has no folder to read from")
-	}
-	base, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		base = filepath.Clean(root)
-	}
-	target := rel
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(base, target)
-	}
-	target = filepath.Clean(target)
-	if resolved, err := filepath.EvalSymlinks(target); err == nil {
-		target = resolved
-	}
-	if target != base && !strings.HasPrefix(target, base+string(filepath.Separator)) {
+	case err != nil:
 		return "", fmt.Errorf("that path is outside this session's folder, so it is not readable from a chat")
 	}
-	return target, nil
+	return got, nil
 }
 
 // fileRef is one thing to fetch out of a chat message.

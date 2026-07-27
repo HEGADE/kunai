@@ -88,6 +88,19 @@ func loadCLIs(dataDir string) []CLIProfile {
 	return out
 }
 
+// setCLIs replaces the account list under the write lock.
+//
+// It exists because New spawns a goroutine that reads this list (warming the
+// model-version cache), so anything assigning s.clis afterwards is racing it.
+// Tests did that directly and got away with it only because the goroutine
+// usually finished first; whether it does depends on how much work New happens
+// to do after starting it, which is not something a test should be sensitive to.
+func (s *Server) setCLIs(list []CLIProfile) {
+	s.clisMu.Lock()
+	s.clis = list
+	s.clisMu.Unlock()
+}
+
 // cliList returns a snapshot of the accounts under the read lock, so the Accounts
 // settings can edit the list live without racing a session start.
 func (s *Server) cliList() []CLIProfile {
