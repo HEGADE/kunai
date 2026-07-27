@@ -3,7 +3,6 @@
   import { usage } from '../lib/api'
   import { fetchQuery, keys, peek, SLOW_TTL, USAGE_TTL } from '../lib/query.svelte'
   import type { Usage, UsageWindow } from '../lib/types'
-  import { updateAvailable } from '../lib/update'
   import { noWorktree, worktreeBranches, type BranchList, type WorktreeChoice } from '../lib/worktrees'
   import Schedules from './Schedules.svelte'
   import Spinner from './Spinner.svelte'
@@ -22,16 +21,6 @@
       null,
   )
   const st = $derived(sel?.stats ?? null)
-  const outdated = $derived(updateAvailable(st?.kunai_version, app.latestVersion, st?.channel))
-  const updating = $derived(sel ? !!app.updating[sel.id] : false)
-  const updateErr = $derived(sel ? (app.updateError[sel.id] ?? '') : '')
-  const updateProg = $derived(sel ? (app.updateProgress[sel.id] ?? -1) : -1)
-  const updateLabel = $derived.by(() => {
-    if (!updating) return updateErr ? 'Retry' : 'Update'
-    if (updateProg >= 1) return 'Restarting…'
-    if (updateProg >= 0) return `${Math.round(updateProg * 100)}%`
-    return 'Updating…'
-  })
   const selSessions = $derived(sel ? app.sessions.filter((s) => s.machineId === sel.id).length : 0)
   const selResumable = $derived(sel ? app.history.filter((h) => h.machineId === sel.id).length : 0)
 
@@ -424,31 +413,11 @@
     </div>
   {/if}
 
-  <!-- A check that could not run must say so. Showing nothing is what "you are up
-       to date" looks like, and a machine sat a release behind with an empty
-       screen is exactly how this was missed. -->
-  {#if !outdated && app.versionCheckFailed && sel}
-    <p class="ufail">{app.versionCheckFailed}</p>
-  {/if}
-
-  {#if outdated && sel}
-    <div class="update">
-      <span class="udot"></span>
-      <div class="utext">
-        <span class="uhead">Update available</span>
-        <span class="mono usub">{st?.kunai_version} → {app.latestVersion} · restarts {sel.label}, sessions resume</span>
-        {#if updateErr}
-          <span class="mono uerr" title={updateErr}>update failed: {updateErr}</span>
-        {/if}
-        {#if updating && updateProg >= 0 && updateProg < 1}
-          <div class="ubar"><div class="ubar-fill" style="width: {Math.round(updateProg * 100)}%"></div></div>
-        {/if}
-      </div>
-      <button class="ubtn" disabled={updating} onclick={() => sel && app.updateMachine(sel.id)}>
-        {updateLabel}
-      </button>
-    </div>
-  {/if}
+  <!-- The update banner used to sit here. It now lives in the sidebar, above the
+       configuration nav (UpdateNudge.svelte): the sidebar is the only chrome that
+       is always on screen, and this is the one way to update a machine from the
+       app, so making it something you had to come to the home screen to find was
+       the wrong shape for it. -->
 
   <!-- Status is a sentence, not a panel: it answers "can I work" in one line. A
        session stuck on a permission gate takes the line over, because an agent
@@ -825,81 +794,6 @@
     height: 7px;
     border-radius: 50%;
     background: var(--alert);
-  }
-  .update {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 14px;
-    background: var(--panel);
-    border: 1px solid var(--border-2);
-    border-radius: var(--r-lg);
-  }
-  .udot {
-    flex: none;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--text);
-  }
-  .utext {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-    flex: 1;
-  }
-  .uhead {
-    font-size: 13px;
-    font-weight: 550;
-    color: var(--text);
-  }
-  .usub {
-    font-size: 10.5px;
-    color: var(--text-4);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  /* The reason is the whole point of showing this, so it wraps rather than
-     truncating: the real messages ("cannot write to /usr/local/bin (update needs
-     a writable install dir)") are longer than a phone is wide, and an ellipsis
-     cut it back to almost nothing useful. Two lines is the ceiling. */
-  .uerr {
-    font-size: 10.5px;
-    line-height: 1.4;
-    color: var(--alert);
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    overflow: hidden;
-  }
-  .ubar {
-    margin-top: 4px;
-    height: 3px;
-    border-radius: 100px;
-    background: var(--panel-3);
-    overflow: hidden;
-  }
-  .ubar-fill {
-    height: 100%;
-    border-radius: 100px;
-    background: var(--text-2);
-    transition: width 120ms linear;
-  }
-  .ubtn {
-    flex: none;
-    padding: 7px 16px;
-    border-radius: 100px;
-    background: var(--text);
-    color: var(--bg);
-    border: none;
-    font-size: 13px;
-    font-weight: 600;
-  }
-  .ubtn:disabled {
-    opacity: 0.6;
   }
   /* Quota: the page's one piece of weight. Reuses the track/fill and mono
      numerals the context meter already uses, so a budget reads the same
@@ -1638,13 +1532,6 @@
   }
   .browse2:hover {
     color: var(--text);
-  }
-
-  /* Quiet: it is not an error, it is an answer that has not arrived. */
-  .ufail {
-    margin: 0 0 4px;
-    font-size: 11.5px;
-    color: var(--text-4);
   }
 
   /* --- reference: dense, quiet ---------------------------------------------- */

@@ -7,17 +7,29 @@
   import { shortAgo } from '../lib/reltime'
   import { hasWork, isAwaiting, isWorking, needsAttention, summarise } from '../lib/sidebar'
   import { isGitRepo } from '../lib/worktrees'
+  import { updateAvailable } from '../lib/update'
   import { fetchQuery, keys, peek, SLOW_TTL } from '../lib/query.svelte'
   import Wordmark from './Wordmark.svelte'
   import Home from './Home.svelte'
   import SessionMenu from './SessionMenu.svelte'
   import Hint from './Hint.svelte'
+  import UpdateNudge from './UpdateNudge.svelte'
   import WorktreeStart from './WorktreeStart.svelte'
 
   // The nightly channel gets a night-sky header, so you can tell a nightly build
   // from a stable one at a glance. This is the one place the "no gradients" rule
   // is broken, and only when the build serving the app is nightly.
   const nightly = $derived(app.isNightly)
+
+  // Every machine running an older build than the release channel offers. Read
+  // across the whole fleet rather than for one selected machine: the sidebar is
+  // not scoped to a machine, and a peer being a release behind is exactly the
+  // thing nobody would go looking for.
+  const outdatedMachines = $derived(
+    app.machines.filter((m) =>
+      updateAvailable(m.stats?.kunai_version, app.latestVersion, m.stats?.channel),
+    ),
+  )
 
   let notif = $state(pushState())
   let notifHint = $state('')
@@ -572,6 +584,25 @@
        granted it's the desired steady state, so the persistent bar just eats
        session-list space and is dropped. -->
   <div class="foot">
+    <!-- An available update sits here, above the destinations, because the
+         sidebar is the only chrome that is always on screen. On the home screen
+         it was something you had to go and look at, which for the only way to
+         update a machine from the app is the wrong shape. It is absent entirely
+         when everything is current, so it nudges rather than nags.
+
+         One row per machine that needs it, and the machine's name replaces the
+         "Update available" heading once there is more than one, because with a
+         fleet the useful fact is WHICH box is behind. -->
+    {#each outdatedMachines as m (m.id)}
+      <UpdateNudge machine={m} named={outdatedMachines.length > 1} />
+    {/each}
+    {#if !outdatedMachines.length && app.versionCheckFailed}
+      <!-- A check that could not run has to say so. Showing nothing is exactly
+           what "you are up to date" looks like, and a machine sitting a release
+           behind a silent screen is how this went unnoticed before. -->
+      <p class="ufail mono" title={app.versionCheckFailed}>{app.versionCheckFailed}</p>
+    {/if}
+
     {#if notif !== 'unsupported' && notif !== 'granted'}
       {#if notifHint}<p class="hint">{notifHint}</p>{/if}
       <button class="notif" onclick={toggleNotif}>
@@ -1345,6 +1376,22 @@
     font-size: 12px;
     color: var(--text-3);
     line-height: 1.5;
+  }
+  /* Quiet: a version check that could not run is not an error, it is an answer
+     that has not arrived. It only appears when nothing is known to be outdated,
+     so it never competes with a real update. */
+  .ufail {
+    margin: 0 2px 8px;
+    font-size: 10.5px;
+    color: var(--text-4);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* The nudge sits above the nav with room to breathe, and stacks when more than
+     one machine is behind. */
+  .foot > :global(.nudge) {
+    margin-bottom: 8px;
   }
   .notif {
     display: flex;
