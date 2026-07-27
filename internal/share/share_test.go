@@ -1,6 +1,7 @@
 package share
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -403,5 +404,44 @@ func TestAnExpiredShareStopsBelongingToItsSession(t *testing.T) {
 	// And revoking is not the only path: the sweep already dropped it.
 	if _, err := s.Get(sh.Token); err != ErrNotFound {
 		t.Errorf("the expired share is still resolvable: %v", err)
+	}
+}
+
+// An expired share must leave the file, not just the map.
+//
+// sweepLocked deleted from memory on every read path and never wrote, so
+// shares.json kept links the running process had already stopped honouring. The
+// file is meant to be the record of what this machine is currently exposing, and
+// anything reading it to answer that question got a stale yes.
+func TestSweepPersistsWhatItDropped(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "shares.json")
+	now := time.Now()
+
+	s := NewStore(path)
+	s.SetClock(func() time.Time { return now })
+	if _, err := s.Create(Share{SessionID: "a", Tier: TierView}, MinTTL); err != nil {
+		t.Fatal(err)
+	}
+
+	// Past its expiry, and something reads the store.
+	s.SetClock(func() time.Time { return now.Add(MinTTL + time.Second) })
+	if !s.Empty() {
+		t.Fatal("the expired share still answers")
+	}
+
+	// A second store reading the same file must not find it either. Before the
+	// fix this reloaded the dead share, and only its own load-time expiry check
+	// hid the problem.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list []*Share
+	if err := json.Unmarshal(raw, &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Errorf("shares.json still lists %d expired share(s): %s", len(list), raw)
 	}
 }

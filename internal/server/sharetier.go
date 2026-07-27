@@ -10,6 +10,7 @@ package server
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/hegade/kunai/internal/share"
@@ -97,8 +98,41 @@ func (s *Server) reconcileShares(ctx context.Context) {
 			return
 		case <-t.C:
 			s.restoreOrphanedSessions(ctx)
+			s.closePublicPortIfIdle()
 		}
 	}
+}
+
+// closePublicPortIfIdle takes the machine off the public internet once the last
+// share is gone.
+//
+// Creating a share opens the gate and the owner points Funnel at it; nothing
+// closed either again. A share that simply ran out of time left the port
+// forwarding to a listener that answered 404 to the whole internet, indefinitely,
+// and the only way back was to remember to turn it off by hand. The Funnel
+// mapping outliving the link is exactly what made this dangerous rather than
+// untidy: it is still there weeks later, pointing at whatever is on that port.
+//
+// Only a mapping pointing at OUR gate is touched. A `tailscale funnel` the owner
+// set up for something else is on a port funnelPortFor does not report and is
+// left alone.
+func (s *Server) closePublicPortIfIdle() {
+	if s.shares == nil || s.gate == nil || !s.shares.Empty() {
+		return
+	}
+	if port, on := s.funnelPortFor(s.gate.Port()); on {
+		args := funnelOffArgs(port)
+		if out, err := execOut(args[0], args[1:]...); err != nil {
+			// Not fatal, and retried on the next tick: the gate stays up so a link
+			// created in the meantime still works, and a port left open is a thing to
+			// report rather than a reason to stop.
+			logShare("could not close public port %d after the last share ended: %v %s", port, err, strings.TrimSpace(out))
+			return
+		}
+		s.forgetFunnel()
+		logShare("nothing is shared any more; public port %d closed", port)
+	}
+	s.gate.stop()
 }
 
 func (s *Server) restoreOrphanedSessions(ctx context.Context) {

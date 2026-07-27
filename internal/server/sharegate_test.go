@@ -373,3 +373,72 @@ func TestRevokingAnAlreadyGoneShareSucceeds(t *testing.T) {
 		}
 	}
 }
+
+// The device key is the credential that says "I am the one who was approved", so
+// it stays in a header on every route that can use one. It used to be read from
+// the query string everywhere, which puts it in referrers, browser history and
+// any proxy log on the way. Only the websocket needs that, because a browser
+// cannot set a header on a WebSocket handshake.
+func TestDeviceKeyIsHeaderOnlyExceptOnTheSocket(t *testing.T) {
+	r := httptest.NewRequest("GET", "/api/share/tok?device=sneaky", nil)
+	if got := deviceOf(r); got != "" {
+		t.Errorf("deviceOf read the key off the query string: %q", got)
+	}
+	if got := deviceOfSocket(r); got != "sneaky" {
+		t.Errorf("deviceOfSocket = %q, want the query key the socket has no other way to send", got)
+	}
+
+	r2 := httptest.NewRequest("GET", "/api/share/tok?device=sneaky", nil)
+	r2.Header.Set("X-Kunai-Device", "real")
+	if got := deviceOf(r2); got != "real" {
+		t.Errorf("deviceOf = %q, want the header", got)
+	}
+	if got := deviceOfSocket(r2); got != "real" {
+		t.Errorf("deviceOfSocket = %q, want the header to win over the query", got)
+	}
+
+	// Bounded, because the value is persisted and a stranger picks it.
+	r3 := httptest.NewRequest("GET", "/api/share/tok", nil)
+	r3.Header.Set("X-Kunai-Device", strings.Repeat("x", maxDeviceLen+1))
+	if got := deviceOf(r3); got != "" {
+		t.Error("an oversized device key was accepted and would be written to shares.json")
+	}
+}
+
+// A share link is a public URL, so the number of sockets it can attract is not
+// bounded by anything the owner controls. Every one of them subscribes to the
+// session and is fanned out to on every event.
+func TestGuestSocketsAreCapped(t *testing.T) {
+	g := newShareGate(nil, nil, nil)
+	for i := 0; i < maxGuestSockets; i++ {
+		if !g.enterGuest() {
+			t.Fatalf("refused guest %d, below the cap", i)
+		}
+	}
+	if g.enterGuest() {
+		t.Fatal("accepted a guest past the cap, so the fan-out has no ceiling")
+	}
+	g.leaveGuest()
+	if !g.enterGuest() {
+		t.Error("a slot freed by a guest leaving was not reusable")
+	}
+}
+
+// An IPv6 origin has colons inside it, so the port has to be found after the
+// closing bracket rather than at the last colon in the string.
+func TestShareURLSurvivesAnIPv6Origin(t *testing.T) {
+	for _, c := range []struct {
+		origin string
+		port   int
+		want   string
+	}{
+		{"https://[fd7a::1]:8443", 10000, "https://[fd7a::1]:10000/s/T"},
+		{"https://[fd7a::1]", 10000, "https://[fd7a::1]:10000/s/T"},
+		{"https://[fd7a::1]:8443", 443, "https://[fd7a::1]/s/T"},
+		{"https://host.ts.net:8443", 10000, "https://host.ts.net:10000/s/T"},
+	} {
+		if got := shareURL(c.origin, c.port, "T"); got != c.want {
+			t.Errorf("shareURL(%q, %d) = %q, want %q", c.origin, c.port, got, c.want)
+		}
+	}
+}

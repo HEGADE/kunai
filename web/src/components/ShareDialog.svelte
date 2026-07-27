@@ -176,8 +176,25 @@
     }
   }
 
+  // What the owner has typed while comparing it against what their guest is
+  // reading out. Cleared whenever the request changes, so a code typed for one
+  // person can never sit in the box and approve the next one.
+  let typedCode = $state('')
+  const pendingCode = $derived(share?.pending?.code ?? '')
+  $effect(() => {
+    pendingCode // re-runs when a different request arrives
+    typedCode = ''
+  })
+  // Compared loosely on case and spacing, strictly on the characters: the owner
+  // is transcribing something read aloud, not proving they can type.
+  const norm = (s: string) => s.replace(/[\s-]/g, '').toUpperCase()
+  const codeMatches = $derived(!!pendingCode && norm(typedCode) === norm(pendingCode))
+
+  // The server checks the code too. This one exists to make the owner look at it:
+  // approving is the moment the whole design rests on, and a button that needs no
+  // input is a button that gets pressed.
   const approve = () =>
-    act(() => (share?.pending ? approveShareGuest(base, share.token, share.pending.code) : Promise.resolve()))
+    act(() => (share?.pending && codeMatches ? approveShareGuest(base, share.token, share.pending.code) : Promise.resolve()))
 
   const deny = (unpair = false) =>
     act(() => (share ? denyShareGuest(base, share.token, unpair) : Promise.resolve()))
@@ -387,12 +404,28 @@
         {/if}
 
         {#if share.pending}
+          <!-- The code is the whole check, so the owner has to enter it rather
+               than click past it. The name is typed by whoever opened the link
+               and proves nothing: anybody holding it can ask, under any name, so
+               a bare Approve button next to "Alice wants in" is a button that
+               approves whoever got there first. Typing what the other person
+               reads out is the one step that cannot be faked from the link. -->
           <div class="panel pair">
-            <p><b>{share.pending.name || 'Someone'}</b> wants to send to this session.
-              They should be seeing this code:</p>
-            <p class="code mono">{share.pending.code}</p>
+            <p>Someone calling themselves <b>{share.pending.name || 'a guest'}</b>
+              wants to send to this session.</p>
+            <p class="hint">Ask them to read you the code on their screen, and type
+              it here. Do not let anyone in whose code you have not heard from them.</p>
+            <input
+              class="codein mono"
+              bind:value={typedCode}
+              placeholder="code"
+              autocomplete="off"
+              autocapitalize="characters"
+              spellcheck="false"
+              maxlength="12"
+              aria-label="The code your guest is reading out" />
             <div class="prow">
-              <button class="go" disabled={busy} onclick={approve}>Let them in</button>
+              <button class="go" disabled={busy || !codeMatches} onclick={approve}>Let them in</button>
               <button class="ghost" disabled={busy} onclick={() => deny(false)}>No</button>
             </div>
           </div>
@@ -881,14 +914,25 @@
     font-variant-ligatures: none;
   }
   /* Read aloud or off a screen, so it is set large and widely tracked. */
-  .code {
+  /* The code the owner types while their guest reads it out. Sized like the code
+     it is transcribing rather than like an ordinary field, so the two read as the
+     same thing and a mismatch is obvious at a glance. */
+  .codein {
     align-self: flex-start;
-    padding: 5px 13px;
-    background: var(--panel-3);
-    border-radius: 8px;
-    color: var(--text) !important;
+    width: 8.5em;
+    height: 40px;
+    padding: 0 13px;
+    background: var(--panel);
+    border: 1px solid var(--border-2);
+    border-radius: 9px;
+    color: var(--text);
     font-size: 20px;
     letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+  .codein:focus-visible {
+    border-color: var(--border-3, var(--border-2));
+    outline: none;
   }
   .prow {
     display: flex;

@@ -100,10 +100,18 @@ func (s *Store) saveLocked() {
 
 // sweepLocked drops expired shares. Called on every read path, so an expired
 // share stops answering the moment its time is up rather than at the next write.
+//
+// It persists what it removed. Without that the file kept shares the running
+// process had already stopped honouring, so the header comment above ("the file
+// is the record of what is currently reachable") was not true between a sweep
+// and the next unrelated write, and anything reading shares.json to answer "is
+// this machine exposed" got a stale yes.
 func (s *Store) sweepLocked(now time.Time) {
+	changed := false
 	for tok, sh := range s.byToken {
 		if sh.Expired(now) {
 			delete(s.byToken, tok)
+			changed = true
 		}
 	}
 	// A pairing request that nobody approved is dropped on its own, shorter clock:
@@ -111,7 +119,11 @@ func (s *Store) sweepLocked(now time.Time) {
 	for _, sh := range s.byToken {
 		if sh.Pending != nil && now.Sub(time.Unix(sh.Pending.AskedAt, 0)) > PairTTL {
 			sh.Pending = nil
+			changed = true
 		}
+	}
+	if changed {
+		s.saveLocked()
 	}
 }
 

@@ -47,7 +47,18 @@ type shareGate struct {
 	port    int
 	started bool
 	srv     *http.Server
+	// guests counts open guest sockets. A share link is a public URL, and every
+	// socket on it attaches a subscriber the session fans every event out to, so
+	// without a ceiling one link posted anywhere is an unbounded fan-out on the
+	// owner's machine. Generous, because the legitimate case is a handful of
+	// people watching one conversation.
+	guests int
 }
+
+// maxGuestSockets is the ceiling on concurrent viewers of all shares on this
+// machine. Beyond it the gate refuses politely rather than accepting work it
+// cannot bound.
+const maxGuestSockets = 32
 
 // sessionLookup is all the gate may do to the rest of kunai. *session.Manager
 // satisfies it as-is; the interface exists so the gate can be stood up in a test
@@ -115,6 +126,44 @@ func (g *shareGate) start(ctx context.Context) error {
 		g.mu.Unlock()
 	}()
 	return nil
+}
+
+// stop shuts the listener down and forgets its port, so start can bind a fresh
+// one later. Called when the last share goes: a listener with nothing to serve
+// is a port open for no reason, and leaving it up is what let the public Funnel
+// mapping outlive every share it was opened for.
+func (g *shareGate) stop() {
+	g.mu.Lock()
+	srv, was := g.srv, g.started
+	g.srv, g.started, g.port = nil, false, 0
+	g.mu.Unlock()
+	if !was || srv == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(ctx)
+	log.Print("share gate closed; nothing is shared any more")
+}
+
+// enterGuest reserves a slot for one guest socket, or reports that the machine
+// is already carrying as many as it will.
+func (g *shareGate) enterGuest() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.guests >= maxGuestSockets {
+		return false
+	}
+	g.guests++
+	return true
+}
+
+func (g *shareGate) leaveGuest() {
+	g.mu.Lock()
+	if g.guests > 0 {
+		g.guests--
+	}
+	g.mu.Unlock()
 }
 
 // mux is the entire public surface. Every route a guest can reach is on this
@@ -274,14 +323,39 @@ func (g *shareGate) handlePairStatus(w http.ResponseWriter, r *http.Request) {
 	writeGuestJSON(w, map[string]bool{"paired": sh.Paired(deviceOf(r))})
 }
 
-// deviceOf reads the guest's device key. A header, not a cookie: a cookie is
+// deviceOf reads the guest's device key from a header. Not a cookie: a cookie is
 // attached by the browser to every request from any page on this origin, which is
 // exactly the property that would let a hostile page drive the session.
+//
+// Header only. The query string used to be accepted here as well, which put the
+// credential into a place that ends up in referrers, history and any proxy log
+// along the way, on routes that never needed it.
 func deviceOf(r *http.Request) string {
-	if d := r.Header.Get("X-Kunai-Device"); d != "" {
+	return boundDevice(r.Header.Get("X-Kunai-Device"))
+}
+
+// deviceOfSocket also accepts the key from the query string, which the websocket
+// has no way to avoid: a browser cannot set headers on a WebSocket handshake.
+// Kept separate from deviceOf so the widening applies to exactly the one route
+// that is stuck with it.
+func deviceOfSocket(r *http.Request) string {
+	if d := deviceOf(r); d != "" {
 		return d
 	}
-	return r.URL.Query().Get("device")
+	return boundDevice(r.URL.Query().Get("device"))
+}
+
+// maxDeviceLen bounds the key a guest may claim. The client generates 16 random
+// bytes base64'd, so anything near this is already far larger than legitimate;
+// the bound exists because the value is persisted to shares.json and a stranger
+// should not choose how much of it to fill.
+const maxDeviceLen = 128
+
+func boundDevice(d string) string {
+	if len(d) > maxDeviceLen {
+		return ""
+	}
+	return d
 }
 
 // trimName bounds what a stranger can write into the owner's approval prompt.
@@ -320,8 +394,10 @@ func writeGuestJSON(w http.ResponseWriter, v any) {
 func shareURL(origin string, funnelPort int, token string) string {
 	origin = strings.TrimSuffix(origin, "/")
 	if funnelPort != 0 {
-		// Only a port after the host, never the "https:" colon.
-		if i := strings.LastIndex(origin, ":"); i > strings.Index(origin, "//") {
+		// Only a port after the host, never the "https:" colon, and never a colon
+		// inside a bracketed IPv6 literal: "https://[fd7a::1]" has three of those
+		// and taking the last one would cut the address in half.
+		if i := strings.LastIndex(origin, ":"); i > strings.Index(origin, "//") && i > strings.LastIndex(origin, "]") {
 			origin = origin[:i]
 		}
 		// 443 is implicit in an https URL, and writing it out makes a link people

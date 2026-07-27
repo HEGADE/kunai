@@ -12,6 +12,7 @@ package server
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"net/http"
@@ -55,7 +56,15 @@ func (g *shareGate) handleWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "that session has ended", http.StatusGone)
 		return
 	}
-	device := deviceOf(r)
+	device := deviceOfSocket(r)
+
+	// Bounded before the socket is accepted, so a refusal costs a handshake rather
+	// than a subscriber on the owner's session.
+	if !g.enterGuest() {
+		http.Error(w, "too many people are watching this machine's shares right now", http.StatusServiceUnavailable)
+		return
+	}
+	defer g.leaveGuest()
 
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		// Unlike /ws/app, this is NOT a wildcard. The tailnet is not the perimeter
@@ -179,6 +188,12 @@ func (g *shareGate) runGuestCommand(sess *session.Session, token, device string,
 		if len(cmd.Attachments) > 0 {
 			return errors.New("files cannot be attached through a shared link")
 		}
+		// An empty prompt is rejected by the CLI and leaves the turn sitting on
+		// "Working..." forever, having also spent one of the guest's turns. The
+		// same trap the Telegram adapter had to close.
+		if strings.TrimSpace(cmd.Text) == "" {
+			return errors.New("type something to send")
+		}
 		// The cap is spent under the store's own lock, before the turn is sent, so
 		// two prompts arriving together cannot both take the last remaining turn.
 		if err := g.shares.SpendTurn(token, device); err != nil {
@@ -241,10 +256,21 @@ func redactEvent(ev session.AppEvent, sh *share.Share) (session.AppEvent, bool) 
 	}
 
 	switch ev.T {
-	case session.EvUser, session.EvDelta, session.EvThinking, session.EvQueued,
+	case session.EvDelta, session.EvThinking, session.EvQueued,
 		session.EvUnqueued, session.EvState, session.EvCompact, session.EvLoop,
 		session.EvMode, session.EvError, session.EvPermissionResolved:
 		return ev, true
+
+	case session.EvUser:
+		if sh.Detail.ToolInputs {
+			return ev, true
+		}
+		// The words yes, the files no. A strict share withholds what a tool read,
+		// so passing the owner's attachments through verbatim was inconsistent:
+		// the names alone can say more than the conversation does.
+		out := ev
+		out.Attachments = nil
+		return out, true
 
 	case session.EvAssistant:
 		if sh.Detail.ToolInputs {

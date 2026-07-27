@@ -125,26 +125,53 @@ func TestResolveAnyAcceptsASecondRoot(t *testing.T) {
 
 func TestToolPathsReadsEveryArgumentThatNamesAFile(t *testing.T) {
 	cases := []struct {
-		name  string
+		tool  string
 		input string
 		want  []string
+		ok    bool
 	}{
-		{"Read", `{"file_path":"/repo/a.go"}`, []string{"/repo/a.go"}},
-		{"Glob", `{"pattern":"**/*.go","path":"/repo/src"}`, []string{"/repo/src"}},
-		{"NotebookEdit", `{"notebook_path":"/repo/n.ipynb"}`, []string{"/repo/n.ipynb"}},
-		{"no paths", `{"pattern":"TODO"}`, nil},
-		{"not an object", `"hello"`, nil},
-		{"empty", ``, nil},
+		{"Read", `{"file_path":"/repo/a.go"}`, []string{"/repo/a.go"}, true},
+		{"NotebookEdit", `{"notebook_path":"/repo/n.ipynb"}`, []string{"/repo/n.ipynb"}, true},
+
+		// Glob's pattern IS a path expression, and the tool accepts an absolute one
+		// or one that climbs out. Reading only `path` left it able to enumerate the
+		// whole filesystem, since a pattern-only call named nothing to check.
+		{"Glob", `{"pattern":"**/*.go","path":"/repo/src"}`, []string{"**/*.go", "/repo/src"}, true},
+		{"Glob", `{"pattern":"/etc/**"}`, []string{"/etc/**"}, true},
+		{"Glob", `{"pattern":"../../*.pem"}`, []string{"../../*.pem"}, true},
+
+		// Grep's pattern is a REGULAR EXPRESSION and must never be resolved as a
+		// path, or searching for "../" would be denied. Its path is optional and
+		// defaults to the working directory, so a pattern-only call is complete.
+		{"Grep", `{"pattern":"../../etc"}`, nil, true},
+		{"Grep", `{"pattern":"TODO","path":"/repo"}`, []string{"/repo"}, true},
+
+		// Tools that name no file at all: nothing found, and nothing missing.
+		{"WebSearch", `{"query":"how to sort a slice"}`, nil, true},
+		{"TodoWrite", `{"todos":[]}`, nil, true},
+
+		// ok=false is "could not verify". A tool that always names a file, in a
+		// shape we cannot read, must not look the same as one with nothing to check.
+		{"Read", `{"file_path":123}`, nil, false},
+		{"Read", `{"paff":"/repo/a.go"}`, nil, false},
+		{"Read", `"hello"`, nil, false},
+		{"Read", ``, nil, false},
+		{"Write", `{}`, nil, false},
+		{"SomeNewTool", `{"file_path":"/repo/a.go"}`, nil, false},
 	}
 	for _, c := range cases {
-		got := ToolPaths(json.RawMessage(c.input))
+		got, ok := ToolPaths(c.tool, json.RawMessage(c.input))
+		if ok != c.ok {
+			t.Errorf("%s %s: ok=%v, want %v", c.tool, c.input, ok, c.ok)
+			continue
+		}
 		if len(got) != len(c.want) {
-			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+			t.Errorf("%s %s: got %v, want %v", c.tool, c.input, got, c.want)
 			continue
 		}
 		for i := range got {
 			if got[i] != c.want[i] {
-				t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+				t.Errorf("%s %s: got %v, want %v", c.tool, c.input, got, c.want)
 				break
 			}
 		}
@@ -158,7 +185,10 @@ func TestToolPathsReadsEveryEditInAMultiEdit(t *testing.T) {
 		{"file_path":"/repo/b.go"},
 		{"file_path":"/etc/passwd"}
 	]}`
-	got := ToolPaths(json.RawMessage(input))
+	got, ok := ToolPaths("MultiEdit", json.RawMessage(input))
+	if !ok {
+		t.Fatal("a well-formed MultiEdit was reported as an unreadable shape")
+	}
 	if len(got) != 3 {
 		t.Fatalf("got %v, want all three paths", got)
 	}
