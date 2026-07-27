@@ -531,3 +531,79 @@ func TestResumeLoopHonoursTheIterationCap(t *testing.T) {
 		t.Fatalf("state = %q, want exhausted", st.State)
 	}
 }
+
+// A respawn (changing effort, switching account, auto-failover) does not end a
+// loop, and must not strand one either.
+//
+// Session.Close is only drv.Close, so stopLoopLocked never ran on a respawn: the
+// loop vanished with no ending event and no notification, while loops/<id>.json
+// stayed on disk still saying "running" for the next boot to resurrect. And the
+// acceptEdits the loop had borrowed was captured into the respawn as the
+// session's own mode, with no loop left to give it back, so the session stayed
+// permissive permanently.
+func TestLoopHandoffCarriesTheRunAndNotTheBorrowedMode(t *testing.T) {
+	s := newSession("s-loop", t.TempDir(), "", newFakeDriver())
+
+	// The mode the user actually chose, before the loop borrows anything.
+	s.mu.Lock()
+	s.mode = "default"
+	s.mu.Unlock()
+
+	var saved []LoopPersist
+	s.SetLoopPersister(func(r LoopPersist) { saved = append(saved, r) })
+
+	if err := s.StartLoop(LoopConfig{Prompt: "keep going", MaxIters: 9}); err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	quiet()
+
+	// The loop borrowed acceptEdits for its duration.
+	if got := s.Mode(); got != LoopPermissionMode {
+		t.Fatalf("loop did not borrow the mode: %q", got)
+	}
+
+	rec, prevMode, ok := s.LoopHandoff()
+	if !ok {
+		t.Fatal("a running loop was not offered for handoff, so a respawn would lose it")
+	}
+	if prevMode != "default" {
+		t.Errorf("handoff reported prevMode %q, want the mode from before the loop; "+
+			"carrying the borrowed one is what left sessions permissive for good", prevMode)
+	}
+	if rec.Config.Prompt != "keep going" || rec.Config.MaxIters != 9 {
+		t.Errorf("handoff lost the loop's task or its cap: %+v", rec.Config)
+	}
+	if rec.State != LoopRunning {
+		t.Errorf("handoff state = %q, want %q", rec.State, LoopRunning)
+	}
+
+	// The durable record is still "running" throughout: nothing is driving the
+	// loop between the two processes, so a crash there must leave it resumable
+	// rather than deleted.
+	if len(saved) == 0 || saved[len(saved)-1].State != LoopRunning {
+		t.Errorf("the persisted record should still read running during a handoff, got %+v", saved)
+	}
+
+	// The new process picks it up where it left off.
+	next := newSession("s-loop", t.TempDir(), "", newFakeDriver())
+	next.SetLoopPersister(func(r LoopPersist) { saved = append(saved, r) })
+	if err := next.ResumeLoop(rec); err != nil {
+		t.Fatalf("ResumeLoop on the respawned session: %v", err)
+	}
+	quiet()
+	st := loopStatus(next)
+	if st == nil || st.State != LoopRunning {
+		t.Fatalf("the loop did not continue on the new process: %+v", st)
+	}
+	if st.Iteration < rec.Iteration {
+		t.Errorf("the loop restarted its count at %d, want it to continue from %d", st.Iteration, rec.Iteration)
+	}
+}
+
+// No loop running means nothing to hand off, so a respawn stays a plain respawn.
+func TestLoopHandoffIsEmptyWithoutALoop(t *testing.T) {
+	s := newSession("s-noloop", t.TempDir(), "", newFakeDriver())
+	if _, _, ok := s.LoopHandoff(); ok {
+		t.Fatal("offered a handoff for a session that has no loop")
+	}
+}

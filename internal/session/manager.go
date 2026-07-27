@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"sort"
 	"sync"
@@ -320,6 +321,14 @@ func (m *Manager) restart(ctx context.Context, id, effort string, acct *acctOver
 	// Everything spawn-time carries over unless this restart is explicitly
 	// changing it; see spawnSpec for why that decision lives in one place.
 	spec := specOf(old).withOverrides(effort, acct)
+	// A loop is carried across the respawn rather than killed by it: the run is
+	// meant to survive a process change, exactly as it survives a kunai restart.
+	// The mode it borrowed must NOT be, or the new process is built permissive
+	// with no loop left to hand the mode back. See Session.LoopHandoff.
+	loopRec, preLoopMode, hadLoop := old.LoopHandoff()
+	if hadLoop && preLoopMode != "" {
+		spec.mode = preLoopMode
+	}
 	dir := spec.configDir() // where the resumed process reads its transcript
 
 	old.Close()
@@ -345,7 +354,23 @@ func (m *Manager) restart(ctx context.Context, id, effort string, acct *acctOver
 	} else {
 		opts.SessionID = id
 	}
-	return m.Create(ctx, opts)
+	sess, err := m.Create(ctx, opts)
+	if err != nil {
+		// The old session is already gone. The loop's record is still on disk
+		// saying "running", which is the right outcome: nothing is driving it now,
+		// and the next boot will pick it up rather than lose the run.
+		return nil, err
+	}
+	if hadLoop {
+		// Re-arms the loop on the new process, which re-borrows acceptEdits and
+		// records the real pre-loop mode to hand back when it ends. Failure is
+		// reported by ResumeLoop to the session itself (it stops the loop with a
+		// reason), so the respawn still succeeded and the caller gets its session.
+		if err := sess.ResumeLoop(loopRec); err != nil {
+			log.Printf("session %s: respawned but the loop could not continue: %v", id, err)
+		}
+	}
+	return sess, nil
 }
 
 // newUUID returns a random RFC 4122 v4 UUID (required by claude --session-id).

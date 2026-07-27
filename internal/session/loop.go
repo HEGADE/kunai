@@ -283,6 +283,45 @@ func (s *Session) persistLoopLocked() {
 	})
 }
 
+// LoopHandoff snapshots a running loop so a respawn can carry it onto the new
+// process, and reports the mode the session was in before the loop borrowed
+// acceptEdits. Returns ok=false when no loop is running.
+//
+// A respawn is not the end of a loop: changing effort or switching account
+// replaces the process, and the run is meant to continue on the other side, the
+// same way it continues across a kunai restart. Without this the loop simply
+// vanished. Session.Close is only drv.Close, so stopLoopLocked never ran: no
+// ending event, no notification, the meter just disappeared, and
+// loops/<id>.json stayed on disk still saying "running" for the next boot to
+// resurrect. Meanwhile the borrowed acceptEdits had been captured into the
+// respawn's spawnSpec as the session's own mode, with no loop left to hand it
+// back, so the session stayed permissive for good.
+//
+// prevMode is returned separately because that is the value the respawn must be
+// built with. Carrying the live mode would bake the borrowed one in permanently.
+func (s *Session) LoopHandoff() (rec LoopPersist, prevMode string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l := s.loop
+	if l == nil || l.state != LoopRunning {
+		return LoopPersist{}, "", false
+	}
+	return LoopPersist{
+		SessionID: s.ID,
+		Cwd:       s.Cwd,
+		Model:     s.model,
+		Effort:    s.effort,
+		CLIName:   s.cliName,
+		Bin:       s.cliBin,
+		Env:       s.cliEnv,
+		Config:    l.cfg,
+		Iteration: l.iteration,
+		SpentUSD:  s.lastCostUSD - l.startCost,
+		Resumes:   l.resumes,
+		State:     l.state,
+	}, l.prevMode, true
+}
+
 // SetLoopPersister registers where a running loop is saved so it can survive a
 // restart. Called on every session by the server.
 func (s *Session) SetLoopPersister(fn func(LoopPersist)) {
