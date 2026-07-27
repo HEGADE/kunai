@@ -44,6 +44,25 @@ export interface Tab {
 }
 export const tabKey = (machineId: string, id: string) => `${machineId}:${id}`
 
+// switchFailure turns a respawn failure into something worth reading.
+//
+// The common one is not a bug and not the account: kunai restarted (a self
+// update does exactly this), which ends every ordinary session, and the tab you
+// are looking at has been pointing at a session that no longer exists ever
+// since. The server answers "session not found", which is true and tells you
+// nothing about what to do, so the one case anybody actually hits gets said
+// properly.
+function switchFailure(account: string, e: Error): string {
+  const msg = e.message || 'that did not work'
+  if (/not found|no such session/i.test(msg)) {
+    return 'This session has ended, so there is nothing to switch. Reopen it from Recent to carry on.'
+  }
+  if (/signed out/i.test(msg) && account) {
+    return msg // the server already names the account and what to do
+  }
+  return msg
+}
+
 // StartSpec is everything about a new session other than where it runs and what
 // it is asked to do. Every field is optional and an omitted one takes the app
 // default, so a one-tap start passes nothing at all. It exists as one shape so
@@ -148,6 +167,16 @@ class AppStore {
   showProviders = $state(false)
   showAllSessions = $state(false)
   listError = $state('')
+  // actionError is why the last thing you asked for did not happen: switching
+  // account, changing effort, closing.
+  //
+  // Separate from listError because they are read in different places. listError
+  // is about the machine list and belongs in the sidebar; this is about the
+  // session in front of you and has to appear there. Routing these into
+  // listError meant an account switch that the server refused reported itself in
+  // a panel you cannot see from a chat, so the picker looked stuck and nothing
+  // explained why. Cleared by the next action that succeeds.
+  actionError = $state('')
   // Sidebar machine filter: 'all' or a machine id. Lets you focus one machine.
   machineFilter = $state('all')
 
@@ -895,9 +924,38 @@ class AppStore {
   // The server closes and resumes it under the same id, so we rebuild the
   // connection from scratch (its seqs reset, so the existing socket would miss
   // the replayed history).
+  // reopenActive resumes the session the active tab is pointing at, after the
+  // server lost it.
+  //
+  // Nothing is actually lost when kunai restarts: the conversation is on disk in
+  // the transcript, and resuming reads it back. Only the process is gone. So the
+  // one useful thing to offer beside "this session has ended" is the one tap that
+  // brings it back, on the same account and in the same folder, rather than
+  // sending somebody to hunt for it in Recent.
+  async reopenActive() {
+    const t = this.activeTab
+    const conn = this.chat
+    if (!t || !conn) return
+    this.actionError = ''
+    try {
+      const meta = await createSession(this.baseForMachine(t.machineId), {
+        cwd: conn.cwd,
+        resume: t.id,
+        title: conn.title,
+        cli: conn.cli || undefined,
+      })
+      this.closeTabFor(t.machineId, t.id, { ended: true }) // drop the dead tab
+      this.open(t.machineId, meta.id)
+      this.refresh()
+    } catch (e) {
+      this.actionError = (e as Error).message
+    }
+  }
+
   async restartWithEffort(effort: string) {
     const t = this.activeTab
     if (!t) return
+    this.actionError = ''
     try {
       await apiSetEffort(this.baseForMachine(t.machineId), t.id, effort)
       await this.swapConnection(t, (c) => {
@@ -905,7 +963,7 @@ class AppStore {
       })
       this.refresh()
     } catch (e) {
-      this.listError = (e as Error).message
+      this.actionError = switchFailure('', e as Error)
     }
   }
 
@@ -937,6 +995,7 @@ class AppStore {
   async switchAccount(name: string) {
     const t = this.activeTab
     if (!t) return
+    this.actionError = ''
     try {
       await apiSetAccount(this.baseForMachine(t.machineId), t.id, name)
       await this.swapConnection(t, (c) => {
@@ -944,7 +1003,7 @@ class AppStore {
       })
       this.refresh()
     } catch (e) {
-      this.listError = (e as Error).message
+      this.actionError = switchFailure(name, e as Error)
     }
   }
 

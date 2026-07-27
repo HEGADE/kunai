@@ -1,4 +1,4 @@
-import { fetchOlderTurns, listCheckpoints, revertPreview, revertTurn, undoRevert } from './api'
+import { fetchOlderTurns, listCheckpoints, listSessions, revertPreview, revertTurn, undoRevert } from './api'
 import { DEFAULT_MODEL, DEFAULT_EFFORT } from './models'
 import type {
   AppEvent,
@@ -47,7 +47,16 @@ export interface PendingPermission {
   description?: string
 }
 
-export type ConnStatus = 'connecting' | 'online' | 'offline'
+// 'gone' means the session does not exist on the server any more, as opposed to
+// 'offline', which means we cannot reach it right now.
+//
+// They looked identical before and behaved identically, which was wrong in the
+// one case that actually happens: kunai restarting (a self update does exactly
+// this) ends every ordinary session, and the tab left over from before then
+// reconnected forever into a 404. It read as a network problem that never
+// cleared, and every control on it failed silently, because there was nothing
+// there to act on.
+export type ConnStatus = 'connecting' | 'online' | 'offline' | 'gone'
 
 // ChatConnection owns one session's live view. It survives socket drops: on
 // reconnect it asks the server for everything after the last seq it saw, so a
@@ -203,12 +212,38 @@ export class ChatConnection {
     ws.onclose = () => {
       if (this.closed) return
       this.status = 'offline'
+      // A rejected handshake and a dropped connection look the same here: the
+      // browser does not expose the HTTP status of a failed WebSocket upgrade,
+      // so a 404 for a session that no longer exists arrives as a plain close.
+      // The difference matters, so it is asked over REST instead, and only after
+      // a couple of failures, so an ordinary blip never spends a request.
+      if (this.retries >= 2) void this.checkStillThere()
       this.scheduleReconnect()
     }
     ws.onerror = () => ws.close()
   }
 
+  // checkStillThere asks whether the session exists at all, and stops retrying
+  // when it does not.
+  //
+  // Deliberately quiet about everything else: if the machine cannot be reached
+  // the list request fails too, and that is an offline machine rather than a
+  // dead session, so it says nothing and lets the reconnect carry on.
+  private async checkStillThere() {
+    try {
+      const live = await listSessions(this.base)
+      if (this.closed || this.status === 'gone') return
+      if (!live.some((m) => m.id === this.id)) {
+        this.status = 'gone'
+        clearTimeout(this.reconnectTimer)
+      }
+    } catch {
+      /* the machine is unreachable, which says nothing about this session */
+    }
+  }
+
   private scheduleReconnect() {
+    if (this.status === 'gone') return
     clearTimeout(this.reconnectTimer)
     this.retries++
     const delay = Math.min(1000 * 2 ** this.retries, 12000) + Math.random() * 400

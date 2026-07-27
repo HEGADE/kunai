@@ -554,6 +554,29 @@
   {/if}
 
   <div class="dock" bind:clientHeight={dockH}>
+    <!-- A session that no longer exists, said once and plainly, with the only
+         thing that helps. kunai restarting ends every ordinary session, and a
+         self update does exactly that, so a tab open from before a release
+         pointed at nothing: the socket retried forever showing "offline", and
+         every control on it failed without a word. -->
+    {#if chat.status === 'gone'}
+      <div class="ended">
+        <span class="edot" aria-hidden="true"></span>
+        <span class="etext">This session has ended. kunai restarted, which closes running sessions.</span>
+        <button class="ebtn" onclick={() => app.reopenActive()}>Reopen it</button>
+      </div>
+    {/if}
+
+    <!-- Why the last thing you asked for did not happen. It belongs here, beside
+         the controls that asked, rather than in the sidebar where it used to go
+         and where you cannot see it from a chat. -->
+    {#if app.actionError}
+      <div class="ended warn">
+        <span class="etext">{app.actionError}</span>
+        <button class="ex" onclick={() => (app.actionError = '')} aria-label="Dismiss">✕</button>
+      </div>
+    {/if}
+
     <LoopBar {chat} />
     <Queued {chat} />
     <div class="field">
@@ -576,7 +599,12 @@
         enterkeyhint={isTouch ? 'enter' : 'send'}
         autocomplete="off"
         autocapitalize="sentences"
-        placeholder={chat.status === 'online' ? 'Message Claude…' : 'Reconnecting…'}
+        placeholder={chat.status === 'online'
+          ? 'Message Claude…'
+          : chat.status === 'gone'
+            ? 'This session has ended'
+            : 'Reconnecting…'}
+        disabled={chat.status === 'gone'}
       ></textarea>
       <div class="bar">
         <button class="attach" onclick={() => fileInput?.click()} aria-label="Attach file" title="Attach">
@@ -1082,6 +1110,66 @@
      beneath it; the field's own edge defines it. */
   .dock {
     padding: 6px 16px calc(var(--safe-bottom) + 12px);
+  }
+  /* A dead session, and a failed action, both sit directly above the composer:
+     the composer is where you were about to act, so it is where the reason you
+     cannot has to be. */
+  .ended {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 8px;
+    padding: 9px 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+  }
+  .ended.warn {
+    border-color: var(--alert);
+  }
+  .edot {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-4);
+  }
+  .etext {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-3);
+  }
+  .ended.warn .etext {
+    color: var(--alert);
+  }
+  .ebtn {
+    flex: none;
+    height: 26px;
+    padding: 0 11px;
+    border: 0;
+    border-radius: 7px;
+    background: var(--white);
+    color: #0b0b0c;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .ex {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-4);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .ex:hover {
+    background: var(--panel-3);
+    color: var(--text);
   }
   @media (min-width: 861px) {
     .dock {
