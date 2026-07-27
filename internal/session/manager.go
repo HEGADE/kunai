@@ -101,6 +101,12 @@ type CreateOptions struct {
 	// the model which git worktree it is working in. Spawn-time only, so restart
 	// carries it over the same way it carries the account and the effort.
 	AppendSystemPrompt string
+	// DisallowedTools names tools this session must not offer the model, set when
+	// the session is shared with someone who is not its owner. Spawn-time, so it
+	// is carried by spawnSpec across every respawn: a tool restriction silently
+	// dropped by a later effort change would hand a guest the toolset the share
+	// was created to withhold.
+	DisallowedTools []string
 }
 
 // Create registers a new claude session and returns immediately; the CLI boots
@@ -139,6 +145,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	drvOpts := claude.Options{
 		Cwd: opts.Cwd, Model: opts.Model, Effort: opts.Effort, PermissionMode: mode,
 		Bin: opts.Bin, Env: envKV(opts.Env), AppendSystemPrompt: opts.AppendSystemPrompt,
+		DisallowedTools: opts.DisallowedTools,
 	}
 	if opts.Resume != "" {
 		drvOpts.Resume = opts.Resume
@@ -155,6 +162,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	s.cliBin = opts.Bin
 	s.cliEnv = opts.Env
 	s.appendPrompt = opts.AppendSystemPrompt
+	s.disallowedTools = opts.DisallowedTools
 	s.contextTokens = opts.ContextTokens
 	s.overhead = opts.Overhead
 	s.histBefore = opts.HistBefore
@@ -279,13 +287,36 @@ type acctOverride struct {
 	model string // "" carries the old model over; set to reset it (e.g. provider -> Claude)
 }
 
+// restartOverride is what a respawn is changing. Everything left zero carries
+// over from the running session, which is the default that matters: the failure
+// mode here is not a wrong value, it is a value nobody remembered to mention
+// silently reverting to whatever a fresh session would get.
+//
+// tools is a pointer because "leave the restrictions alone" and "remove them" are
+// different instructions and both have to be expressible.
+type restartOverride struct {
+	effort string
+	acct   *acctOverride
+	tools  *[]string
+	mode   string
+}
+
 // RestartWithEffort relaunches a live session at a new reasoning effort by
 // closing it and re-creating it with --resume (effort is a spawn-time CLI flag,
 // so it cannot change on the running process). The conversation is preserved via
 // the transcript: seedFn loads it back into the replay buffer. The new session
 // keeps the same id (resume forces id == claude session id).
 func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seedFn func(configDir, cid string) []SeedTurn) (*Session, error) {
-	return m.restart(ctx, id, effort, nil, seedFn)
+	return m.restart(ctx, id, restartOverride{effort: effort}, seedFn)
+}
+
+// RestartWithTools relaunches a session with a different set of withheld tools,
+// used when a session is shared with somebody who is not its owner and when that
+// share ends. The tool list is a spawn-time CLI flag, so like effort it cannot be
+// changed on a running process. mode, when set, becomes the session's standing
+// permission mode.
+func (m *Manager) RestartWithTools(ctx context.Context, id string, denied []string, mode string, seedFn func(configDir, cid string) []SeedTurn) (*Session, error) {
+	return m.restart(ctx, id, restartOverride{tools: &denied, mode: mode}, seedFn)
 }
 
 // RestartWithAccount relaunches a live session on a different Claude account,
@@ -294,7 +325,7 @@ func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seed
 // as the new account. The transcript must already be present under the new
 // account's config dir (the handler copies it before calling this).
 func (m *Manager) RestartWithAccount(ctx context.Context, id, name, bin string, env map[string]string, seedFn func(configDir, cid string) []SeedTurn) (*Session, error) {
-	return m.restart(ctx, id, "", &acctOverride{name: name, bin: bin, env: env}, seedFn)
+	return m.restart(ctx, id, restartOverride{acct: &acctOverride{name: name, bin: bin, env: env}}, seedFn)
 }
 
 // RestartWithAccountModel is RestartWithAccount plus a model reset, for switching to
@@ -302,14 +333,14 @@ func (m *Manager) RestartWithAccount(ctx context.Context, id, name, bin string, 
 // a carried-over "grok-4.5" is not a Claude tier and leaves the picker blank). An
 // empty model carries the old one over, as before.
 func (m *Manager) RestartWithAccountModel(ctx context.Context, id, name, bin string, env map[string]string, model string, seedFn func(configDir, cid string) []SeedTurn) (*Session, error) {
-	return m.restart(ctx, id, "", &acctOverride{name: name, bin: bin, env: env, model: model}, seedFn)
+	return m.restart(ctx, id, restartOverride{acct: &acctOverride{name: name, bin: bin, env: env, model: model}}, seedFn)
 }
 
 // restart is the shared respawn: close the live process and re-create it with
 // --resume so the conversation is preserved via the transcript. effort != ""
 // changes the reasoning effort; acct != nil changes the account. Anything not
 // overridden carries over from the old session.
-func (m *Manager) restart(ctx context.Context, id, effort string, acct *acctOverride, seedFn func(configDir, cid string) []SeedTurn) (*Session, error) {
+func (m *Manager) restart(ctx context.Context, id string, ov restartOverride, seedFn func(configDir, cid string) []SeedTurn) (*Session, error) {
 	m.mu.Lock()
 	old, ok := m.sessions[id]
 	m.mu.Unlock()
@@ -320,7 +351,7 @@ func (m *Manager) restart(ctx context.Context, id, effort string, acct *acctOver
 	meta := old.Meta()
 	// Everything spawn-time carries over unless this restart is explicitly
 	// changing it; see spawnSpec for why that decision lives in one place.
-	spec := specOf(old).withOverrides(effort, acct)
+	spec := specOf(old).withOverrides(ov)
 	// A loop is carried across the respawn rather than killed by it: the run is
 	// meant to survive a process change, exactly as it survives a kunai restart.
 	// The mode it borrowed must NOT be, or the new process is built permissive

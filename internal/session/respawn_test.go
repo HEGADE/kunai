@@ -4,15 +4,58 @@ import "testing"
 
 func fullSpec() spawnSpec {
 	return spawnSpec{
-		model:         "opus",
-		effort:        "high",
-		mode:          "acceptEdits",
-		cliName:       "claude-work",
-		cliBin:        "claude",
-		cliEnv:        map[string]string{"CLAUDE_CONFIG_DIR": "/accounts/work"},
-		appendPrompt:  "You are working in a git worktree",
-		contextTokens: 42_000,
-		overhead:      36_000,
+		model:           "opus",
+		effort:          "high",
+		mode:            "acceptEdits",
+		cliName:         "claude-work",
+		cliBin:          "claude",
+		cliEnv:          map[string]string{"CLAUDE_CONFIG_DIR": "/accounts/work"},
+		appendPrompt:    "You are working in a git worktree",
+		disallowedTools: []string{"Bash", "Task", "NotebookEdit"},
+		contextTokens:   42_000,
+		overhead:        36_000,
+	}
+}
+
+// The field with the sharpest edge. A session shared with somebody else runs
+// without Bash, and that is a spawn-time flag, so every respawn has to reproduce
+// it. Losing it in an effort change would hand a guest a shell on the owner's
+// machine, silently, at a moment nobody is thinking about the share.
+func TestToolRestrictionsSurviveEveryRespawn(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		ov   restartOverride
+	}{
+		{"effort change", restartOverride{effort: "low"}},
+		{"account switch", restartOverride{acct: &acctOverride{name: "B", bin: "claude"}}},
+		{"nothing in particular", restartOverride{}},
+	} {
+		got := fullSpec().withOverrides(c.ov)
+		if len(got.disallowedTools) != 3 || got.disallowedTools[0] != "Bash" {
+			t.Errorf("%s dropped the tool restrictions: %v", c.name, got.disallowedTools)
+		}
+	}
+
+	// And apply has to write it, or carrying it through the spec achieves nothing.
+	var opts CreateOptions
+	fullSpec().apply(&opts)
+	if len(opts.DisallowedTools) != 3 {
+		t.Errorf("apply did not write the tool restrictions: %v", opts.DisallowedTools)
+	}
+}
+
+// Ending a share has to be able to give the tools BACK, so "no restrictions" is a
+// real instruction and not the same as "leave them alone".
+func TestToolRestrictionsCanBeCleared(t *testing.T) {
+	none := []string{}
+	got := fullSpec().withOverrides(restartOverride{tools: &none})
+	if len(got.disallowedTools) != 0 {
+		t.Errorf("clearing the restrictions left %v", got.disallowedTools)
+	}
+	// A nil override means keep, which is what every other restart relies on.
+	kept := fullSpec().withOverrides(restartOverride{tools: nil})
+	if len(kept.disallowedTools) != 3 {
+		t.Errorf("a nil tools override changed them to %v", kept.disallowedTools)
 	}
 }
 
@@ -20,7 +63,7 @@ func fullSpec() spawnSpec {
 // to send a work session back to the default account. Everything not asked for
 // must survive it untouched.
 func TestEffortChangeKeepsEverythingElse(t *testing.T) {
-	got := fullSpec().withOverrides("low", nil)
+	got := fullSpec().withOverrides(restartOverride{effort: "low"})
 
 	if got.effort != "low" {
 		t.Errorf("effort = %q, want low", got.effort)
@@ -42,9 +85,9 @@ func TestEffortChangeKeepsEverythingElse(t *testing.T) {
 }
 
 func TestAccountChangeKeepsTheWorktreeBrief(t *testing.T) {
-	got := fullSpec().withOverrides("", &acctOverride{
+	got := fullSpec().withOverrides(restartOverride{acct: &acctOverride{
 		name: "Claude", bin: "claude", env: map[string]string{"CLAUDE_CONFIG_DIR": "/accounts/personal"},
-	})
+	}})
 
 	if got.cliName != "Claude" {
 		t.Errorf("account did not switch: %q", got.cliName)
@@ -60,12 +103,12 @@ func TestAccountChangeKeepsTheWorktreeBrief(t *testing.T) {
 // A model reset is only applied when the target account asks for one, because an
 // account switch that leaves a provider model on a Claude account blanks the picker.
 func TestAccountChangeResetsTheModelOnlyWhenAsked(t *testing.T) {
-	kept := fullSpec().withOverrides("", &acctOverride{name: "B", bin: "claude"})
+	kept := fullSpec().withOverrides(restartOverride{acct: &acctOverride{name: "B", bin: "claude"}})
 	if kept.model != "opus" {
 		t.Errorf("model = %q, want it carried over", kept.model)
 	}
 
-	reset := fullSpec().withOverrides("", &acctOverride{name: "B", bin: "claude", model: "sonnet"})
+	reset := fullSpec().withOverrides(restartOverride{acct: &acctOverride{name: "B", bin: "claude", model: "sonnet"}})
 	if reset.model != "sonnet" {
 		t.Errorf("model = %q, want the requested reset", reset.model)
 	}
@@ -77,16 +120,16 @@ func TestAccountChangeResetsTheModelOnlyWhenAsked(t *testing.T) {
 func TestProviderAccountAlwaysGetsTheProviderMode(t *testing.T) {
 	spec := fullSpec()
 	spec.mode = "default"
-	got := spec.withOverrides("", &acctOverride{
+	got := spec.withOverrides(restartOverride{acct: &acctOverride{
 		name: "Codex", bin: "claude",
 		env: map[string]string{"ANTHROPIC_BASE_URL": "http://127.0.0.1:9"},
-	})
+	}})
 	if got.mode != ProviderPermissionMode {
 		t.Errorf("mode = %q, want %q", got.mode, ProviderPermissionMode)
 	}
 
 	// And a Claude account is left alone.
-	claude := fullSpec().withOverrides("", nil)
+	claude := fullSpec().withOverrides(restartOverride{})
 	if claude.mode != "acceptEdits" {
 		t.Errorf("a Claude session's mode was rewritten to %q", claude.mode)
 	}

@@ -135,6 +135,10 @@ type Options struct {
 	// and would be, in exactly the long unattended run where forgetting matters
 	// most. A system prompt stays resident for the life of the process.
 	AppendSystemPrompt string
+	// DisallowedTools names tools the CLI must not offer the model at all, passed
+	// as --disallowedTools. Spawn-time, like everything else here, so changing it
+	// means respawning the process.
+	DisallowedTools []string
 	// ReadyTimeout bounds how long Start waits for the init handshake.
 	ReadyTimeout time.Duration
 }
@@ -209,6 +213,14 @@ func (s *Session) args() []string {
 	}
 	if s.opts.AppendSystemPrompt != "" {
 		a = append(a, "--append-system-prompt", s.opts.AppendSystemPrompt)
+	}
+	// Tools the session may not use at all, for a session shared with someone who
+	// is not its owner. This removes them from the model's toolset rather than
+	// gating them behind a prompt, which is the distinction the whole share design
+	// rests on: a tool that is merely gated is one careless approval away from
+	// running. Verified against claude 2.1.220 in exactly this mode.
+	if len(s.opts.DisallowedTools) > 0 {
+		a = append(a, "--disallowedTools", strings.Join(s.opts.DisallowedTools, ","))
 	}
 	if s.opts.SessionID != "" {
 		a = append(a, "--session-id", s.opts.SessionID)

@@ -58,6 +58,15 @@ type AppEvent struct {
 	// "delta" / "thinking" / "user"
 	Text string `json:"text,omitempty"`
 
+	// From marks work that somebody other than the owner caused: set on "user",
+	// "queued" and "permission" when a shared link sent it, and empty otherwise.
+	//
+	// It exists because approving a tool call is the one authority a guest never
+	// gets, and an owner approving from a lock-screen notification sees a tool name
+	// and nothing else. Without this, a guest's request for a risky action is
+	// indistinguishable from one you made yourself a minute ago.
+	From string `json:"from,omitempty"`
+
 	// "user": what was attached to the prompt. Metadata only (name + type) — the
 	// bytes already went to Claude and are never served back; this just lets the
 	// message show what rode along with it.

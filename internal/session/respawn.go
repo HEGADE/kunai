@@ -28,6 +28,13 @@ type spawnSpec struct {
 	// the main checkout.
 	appendPrompt string
 
+	// disallowedTools is the toolset withheld while the session is shared with
+	// someone who is not its owner. The most important field here to carry: the
+	// others going missing is a nuisance, this one going missing hands a guest
+	// Bash on somebody else's machine. Changing effort mid-share must not be a way
+	// to get it back.
+	disallowedTools []string
+
 	// The context meter's state, so a respawn does not reset it to zero and
 	// mislead until the next turn corrects it.
 	contextTokens int64
@@ -42,25 +49,34 @@ func specOf(s *Session) spawnSpec {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return spawnSpec{
-		model:         meta.Model,
-		effort:        meta.Effort,
-		mode:          s.mode,
-		cliName:       s.cliName,
-		cliBin:        s.cliBin,
-		cliEnv:        s.cliEnv,
-		appendPrompt:  s.appendPrompt,
-		contextTokens: s.contextTokens,
-		overhead:      s.overhead,
+		model:           meta.Model,
+		effort:          meta.Effort,
+		mode:            s.mode,
+		cliName:         s.cliName,
+		cliBin:          s.cliBin,
+		cliEnv:          s.cliEnv,
+		appendPrompt:    s.appendPrompt,
+		disallowedTools: s.disallowedTools,
+		contextTokens:   s.contextTokens,
+		overhead:        s.overhead,
 	}
 }
 
-// withOverrides applies a restart's requested changes and nothing else. An empty
-// effort keeps the current one; a nil account keeps the current account.
-func (sp spawnSpec) withOverrides(effort string, acct *acctOverride) spawnSpec {
-	if effort != "" {
-		sp.effort = effort
+// withOverrides applies a restart's requested changes and nothing else. Every
+// zero field means "keep what the session already has".
+func (sp spawnSpec) withOverrides(ov restartOverride) spawnSpec {
+	if ov.effort != "" {
+		sp.effort = ov.effort
 	}
-	if acct != nil {
+	if ov.tools != nil {
+		// Non-nil and empty is a real instruction: it is how a share ending gives
+		// the session its full toolset back.
+		sp.disallowedTools = *ov.tools
+	}
+	if ov.mode != "" {
+		sp.mode = ov.mode
+	}
+	if acct := ov.acct; acct != nil {
 		sp.cliName, sp.cliBin, sp.cliEnv = acct.name, acct.bin, acct.env
 		if acct.model != "" {
 			// Reset the model when the new account makes the old one meaningless,
@@ -91,6 +107,7 @@ func (sp spawnSpec) apply(opts *CreateOptions) {
 	opts.Bin = sp.cliBin
 	opts.Env = sp.cliEnv
 	opts.AppendSystemPrompt = sp.appendPrompt
+	opts.DisallowedTools = sp.disallowedTools
 	opts.ContextTokens = sp.contextTokens
 	opts.Overhead = sp.overhead
 }

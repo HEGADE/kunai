@@ -26,6 +26,7 @@ import (
 	"github.com/hegade/kunai/internal/push"
 	"github.com/hegade/kunai/internal/schedule"
 	"github.com/hegade/kunai/internal/session"
+	"github.com/hegade/kunai/internal/share"
 	"github.com/hegade/kunai/internal/telegram"
 	"github.com/hegade/kunai/internal/webui"
 )
@@ -105,6 +106,14 @@ type Server struct {
 	modelVers     modelVersionCache        // newest model version per family, read from the claude binary
 	worktrees     *worktreeStore           // git worktrees, so several agents share one repo safely
 	fleet         *fleetHub                // pushes the session list to clients instead of them polling for it
+	// shares and gate are session sharing: a link worth one conversation, served
+	// on a listener of its own so a guest can never reach the routes above. See
+	// sharegate.go for why that is a separate mux rather than a middleware.
+	shares     *share.Store
+	gate       *shareGate
+	funnelMu   sync.Mutex
+	funnelAt   time.Time // when the funnel port was last read (it shells out)
+	funnelPort int
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -163,6 +172,11 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	s.failover.load()            // re-apply the persisted opt-in on boot (default off)
 	go s.discoverModelVersions() // warm the model-version cache off the request path
 	s.sched = schedule.New(filepath.Join(cfg.DataDir, "schedule.json"), s.fireJob)
+	// Sharing needs somewhere to persist links, so like the other stores it is
+	// only available with a data dir. The gate is constructed either way and simply
+	// never started when there is nothing to serve.
+	s.shares = share.NewStore(shareStorePath(cfg.DataDir))
+	s.gate = newShareGate(s.shares, mgr, s.pwa)
 	if cfg.DataDir != "" {
 		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))
 		// New accounts log in with the same binary as the default profile, into a
@@ -275,6 +289,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/schedule", s.handleScheduleCreate)
 	mux.HandleFunc("PUT /api/schedule/{id}", s.handleScheduleReplace)
 	mux.HandleFunc("DELETE /api/schedule/{id}", s.handleScheduleDelete)
+	// Sharing, owner side. The guest's own routes are NOT here: they live on a
+	// separate mux on a separate listener (sharegate.go), which is what keeps a
+	// public link from ever reaching the handlers above.
+	mux.HandleFunc("GET /api/shares", s.handleListShares)
+	mux.HandleFunc("POST /api/shares", s.handleCreateShare)
+	mux.HandleFunc("GET /api/sessions/{id}/share", s.handleGetShare)
+	mux.HandleFunc("POST /api/shares/{token}/approve/{code}", s.handleApproveShare)
+	mux.HandleFunc("POST /api/shares/{token}/deny", s.handleDenyShare)
+	mux.HandleFunc("DELETE /api/shares/{token}", s.handleRevokeShare)
+	mux.HandleFunc("GET /api/funnel", s.handleFunnelStatus)
+	mux.HandleFunc("POST /api/funnel", s.handleFunnelOn)
+	mux.HandleFunc("DELETE /api/funnel", s.handleFunnelOff)
+
 	mux.HandleFunc("GET /ws/app/{id}", s.handleWS)
 	// Machine-level pushes: the session list when it changes, stats on a timer the
 	// server owns. Replaces the client polling every machine for both.
@@ -499,6 +526,14 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
 	s.mgr.Close(id)
 	if s.checkpoints != nil {
 		s.checkpoints.forget(id) // the shadow refs remain for git GC; drop the tracking
+	}
+	// A share must not outlive the session it points at. Left behind, it is a
+	// public link to a conversation that no longer exists, and worse, to an id
+	// that could later be reused by another one.
+	if s.shares != nil {
+		if _, had := s.shares.RevokeSession(id); had {
+			logShare("session %s ended, so its link was revoked", id)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

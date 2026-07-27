@@ -71,7 +71,12 @@ type Session struct {
 	// appendPrompt is extra system prompt baked in at spawn (a worktree brief).
 	// It is spawn-time only, so like effort it has to be carried across a restart
 	// or an effort/account change would silently drop it.
-	appendPrompt    string
+	appendPrompt string
+	// disallowedTools is the toolset withheld while this session is shared with
+	// somebody who is not its owner. Spawn-time, like appendPrompt, and carried by
+	// spawnSpec for the same reason with a much sharper edge: losing it hands a
+	// guest the tools the share exists to withhold.
+	disallowedTools []string
 	title           string
 	claudeSessionID string // CLI-assigned id, for --resume cold-start
 	state           string
@@ -80,6 +85,7 @@ type Session struct {
 	pendingPost     int64   // a just-compacted conversation size, awaiting the next usage to measure overhead
 	histBefore      int64   // transcript byte offset older-than-seed history begins before; 0 = none. Reverse-scroll cursor.
 	lastCostUSD     float64 // running session total from the CLI, to difference per turn
+	turnFrom        Origin  // who started the turn now running; see origin.go
 	buf             *ring
 	subs            map[*Subscriber]struct{}
 	queue           []*queuedPrompt // prompts waiting for the running turn to end
@@ -99,9 +105,9 @@ type Session struct {
 	// onListChange fires when this session's row in a listing would look
 	// different, so the server can push rather than have clients poll.
 	onListChange func()
-	onRateLimit     func(window string, resetsAt int64)
-	onTurnEnd       func(rateLimited bool) // fired after every turn; failover reacts to a wall
-	loopPersist     func(LoopPersist)      // save/clear a running loop so it survives a restart
+	onRateLimit  func(window string, resetsAt int64)
+	onTurnEnd    func(rateLimited bool) // fired after every turn; failover reacts to a wall
+	loopPersist  func(LoopPersist)      // save/clear a running loop so it survives a restart
 	// checkpointHook, if set, snapshots the working tree at the start of a turn --
 	// synchronously, BEFORE the prompt reaches the CLI, so the checkpoint is the true
 	// pre-turn state (a later capture would race the agent's first edit). seq is the
@@ -473,6 +479,10 @@ func (s *Session) onPermission(ask *claude.PermissionAsk) {
 		Suggestions: ask.Suggestions,
 	}
 	s.mu.Lock()
+	// Carry who caused the turn this ask belongs to. The owner is the only one who
+	// can answer it, and they need to know whether they are approving their own
+	// work or a visitor's.
+	ev.From = string(s.turnFrom)
 	if s.state != StateAwaiting {
 		s.state = StateAwaiting
 		stateEv := s.sequenceLocked(AppEvent{T: EvState, State: StateAwaiting})
@@ -500,6 +510,7 @@ type queuedPrompt struct {
 	content     any    // built content (attachments) for the CLI; not sent to clients
 	label       string // what the queue shows, when the text itself is not for reading
 	silent      bool   // context handed to the model; another event already stands for it
+	from        Origin // who sent it; empty is the owner. See origin.go.
 }
 
 // Prompt sends a user turn, or queues it if a turn is already running. The
@@ -519,7 +530,7 @@ func (s *Session) prompt(q *queuedPrompt) error {
 	if s.state == StateRunning || s.state == StateAwaiting {
 		q.ID = newQueueID()
 		s.queue = append(s.queue, q)
-		s.emitLocked(s.sequenceLocked(AppEvent{T: EvQueued, QueueID: q.ID, Text: q.display(), Attachments: q.Attachments}))
+		s.emitLocked(s.sequenceLocked(AppEvent{T: EvQueued, QueueID: q.ID, Text: q.display(), Attachments: q.Attachments, From: string(q.from)}))
 		s.mu.Unlock()
 		return nil
 	}
@@ -544,10 +555,13 @@ func (q *queuedPrompt) display() string {
 // checkpoint to this turn.
 func (s *Session) startTurnLocked(q *queuedPrompt) uint64 {
 	s.lastText = "" // this turn has not said anything yet
+	// Whose turn this is, so a guest can stop their own work and only their own,
+	// and so a permission ask raised by it can say who asked for it.
+	s.turnFrom = q.from
 	var userSeq uint64
 	if !q.silent {
 		s.lastPromptText = q.Text // remember it so failover can resend on another account
-		ev := s.sequenceLocked(AppEvent{T: EvUser, Text: q.Text, Attachments: q.Attachments})
+		ev := s.sequenceLocked(AppEvent{T: EvUser, Text: q.Text, Attachments: q.Attachments, From: string(q.from)})
 		userSeq = ev.Seq
 		s.emitLocked(ev)
 	}
@@ -589,6 +603,23 @@ func (s *Session) AddProject(info project.Info) error {
 }
 
 // Projects lists the codebases this session has context for.
+// DisallowedTools is the toolset currently withheld from this session, so a
+// caller can tell whether a respawn would actually change anything.
+func (s *Session) DisallowedTools() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.disallowedTools...)
+}
+
+// HighSeq is the newest event number this session has emitted. A share made
+// "from now on" freezes this as its floor, so the guest never sees the
+// conversation that happened before the link existed.
+func (s *Session) HighSeq() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.seq
+}
+
 func (s *Session) Projects() []project.Info {
 	s.mu.Lock()
 	defer s.mu.Unlock()
