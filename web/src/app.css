@@ -30,6 +30,17 @@
 
   --white: #f2f2f3;
 
+  /* Brand marks. The one sanctioned break in the near-monochrome rule, and it is
+     narrow on purpose: a mark is coloured ONLY when it stands for somebody else's
+     product, because there the colour is the identity and carries real
+     information (this row is Claude, that one is Grok). kunai's own furniture --
+     the gear, the signal, the chip -- stays on the gray ramp. Colour everything
+     and colour stops meaning anything, which would cost us the one place it has
+     to work: telling two accounts apart at a glance. */
+  --claude: #d97757;
+  --openai: #a8b3c4;
+  --grok: #d6d7da;
+
   --sans: 'Geist Variable', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
   --serif: 'Source Serif 4 Variable', Charter, 'Iowan Old Style', Georgia, serif;

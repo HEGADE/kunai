@@ -585,19 +585,35 @@
          become one row instead; see .nav below. -->
     <!-- Four destinations you visit rarely, as one icon row rather than four
          labelled rows: as rows they cost about 180px of the session list
-         permanently. But an icon on its own does not say what it opens, and the
-         first version of this leaned on hover to explain it, which is no
-         explanation at all on a phone. So there are two answers, one per input:
-         a Hint on hover for a pointer, and the label itself on a touch screen
-         (see .nlbl), where the room exists because there is no bubble to show. -->
+         permanently.
+
+         The labels used to be hidden wherever a hover bubble could stand in for
+         them, which meant every pointer user had to hover each icon and read a
+         tooltip to find out what it opened. A tooltip is a reference, not a
+         label: it answers a question you already had to know to ask. So the word
+         is always on now. The row costs 4px more than it did and nothing has to
+         be discovered.
+
+         The icons then stopped trying to explain and started trying to identify,
+         which is a job they can actually do. Three of the four were replaced. A
+         speech bubble for Channels collided with New session a few inches above
+         it (see the newChat snippet, a bubble with a plus), so within one sidebar
+         the same glyph meant both "a conversation" and "how to reach one". Two
+         people for Accounts read as collaborators, when these are Claude logins
+         and nobody else is involved. And a 2x2 grid for Providers meant nothing
+         at all: it is the "apps" icon in every other product on earth. -->
     <nav class="nav" aria-label="Configuration">
       <Hint
         title="Channels"
         body="Reach a session from somewhere that is not this app. Telegram is set up here: pair a chat, and you can drive an agent from your phone without kunai open."
       >
         <button class="navitem" onclick={() => app.openChannels()} aria-label="Channels">
+          <!-- Signal, not a speech bubble: a channel is a way IN to a session
+               from outside, and the bubble already belongs to the sessions
+               themselves. Deliberately generic rather than Telegram's plane,
+               because the server assumes more channels are coming. -->
           <span class="nic">
-            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 01-9 8.4 8.5 8.5 0 01-3.9-.9L3 20.5l1.5-4.4a8.4 8.4 0 01-.9-3.9 8.5 8.5 0 018.4-8.7h.5a8.5 8.5 0 018.5 8.5z" /></svg>
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5.2 5.2a9.6 9.6 0 000 13.6" /><path d="M18.8 5.2a9.6 9.6 0 010 13.6" /><path d="M8.5 8.5a5 5 0 000 7" /><path d="M15.5 8.5a5 5 0 010 7" /><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" /></svg>
           </span>
           <span class="nlbl">Channels</span>
         </button>
@@ -607,8 +623,12 @@
         body="The Claude logins this machine can run a session on. Add another and you can work on two subscriptions at once, or hand a session to whichever one still has quota."
       >
         <button class="navitem" onclick={() => app.openAccounts()} aria-label="Accounts">
-          <span class="nic">
-            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 00-3-3.87" /><path d="M16 3.13a4 4 0 010 7.75" /></svg>
+          <!-- Claude's own mark, in Claude's own colour. These are Claude logins
+               and nothing else, so the most direct thing the icon can say is the
+               name of the thing. It is the only warm pixel in the sidebar, which
+               is fitting: it is what the whole app is pointed at. -->
+          <span class="nic claude">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M12 12V3.4" /><path d="M12 12v8.6" /><path d="M12 12H3.4" /><path d="M12 12h8.6" /><path d="M12 12L5.95 5.95" /><path d="M12 12l6.05 6.05" /><path d="M12 12l6.05-6.05" /><path d="M12 12l-6.05 6.05" /></svg>
           </span>
           <span class="nlbl">Accounts</span>
         </button>
@@ -618,8 +638,12 @@
         body="Run the agent on a model that is not Claude. A Codex or Grok subscription is authorised here, and every tool, edit and permission keeps working; only the model answering changes."
       >
         <button class="navitem" onclick={() => app.openProviders()} aria-label="Providers">
+          <!-- A chip: which brain answers. The whole idea of a provider is that
+               everything else about the session is unchanged and only the thing
+               doing the thinking is swapped, so the icon is the part being
+               swapped. -->
           <span class="nic">
-            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /></svg>
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6.4" y="6.4" width="11.2" height="11.2" rx="2.2" /><path d="M9.9 2.9v3.5M14.1 2.9v3.5M9.9 17.6v3.5M14.1 17.6v3.5M2.9 9.9h3.5M2.9 14.1h3.5M17.6 9.9h3.5M17.6 14.1h3.5" /></svg>
           </span>
           <span class="nlbl">Providers</span>
         </button>
@@ -1257,14 +1281,15 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 3px;
+    gap: 4px;
     flex: 1;
     min-width: 0;
-    height: 44px;
+    height: 50px;
     border: 0;
     border-radius: var(--r-sm);
     background: transparent;
     color: var(--text-3);
+    font-size: 10px;
     cursor: pointer;
   }
   .navitem:hover {
@@ -1274,23 +1299,29 @@
   .nic {
     display: flex;
   }
-  /* The label is hidden only where a hover bubble can replace it. A coarse
-     pointer never hovers, so there the word stays: an unexplained icon was the
-     whole complaint, and a tooltip nobody can trigger does not answer it. */
+  /* Claude's mark keeps its own colour at every state. Dimming it to the gray
+     ramp at rest would throw away the recognition that is the entire reason it
+     is here; it only warms slightly on hover, like everything else in the row. */
+  .nic.claude {
+    color: var(--claude);
+  }
+  .navitem:hover .nic.claude {
+    filter: brightness(1.12);
+  }
+  /* Always on. The icon identifies; the word is what tells you what it opens,
+     and a hover tooltip cannot do that job for someone who has not already
+     guessed. The Hint stays for the sentence of detail underneath. */
   .nlbl {
-    display: none;
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   @media (pointer: coarse) {
     .navitem {
-      height: 52px;
+      height: 54px;
       font-size: 10.5px;
-    }
-    .nlbl {
-      display: block;
-      max-width: 100%;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
     }
   }
 
