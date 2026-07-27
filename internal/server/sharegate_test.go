@@ -285,8 +285,11 @@ func TestOwnerPageKeepsItsServiceWorker(t *testing.T) {
 // belonged to the STABLE install, and turning on public access took stable off
 // the air until somebody undid the Funnel mapping by hand.
 func TestFunnelNeverOffersAPortSomethingIsOn(t *testing.T) {
-	prevOut, prevLn := execOut, listenerOn
-	defer func() { execOut, listenerOn = prevOut, prevLn }()
+	prevOut, prevLn, prevBin := execOut, listenerOn, tailscaleBin
+	defer func() { execOut, listenerOn, tailscaleBin = prevOut, prevLn, prevBin }()
+	// Pretend tailscale is installed. Without this the check bails out before any
+	// of the logic under test on a machine that has none, which is every CI runner.
+	tailscaleBin = func() string { return "/usr/bin/tailscale" }
 	// An empty serve config: as far as tailscale is concerned every port is free.
 	execOut = func(string, ...string) (string, error) { return `{}`, nil }
 	// ...but something else on the box holds 8443.
@@ -315,8 +318,11 @@ func TestFunnelNeverOffersAPortSomethingIsOn(t *testing.T) {
 // A port nothing holds is offered, or the check would be useless in the other
 // direction.
 func TestFunnelOffersAFreePort(t *testing.T) {
-	prevOut, prevLn := execOut, listenerOn
-	defer func() { execOut, listenerOn = prevOut, prevLn }()
+	prevOut, prevLn, prevBin := execOut, listenerOn, tailscaleBin
+	defer func() { execOut, listenerOn, tailscaleBin = prevOut, prevLn, prevBin }()
+	// Pretend tailscale is installed. Without this the check bails out before any
+	// of the logic under test on a machine that has none, which is every CI runner.
+	tailscaleBin = func() string { return "/usr/bin/tailscale" }
 	execOut = func(string, ...string) (string, error) { return `{}`, nil }
 	listenerOn = func(int) string { return "" }
 

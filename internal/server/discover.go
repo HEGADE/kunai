@@ -227,7 +227,12 @@ func tailscalePeers() ([]tsPeer, bool) {
 
 // tailscaleBin finds the tailscale CLI on PATH (Linux, Homebrew) or the macOS
 // app bundle path used by the GUI client.
-func tailscaleBin() string {
+// A var so a test can answer without one being installed. The Funnel tests stub
+// execOut and the bind probe already, but this lookup is a real one, so on a
+// machine with no tailscale (CI, most obviously) funnelStatus bailed out before
+// reaching anything under test and both of them failed there while passing on a
+// developer's tailnet-joined box.
+var tailscaleBin = func() string {
 	if p, err := exec.LookPath("tailscale"); err == nil {
 		return p
 	}
