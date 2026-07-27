@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -261,40 +262,74 @@ func TestOwnerPageKeepsItsServiceWorker(t *testing.T) {
 	}
 }
 
-// kunai binds its own port directly rather than through `tailscale serve`, so
-// tailscale reports it as free. Offering it would have the owner turn on public
-// access by knocking their own app off the air.
-func TestFunnelNeverOffersKunaisOwnPort(t *testing.T) {
-	prev := execOut
-	defer func() { execOut = prev }()
+// A port something on this machine is already listening on must never be offered,
+// whatever tailscale thinks of it.
+//
+// tailscale only knows about what `tailscale serve` forwards. kunai binds its own
+// port directly, so tailscale calls it free, and taking it with Funnel does not
+// fail: it quietly starts intercepting that port at the tailnet level. The app
+// that was there stays running and becomes unreachable.
+//
+// That is not hypothetical. A nightly install on 8444 offered 8443, which
+// belonged to the STABLE install, and turning on public access took stable off
+// the air until somebody undid the Funnel mapping by hand.
+func TestFunnelNeverOffersAPortSomethingIsOn(t *testing.T) {
+	prevOut, prevLn := execOut, listenerOn
+	defer func() { execOut, listenerOn = prevOut, prevLn }()
 	// An empty serve config: as far as tailscale is concerned every port is free.
 	execOut = func(string, ...string) (string, error) { return `{}`, nil }
+	// ...but something else on the box holds 8443.
+	listenerOn = func(port int) string {
+		if port == 8443 {
+			return "already in use on this machine"
+		}
+		return ""
+	}
 
-	s := &Server{cfg: Config{Addr: "100.64.0.1:8443"}}
-	st := s.funnelStatus(41234)
+	st := (&Server{}).funnelStatus(41234)
 
 	for _, p := range st.Free {
 		if p == 8443 {
-			t.Fatal("offered 8443, which is the port kunai itself is listening on")
+			t.Fatal("offered 8443 while something on this machine is listening on it")
 		}
 	}
 	if st.InUse[8443] == "" {
 		t.Error("8443 should be reported as taken, with a reason the owner can read")
 	}
 	if len(st.Free) == 0 {
-		t.Error("no port was offered at all")
+		t.Error("no port was offered at all, so nothing can ever be shared")
 	}
 }
 
-func TestOwnPortReadsTheBindAddress(t *testing.T) {
-	for addr, want := range map[string]int{
-		"100.64.0.1:8443": 8443,
-		"127.0.0.1:8899":  8899,
-		"":                0,
-		"nonsense":        0,
-	} {
-		if got := (&Server{cfg: Config{Addr: addr}}).ownPort(); got != want {
-			t.Errorf("ownPort(%q) = %d, want %d", addr, got, want)
-		}
+// A port nothing holds is offered, or the check would be useless in the other
+// direction.
+func TestFunnelOffersAFreePort(t *testing.T) {
+	prevOut, prevLn := execOut, listenerOn
+	defer func() { execOut, listenerOn = prevOut, prevLn }()
+	execOut = func(string, ...string) (string, error) { return `{}`, nil }
+	listenerOn = func(int) string { return "" }
+
+	st := (&Server{}).funnelStatus(41234)
+	if len(st.Free) != len(funnelPorts) {
+		t.Errorf("free = %v, want all of %v", st.Free, funnelPorts)
+	}
+}
+
+// Binding is how the question is answered, so the probe has to survive being run
+// for real: a low port refused for permission is NOT a port in use, and calling
+// it taken would hide 443 from everybody running kunai unprivileged.
+func TestListenerProbeIgnoresPermissionErrors(t *testing.T) {
+	// An ephemeral port nothing holds.
+	ln, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Skip("cannot bind at all in this environment")
+	}
+	taken := ln.Addr().(*net.TCPAddr).Port
+	if got := listenerOn(taken); got == "" {
+		t.Errorf("a port this test is holding was reported free")
+	}
+	ln.Close()
+	if got := listenerOn(taken); got != "" {
+		t.Errorf("a released port is still reported as %q", got)
 	}
 }

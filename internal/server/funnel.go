@@ -16,9 +16,11 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -74,15 +76,25 @@ func (s *Server) funnelStatus(gatePort int) funnelState {
 	}
 
 	target := "http://127.0.0.1:" + strconv.Itoa(gatePort)
-	mine := s.ownPort()
 	for _, port := range funnelPorts {
-		// kunai's own listener is not something tailscale knows about, because the
-		// server binds it directly rather than through `tailscale serve`. Offering
-		// it as free would have Funnel try to take a port the server is already
-		// holding, and the owner would be turning on public access by knocking
-		// their own app off the air.
-		if port == mine {
-			out.InUse[port] = "kunai itself"
+		// A port something on this machine is ALREADY listening on is not free,
+		// whatever tailscale thinks.
+		//
+		// tailscale only knows about what `tailscale serve` is configured to
+		// forward. kunai binds its own port directly, so tailscale reports it as
+		// available, and taking it with Funnel does not fail: it silently starts
+		// intercepting that port at the tailnet level and hands it to whatever
+		// Funnel was pointed at. The app that was there is still running and
+		// perfectly healthy, and completely unreachable.
+		//
+		// This cost a real outage. A nightly install on 8444 offered 8443 as free,
+		// because 8443 belonged to the STABLE install and the check only knew this
+		// process's own -addr. Turning on public access took the stable instance
+		// off the air, and it stayed off after the share expired, because the
+		// Funnel mapping outlives the link. So the question has to be "is anything
+		// here already on that port", not "is it me".
+		if who := listenerOn(port); who != "" {
+			out.InUse[port] = who
 			continue
 		}
 		key := ":" + strconv.Itoa(port)
@@ -107,19 +119,33 @@ func (s *Server) funnelStatus(gatePort int) funnelState {
 	return out
 }
 
-// ownPort is the port kunai itself listens on, read from the configured bind
-// address. 0 when it cannot be determined, which simply means nothing is excluded.
-func (s *Server) ownPort() int {
-	addr := s.cfg.Addr
-	i := strings.LastIndex(addr, ":")
-	if i < 0 {
-		return 0
+// listenerOn reports what is already listening on a port, or "" when nothing is.
+//
+// Asked by trying to bind it, which is the only answer that does not depend on
+// parsing another tool's output or on this process knowing what else is
+// installed. A port that cannot be bound is a port in use, whoever holds it: the
+// stable install, a nightly one, or something that has nothing to do with kunai.
+//
+// The wildcard address is what has to be tried, not loopback: kunai binds its
+// tailnet IP, so 127.0.0.1:8443 is still free while 8443 is very much taken.
+// Binding 0.0.0.0 conflicts with a listener on ANY address, which is the
+// question being asked.
+//
+// Only EADDRINUSE counts. A low port like 443 fails with a permission error for
+// an unprivileged service, and that is not a reason to call it taken: Funnel on
+// 443 is tailscale binding it, not kunai.
+//
+// A var so the tests can answer without opening sockets.
+var listenerOn = func(port int) string {
+	ln, err := net.Listen("tcp", ":"+strconv.Itoa(port))
+	if err == nil {
+		_ = ln.Close()
+		return ""
 	}
-	p, err := strconv.Atoi(addr[i+1:])
-	if err != nil {
-		return 0
+	if errors.Is(err, syscall.EADDRINUSE) {
+		return "already in use on this machine"
 	}
-	return p
+	return ""
 }
 
 // hostSuffix finds the Web key ending in the port we are asking about. The key is
@@ -173,6 +199,17 @@ func (s *Server) handleFunnelOn(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&body)
 	if !allowedFunnelPort(body.Port) {
 		writeErr(w, http.StatusBadRequest, "Funnel only serves 443, 8443 or 10000")
+		return
+	}
+	// Refuse a port something here is already serving, checked HERE and not only
+	// when the list was built. The status is advisory and can be seconds old; this
+	// is the request that actually takes the port, and taking one already in use
+	// does not fail loudly, it quietly makes the app that was there unreachable.
+	// That is how a nightly install knocked the stable one off the air.
+	if who := listenerOn(body.Port); who != "" {
+		writeErr(w, http.StatusConflict,
+			"port "+strconv.Itoa(body.Port)+" is "+who+
+				", and Funnel would take it over and make that unreachable")
 		return
 	}
 	// The gate must be listening before anything is pointed at it, or the first
