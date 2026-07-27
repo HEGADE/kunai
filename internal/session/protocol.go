@@ -19,7 +19,12 @@ type AppEvent struct {
 	T   string `json:"t"`
 
 	// "hello" (sent once on attach)
-	ID      string     `json:"id,omitempty"`
+	ID string `json:"id,omitempty"`
+	// Epoch identifies the process behind ID and changes on every respawn. A client
+	// that sees a different epoch than the one it holds must reset its last-seen seq
+	// and rebuild: the new process numbers its events from 1 again, so anything the
+	// client kept would swallow the whole conversation as already-seen.
+	Epoch   string     `json:"epoch,omitempty"`
 	Cwd     string     `json:"cwd,omitempty"`
 	Model   string     `json:"model,omitempty"`
 	Title   string     `json:"title,omitempty"`

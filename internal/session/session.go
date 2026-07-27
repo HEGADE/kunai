@@ -45,6 +45,19 @@ type Session struct {
 	Cwd       string    //
 	CreatedAt time.Time //
 
+	// epoch identifies THIS process behind the stable ID, and changes whenever the
+	// session is respawned (an effort change, an account switch, auto-failover).
+	//
+	// It has to exist because a respawn builds a whole new Session: seq restarts at
+	// 1 and the ring is empty, while every attached client is still holding the old
+	// high-water mark. They reconnect with ?since=<old seq> and then drop every
+	// event at or below it, so they go silently deaf to the new process, for good,
+	// in a long session. The SPA's own tab escaped only because it throws its
+	// connection away by hand; a second phone, a chat, or a shared link never knew
+	// to. Carried on hello so any client can notice the process changed under it
+	// and start over. Immutable for the life of the Session, so it needs no lock.
+	epoch string
+
 	drv driver
 
 	mu      sync.Mutex
@@ -205,6 +218,7 @@ func newSession(id, cwd, title string, drv driver) *Session {
 	s := &Session{
 		ID:              id,
 		Cwd:             cwd,
+		epoch:           newQueueID(), // any fresh random string; see the field
 		CreatedAt:       time.Now(),
 		drv:             drv,
 		title:           title,
@@ -766,6 +780,7 @@ func (s *Session) Attach(afterSeq uint64) (hello AppEvent, backlog []AppEvent, s
 	hello = AppEvent{
 		T:             EvHello,
 		ID:            s.ID,
+		Epoch:         s.epoch,
 		Cwd:           s.Cwd,
 		Model:         s.model,
 		Title:         s.title,
@@ -780,6 +795,15 @@ func (s *Session) Attach(afterSeq uint64) (hello AppEvent, backlog []AppEvent, s
 		Pending:       pending,
 		Queued:        queued,
 		Projects:      append([]project.Info(nil), s.projects...),
+	}
+	// A client asking for events after a seq this session never reached is holding
+	// a number from a previous incarnation of it: the respawn built a new Session
+	// whose numbering restarts at 1, so "everything after 500" matches nothing and
+	// the client gets an empty backlog forever. Treat it as a cold attach and send
+	// the lot. The alternative, trusting the number, is silence that looks exactly
+	// like an idle session.
+	if afterSeq > s.seq {
+		afterSeq = 0
 	}
 	backlog = s.buf.since(afterSeq)
 

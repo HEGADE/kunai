@@ -202,6 +202,11 @@ export interface AppEvent {
     | 'rate_limit'
   // hello
   id?: string
+  // hello: identifies the process behind id, and changes on every respawn (an
+  // effort change, an account switch, auto-failover). A different epoch means the
+  // event numbering restarted, so a client holding a last-seen seq must reset it
+  // or it will treat the entire new conversation as already applied.
+  epoch?: string
   cwd?: string
   model?: string
   title?: string

@@ -123,6 +123,11 @@ export class ChatConnection {
   private ws?: WebSocket
   private lastSeq = 0
   private highSeq = 0 // last seq the server had buffered when we attached
+  // Which incarnation of the session we are showing. A respawn (effort change,
+  // account switch, auto-failover) replaces the process behind the same id and
+  // restarts event numbering at 1, so what we are holding is a different
+  // conversation's worth of state. See onEpochChange.
+  private epoch = ''
   private retries = 0
   private closed = false
   private reconnectTimer?: ReturnType<typeof setTimeout>
@@ -210,6 +215,31 @@ export class ChatConnection {
     this.reconnectTimer = setTimeout(() => this.connect(), delay)
   }
 
+  // Drop everything that belonged to the previous process behind this id, so the
+  // backlog that follows this hello rebuilds the conversation instead of being
+  // appended to a copy of it.
+  //
+  // The identity fields (cwd, model, mode, effort, cli, title) are deliberately
+  // NOT cleared: the same hello that triggered this is about to overwrite them,
+  // and blanking them first makes the header flicker through empty values.
+  private resetForNewProcess() {
+    this.lastSeq = 0
+    this.items = []
+    this.streaming = ''
+    this.thinking = ''
+    this.toolResults = {}
+    this.agentBlocks = {}
+    this.agentStreaming = {}
+    this.pending = []
+    this.queued = []
+    this.checkpointSeqs = []
+    this.reverted = {}
+    this.errorLine = ''
+    // The log has to re-mount at the bottom of the rebuilt backlog rather than
+    // hold the scroll position of a conversation that no longer exists.
+    this.ready = false
+  }
+
   private apply(ev: AppEvent) {
     // Dedupe: replayed backlog can overlap what we already applied.
     if (ev.seq && ev.seq <= this.lastSeq) return
@@ -217,6 +247,13 @@ export class ChatConnection {
 
     switch (ev.t) {
       case 'hello':
+        // A respawn puts a NEW process behind the same id, seeded with the same
+        // conversation from the transcript. Everything we hold came from the dead
+        // one, so keeping it would show the conversation twice, once from each.
+        // The server already resends the whole backlog (it clamps our impossible
+        // since), so dropping what we have is enough to rebuild cleanly.
+        if (ev.epoch && this.epoch && ev.epoch !== this.epoch) this.resetForNewProcess()
+        if (ev.epoch) this.epoch = ev.epoch
         this.cwd = ev.cwd ?? this.cwd
         this.model = ev.model || this.model
         this.title = ev.title ?? this.title

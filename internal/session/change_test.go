@@ -86,3 +86,61 @@ func TestListChangeCallbackRunsOutsideTheLock(t *testing.T) {
 		t.Fatal("callback deadlocked: it is being fired while the session lock is held")
 	}
 }
+
+// A respawn builds a new Session behind the same id, so event numbering restarts
+// at 1 while every attached client is still holding the old high-water mark. If
+// Attach trusted that number, `since(500)` against a ring numbered 1..N would
+// match nothing and the client would sit in silence indistinguishable from an
+// idle session -- permanently, because the number never comes back down.
+//
+// The SPA's own tab survived this only by throwing its connection away by hand,
+// which no other client knows to do: a second phone, a Telegram view, or a shared
+// link just goes deaf. Auto-failover respawns with no initiating client at all,
+// so today it blinds everyone attached.
+func TestAttachRecoversFromAPreviousIncarnationsSeq(t *testing.T) {
+	s := newSession("s3", t.TempDir(), "", newFakeDriver())
+	for i := 0; i < 3; i++ {
+		s.mu.Lock()
+		s.sequenceLocked(AppEvent{T: EvUser, Text: "turn"})
+		s.mu.Unlock()
+	}
+
+	// A client from the dead process asks for everything after seq 500.
+	hello, backlog, sub := s.Attach(500)
+	defer s.Detach(sub)
+	if len(backlog) != 3 {
+		t.Fatalf("backlog had %d events, want all 3 replayed: a stale seq must not silence the session", len(backlog))
+	}
+	if hello.Epoch == "" {
+		t.Error("hello carried no epoch, so a client cannot tell the process changed")
+	}
+
+	// A seq this session really has reached still means what it says.
+	if _, gap, sub2 := s.Attach(2); len(gap) != 1 {
+		t.Errorf("a real seq replayed %d events, want just the 1 after it", len(gap))
+		s.Detach(sub2)
+	} else {
+		s.Detach(sub2)
+	}
+}
+
+// Two sessions must not share an epoch, or a client could not tell them apart
+// across a respawn.
+func TestEachSessionGetsItsOwnEpoch(t *testing.T) {
+	a := newSession("a", t.TempDir(), "", newFakeDriver())
+	b := newSession("b", t.TempDir(), "", newFakeDriver())
+	ha, _, sa := a.Attach(0)
+	hb, _, sb := b.Attach(0)
+	defer a.Detach(sa)
+	defer b.Detach(sb)
+	if ha.Epoch == "" || ha.Epoch == hb.Epoch {
+		t.Fatalf("epochs must be distinct and non-empty, got %q and %q", ha.Epoch, hb.Epoch)
+	}
+	// Stable for the life of the session: it identifies the process, not the attach.
+	if again, _, s2 := a.Attach(0); again.Epoch != ha.Epoch {
+		t.Errorf("epoch changed between attaches: %q then %q", ha.Epoch, again.Epoch)
+		a.Detach(s2)
+	} else {
+		a.Detach(s2)
+	}
+}
