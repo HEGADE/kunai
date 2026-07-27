@@ -39,6 +39,15 @@ const (
 	loginFlowTTL     = 10 * time.Minute // abandon a flow the user walked away from
 )
 
+// loginURLSettle is how long to keep reading after an authorize URL appears, in
+// case a second one supersedes it. The CLI can print a loopback URL, fail to open
+// a browser (there is none under a PTY on a headless service), and then start a
+// WHOLE NEW paste-code flow with its own state and PKCE verifier. Taking the first
+// URL hands out a link to a flow the CLI is no longer listening on, and the code
+// it returns dies at the token exchange with a bare 400. The wait is the cost of
+// being sure; a login is not a hot path. A var so a test need not spend it.
+var loginURLSettle = 3 * time.Second
+
 // oauthURL matches the authorize link the CLI prints. The class excludes control
 // bytes and whitespace so it stops at the terminal escapes around the link (the
 // CLI wraps it in an OSC-8 hyperlink, printing the URL twice back to back); we
@@ -439,40 +448,67 @@ func (m *loginManager) sweep() {
 }
 
 // readOAuthURL reads the PTY until the CLI prints its authorize URL or the timeout
-// hits, whichever comes first.
+// hits, whichever comes first, and returns the LAST one it printed.
+//
+// The last, not the first, and that distinction was a real bug. The CLI may print
+// a loopback authorize URL, fail to open a browser, and then start an entirely
+// separate paste-code flow with a fresh state and code_challenge. Both URLs reach
+// the PTY seconds apart. Handing out the first one sends the account owner to a
+// flow the CLI has abandoned: they sign in, get a perfectly good code, and the
+// token exchange rejects it as belonging to a different request. So once a URL
+// appears we keep reading for loginURLSettle to see whether another supersedes it.
 func readOAuthURL(tty *os.File, tail *ptyTail, timeout time.Duration) (string, error) {
-	type res struct {
-		url string
-		err error
-	}
-	ch := make(chan res, 1)
+	found := make(chan string, 4)
+	failed := make(chan error, 1)
 	go func() {
 		var buf bytes.Buffer
 		chunk := make([]byte, 4096)
+		last := ""
 		for {
 			n, err := tty.Read(chunk)
 			if n > 0 {
 				buf.Write(chunk[:n])
 				_, _ = tail.Write(chunk[:n]) // capture for a hang report
-				// Accept a match only once a byte follows it (loc[1] < len), which
-				// means the URL terminated at an escape/space and wasn't cut off by
-				// a mid-read buffer boundary.
-				if loc := oauthURL.FindIndex(buf.Bytes()); loc != nil && loc[1] < buf.Len() {
-					ch <- res{url: string(buf.Bytes()[loc[0]:loc[1]])}
-					return
+				// Take the newest match, and accept it only once a byte follows it
+				// (loc[1] < len), which means the URL terminated at an escape or a
+				// space and was not cut off by a mid-read buffer boundary.
+				if locs := oauthURL.FindAllIndex(buf.Bytes(), -1); len(locs) > 0 {
+					loc := locs[len(locs)-1]
+					if loc[1] < buf.Len() {
+						if u := string(buf.Bytes()[loc[0]:loc[1]]); u != last {
+							last = u
+							found <- u
+						}
+					}
 				}
 			}
 			if err != nil {
-				ch <- res{err: fmt.Errorf("the login exited before showing a link")}
+				failed <- fmt.Errorf("the login exited before showing a link")
 				return
 			}
 		}
 	}()
-	select {
-	case r := <-ch:
-		return r.url, r.err
-	case <-time.After(timeout):
-		return "", fmt.Errorf("the login didn't produce a link in time")
+
+	var best string
+	var settled <-chan time.Time
+	deadline := time.After(timeout)
+	for {
+		select {
+		case u := <-found:
+			// Each new URL restarts the window, so a third would be caught too.
+			best, settled = u, time.After(loginURLSettle)
+		case <-settled:
+			return best, nil
+		case err := <-failed:
+			// The CLI died. A URL it printed on the way out is worthless, because
+			// there is no process left to hand a code to.
+			return "", err
+		case <-deadline:
+			if best != "" {
+				return best, nil // still printing, but we have something usable
+			}
+			return "", fmt.Errorf("the login didn't produce a link in time")
+		}
 	}
 }
 

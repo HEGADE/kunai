@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -30,6 +31,97 @@ func TestAccountLoginStartCapturesURL(t *testing.T) {
 	t.Logf("url=%s", url)
 	if !strings.Contains(url, "oauth") || !strings.HasPrefix(url, "https://") {
 		t.Fatalf("url = %q, want an https oauth link", url)
+	}
+}
+
+// The CLI can print a loopback authorize URL, fail to open a browser, and then
+// start a SECOND, paste-code flow with its own state and code_challenge. Only the
+// last one is live. Handing out the first sent the account owner to an abandoned
+// flow: they signed in, got a good code, and the token exchange refused it with a
+// bare 400 that named nothing. This is that exact byte sequence, captured from a
+// real failed login.
+func TestReadOAuthURLTakesTheLastOfTwoFlows(t *testing.T) {
+	defer func(d time.Duration) { loginURLSettle = d }(loginURLSettle)
+	loginURLSettle = 150 * time.Millisecond
+
+	const loopback = "https://claude.ai/oauth/authorize?code=true&client_id=9d1c250a" +
+		"&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A60407%2Fcallback" +
+		"&code_challenge=fMJE2ClK&code_challenge_method=S256&state=WAdi9hRn"
+	const pasteCodeURL = "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a" +
+		"&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback" +
+		"&code_challenge=OTHER&code_challenge_method=S256&state=DIFFERENT"
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The writer stays open: a real CLI is still running and waiting for the
+	// paste, so the read must settle rather than end on EOF.
+	defer w.Close()
+	defer r.Close()
+
+	go func() {
+		// The CLI wraps each link in an OSC-8 hyperlink, so the URL arrives with
+		// escapes around it, and the two are seconds apart in practice.
+		fmt.Fprintf(w, "\x1b]8;;%s\x1b\\Sign in\x1b]8;;\x1b\\ ", loopback)
+		time.Sleep(20 * time.Millisecond)
+		fmt.Fprintf(w, "\x1b]8;;%s\x1b\\ | Paste code here if prompted > ", pasteCodeURL)
+	}()
+
+	got, err := readOAuthURL(r, &ptyTail{}, 5*time.Second)
+	if err != nil {
+		t.Fatalf("readOAuthURL: %v", err)
+	}
+	if got == loopback {
+		t.Fatal("returned the abandoned loopback URL; the code it yields dies at the token exchange")
+	}
+	if got != pasteCodeURL {
+		t.Fatalf("got %q, want the live paste-code URL %q", got, pasteCodeURL)
+	}
+	// And the flow classification follows from it, so kunai types the code into
+	// the PTY rather than trying to bridge a localhost port nothing is on.
+	if _, _, loop := loopbackTarget(got); loop {
+		t.Error("classified the paste-code flow as loopback")
+	}
+}
+
+// A single URL, the ordinary case, must still come back rather than being held
+// for a second one that never arrives.
+func TestReadOAuthURLReturnsASingleURL(t *testing.T) {
+	defer func(d time.Duration) { loginURLSettle = d }(loginURLSettle)
+	loginURLSettle = 150 * time.Millisecond
+
+	const only = "https://claude.ai/oauth/authorize?client_id=x&redirect_uri=" +
+		"http%3A%2F%2Flocalhost%3A53733%2Fcallback&state=KCSYRP"
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	defer r.Close()
+	go fmt.Fprintf(w, "\x1b]8;;%s\x1b\\open this\x1b]8;;\x1b\\ ", only)
+
+	got, err := readOAuthURL(r, &ptyTail{}, 5*time.Second)
+	if err != nil {
+		t.Fatalf("readOAuthURL: %v", err)
+	}
+	if got != only {
+		t.Fatalf("got %q, want %q", got, only)
+	}
+}
+
+// A CLI that dies without printing a link is an error, not an empty string that
+// the caller would hand to someone as a sign-in URL.
+func TestReadOAuthURLReportsAnEarlyExit(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	go func() { fmt.Fprint(w, "some banner, no link\n"); w.Close() }()
+
+	if got, err := readOAuthURL(r, &ptyTail{}, 5*time.Second); err == nil {
+		t.Fatalf("got %q with no error, want an error", got)
 	}
 }
 
