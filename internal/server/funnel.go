@@ -74,7 +74,17 @@ func (s *Server) funnelStatus(gatePort int) funnelState {
 	}
 
 	target := "http://127.0.0.1:" + strconv.Itoa(gatePort)
+	mine := s.ownPort()
 	for _, port := range funnelPorts {
+		// kunai's own listener is not something tailscale knows about, because the
+		// server binds it directly rather than through `tailscale serve`. Offering
+		// it as free would have Funnel try to take a port the server is already
+		// holding, and the owner would be turning on public access by knocking
+		// their own app off the air.
+		if port == mine {
+			out.InUse[port] = "kunai itself"
+			continue
+		}
 		key := ":" + strconv.Itoa(port)
 		web, served := st.Web[hostSuffix(st, key)]
 		if !served {
@@ -95,6 +105,21 @@ func (s *Server) funnelStatus(gatePort int) funnelState {
 		out.InUse[port] = proxy
 	}
 	return out
+}
+
+// ownPort is the port kunai itself listens on, read from the configured bind
+// address. 0 when it cannot be determined, which simply means nothing is excluded.
+func (s *Server) ownPort() int {
+	addr := s.cfg.Addr
+	i := strings.LastIndex(addr, ":")
+	if i < 0 {
+		return 0
+	}
+	p, err := strconv.Atoi(addr[i+1:])
+	if err != nil {
+		return 0
+	}
+	return p
 }
 
 // hostSuffix finds the Web key ending in the port we are asking about. The key is

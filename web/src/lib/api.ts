@@ -1,4 +1,4 @@
-import type { AccountInfo, ChannelInfo, Attachment, CLIProfile, HistoryEntry, Job, Listing, MachineInfo, Meta, OlderTurns, PermissionMode, Provider, Stats, ThermalConfig, Usage } from './types'
+import type { AccountInfo, ChannelInfo, Attachment, CLIProfile, FunnelState, HistoryEntry, Job, Listing, MachineInfo, Meta, OlderTurns, PermissionMode, Provider, Share, ShareTier, Stats, ThermalConfig, Usage } from './types'
 
 // Every call takes a `base` origin so the client can reach any machine directly
 // over the tailnet. base === '' means the current origin (the hub), so the hub's
@@ -501,5 +501,74 @@ export function answerChannelRequest(
 export function revokeChannelPerson(base: string, id: string, person: string): Promise<ChannelInfo> {
   return fetch(at(base, `/api/channels/${id}/people/${person}`), { method: 'DELETE' }).then((r) =>
     json<ChannelInfo>(r),
+  )
+}
+
+// --- Sharing -----------------------------------------------------------------
+
+// getShare returns the link for a session, or null when it is not shared. A 404
+// is the ordinary answer here, not a failure, so it is not thrown.
+export async function getShare(base: string, id: string): Promise<Share | null> {
+  const r = await fetch(at(base, `/api/sessions/${id}/share`))
+  if (r.status === 404) return null
+  return json<Share>(r)
+}
+
+export interface ShareSpec {
+  session_id: string
+  tier: ShareTier
+  ttl_secs: number
+  detail: boolean
+  from_now: boolean
+  mode: string
+  max_turns: number
+}
+
+export function createShare(base: string, spec: ShareSpec): Promise<Share> {
+  return fetch(at(base, '/api/shares'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(spec),
+  }).then((r) => json<Share>(r))
+}
+
+// approveShareGuest lets one person through, by the code they are looking at.
+export function approveShareGuest(base: string, token: string, code: string): Promise<Share> {
+  return fetch(at(base, `/api/shares/${token}/approve/${code}`), { method: 'POST' }).then((r) =>
+    json<Share>(r),
+  )
+}
+
+// denyShareGuest refuses the outstanding request, or removes the guest already
+// paired when `unpair` is set. Both are the owner saying no.
+export function denyShareGuest(base: string, token: string, unpair = false): Promise<Share> {
+  const q = unpair ? '?unpair=1' : ''
+  return fetch(at(base, `/api/shares/${token}/deny${q}`), { method: 'POST' }).then((r) =>
+    json<Share>(r),
+  )
+}
+
+export async function revokeShare(base: string, token: string): Promise<void> {
+  const r = await fetch(at(base, `/api/shares/${token}`), { method: 'DELETE' })
+  if (!r.ok) throw new Error(await r.text())
+}
+
+export function funnelStatus(base: string): Promise<FunnelState> {
+  return fetch(at(base, '/api/funnel')).then((r) => json<FunnelState>(r))
+}
+
+// openFunnel points a public port at the share listener. Outward-facing, so the
+// caller shows the exact command first.
+export function openFunnel(base: string, port: number): Promise<FunnelState> {
+  return fetch(at(base, '/api/funnel'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ port }),
+  }).then((r) => json<FunnelState>(r))
+}
+
+export function closeFunnel(base: string, port: number): Promise<FunnelState> {
+  return fetch(at(base, `/api/funnel?port=${port}`), { method: 'DELETE' }).then((r) =>
+    json<FunnelState>(r),
   )
 }

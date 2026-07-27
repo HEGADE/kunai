@@ -324,3 +324,55 @@ func TestCorruptStoreStartsEmpty(t *testing.T) {
 }
 
 func writeFile(path, body string) error { return os.WriteFile(path, []byte(body), 0o600) }
+
+// A second person opening the link must NOT displace the first person's pending
+// request.
+//
+// The failure this prevents is quiet and bad: Sam reads their code to the owner,
+// Eve opens the link a moment later, and with a single overwritable slot the
+// owner's approval either fails (if they type Sam's code) or lets EVE in (if
+// they tap a button bound to whoever is currently waiting), while believing they
+// approved Sam.
+func TestASecondAskerCannotDisplaceTheFirst(t *testing.T) {
+	s := newTestStore(t)
+	sh := liveShare(t, s, TierWork)
+
+	sams, err := s.Ask(sh.Token, "device-sam", "Sam")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Ask(sh.Token, "device-eve", "Eve"); err == nil {
+		t.Fatal("a second device took over the pending slot")
+	}
+
+	// Sam's code still works, and lets in Sam.
+	got, err := s.Approve(sh.Token, sams)
+	if err != nil {
+		t.Fatalf("the first asker's code stopped working: %v", err)
+	}
+	if got.Guest == nil || got.Guest.Device != "device-sam" {
+		t.Fatalf("approved the wrong person: %+v", got.Guest)
+	}
+
+	// Asking twice from the same browser is idempotent, not a second request.
+	s2 := newTestStore(t)
+	sh2 := liveShare(t, s2, TierWork)
+	a, _ := s2.Ask(sh2.Token, "device-sam", "Sam")
+	b, _ := s2.Ask(sh2.Token, "device-sam", "Sam")
+	if a != b {
+		t.Errorf("the same device got two different codes: %q then %q", a, b)
+	}
+
+	// And denying clears the way for the next person.
+	s3 := newTestStore(t)
+	sh3 := liveShare(t, s3, TierWork)
+	if _, err := s3.Ask(sh3.Token, "device-sam", "Sam"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s3.Deny(sh3.Token); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s3.Ask(sh3.Token, "device-eve", "Eve"); err != nil {
+		t.Fatalf("denying did not free the slot: %v", err)
+	}
+}

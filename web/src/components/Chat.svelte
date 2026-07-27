@@ -1,9 +1,9 @@
 <script lang="ts">
   import { tick } from 'svelte'
   import { app } from '../lib/app.svelte'
-  import { uploadFile, getProviderModels, setProviderModel } from '../lib/api'
+  import { uploadFile, getProviderModels, setProviderModel, getShare } from '../lib/api'
   import type { ChatConnection } from '../lib/chat.svelte'
-  import type { Attachment } from '../lib/types'
+  import type { Attachment, Share } from '../lib/types'
   import { groupTurns } from '../lib/turns'
   import { MODELS, EFFORTS, modelLabel, modelOptionLabel, modelFamily, effortLabel } from '../lib/models'
   import { PERMISSION_MODES, permissionLabel } from '../lib/permissions'
@@ -27,6 +27,7 @@
   import WorktreeCard from './WorktreeCard.svelte'
   import TurnFooter from './TurnFooter.svelte'
   import TurnChanges from './TurnChanges.svelte'
+  import ShareDialog from './ShareDialog.svelte'
 
   let { chat }: { chat: ChatConnection } = $props()
 
@@ -67,6 +68,20 @@
   let addProjOpen = $state(false)
   let loopOpen = $state(false)
   let infoOpen = $state(false)
+  let shareOpen = $state(false)
+  // The session's link, when it has one. Kept here rather than fetched by the
+  // dialog so the button can show that this session is shared without the dialog
+  // being open, which is the difference between a share you remember and one you
+  // forgot about.
+  let share = $state<Share | null>(null)
+  $effect(() => {
+    const id = chat.sessionId
+    getShare(chat.origin, id)
+      .then((s) => {
+        if (chat.sessionId === id) share = s
+      })
+      .catch(() => {})
+  })
 
   // Ending a session is destructive (it stops the running turn), and the button
   // is one tap in a busy row, so it arms first: one tap turns it solid red, a
@@ -345,6 +360,18 @@
          at a glance; a phone drops to coloured icons. Close is icon-only and
          alert-red, set apart by a hairline, so a terminal action stands out. -->
     <div class="actions">
+      <!-- Shared is a state, not just an action, so the button says so at rest:
+           a link you forgot you made is the failure this feature has to avoid. -->
+      <button
+        class="abtn share"
+        class:on={!!share}
+        onclick={() => (shareOpen = true)}
+        aria-label={share ? 'This session is shared' : 'Share this session'}
+        title={share ? 'Shared by link — open to manage or stop it' : 'Share this session by link'}
+      >
+        <span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7" /><path d="M16 6l-4-4-4 4" /><path d="M12 2v14" /></svg></span>
+        <span class="albl">{share ? 'Shared' : 'Share'}</span>
+      </button>
       <button class="abtn add" onclick={() => (addProjOpen = true)} aria-label="Add project" title="Add another project to this session">
         <span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /><path d="M12 11v4M10 13h4" /></svg></span>
         <span class="albl">Add project</span>
@@ -482,6 +509,19 @@
   {/if}
 
   <PermissionGate {chat} />
+
+  <!-- A centred modal rather than an in-chat sheet: this is configuration with
+       several decisions in it, not a chat action, and it has to be readable
+       while you decide what a stranger may do. -->
+  {#if shareOpen}
+    <ShareDialog
+      base={chat.origin}
+      sessionId={chat.sessionId}
+      title={chat.title}
+      existing={share}
+      onclose={() => (shareOpen = false)}
+      onchange={(s) => (share = s)} />
+  {/if}
 
   {#if addProjOpen}
     <div class="floater">
@@ -785,6 +825,16 @@
   }
   .abtn.sched .ic {
     color: #a08ac0;
+  }
+  .abtn.share .ic {
+    color: #6f9f8c;
+  }
+  /* A live share is the one action here whose state you need to see without
+     opening it, so it holds a quiet surface at rest rather than only on hover. */
+  .abtn.share.on {
+    background: var(--panel);
+    border-color: var(--border);
+    color: var(--text-2);
   }
   /* The info button is a quiet neutral glyph until opened, when it fills like the
      others; it holds the session's context (folder, branch, account, projects). */

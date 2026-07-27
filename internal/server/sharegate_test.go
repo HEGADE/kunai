@@ -1,10 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -218,6 +220,81 @@ func TestFunnelCommands(t *testing.T) {
 	for _, p := range []int{80, 8080, 0, 44300} {
 		if allowedFunnelPort(p) {
 			t.Errorf("port %d is not a Funnel port and must be refused", p)
+		}
+	}
+}
+
+// The guest page must not install the owner's service worker. The PWA is scoped
+// to "/", precaches the owner's bundle, and is how a long-open window updates
+// itself; a visitor holding a temporary link should install none of it, and one
+// they did install would outlive the share.
+//
+// Asserted against the REAL built share.html, not a fixture, because the tag is
+// injected by vite-plugin-pwa and the whole point is to survive it changing.
+func TestGuestPageDoesNotRegisterTheServiceWorker(t *testing.T) {
+	built, err := os.ReadFile(filepath.Join("..", "webui", "dist", "share.html"))
+	if err != nil {
+		t.Skip("no built share.html to check")
+	}
+	if !bytes.Contains(built, []byte("registerSW.js")) {
+		t.Log("the build no longer injects registerSW.js; the strip is now redundant but harmless")
+	}
+	served := withoutServiceWorker(built)
+	if bytes.Contains(served, []byte("registerSW.js")) {
+		t.Fatal("the guest page still registers the owner's service worker")
+	}
+	// And it is still a working page: the entry script must survive.
+	if !bytes.Contains(served, []byte("/assets/share-")) {
+		t.Fatalf("the strip removed the guest bundle too: %s", served)
+	}
+}
+
+// The owner's own page is untouched by any of this; its registration is what
+// makes a long-open PWA pick up a deploy.
+func TestOwnerPageKeepsItsServiceWorker(t *testing.T) {
+	built, err := os.ReadFile(filepath.Join("..", "webui", "dist", "index.html"))
+	if err != nil {
+		t.Skip("no built index.html to check")
+	}
+	if !bytes.Contains(built, []byte("registerSW.js")) {
+		t.Error("the owner's app stopped registering its service worker, so it will not auto-update")
+	}
+}
+
+// kunai binds its own port directly rather than through `tailscale serve`, so
+// tailscale reports it as free. Offering it would have the owner turn on public
+// access by knocking their own app off the air.
+func TestFunnelNeverOffersKunaisOwnPort(t *testing.T) {
+	prev := execOut
+	defer func() { execOut = prev }()
+	// An empty serve config: as far as tailscale is concerned every port is free.
+	execOut = func(string, ...string) (string, error) { return `{}`, nil }
+
+	s := &Server{cfg: Config{Addr: "100.64.0.1:8443"}}
+	st := s.funnelStatus(41234)
+
+	for _, p := range st.Free {
+		if p == 8443 {
+			t.Fatal("offered 8443, which is the port kunai itself is listening on")
+		}
+	}
+	if st.InUse[8443] == "" {
+		t.Error("8443 should be reported as taken, with a reason the owner can read")
+	}
+	if len(st.Free) == 0 {
+		t.Error("no port was offered at all")
+	}
+}
+
+func TestOwnPortReadsTheBindAddress(t *testing.T) {
+	for addr, want := range map[string]int{
+		"100.64.0.1:8443": 8443,
+		"127.0.0.1:8899":  8899,
+		"":                0,
+		"nonsense":        0,
+	} {
+		if got := (&Server{cfg: Config{Addr: addr}}).ownPort(); got != want {
+			t.Errorf("ownPort(%q) = %d, want %d", addr, got, want)
 		}
 	}
 }

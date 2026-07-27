@@ -231,6 +231,11 @@ export interface AppEvent {
   // delta / thinking / user / error
   text?: string
   message?: string
+  // user / queued / permission: set to 'guest' when somebody holding a share link
+  // caused this, and absent when the owner did. It matters most on a permission
+  // ask, where the owner is deciding whether to approve a tool call and has
+  // otherwise no way to tell their own request from a visitor's.
+  from?: string
   // user: what was attached to the prompt (metadata only)
   attachments?: Attachment[]
   // assistant
@@ -407,4 +412,59 @@ export interface ChannelInfo {
   waiting: ChannelRequest[]
   detail: boolean // send tool inputs and outputs, off by default
   help?: string
+}
+
+// --- Sharing -----------------------------------------------------------------
+// Mirrors internal/share.Share plus the two fields the server adds when it hands
+// one to the owner. Kept in step with the Go by hand, like the rest of the wire.
+
+export type ShareTier = 'view' | 'ask' | 'work'
+
+export interface ShareGuest {
+  device: string
+  name?: string
+  paired_at: number
+}
+
+export interface SharePending {
+  code: string
+  device: string
+  name?: string
+  asked_at: number
+}
+
+export interface ShareDetail {
+  ToolInputs: boolean
+  ToolOutputs: boolean
+}
+
+export interface Share {
+  token: string
+  session_id: string
+  title?: string
+  tier: ShareTier
+  mode?: string
+  detail: ShareDetail
+  from_seq?: number
+  roots?: string[]
+  expires_at: number
+  guest?: ShareGuest
+  pending?: SharePending
+  turns: number
+  max_turns?: number
+  created_at: number
+  // Added by the server: the link itself, and whether Funnel is actually
+  // serving it. A link nobody outside can open should say so rather than look
+  // fine and fail for the guest.
+  url: string
+  reachable: boolean
+}
+
+// FunnelState is what the owner needs to decide whether to open a public port.
+export interface FunnelState {
+  available: boolean // the tailscale CLI could be asked at all
+  port?: number // the public port serving the share gate, absent if none
+  free: number[] | null // funnel ports not already serving something else
+  in_use?: Record<string, string> // taken port -> what it currently points at
+  error?: string
 }

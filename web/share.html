@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b0b0c" />
+    <!-- A shared conversation is not for indexing, and the token is in the URL,
+         so nothing should carry it onward in a referrer. -->
+    <meta name="robots" content="noindex, nofollow, noarchive" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Shared session</title>
+  </head>
+  <body>
+    <div id="share"></div>
+    <!-- Deliberately NOT main.ts: this entry never registers the service worker.
+         The PWA is the owner's app, scoped to /, and a guest should not be
+         installing it or caching anything of it. -->
+    <script type="module" src="/src/share.ts"></script>
+  </body>
+</html>

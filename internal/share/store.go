@@ -220,8 +220,23 @@ func (s *Store) Ask(token, device, name string) (string, error) {
 		// that would take the first person's place.
 		return "", errors.New("someone is already paired with this link")
 	}
-	if sh.Pending != nil && sh.Pending.Device == device {
-		return sh.Pending.Code, nil
+	if sh.Pending != nil {
+		if sh.Pending.Device == device {
+			// Asking twice from the same browser returns the same code rather than
+			// inventing a second one the owner would also have to deal with.
+			return sh.Pending.Code, nil
+		}
+		// Somebody else is already waiting, and their request must NOT be replaced.
+		//
+		// A single pending slot that the newest asker overwrites is worse than it
+		// looks: the first person reads their code to the owner, a second person
+		// opens the link, and the code the owner was given no longer matches. If
+		// the owner approves from a button bound to "whoever is waiting" rather
+		// than by typing the code, they approve the second person while believing
+		// they approved the first. So the queue is one deep and first come first
+		// served; the owner denies to move on, and an unanswered request expires
+		// on its own after PairTTL.
+		return "", errors.New("someone else is already waiting to be let in; ask them to try again shortly")
 	}
 	sh.Pending = &Pending{Code: NewPairCode(), Device: device, Name: name, AskedAt: now.Unix()}
 	s.saveLocked()

@@ -318,6 +318,16 @@ func (s *Server) Run(ctx context.Context) error {
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	// Bring the share listener back up when links survived the restart. Without
+	// this a share persists in shares.json, looks live in the app, and answers 404
+	// to the person holding it, because nothing is listening on the port Funnel
+	// points at. Started only when something is actually shared, so a machine that
+	// has never shared anything opens no extra listener at all.
+	if s.shares != nil && s.gate != nil && !s.shares.Empty() {
+		if err := s.gate.start(ctx); err != nil {
+			logShare("could not reopen the public listener for existing links: %v", err)
+		}
+	}
 	// Boot the managed CLIProxyAPI sidecar if any providers are configured, so
 	// their sessions have a proxy to reach. Downloading/verifying happens inside.
 	if s.cliproxy != nil && s.anyProviderNeedsSidecar() {

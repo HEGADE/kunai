@@ -1,10 +1,20 @@
 <script lang="ts">
-  import type { Block } from '../lib/types'
-  import type { ChatConnection } from '../lib/chat.svelte'
+  import type { Block, ToolResult } from '../lib/types'
   import Markdown from './Markdown.svelte'
   import ToolCard from './ToolCard.svelte'
 
-  let { block, chat }: { block: Block; chat: ChatConnection } = $props()
+  // Everything this needs from a connection, and nothing else. Taking the whole
+  // ChatConnection meant the guest page could not render a turn without one, and
+  // a guest has no accounts, no fleet and no permission to answer anything. Both
+  // connections satisfy this, so a shared conversation renders through exactly
+  // the same components as a local one.
+  interface BlockSource {
+    toolResults: Record<string, ToolResult>
+    agentBlocks?: Record<string, Block[]>
+    agentStreaming?: Record<string, string>
+  }
+
+  let { block, chat }: { block: Block; chat: BlockSource } = $props()
 </script>
 
 {#if block.type === 'text' && block.text}
@@ -16,8 +26,8 @@
     name={block.name ?? 'tool'}
     input={block.input}
     result={block.id ? chat.toolResults[block.id] : undefined}
-    nested={block.id ? (chat.agentBlocks[block.id] ?? []) : []}
-    nestedStreaming={block.id ? (chat.agentStreaming[block.id] ?? '') : ''}
+    nested={block.id ? (chat.agentBlocks?.[block.id] ?? []) : []}
+    nestedStreaming={block.id ? (chat.agentStreaming?.[block.id] ?? '') : ''}
     nestedResults={chat.toolResults}
   />
 {:else if block.type === 'thinking' && block.text}

@@ -24,6 +24,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -165,6 +166,7 @@ func (g *shareGate) handlePage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "the shared view is unavailable on this machine", http.StatusNotFound)
 		return
 	}
+	b = withoutServiceWorker(b)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	// A shared conversation should not be indexed or previewed by anything that
@@ -172,6 +174,27 @@ func (g *shareGate) handlePage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	_, _ = w.Write(b)
+}
+
+// swTag matches the service-worker registration vite-plugin-pwa injects into
+// every HTML entry it builds.
+var swTag = regexp.MustCompile(`\s*<script[^>]*registerSW\.js[^>]*></script>`)
+
+// withoutServiceWorker strips the PWA registration from the guest page.
+//
+// The PWA is the owner's app: it is scoped to "/", it precaches their bundle, and
+// it is what a long-open window uses to update itself. A visitor holding a
+// temporary link should install none of that, and a service worker they did
+// install would outlive the share, keeping a cached copy of somebody else's app
+// on their machine after the link had expired.
+//
+// This happens here rather than in the build because vite-plugin-pwa injects the
+// tag after transformIndexHtml runs, so a build-time strip would depend on
+// matching that plugin's internal ordering. The gate is the only thing that ever
+// serves this page, so removing it at the point of serving is both simpler and a
+// guarantee rather than a hope.
+func withoutServiceWorker(html []byte) []byte {
+	return swTag.ReplaceAll(html, nil)
 }
 
 // shareHello is what the guest page needs to render before it opens a socket.
