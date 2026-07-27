@@ -385,7 +385,25 @@
     const left = Math.max(0, 100 - b.pct)
     return left < 2 ? 'spent' : Math.round(left) + '% left'
   }
+  // The dot beside the chosen account is its headroom, not decoration: the whole
+  // reason to pick one account over another is which of them can still finish the
+  // work, and that is worth knowing before you type rather than after it stops.
+  // Unknown quota stays on the gray ramp instead of guessing green.
+  function acctDot(name: string): string {
+    const b = binding(uses[name] ?? null)
+    if (!b) return 'var(--text-4)'
+    const left = Math.max(0, 100 - b.pct)
+    if (left < 2) return 'var(--alert)'
+    return left < 20 ? 'var(--busy)' : 'var(--live)'
+  }
 </script>
+
+<!-- Every scope control opens something, and without a mark saying so they read as
+     labels: the folder and branch above the field state a fact, and nothing about
+     them suggests the fact can be changed. -->
+{#snippet chev()}
+  <svg class="pchev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+{/snippet}
 
 <!-- An ambient wash behind the home screen: two very low-contrast radial pools that
      drift on a slow cycle. It is the one gradient in the app, deliberately kept
@@ -446,24 +464,26 @@
     {/if}
   </p>
 
-  <!-- The launcher IS the page: one field, plus the two things a task needs to run
-       (where, and on which machine). Given real presence, it fills the canvas the
-       way a stack of small sections never could. -->
-  <div class="launch" class:busy={launching}>
-    <textarea
-      class="brief"
-      bind:value={brief}
-      onkeydown={onBriefKey}
-      rows="2"
-      placeholder="What should Claude work on?"
-      aria-label="Describe the task to start"
-    ></textarea>
-    <div class="lbar">
-      <div class="dirwrap">
-        <button class="pick" class:on={dirOpen} onclick={() => (dirOpen = !dirOpen)} title={targetDir}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
-          <span class="pname">{targetName || 'Choose a folder'}</span>
-        </button>
+  <!-- The launcher IS the page: one field, plus the things a task needs to run.
+       It reads top to bottom as the sentence you are composing. WHERE it runs sits
+       above the field, because it is what you check before you start typing and it
+       is true of the run rather than of the words: folder, branch, machine. The
+       field is then only the field. WHO runs it and the Start action sit inside the
+       bottom edge, against the text they act on.
+       Everything used to be crammed into one row inside the box, which read as a
+       toolbar of unrelated controls and left the scope you were about to commit to
+       as the least prominent thing on the page. -->
+  <!-- Scope and field are one control, so they are one flex child: left as two,
+       the column's 20px gap pushed the folder and branch away from the box they
+       describe and they read as a stray row belonging to nothing. -->
+  <div class="starter">
+  <div class="scope">
+    <div class="dirwrap">
+      <button class="pick" class:on={dirOpen} onclick={() => (dirOpen = !dirOpen)} title={targetDir}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
+        <span class="pname mono">{targetName || 'Choose a folder'}</span>
+        {@render chev()}
+      </button>
         {#if dirOpen}
           <button class="scrim2" onclick={() => (dirOpen = false)} aria-label="Close"></button>
           <div class="dirpop">
@@ -499,11 +519,11 @@
         {/if}
       </div>
       {#if multi}
-        <span class="lsep" aria-hidden="true"></span>
         <div class="dirwrap">
           <button class="pick" class:on={machOpen} onclick={() => (machOpen = !machOpen)} title={sel?.url}>
             <span class="mdot2" class:live={sel?.online}></span>
             <span class="pname">{sel?.label}</span>
+            {@render chev()}
           </button>
           {#if machOpen}
             <button class="scrim2" onclick={() => (machOpen = false)} aria-label="Close"></button>
@@ -523,11 +543,52 @@
           {/if}
         </div>
       {/if}
+      <div class="dirwrap">
+        <button
+          class="pick wtpick"
+          class:on={wtOpen}
+          class:armed={wt.on}
+          onclick={() => (wtOpen = !wtOpen)}
+          title={wt.on ? 'A checkout of its own' : 'Runs on this branch, in this checkout'}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 3v12M6 21a2 2 0 100-4 2 2 0 000 4zM6 7a2 2 0 100-4 2 2 0 000 4zM18 11a2 2 0 100-4 2 2 0 000 4zM18 9v2a4 4 0 01-4 4H6" /></svg>
+          <span class="pname" class:mono={!wt.on && !!onBranch}>{wtLabel}</span>
+          {@render chev()}
+        </button>
+      </div>
+      <!-- The worktree popover hangs off the scope row's right edge rather than off
+           the button: anchored to the button it overflowed whichever edge it was
+           pointed at, right on a narrow window and left on a wide one, because the
+           button sits in the middle of a row whose width changes. -->
+      {#if wtOpen}
+        <button class="scrim2" onclick={() => (wtOpen = false)} aria-label="Close"></button>
+        <div class="dirpop wtpop">
+          <WorktreeChoicePicker
+            base={app.baseForMachine(sel?.id ?? '')}
+            repo={targetDir}
+            bind:value={wt}
+            ondone={() => (wtOpen = false)}
+          />
+        </div>
+      {/if}
+  </div>
+
+  <div class="launch" class:busy={launching}>
+    <textarea
+      class="brief"
+      bind:value={brief}
+      onkeydown={onBriefKey}
+      rows="2"
+      placeholder="What should Claude work on?"
+      aria-label="Describe the task to start"
+    ></textarea>
+    <div class="lbar">
       {#if acctNames.length > 1}
-        <span class="lsep" aria-hidden="true"></span>
-        <div class="dirwrap">
+        <div class="dirwrap up">
           <button class="pick" class:on={acctOpen} onclick={() => (acctOpen = !acctOpen)} title="Account or provider">
+            <span class="adot" style:background={acctDot(acctLabel)}></span>
             <span class="pname">{acctLabel}</span>
+            {@render chev()}
           </button>
           {#if acctOpen}
             <button class="scrim2" onclick={() => (acctOpen = false)} aria-label="Close"></button>
@@ -543,45 +604,18 @@
             </div>
           {/if}
         </div>
+      {:else}
+        <!-- With one account there is no choice to offer, so the space says the one
+             thing a first-timer does not know: Enter starts it. -->
+        <span class="lkey">Enter to start, Shift Enter for a new line</span>
       {/if}
-      <span class="lsep" aria-hidden="true"></span>
-      <div class="dirwrap">
-        <button
-          class="pick wtpick"
-          class:on={wtOpen}
-          class:armed={wt.on}
-          onclick={() => (wtOpen = !wtOpen)}
-          title={wt.on ? 'A checkout of its own' : 'Runs on this branch, in this checkout'}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 3v12M6 21a2 2 0 100-4 2 2 0 000 4zM6 7a2 2 0 100-4 2 2 0 000 4zM18 11a2 2 0 100-4 2 2 0 000 4zM18 9v2a4 4 0 01-4 4H6" /></svg>
-          <span class="pname" class:mono={!wt.on && !!onBranch}>{wtLabel}</span>
-        </button>
-      </div>
       <span class="lspacer"></span>
       <button class="go" disabled={!brief.trim() || !targetDir || launching} onclick={launch}>
         {#if launching}<Spinner />{/if}
         {launching ? 'Starting…' : 'Start'}
       </button>
-      <!-- Horizontally it hangs off the row's right edge rather than off the pill:
-           anchored to the pill it overflowed whichever edge it was pointed at,
-           right on a narrow window and left on a wide one, because the pill sits
-           in the middle of a row whose width changes.
-           Vertically it belongs just above the row. It used to be a child of the
-           card, so bottom:100% put it above the CARD -- floating a couple of
-           hundred pixels clear of the control that opened it, with the prompt
-           field in between. -->
-      {#if wtOpen}
-        <button class="scrim2" onclick={() => (wtOpen = false)} aria-label="Close"></button>
-        <div class="dirpop wtpop">
-          <WorktreeChoicePicker
-            base={app.baseForMachine(sel?.id ?? '')}
-            repo={targetDir}
-            bind:value={wt}
-            ondone={() => (wtOpen = false)}
-          />
-        </div>
-      {/if}
     </div>
+  </div>
   </div>
 
   <!-- Reference below: dense and quiet, one line each. These answer questions you
@@ -1362,7 +1396,7 @@
 
   /* --- the launcher: the one element with real presence -------------------- */
   .launch {
-    position: relative; /* the worktree popover anchors to the card, not the pill */
+    position: relative; /* the account popover anchors to the card, not the pill */
     display: flex;
     flex-direction: column;
     background: var(--panel-2);
@@ -1394,23 +1428,62 @@
   .brief::placeholder {
     color: var(--text-3);
   }
+  /* Where the run lands, above the field. No pill chrome and no separators: these
+     are a line of facts about the run you are about to start, so they should read
+     as a sentence rather than as a toolbar, and the chevron is what says each one
+     can be changed. The row is the popover anchor for everything in it. */
+  .starter {
+    display: flex;
+    flex-direction: column;
+  }
+  .scope {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 2px;
+    margin: 0 0 9px;
+    padding: 0 4px;
+  }
   .lbar {
-    position: relative; /* the worktree popover hangs off this row, not the card */
+    position: relative;
     display: flex;
     align-items: center;
     gap: 3px;
     padding-top: 8px;
   }
+  /* The keyboard hint takes the space the account picker would, so the bottom edge
+     is never a lone button floating against nothing. */
+  .lkey {
+    padding-left: 3px;
+    color: var(--text-4);
+    font-size: 11.5px;
+  }
+  /* A keyboard shortcut is not advice you can act on without a keyboard, and on a
+     phone the line runs right up against Start. */
+  @media (pointer: coarse) {
+    .lkey {
+      display: none;
+    }
+  }
+  .adot {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+  .pchev {
+    flex: none;
+    margin-left: -2px;
+    color: var(--text-4);
+  }
+  .pick:hover .pchev,
+  .pick.on .pchev {
+    color: var(--text-3);
+  }
   .lspacer {
     flex: 1;
     min-width: 6px;
-  }
-  .lsep {
-    flex: none;
-    width: 1px;
-    height: 14px;
-    margin: 0 5px;
-    background: var(--border-2);
   }
   .pick {
     display: inline-flex;
@@ -1484,10 +1557,14 @@
   }
   /* Three bands: an optional filter, the scrolling list, and a pinned action. Only
      the middle one scrolls, so Browse is always one tap away. */
+  /* Popovers drop DOWN by default, because the controls that own them now sit
+     above the field: opening upward from there would put the list off the top of
+     the page. The one that still opens upward is the account picker, which lives
+     on the field's bottom edge; it carries .up. */
   .dirpop {
     position: absolute;
     z-index: 31;
-    bottom: calc(100% + 8px);
+    top: calc(100% + 8px);
     left: 0;
     display: flex;
     flex-direction: column;
@@ -1530,10 +1607,14 @@
      bar and a left-anchored popover hung out past the card. Same width and
      padding as the folder and account popovers it sits beside: it is a menu, not
      a dialog. */
+  .up .dirpop {
+    top: auto;
+    bottom: calc(100% + 8px);
+  }
   .wtpop {
     left: auto;
     right: 0;
-    bottom: calc(100% + 6px);
+    top: calc(100% + 6px);
     min-width: 260px;
     max-width: min(320px, calc(100% - 20px));
     padding: 5px;
