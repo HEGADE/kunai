@@ -15,6 +15,7 @@ import { summarise, isAwaiting, isWorking } from '../src/lib/sidebar.ts'
 import {
   chosenCli, isProvider, providerModelChoices, providerModelToSend, showEffort,
 } from '../src/lib/spawnoptions.ts'
+import { clampTTL, splitDuration, expiryWords, MIN_TTL, MAX_TTL } from '../src/lib/duration.ts'
 
 let pass = 0
 const fails = []
@@ -125,6 +126,31 @@ eq('unchanged provider model is not sent back', providerModelToSend('Codex', PM,
 eq('a changed one is', providerModelToSend('Codex', PM, 'gpt-5.5'), 'gpt-5.5')
 eq('and never for a Claude account', providerModelToSend('Claude', PM, 'gpt-5.5'), undefined)
 eq('nor when nothing is chosen', providerModelToSend('Codex', PM, ''), undefined)
+
+// --- duration: how long a share link lives ---------------------------------
+// The bounds have to match what the server enforces, or the dialog shows a
+// number the server quietly changes underneath it.
+eq("a too-short link is pulled up to the floor", clampTTL(60), MIN_TTL)
+eq("zero too", clampTTL(0), MIN_TTL)
+eq("a too-long one is pulled down to the ceiling", clampTTL(400 * 86400), MAX_TTL)
+eq("a legal one is left alone", clampTTL(86400 + 4 * 3600 + 5 * 60), 101100)
+eq("nonsense does not become NaN", clampTTL(NaN), MIN_TTL)
+
+// The picker composes days/hours/minutes, so a stored share has to come apart
+// into the same units it was made in.
+eq("a composed duration round-trips", splitDuration(86400 + 4 * 3600 + 15 * 60), { days: 1, hours: 4, mins: 15 })
+eq("zero splits to zero", splitDuration(0), { days: 0, hours: 0, mins: 0 })
+eq("exact days carry no remainder", splitDuration(5 * 86400), { days: 5, hours: 0, mins: 0 })
+
+// An expiry is stated as an instant, because "5 days" has to be added to the
+// current time before it means anything and a weekday does not.
+const NOON = new Date(2026, 6, 27, 12, 0, 0).getTime()
+const starts = (s, p) => eq(s, expiryWords(p[0], NOON).startsWith(p[1]), true)
+starts("a few hours out is today", [NOON + 3 * 3600e3, "expires today at"])
+starts("overnight is tomorrow", [NOON + 20 * 3600e3, "expires tomorrow at"])
+eq("within the week it names the weekday", /^expires \w+day at /.test(expiryWords(NOON + 3 * 86400e3, NOON)), true)
+eq("and not today or tomorrow", /today|tomorrow/.test(expiryWords(NOON + 3 * 86400e3, NOON)), false)
+eq("a link already gone says so", expiryWords(NOON - 1000, NOON), "expired")
 
 console.log(`${pass}/${pass + fails.length} passed`)
 for (const f of fails) console.log(`FAIL ${f}`)
