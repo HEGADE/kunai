@@ -590,12 +590,12 @@
          update a machine from the app is the wrong shape. It is absent entirely
          when everything is current, so it nudges rather than nags.
 
-         One row per machine that needs it, and the machine's name replaces the
-         "Update available" heading once there is more than one, because with a
-         fleet the useful fact is WHICH box is behind. -->
-    {#each outdatedMachines as m (m.id)}
-      <UpdateNudge machine={m} named={outdatedMachines.length > 1} />
-    {/each}
+         ONE row, however many machines are behind: they all track the same
+         channel, so they are all going to the same version and there is a single
+         decision to make. -->
+    {#if outdatedMachines.length}
+      <UpdateNudge machines={outdatedMachines} />
+    {/if}
     {#if !outdatedMachines.length && app.versionCheckFailed}
       <!-- A check that could not run has to say so. Showing nothing is exactly
            what "you are up to date" looks like, and a machine sitting a release
