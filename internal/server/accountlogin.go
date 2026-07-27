@@ -58,10 +58,12 @@ type loginFlow struct {
 	// loopbackBase is set when the CLI chose the localhost-loopback login flow
 	// (newer claude CLIs) rather than paste-code: the local callback endpoint the
 	// code must be delivered to, on this machine. Empty means paste-code, where
-	// the code is typed into the PTY instead. loopbackState is the OAuth state the
-	// authorize URL carried, reused when the pasted code arrives without one.
-	loopbackBase  string
-	loopbackState string
+	// the code is typed into the PTY instead. authState is the OAuth state the
+	// authorize URL carried, and BOTH flows need it when the paste arrives without
+	// one: loopback puts it back on the callback query, and paste-code appends it
+	// to the code, which is the shape the CLI's manual entry demands.
+	loopbackBase string
+	authState    string
 
 	// A login can complete two ways and a watcher goroutine finalizes whichever
 	// happens: the CLI exits because the browser hit its localhost callback
@@ -189,7 +191,7 @@ func (m *loginManager) start(ctx context.Context, name string) (id, url, dir str
 	}
 	f := &loginFlow{
 		id: id, name: name, dir: dir, cmd: cmd, tty: tty, tail: tail, started: time.Now(),
-		loopbackBase: base, loopbackState: state,
+		loopbackBase: base, authState: state,
 	}
 	m.mu.Lock()
 	m.flows[id] = f
@@ -226,16 +228,44 @@ func loopbackTarget(authorizeURL string) (base, state string, ok bool) {
 		return "", "", false
 	}
 	q := u.Query()
+	// The state is returned even when this is not a loopback URL: the paste-code
+	// flow needs it too, to complete a code the user copied without its state.
 	state = q.Get("state")
 	r, err := url.Parse(q.Get("redirect_uri"))
 	if err != nil || r.Host == "" {
-		return "", "", false
+		return "", state, false
 	}
 	switch r.Hostname() {
 	case "localhost", "127.0.0.1", "::1":
 		return r.String(), state, true
 	}
-	return "", "", false
+	return "", state, false
+}
+
+// pasteCode normalizes what the user pasted into the "<code>#<state>" shape the
+// CLI's manual entry requires. The CLI does `let [code, state] = pasted.split("#")`
+// and rejects the paste outright if either half is missing, with "Invalid code.
+// Please make sure the full code was copied" -- which is exactly what someone sees
+// after copying the code off the page and leaving the state behind, an easy thing
+// to do when the two are joined by a bare "#".
+//
+// kunai already knows the state, because it scraped it from the authorize URL it
+// handed out, so it completes a half-copied paste rather than bouncing it back at
+// the person who now has to go and do the whole sign-in again. A paste that
+// already carries a state is passed through untouched.
+func pasteCode(pasted, state string) string {
+	p := strings.TrimSpace(pasted)
+	// A whole callback URL or a "code=...&state=..." fragment: reduce it first, so
+	// the same forgiving parse the loopback flow gets applies here too.
+	if strings.Contains(p, "code=") {
+		if c, s := codeFromPaste(p, state); c != "" {
+			p, state = c, s
+		}
+	}
+	if strings.Contains(p, "#") || state == "" {
+		return p
+	}
+	return p + "#" + state
 }
 
 // codeFromPaste pulls the OAuth code and state out of whatever the user pasted
@@ -330,14 +360,19 @@ func (m *loginManager) finish(id, code string) (CLIProfile, error) {
 		// so kunai delivers it there rather than typing it into the CLI. This is
 		// what lets the user authenticate in their own browser (credentials never
 		// leave it) and only the code cross to the machine running the CLI.
-		c, st := codeFromPaste(code, f.loopbackState)
+		c, st := codeFromPaste(code, f.authState)
 		f.tail.hide(c)
 		if err := forwardLoopback(f.loopbackBase, c, st); err != nil {
 			return CLIProfile{}, fmt.Errorf("could not hand the code to the CLI's login server: %w", err)
 		}
-	} else if _, err := f.tty.Write([]byte(strings.TrimSpace(code) + "\n")); err != nil {
-		// Paste-code flow: the code is typed into the CLI's prompt.
-		return CLIProfile{}, fmt.Errorf("could not submit the code: %w", err)
+	} else {
+		// Paste-code flow: the code is typed into the CLI's prompt, in the
+		// "<code>#<state>" shape it splits on.
+		typed := pasteCode(code, f.authState)
+		f.tail.hide(typed)
+		if _, err := f.tty.Write([]byte(typed + "\n")); err != nil {
+			return CLIProfile{}, fmt.Errorf("could not submit the code: %w", err)
+		}
 	}
 
 	// The watcher finalizes when the CLI exits; wait for that, then report.

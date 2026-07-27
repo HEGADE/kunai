@@ -365,8 +365,43 @@ func TestLoopbackTargetDetection(t *testing.T) {
 
 	paste := "https://claude.com/cai/oauth/authorize?redirect_uri=" +
 		url.QueryEscape("https://platform.claude.com/oauth/code/callback") + "&state=Z"
-	if _, _, ok := loopbackTarget(paste); ok {
+	_, pasteState, ok := loopbackTarget(paste)
+	if ok {
 		t.Error("a paste-code URL was mistaken for loopback")
+	}
+	// The state must survive even when this is not a loopback URL: the paste-code
+	// flow needs it to complete a code copied without one. Dropping it here is what
+	// made a cross-machine login fail with "Invalid code".
+	if pasteState != "Z" {
+		t.Errorf("paste-code state = %q, want %q", pasteState, "Z")
+	}
+}
+
+// The CLI's manual entry does `let [code, state] = pasted.split("#")` and refuses
+// the paste when either half is missing, saying "Invalid code. Please make sure
+// the full code was copied". Copying only the code off the page is easy to do and
+// used to cost a whole sign-in, so kunai puts the state back on.
+func TestPasteCodeCompletesAHalfCopiedPaste(t *testing.T) {
+	const code = "PyEWjWAFiMx4dqpNDVr4PoeKlxRIZQys0hYOoy5"
+	const st = "KCSYRPs3G29NFLoFa7A7MLRK5ZzpqD"
+
+	cases := []struct{ name, in, want string }{
+		{"bare code gets the state", code, code + "#" + st},
+		{"already complete is untouched", code + "#" + st, code + "#" + st},
+		{"a different state is respected", code + "#other", code + "#other"},
+		{"surrounding whitespace", "  " + code + "\n", code + "#" + st},
+		{"a pasted callback url", "http://localhost:1/cb?code=" + code + "&state=" + st, code + "#" + st},
+	}
+	for _, c := range cases {
+		if got := pasteCode(c.in, st); got != c.want {
+			t.Errorf("%s: pasteCode(%q) = %q, want %q", c.name, c.in, got, c.want)
+		}
+	}
+
+	// With no state known there is nothing to add, and inventing one would swap a
+	// clear "Invalid code" for a confusing state mismatch.
+	if got := pasteCode(code, ""); got != code {
+		t.Errorf("with no state: got %q, want the code unchanged", got)
 	}
 }
 

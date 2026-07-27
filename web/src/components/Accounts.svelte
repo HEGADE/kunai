@@ -245,9 +245,10 @@
         </p>
         <p class="subtle">
           The link opens Claude, not kunai, so it is safe to send to whoever owns the
-          account: they sign in, and only the code comes back. If the page ends on a
-          "can't reach the site" error, that is expected. Copy the whole address from
-          the browser bar and paste it below.
+          account: they sign in, and only the code comes back. Copy <b>all</b> of what
+          the page gives back, including everything after the <code class="hash">#</code>.
+          If it ends on a "can't reach the site" error instead, that is expected too:
+          copy the whole address out of the browser bar.
         </p>
         <a class="cta" href={url} target="_blank" rel="noopener noreferrer">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><path d="M15 3h6v6" /><path d="M10 14L21 3" /></svg>
@@ -599,6 +600,11 @@
     font-size: 12px;
     line-height: 1.5;
     color: var(--text-4);
+  }
+  /* The one character people leave behind when they copy the code. */
+  .subtle .hash {
+    font-family: var(--mono);
+    color: var(--text-2);
   }
   .cta {
     display: inline-flex;
