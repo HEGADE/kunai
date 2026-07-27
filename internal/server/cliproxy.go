@@ -41,8 +41,25 @@ func (s *Server) ensureCLIProxy() {
 // base_url rather than the empty string a still-starting sidecar returns. The
 // started flag is set before the port is assigned, so we poll BaseURL() rather
 // than trust it. Called synchronously on the provider paths that bake the env.
-func (s *Server) ensureCLIProxyReady() {
+//
+// named is the provider being switched to or created on. Only that provider's
+// needs decide whether to wait: since the native proxies became the default, a
+// Codex or Grok provider with a login needs no sidecar at all, and waiting for
+// one anyway meant every switch onto a provider froze the request for the full
+// 25 seconds and kicked off a 40MB download nothing would use. The dialog showed
+// no error because there was none -- the switch worked, a great deal later than
+// anybody would wait. An empty name keeps the old fleet-wide behaviour for the
+// callers that are not about to compile one specific provider.
+func (s *Server) ensureCLIProxyReady(named string) {
 	if s.cliproxy == nil {
+		return
+	}
+	if named != "" {
+		p := s.providerNamed(named)
+		if p == nil || !s.providerNeedsSidecar(*p) {
+			return
+		}
+	} else if !s.anyProviderNeedsSidecar() {
 		return
 	}
 	ctx := s.baseCtx

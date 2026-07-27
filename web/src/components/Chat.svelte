@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte'
   import { app } from '../lib/app.svelte'
-  import { uploadFile, getProviderModels, setProviderModel, getShare } from '../lib/api'
+  import { uploadFile, getProviderModels, getShare } from '../lib/api'
   import type { ChatConnection } from '../lib/chat.svelte'
   import type { Attachment, Share } from '../lib/types'
   import { groupTurns } from '../lib/turns'
@@ -152,12 +152,11 @@
     pmOpen = false
     if (m === providerModel || pmBusy) return
     pmBusy = true
-    try {
-      await setProviderModel(app.baseForMachine(app.activeMachineId ?? ''), chat.sessionId, m)
-      app.refresh() // provider_models updates -> the chip label follows
-    } finally {
-      pmBusy = false
-    }
+    // Through the app, not straight to the API: the server respawns the session
+    // to bake the new model into its env, so the connection has to be rebuilt and
+    // a failure has to reach the bar (see App.switchProviderModel).
+    await app.switchProviderModel(m)
+    pmBusy = false
   }
 
   // Scrolling: open at the latest message, follow the stream while pinned to the

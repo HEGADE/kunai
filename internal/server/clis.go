@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // A CLI profile is a named Claude CLI: a display name, the binary to run, and any
@@ -113,20 +114,53 @@ func (s *Server) cliList() []CLIProfile {
 // the name is empty or unknown. A session must always get a runnable binary, so
 // this never fails.
 func (s *Server) resolveCLI(name string) CLIProfile {
+	if p, ok := s.lookupCLI(name); ok {
+		return p
+	}
+	return s.cliList()[0]
+}
+
+// lookupCLI resolves a name to an account or provider, reporting whether it was
+// actually found.
+//
+// The difference from resolveCLI matters wherever the name IS the request. A
+// session create with no CLI named means "the default", so falling back there is
+// right; an account switch names the one account you want to move to, and
+// falling back meant asking to switch to something unknown quietly resolved to
+// the default, which handleSetAccount then compared against the session's
+// current account, found equal, and answered 200 "already on it". A switch that
+// did nothing and reported success: the reported "nothing happens, Claude stays
+// where it was, the dropdown feels stuck".
+//
+// The fold pass is part of the same fix. The match here was exact while the
+// callers compare with EqualFold, so a name differing only in case resolved to
+// the default and then compared equal to the account it should have left.
+func (s *Server) lookupCLI(name string) (CLIProfile, bool) {
 	list := s.cliList()
 	for _, c := range list {
 		if c.Name == name {
-			return c
+			return c, true
 		}
 	}
 	// Accounts win over providers on a name clash (handleProviders refuses to
 	// create such a clash), so providers are only consulted after the accounts.
-	for _, p := range s.providerList() {
+	provs := s.providerList()
+	for _, p := range provs {
 		if p.Name == name {
-			return s.providerProfile(p)
+			return s.providerProfile(p), true
 		}
 	}
-	return list[0]
+	for _, c := range list {
+		if strings.EqualFold(c.Name, name) {
+			return c, true
+		}
+	}
+	for _, p := range provs {
+		if strings.EqualFold(p.Name, name) {
+			return s.providerProfile(p), true
+		}
+	}
+	return CLIProfile{}, false
 }
 
 // cliNames lists the names the client's picker offers, accounts first (config

@@ -49,26 +49,39 @@ func (s *Server) providerUsesNative(name string) bool {
 	return ok
 }
 
+// providerNeedsSidecar reports whether this one provider relies on the managed
+// CLIProxyAPI sidecar, i.e. it is not handled by a native in-process proxy and
+// points at no proxy of its own.
+//
+// Asked per provider, not just fleet-wide, because the answer gates a wait: a
+// session switching onto a provider blocks until the sidecar has an address, and
+// waiting for a sidecar this provider will never use is 25 seconds of a frozen
+// dialog followed by a switch that would have worked immediately.
+func (s *Server) providerNeedsSidecar(p Provider) bool {
+	if p.BaseURL != "" {
+		return false // points at its own proxy, not ours
+	}
+	if s.nativeCodex != nil && isCodexModel(providerDisplayModel(p)) {
+		if _, _, ok := s.nativeCodex.codexTokenPath(); ok {
+			return false // native Codex has a token; it handles this one
+		}
+	}
+	if s.nativeGrok != nil && isGrokModel(providerDisplayModel(p)) {
+		if _, ok := s.nativeGrok.tokenPath(); ok {
+			return false // native Grok has a login; it handles this one
+		}
+	}
+	return true
+}
+
 // anyProviderNeedsSidecar reports whether at least one configured provider relies
-// on the managed CLIProxyAPI sidecar (i.e. is not handled by the native proxy and
-// has no external base URL of its own). When false, the 40MB sidecar is never
+// on the managed CLIProxyAPI sidecar. When false, the 40MB sidecar is never
 // downloaded — the whole point of the native path.
 func (s *Server) anyProviderNeedsSidecar() bool {
 	for _, p := range s.providerList() {
-		if p.BaseURL != "" {
-			continue // points at its own proxy, not ours
+		if s.providerNeedsSidecar(p) {
+			return true
 		}
-		if s.nativeCodex != nil && isCodexModel(providerDisplayModel(p)) {
-			if _, _, ok := s.nativeCodex.codexTokenPath(); ok {
-				continue // native Codex has a token; it handles this one
-			}
-		}
-		if s.nativeGrok != nil && isGrokModel(providerDisplayModel(p)) {
-			if _, ok := s.nativeGrok.tokenPath(); ok {
-				continue // native Grok has a login; it handles this one
-			}
-		}
-		return true
 	}
 	return false
 }

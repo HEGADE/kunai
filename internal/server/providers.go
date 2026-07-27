@@ -303,7 +303,7 @@ func (s *Server) handleSetProviderModel(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.pinProviderModel(p, model)
-	s.ensureCLIProxyReady()
+	s.ensureCLIProxyReady(p.Name)
 	prof := s.providerProfile(*p)
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
@@ -343,6 +343,24 @@ func (s *Server) providerNamed(name string) *Provider {
 	return nil
 }
 
+// logRoute records which proxy a provider compiled onto, and says so only when
+// the answer changes. Which proxy is serving a provider is worth knowing, but
+// providerProfile runs on every stats poll, so logging it each time buried the
+// journal in the same two lines a second and made the log useless for diagnosing
+// anything else.
+func (s *Server) logRoute(name, to string) {
+	s.routeMu.Lock()
+	if s.routeLog == nil {
+		s.routeLog = map[string]string{}
+	}
+	same := s.routeLog[name] == to
+	s.routeLog[name] = to
+	s.routeMu.Unlock()
+	if !same {
+		log.Printf("provider %q -> %s", name, to)
+	}
+}
+
 // providerProfile compiles a provider to a runnable profile, defaulting the proxy
 // address and token to the managed sidecar when the provider left them blank
 // (the zero-config path: the owner picks only a model, kunai supplies the proxy).
@@ -366,7 +384,7 @@ func (s *Server) providerProfile(p Provider) CLIProfile {
 		} else if base := s.nativeCodex.BaseURL(); base != "" {
 			p.BaseURL = base
 			p.Token = s.nativeCodex.APIKey()
-			log.Printf("provider %q -> native codex proxy (%s)", p.Name, model)
+			s.logRoute(p.Name, "native codex proxy ("+model+")")
 			return p.profile(s.cfg.DataDir)
 		}
 	}
@@ -376,17 +394,17 @@ func (s *Server) providerProfile(p Provider) CLIProfile {
 		} else if base := s.nativeGrok.BaseURL(); base != "" {
 			p.BaseURL = base
 			p.Token = s.nativeGrok.APIKey()
-			log.Printf("provider %q -> native grok proxy (%s)", p.Name, model)
+			s.logRoute(p.Name, "native grok proxy ("+model+")")
 			return p.profile(s.cfg.DataDir)
 		}
 	}
 	if p.BaseURL == "" && s.cliproxy != nil {
-		log.Printf("provider %q -> CLIProxyAPI sidecar (%s)", p.Name, model)
+		s.logRoute(p.Name, "CLIProxyAPI sidecar ("+model+")")
 		// Reaching here means the sidecar is the proxy for this session (either a
 		// plain sidecar provider, or a native provider whose login was missing so it
 		// degraded). Make sure the sidecar has a bound port before baking its URL, or
 		// the session would spawn with an empty base URL and reply with nothing.
-		s.ensureCLIProxyReady()
+		s.ensureCLIProxyReady(p.Name)
 		p.BaseURL = s.cliproxy.BaseURL()
 	}
 	if p.Token == "" && s.cliproxy != nil {

@@ -103,3 +103,34 @@ func TestSaveCLIs(t *testing.T) {
 		t.Fatalf("empty save did not fall back to default: %+v", got)
 	}
 }
+
+// An account name the machine does not have must not resolve to the default.
+//
+// This is what made "switch account" do nothing and report success: resolveCLI
+// answered with list[0] for anything it did not recognise, handleSetAccount
+// compared that to the session's current account, found them equal, and returned
+// 200 "already on it". The session stayed exactly where it was, no error was
+// raised, and the picker looked stuck.
+func TestAnUnknownAccountNameDoesNotResolveToTheDefault(t *testing.T) {
+	s := &Server{}
+	s.setCLIs([]CLIProfile{
+		{Name: "Claude", Bin: "claude"},
+		{Name: "Work", Bin: "claude", Dir: "/tmp/work"},
+	})
+
+	if _, ok := s.lookupCLI("Deleted"); ok {
+		t.Error("a name no account carries must not resolve")
+	}
+	if got := s.resolveCLI("Deleted").Name; got != "Claude" {
+		t.Errorf("resolveCLI still defaults for the create path: got %q, want Claude", got)
+	}
+	// Exact and case-insensitive both find the real account. The callers compare
+	// names with EqualFold, so a lookup that did not would resolve "work" to the
+	// default and then declare it equal to the account it was asked to leave.
+	for _, name := range []string{"Work", "work", "WORK"} {
+		p, ok := s.lookupCLI(name)
+		if !ok || p.Name != "Work" {
+			t.Errorf("lookupCLI(%q) = (%q, %v), want the Work account", name, p.Name, ok)
+		}
+	}
+}

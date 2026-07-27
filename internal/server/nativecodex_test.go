@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // codexMgrWithToken builds a native codex manager whose data dir already holds a
@@ -101,5 +102,43 @@ func TestProviderProfileUsesNativeWhenStarted(t *testing.T) {
 	}
 	if prof.Env["ANTHROPIC_AUTH_TOKEN"] == "" {
 		t.Error("expected a non-empty auth token for claude")
+	}
+}
+
+// Switching a session onto a provider must not wait for a sidecar that provider
+// will never use.
+//
+// The reported symptom was a provider picker where "nothing happened": the
+// switch worked, 25 seconds later. ensureCLIProxyReady polled for a sidecar
+// address on the request path, and since the native proxies became the default
+// the sidecar is never started, so the poll always ran to its full deadline and
+// kicked off a 40MB download nothing would use. It has to ask about the ONE
+// provider being compiled, not the fleet.
+func TestEnsureCLIProxyReadyDoesNotWaitForASidecarThisProviderDoesNotUse(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	s := &Server{nativeCodex: codexMgrWithToken(t)}
+	s.cliproxy = newCLIProxyManager(t.TempDir()) // present, but never given an address
+	s.providers = &providerStore{list: []Provider{
+		{Name: "Codex", Models: map[string]string{"opus": "gpt-5.5"}}, // native handles it
+		{Name: "Ext", BaseURL: "http://127.0.0.1:9999"},               // its own proxy
+		// And one that genuinely does need the sidecar, which is what makes this
+		// test discriminating: a fleet-wide "does anybody need it" answers yes here
+		// and would still stall the switch onto either of the two above.
+		{Name: "Grok", Models: map[string]string{"opus": "grok-4.5"}},
+	}}
+	if !s.anyProviderNeedsSidecar() {
+		t.Fatal("test setup: one provider must need the sidecar or this proves nothing")
+	}
+
+	for _, name := range []string{"Codex", "Ext", "NotAProvider"} {
+		start := time.Now()
+		s.ensureCLIProxyReady(name)
+		if d := time.Since(start); d > 2*time.Second {
+			t.Errorf("ensureCLIProxyReady(%q) blocked %v; it must not wait on a sidecar this provider does not use", name, d)
+		}
+	}
+	if s.cliproxy.BaseURL() != "" {
+		t.Error("the sidecar was started for providers that do not need it")
 	}
 }

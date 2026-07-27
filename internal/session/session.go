@@ -94,6 +94,7 @@ type Session struct {
 	lastText        string          // the newest assistant text this turn, for the loop's promise
 	lastPromptText  string          // the newest real user prompt, so failover can resend it
 	rateLimited     bool            // the usage window is spent; a loop must not push on
+	wallFromText    bool            // ...and we learned it from a turn's error text (see wall.go)
 	limitWindow     string          // the window that was reported spent ("five_hour"/"seven_day")
 	limitResetsAt   int64           // when that window resets (unix secs), for failover to report
 
@@ -106,7 +107,11 @@ type Session struct {
 	// different, so the server can push rather than have clients poll.
 	onListChange func()
 	onRateLimit  func(window string, resetsAt int64)
-	onTurnEnd    func(rateLimited bool) // fired after every turn; failover reacts to a wall
+	// onTurnEnd fires after every turn. rateLimited says the subscription window
+	// is spent (failover reacts to that); inLoop says a self-prompting run was
+	// still going when the turn began, so a handler that must not act mid-run can
+	// tell even though the loop may have stopped by the time it is called.
+	onTurnEnd func(rateLimited, inLoop bool)
 	loopPersist  func(LoopPersist)      // save/clear a running loop so it survives a restart
 	// checkpointHook, if set, snapshots the working tree at the start of a turn --
 	// synchronously, BEFORE the prompt reaches the CLI, so the checkpoint is the true
@@ -159,7 +164,7 @@ func (s *Session) SetRateLimitHandler(fn func(window string, resetsAt int64)) {
 // whether the turn ended against the usage wall. Account auto-failover uses it to
 // roll a rate-limited session onto another account. It runs after the turn is
 // fully settled, so the handler may safely respawn the session.
-func (s *Session) SetTurnEndHook(fn func(rateLimited bool)) {
+func (s *Session) SetTurnEndHook(fn func(rateLimited, inLoop bool)) {
 	s.mu.Lock()
 	s.onTurnEnd = fn
 	s.mu.Unlock()
@@ -417,6 +422,20 @@ func (s *Session) pump() {
 			s.setState(StateIdle)
 			res := s.turnResult(ev.Raw)
 			s.broadcast(res)
+			// A turn the subscription window rejected does not always arrive as a
+			// rate_limit_event; more often the CLI just ends the turn with an error
+			// whose text says the limit was reached. Read that too, before
+			// afterTurn, which is what asks whether the window is spent. Without
+			// this the wall was visible only in the chat (the client parses the same
+			// text) while everything that acts on one — auto-failover, a loop's stop
+			// condition, a pinned reset job — never learned of it. See wall.go.
+			if res.IsError {
+				if reset, isWall := parseWall(resultText(ev.Raw)); isWall {
+					s.recordWall(reset)
+				}
+			} else {
+				s.clearWall() // a turn that ran is proof the window is not spent
+			}
 			// Only tell you the work is done when nothing is queued behind it —
 			// otherwise the next prompt starts immediately and it isn't. A running
 			// loop is the same kind of "not really done", and it announces its own
@@ -444,6 +463,10 @@ func (s *Session) pump() {
 			// wall: treating it as limited cried "rate-limited" before the quota was
 			// gone and would stop a loop early. This is latched for afterTurn to read.
 			s.rateLimited = ev.LimitStatus != "" && ev.LimitStatus != "allowed" && ev.LimitStatus != "allowed_warning"
+			// A control frame is the CLI's own answer, so it supersedes anything
+			// inferred from a turn's error text and takes the latch back off the
+			// text path (see wall.go).
+			s.wallFromText = false
 			if s.rateLimited {
 				s.limitWindow, s.limitResetsAt = ev.Window, ev.ResetsAt
 			}

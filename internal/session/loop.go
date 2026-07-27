@@ -382,7 +382,7 @@ func (s *Session) afterTurn(turnFailed bool) {
 	if s.closed || l == nil || l.state != LoopRunning {
 		s.mu.Unlock()
 		if hook != nil {
-			hook(rl)
+			hook(rl, false)
 		}
 		return
 	}
@@ -407,6 +407,14 @@ func (s *Session) afterTurn(turnFailed bool) {
 		s.stopLoopLocked(state, reason)
 		s.mu.Unlock()
 		s.notifyAttention(NotifyLoop, reason)
+		// The hook still fires: it is every session's turn-end hook, not the
+		// loop's, and returning without it meant the one turn that ends a loop was
+		// the one turn nobody was told about. inLoop says the loop was still
+		// running when this turn began, so a handler that must not act mid-run (as
+		// failover must not) can still tell.
+		if hook != nil {
+			hook(rl, true)
+		}
 		return
 	}
 	s.mu.Unlock()

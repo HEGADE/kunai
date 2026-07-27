@@ -365,7 +365,7 @@ func TestTurnEndHookReportsRateLimit(t *testing.T) {
 
 		var mu sync.Mutex
 		var calls []bool
-		s.SetTurnEndHook(func(rl bool) { mu.Lock(); calls = append(calls, rl); mu.Unlock() })
+		s.SetTurnEndHook(func(rl, _ bool) { mu.Lock(); calls = append(calls, rl); mu.Unlock() })
 
 		if err := s.Prompt("do the thing", nil, nil); err != nil {
 			t.Fatal(err)

@@ -10,6 +10,7 @@ import {
   removeMachine as apiRemoveMachine,
   setEffort as apiSetEffort,
   setAccount as apiSetAccount,
+  setProviderModel as apiSetProviderModel,
   stats as fetchStats,
   updateMachine as apiUpdateMachine,
   updateSessionMeta,
@@ -1004,6 +1005,30 @@ class AppStore {
       this.refresh()
     } catch (e) {
       this.actionError = switchFailure(name, e as Error)
+    }
+  }
+
+  // switchProviderModel moves the active session to another model on the provider
+  // it already runs on (gpt-5.4 -> gpt-5.5, say). The model is baked into the
+  // spawn env, so the server respawns the session exactly as an account switch
+  // does, which means the connection has to be rebuilt for the same reason: the
+  // new process's sequence numbers start again and the live socket would ignore
+  // every event below its old high-water mark.
+  //
+  // This used to call refresh() and nothing else, so the chip label followed
+  // while the socket stayed attached to a process that no longer existed, and a
+  // failure was swallowed whole. Between them that is a switch that reports
+  // nothing and appears to do nothing.
+  async switchProviderModel(model: string) {
+    const t = this.activeTab
+    if (!t) return
+    this.actionError = ''
+    try {
+      await apiSetProviderModel(this.baseForMachine(t.machineId), t.id, model)
+      await this.swapConnection(t, () => {})
+      this.refresh()
+    } catch (e) {
+      this.actionError = switchFailure('', e as Error)
     }
   }
 

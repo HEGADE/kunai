@@ -114,6 +114,13 @@ type Server struct {
 	funnelMu   sync.Mutex
 	funnelAt   time.Time // when the funnel port was last read (it shells out)
 	funnelPort int
+
+	// Which proxy each provider was last compiled onto, so the routing decision is
+	// logged when it changes rather than on every /api/stats poll. Unthrottled it
+	// wrote several lines a second and buried everything else in the journal,
+	// which is the log you go to when a provider misbehaves.
+	routeMu  sync.Mutex
+	routeLog map[string]string
 }
 
 func New(cfg Config, mgr *session.Manager) *Server {
@@ -207,12 +214,12 @@ func (s *Server) armSession(sess *session.Session) {
 	// One hook, because a session has one: failover reacts to a wall, and a
 	// worktree still carrying a placeholder name takes one from what was asked
 	// of it. Composed here rather than fought over.
-	sess.SetTurnEndHook(func(rateLimited bool) {
+	sess.SetTurnEndHook(func(rateLimited, inLoop bool) {
 		if s.worktrees != nil {
 			s.worktrees.nameFromFirstPrompt(sess.Cwd, sess.LastPromptText())
 		}
 		if s.failover != nil {
-			s.failover.onTurnEnd(sess, rateLimited)
+			s.failover.onTurnEnd(sess, rateLimited, inLoop)
 		}
 	})
 }
@@ -441,9 +448,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// A provider session's base_url comes from the managed sidecar, which may
 	// still be starting; wait for it to have a real address before we bake the
 	// env, or claude would spawn with no proxy to reach.
-	if s.isProviderName(req.CLI) && !s.providerUsesNative(req.CLI) && !s.providerUsesNativeGrok(req.CLI) {
-		s.ensureCLIProxyReady()
-	}
+	s.ensureCLIProxyReady(req.CLI)
 	// Pin the provider's model before the profile is compiled, since the model is
 	// carried in the spawn env: chosen after resolveCLI it would be saved for next
 	// time but not applied to the session that asked for it.

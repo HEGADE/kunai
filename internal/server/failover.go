@@ -225,13 +225,19 @@ func (fc *failoverController) addTried(id, name string) {
 
 // onTurnEnd is the session turn-end hook. A clean turn clears the chain; a turn
 // that ended against the wall triggers a failover when enabled.
-func (fc *failoverController) onTurnEnd(sess *session.Session, rateLimited bool) {
+func (fc *failoverController) onTurnEnd(sess *session.Session, rateLimited, inLoop bool) {
 	id := sess.Meta().ID
 	if !rateLimited {
 		fc.clearTried(id)
 		return
 	}
-	if !fc.Enabled() || sess.InLoop() {
+	// inLoop comes from the turn rather than from sess.InLoop(): a loop that just
+	// stopped against this very wall has already cleared its own state, so asking
+	// the session would say "no loop" and roll a loop's session onto another
+	// account. Loop failover is deliberately a separate decision.
+	if !fc.Enabled() || inLoop {
+		log.Printf("failover: session %s hit the wall on %q but is not eligible (enabled=%v, in a loop=%v)",
+			id, sess.Meta().CLI, fc.Enabled(), inLoop)
 		return
 	}
 

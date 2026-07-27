@@ -883,10 +883,19 @@ func (s *Server) handleSetAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if s.isProviderName(req.Name) {
-		s.ensureCLIProxyReady() // a provider target needs the sidecar's real address
+	// Resolved strictly: the name IS the request here, so an unknown one has to
+	// say so. resolveCLI would hand back the default account, which then compares
+	// equal to a session already on the default and answers "already on it" —
+	// success, with nothing done. See lookupCLI.
+	target, known := s.lookupCLI(req.Name)
+	if !known {
+		writeErr(w, http.StatusNotFound,
+			"There is no account or provider called "+req.Name+" on this machine any more. Reload and pick again.")
+		return
 	}
-	target := s.resolveCLI(req.Name)
+	if s.isProviderName(req.Name) {
+		s.ensureCLIProxyReady(req.Name) // only if THIS provider needs the sidecar
+	}
 	if strings.EqualFold(target.Name, sess.Meta().CLI) {
 		writeJSON(w, http.StatusOK, sess.Meta()) // already on it
 		return
