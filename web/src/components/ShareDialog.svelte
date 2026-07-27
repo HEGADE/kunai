@@ -345,6 +345,11 @@
             <span class="tag">{liveRung?.name ?? share.tier}</span>
             <span class="mono">{expiryWords(share.expires_at * 1000, now)}</span>
             {#if share.detail.ToolInputs}<span class="mono">· full detail</span>{/if}
+            <!-- Said next to the link itself, not only in the panel below. Until
+                 Funnel serves it this URL carries the tailnet port, so copying it
+                 hands somebody an address that resolves for you and for nobody
+                 else. -->
+            {#if !share.reachable}<span class="warn">· tailnet only so far</span>{/if}
           </p>
         </div>
 
@@ -353,8 +358,15 @@
             <p><b>Nobody outside your tailnet can open this yet.</b> Tailscale Funnel
               has to serve it. Traffic is routed by name and stays encrypted until it
               reaches this machine.</p>
-            {#if funnel?.available === false}
-              <p class="hint">Tailscale is not available on this machine.</p>
+            <!-- Each branch says only what was actually established. The old
+                 fallback claimed every port was serving something else whenever
+                 the list came back empty, which is also what "we never got an
+                 answer" looks like, so a machine that simply could not find the
+                 tailscale command reported a port conflict that did not exist. -->
+            {#if !funnel}
+              <p class="hint">Checking what Tailscale can serve…</p>
+            {:else if funnel.error}
+              <p class="hint">{funnel.error}</p>
             {:else if freePorts.length}
               <p class="cmd mono">tailscale funnel --bg --https={freePorts[0]} …</p>
               <button class="go" disabled={funnelBusy} onclick={() => turnOnFunnel(freePorts[0])}>
@@ -362,8 +374,14 @@
                 Turn on public access
               </button>
             {:else}
-              <p class="hint">Every Funnel port is already serving something else.
-                Free one of 443, 8443 or 10000 and reopen this.</p>
+              <!-- Genuinely no room. Naming what holds each port is the difference
+                   between a dead end and something the owner can act on. -->
+              <p class="hint">Every port Funnel can use is taken:</p>
+              <ul class="ports">
+                {#each Object.entries(funnel.in_use ?? {}) as [port, by] (port)}
+                  <li><span class="mono">{port}</span> {by || 'in use'}</li>
+                {/each}
+              </ul>
             {/if}
           </div>
         {/if}
@@ -807,6 +825,9 @@
     font-size: 11.5px;
     color: var(--text-4);
   }
+  .warn {
+    color: var(--busy);
+  }
   .tag {
     padding: 2px 7px;
     border-radius: 999px;
@@ -844,6 +865,13 @@
   }
   .dot.live {
     background: var(--live);
+  }
+  .ports {
+    margin: 0;
+    padding-left: 16px;
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--text-4);
   }
   .cmd {
     font-size: 11.5px;

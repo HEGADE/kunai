@@ -205,13 +205,23 @@ func TestShareURLUsesTheFunnelPort(t *testing.T) {
 
 // Funnel is outward-facing, so the exact command is asserted rather than run.
 func TestFunnelCommands(t *testing.T) {
-	on := strings.Join(funnelOnArgs(10000, 41234), " ")
-	if on != "tailscale funnel --bg --https=10000 http://127.0.0.1:41234" {
-		t.Errorf("funnel on = %q", on)
+	// The binary is asserted by shape, not by string: it is resolved now, because
+	// a Mac under launchd has no "tailscale" on PATH and keeps it in the app
+	// bundle instead, so the absolute path differs per machine. The flags are the
+	// part that must not drift, and they are what would open the wrong port.
+	on := funnelOnArgs(10000, 41234)
+	if !strings.HasSuffix(strings.ToLower(on[0]), "tailscale") {
+		t.Errorf("funnel on runs %q, which is not the tailscale CLI", on[0])
 	}
-	off := strings.Join(funnelOffArgs(10000), " ")
-	if off != "tailscale funnel --https=10000 off" {
-		t.Errorf("funnel off = %q", off)
+	if got := strings.Join(on[1:], " "); got != "funnel --bg --https=10000 http://127.0.0.1:41234" {
+		t.Errorf("funnel on args = %q", got)
+	}
+	off := funnelOffArgs(10000)
+	if !strings.HasSuffix(strings.ToLower(off[0]), "tailscale") {
+		t.Errorf("funnel off runs %q", off[0])
+	}
+	if got := strings.Join(off[1:], " "); got != "funnel --https=10000 off" {
+		t.Errorf("funnel off args = %q", got)
 	}
 	// Only the three ports Tailscale actually serves.
 	for _, p := range []int{443, 8443, 10000} {

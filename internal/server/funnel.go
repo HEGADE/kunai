@@ -60,9 +60,23 @@ type tailscaleServeStatus struct {
 // funnelStatus reports what Funnel is currently doing, given the gate's port.
 func (s *Server) funnelStatus(gatePort int) funnelState {
 	out := funnelState{Free: nil, InUse: map[int]string{}}
-	raw, err := execOut("tailscale", "serve", "status", "--json")
+	// Resolved, not assumed. A macOS service started by launchd gets a minimal
+	// PATH with no /usr/local/bin in it, and the GUI client keeps its CLI inside
+	// the app bundle, so a bare "tailscale" is not found on exactly the machine
+	// most likely to be running the GUI client. discover.go already learned this;
+	// calling the binary by name here meant Funnel looked unavailable on a Mac
+	// where it was installed and working.
+	bin := tailscaleBin()
+	if bin == "" {
+		out.Error = "the tailscale command was not found on this machine"
+		return out
+	}
+	raw, err := execOut(bin, "serve", "status", "--json")
 	if err != nil {
-		out.Error = "tailscale is not available on this machine"
+		// Say what it said. "Not available" covered a missing binary, a stopped
+		// daemon and a logged-out tailnet as if they were one thing, and none of
+		// them is fixed the same way.
+		out.Error = whyTailscaleRefused(raw, "could not ask tailscale about its serve config")
 		return out
 	}
 	out.Available = true
@@ -146,6 +160,21 @@ var listenerOn = func(port int) string {
 		return "already in use on this machine"
 	}
 	return ""
+}
+
+// whyTailscaleRefused is the command's own complaint, trimmed to something a
+// dialog can hold. tailscale explains itself on stderr and that sentence is the
+// most useful thing anybody can be shown; the fallback covers it saying nothing.
+func whyTailscaleRefused(out, fallback string) string {
+	for _, ln := range strings.Split(out, "\n") {
+		if ln = strings.TrimSpace(ln); ln != "" {
+			if len(ln) > 160 {
+				ln = ln[:160] + "…"
+			}
+			return ln
+		}
+	}
+	return fallback
 }
 
 // hostSuffix finds the Web key ending in the port we are asking about. The key is
@@ -252,14 +281,28 @@ func (s *Server) forgetFunnel() {
 // funnelOnArgs and funnelOffArgs are separated out so a test can assert the exact
 // command without a tailnet, and so the UI can show the user the same string it
 // is about to run.
+//
+// The binary is resolved rather than named, for the same reason funnelStatus
+// resolves it: on a Mac under launchd there is no "tailscale" on PATH. The
+// displayed command keeps the bare name, because that is what a person would
+// type in their own shell.
 func funnelOnArgs(publicPort, localPort int) []string {
-	return []string{"tailscale", "funnel", "--bg",
+	return []string{tailscaleOr("tailscale"), "funnel", "--bg",
 		"--https=" + strconv.Itoa(publicPort),
 		"http://127.0.0.1:" + strconv.Itoa(localPort)}
 }
 
 func funnelOffArgs(publicPort int) []string {
-	return []string{"tailscale", "funnel", "--https=" + strconv.Itoa(publicPort), "off"}
+	return []string{tailscaleOr("tailscale"), "funnel", "--https=" + strconv.Itoa(publicPort), "off"}
+}
+
+// tailscaleOr resolves the CLI, falling back to the bare name so the argv stays
+// readable in a test and in a log.
+func tailscaleOr(fallback string) string {
+	if bin := tailscaleBin(); bin != "" {
+		return bin
+	}
+	return fallback
 }
 
 func allowedFunnelPort(p int) bool {
