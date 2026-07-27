@@ -376,3 +376,32 @@ func TestASecondAskerCannotDisplaceTheFirst(t *testing.T) {
 		t.Fatalf("denying did not free the slot: %v", err)
 	}
 }
+
+// The fact the server's reconcile loop depends on: once a share is past its
+// time, the session it belonged to has no live share, so the tools it withheld
+// can be given back.
+//
+// Nothing else was watching for this. Revoking clears a session's restrictions,
+// but a link that simply runs out is swept by whatever next reads the store, and
+// the session went on running without Bash and with its guard installed for as
+// long as it lived. Silently, because from the outside that is indistinguishable
+// from a session nobody ever shared.
+func TestAnExpiredShareStopsBelongingToItsSession(t *testing.T) {
+	s := newTestStore(t)
+	sh := liveShare(t, s, TierWork)
+
+	if _, live := s.BySession("sess-1"); !live {
+		t.Fatal("a live share was not found for its session")
+	}
+
+	s.SetClock(func() time.Time { return time.Unix(sh.ExpiresAt+1, 0) })
+
+	if _, live := s.BySession("sess-1"); live {
+		t.Fatal("an expired share still claims its session, so the session would " +
+			"stay restricted forever")
+	}
+	// And revoking is not the only path: the sweep already dropped it.
+	if _, err := s.Get(sh.Token); err != ErrNotFound {
+		t.Errorf("the expired share is still resolvable: %v", err)
+	}
+}

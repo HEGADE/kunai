@@ -156,14 +156,25 @@
     }
   }
 
-  const revoke = () =>
-    act(async () => {
-      if (!share) return
+  // Stopping is asking for a state, so it ends in that state whatever happened.
+  // The server treats an already-gone link as success; if the call fails for some
+  // other reason the dialog still closes, because leaving it open showing a link
+  // the owner has just told us to stop is the one outcome that would be actively
+  // misleading. The reason is logged rather than trapped behind a dialog they
+  // were trying to dismiss.
+  async function revoke() {
+    if (!share) return
+    busy = true
+    try {
       await revokeShare(base, share.token)
+    } catch (e) {
+      console.error('kunai: stop sharing failed', e)
+    } finally {
+      busy = false
       onchange(null)
       onclose()
-      return null
-    })
+    }
+  }
 
   const approve = () =>
     act(() => (share?.pending ? approveShareGuest(base, share.token, share.pending.code) : Promise.resolve()))
@@ -380,8 +391,13 @@
         {/if}
       {/if}
 
-      {#if err}<p class="err">{err}</p>{/if}
     </div>
+
+    <!-- Errors sit above the footer, outside the scrolling body. Inside it they
+         appended below whatever was on screen, so on a short window the thing
+         explaining why a button did nothing was itself off-screen -- which is
+         indistinguishable from the button doing nothing. -->
+    {#if err}<p class="err">{err}</p>{/if}
 
     <footer>
       {#if share}
@@ -857,8 +873,13 @@
     color: var(--text-4);
   }
   .err {
+    flex: none;
     margin: 0;
+    padding: 9px 15px;
+    border-top: 1px solid var(--border);
+    background: var(--panel);
     font-size: 12px;
+    line-height: 1.45;
     color: var(--alert);
   }
 

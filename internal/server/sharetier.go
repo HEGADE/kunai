@@ -10,6 +10,7 @@ package server
 import (
 	"context"
 	"log"
+	"time"
 
 	"github.com/hegade/kunai/internal/share"
 )
@@ -67,6 +68,56 @@ func (s *Server) restrictSession(ctx context.Context, sessionID string, denied [
 	}
 	s.armSession(next)
 	return nil
+}
+
+// shareReconcile is how often a session is checked against the share that
+// restricted it. Slow, because the only thing it corrects is a session left more
+// restricted than it needs to be, which is a nuisance rather than a risk.
+const shareReconcile = time.Minute
+
+// reconcileShares gives back the toolset of any session whose share is gone.
+//
+// Revoking clears the restriction itself, but revoking is not the only way a
+// share ends. A link that simply runs out of time is swept from the store by
+// whatever next reads it, and nothing was watching for that: the session kept
+// running without Bash, with the guard still installed, for as long as it lived.
+// Silently, because from the outside it looks exactly like a session that was
+// never shared.
+//
+// Reconciling against the store rather than hooking the sweep is deliberate. It
+// catches every way a share can disappear, including ones nobody has thought of
+// yet, and the check is cheap: a session that was never shared has no
+// restrictions to compare.
+func (s *Server) reconcileShares(ctx context.Context) {
+	t := time.NewTicker(shareReconcile)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.restoreOrphanedSessions(ctx)
+		}
+	}
+}
+
+func (s *Server) restoreOrphanedSessions(ctx context.Context) {
+	if s.shares == nil {
+		return
+	}
+	for _, meta := range s.mgr.List() {
+		sess, ok := s.mgr.Get(meta.ID)
+		if !ok || len(sess.DisallowedTools()) == 0 {
+			continue // never shared, or already given back
+		}
+		if _, live := s.shares.BySession(meta.ID); live {
+			continue
+		}
+		logShare("session %s outlived its share; restoring its tools", meta.ID)
+		if err := s.clearShareTier(ctx, meta.ID); err != nil {
+			logShare("could not restore session %s: %v", meta.ID, err)
+		}
+	}
 }
 
 func sameTools(a, b []string) bool {

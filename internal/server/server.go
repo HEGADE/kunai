@@ -328,6 +328,9 @@ func (s *Server) Run(ctx context.Context) error {
 			logShare("could not reopen the public listener for existing links: %v", err)
 		}
 	}
+	// Give back the tools of any session whose share ended without anybody
+	// revoking it, which is what happens every time a link simply runs out.
+	go s.reconcileShares(ctx)
 	// Boot the managed CLIProxyAPI sidecar if any providers are configured, so
 	// their sessions have a proxy to reach. Downloading/verifying happens inside.
 	if s.cliproxy != nil && s.anyProviderNeedsSidecar() {

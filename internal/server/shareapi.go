@@ -198,13 +198,21 @@ func (s *Server) handleRevokeShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := r.PathValue("token")
+	// Already gone is success, not a failure.
+	//
+	// "Stop sharing" asks for a state, not for an event: if the link is not live,
+	// what was asked for is already true. Answering 404 made the button appear to
+	// do nothing whenever the share had lapsed between opening the dialog and
+	// confirming, which is easy with a short expiry -- the error surfaced at the
+	// bottom of a scrolling panel nobody was looking at. It is also what DELETE is
+	// supposed to mean.
 	sh, err := s.shares.Get(token)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, err.Error())
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if err := s.shares.Revoke(token); err != nil {
-		writeErr(w, http.StatusNotFound, err.Error())
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	// Hand the session its full toolset back. Best-effort and deliberately not

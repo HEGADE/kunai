@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+
 	"encoding/json"
 	"io/fs"
 	"net"
@@ -331,5 +332,28 @@ func TestListenerProbeIgnoresPermissionErrors(t *testing.T) {
 	ln.Close()
 	if got := listenerOn(taken); got != "" {
 		t.Errorf("a released port is still reported as %q", got)
+	}
+}
+
+// Stopping a share that has already stopped is success, not a 404.
+//
+// "Stop sharing" asks for a state, and if the link is not live that state is
+// already true. Answering 404 made the button appear to do nothing whenever the
+// share lapsed between opening the dialog and confirming, which a short expiry
+// makes easy, and the error surfaced at the bottom of a scrolling panel where it
+// could not be seen. It is also what DELETE is supposed to mean.
+func TestRevokingAnAlreadyGoneShareSucceeds(t *testing.T) {
+	s := &Server{shares: share.NewStore(filepath.Join(t.TempDir(), "shares.json")), mgr: session.NewManager()}
+	s.gate = newShareGate(s.shares, s.mgr, testPWA{})
+
+	for _, token := range []string{"never-existed", ""} {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest("DELETE", "/api/shares/"+token, nil)
+		r.SetPathValue("token", token)
+		s.handleRevokeShare(rec, r)
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("revoking %q gave %d, want 204: the owner asked for a state, not an event",
+				token, rec.Code)
+		}
 	}
 }
