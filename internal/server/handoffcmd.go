@@ -61,14 +61,38 @@ if [ -z "$url" ]; then
 fi
 # Straight to the terminal as well as to stdout, so the link survives the
 # exit below even though the CLI captures this command's output.
-( printf "\nContinue here: %s\n\n" "$url" > /dev/tty ) 2>/dev/null || true
 echo "$url"
-# Best effort, and never fatal: a headless box has no browser and printing
-# the link is the whole fallback.
+# Opening a browser is best effort and never fatal. A headless box has neither
+# command, and then the printed link IS the feature rather than a fallback.
 for o in xdg-open open; do command -v "$o" >/dev/null 2>&1 && { "$o" "$url" >/dev/null 2>&1 & break; }; done
-# Leave after the turn has rendered. The resume happens when the link is
-# opened, so this only has to be gone before somebody clicks.
-[ -n "${CLAUDE_PID:-}" ] && (sleep 2; kill "$CLAUDE_PID" >/dev/null 2>&1) &
+
+# The link is written to the terminal AFTER the CLI exits, and that ordering is
+# the whole point.
+#
+# Two things ate it before. The CLI repaints its interface over anything written
+# to /dev/tty underneath it, so a link printed while it is still running is gone
+# by the next frame. And the reply that was meant to carry the link is written
+# by the model, which was still thinking when the kill landed two seconds later
+# -- so on a machine with no browser the session simply ended with nothing to
+# show for it. Waiting for the process to actually go puts the link on the
+# shell's own screen, where it stays.
+#
+# tty is overridable so this can be tested without a controlling terminal.
+if [ -n "${CLAUDE_PID:-}" ]; then
+  (
+    sleep 4                                   # let the turn render first
+    kill "$CLAUDE_PID" >/dev/null 2>&1
+    i=0
+    while kill -0 "$CLAUDE_PID" >/dev/null 2>&1 && [ "$i" -lt 100 ]; do
+      sleep 0.2
+      i=$((i + 1))
+    done
+    ( printf "\nContinue in kunai: %s\n\n" "$url" > "${KUNAI_TTY:-/dev/tty}" ) 2>/dev/null
+  ) >/dev/null 2>&1 &
+else
+  # No pid to wait on (an older CLI): the best that can be done is write now.
+  ( printf "\nContinue in kunai: %s\n\n" "$url" > "${KUNAI_TTY:-/dev/tty}" ) 2>/dev/null
+fi
 exit 0
 `
 	scriptPath := filepath.Join(dataDir, "handoff.sh")
