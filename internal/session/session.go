@@ -86,6 +86,7 @@ type Session struct {
 	histBefore      int64   // transcript byte offset older-than-seed history begins before; 0 = none. Reverse-scroll cursor.
 	lastCostUSD     float64 // running session total from the CLI, to difference per turn
 	turnFrom        Origin  // who started the turn now running; see origin.go
+	turnStartedAt   int64   // unix ms the running turn began; 0 when nothing runs
 	buf             *ring
 	subs            map[*Subscriber]struct{}
 	queue           []*queuedPrompt // prompts waiting for the running turn to end
@@ -608,6 +609,11 @@ func (s *Session) startTurnLocked(q *queuedPrompt) uint64 {
 	// Whose turn this is, so a guest can stop their own work and only their own,
 	// and so a permission ask raised by it can say who asked for it.
 	s.turnFrom = q.from
+	// And when, so the list can say how long it has been at it. Stamped here
+	// rather than at the driver, because this is the single place every turn
+	// starts (a prompt, a drained queue entry, a loop iteration) and a second
+	// site would eventually be the one nobody updated.
+	s.turnStartedAt = time.Now().UnixMilli()
 	var userSeq uint64
 	if !q.silent {
 		s.lastPromptText = q.Text // remember it so failover can resend on another account
@@ -953,6 +959,12 @@ func (s *Session) setState(state string) {
 		return
 	}
 	s.state = state
+	// The turn clock stops when the session goes idle, and only then. Awaiting a
+	// permission answer is the SAME turn paused, so clearing it there would
+	// restart the count from zero on approval and make a long turn look young.
+	if state == StateIdle {
+		s.turnStartedAt = 0
+	}
 	sequenced := s.sequenceLocked(AppEvent{T: EvState, State: state})
 	s.emitLocked(sequenced)
 	changed := s.onListChange
@@ -986,6 +998,16 @@ type Meta struct {
 	Title     string    `json:"title"`
 	State     string    `json:"state"`
 	CreatedAt time.Time `json:"created_at"`
+	// TurnStartedAt is when the turn now running began, in unix milliseconds, and
+	// 0 whenever nothing is running. It exists so the sidebar can say how long a
+	// session has been working rather than only that it is, which is the
+	// difference between "busy" and "stuck": twenty seconds is a session thinking
+	// and twenty minutes is one you want to look at.
+	//
+	// Zeroed the moment a turn ends, so it can never outlive the work it measures.
+	// A resumed session has no running turn and therefore no duration, which is
+	// the honest answer rather than a clock started at the reopen.
+	TurnStartedAt int64 `json:"turn_started_at,omitempty"`
 	// Pinned is a user override the server merges in from its session-metadata
 	// store; the session itself never sets it (a live session doesn't know it is
 	// pinned). Kept here so the live list and the Recent list carry the same flag.
@@ -1019,7 +1041,7 @@ func (s *Session) Meta() Meta {
 	return Meta{
 		ID: s.ID, Cwd: s.Cwd, Model: s.model, Effort: s.effort, CLI: s.cliName,
 		Title: s.title, State: s.state, CreatedAt: s.CreatedAt,
-		Projects: len(s.projects),
+		Projects: len(s.projects), TurnStartedAt: s.turnStartedAt,
 	}
 }
 

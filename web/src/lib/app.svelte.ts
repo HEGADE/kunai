@@ -151,6 +151,16 @@ class AppStore {
     return conn?.sessionState ?? m.state ?? ''
   }
 
+  // liveTurnStart is when the running turn began (unix ms), 0 when none is. The
+  // same preference as liveState and for the same reason: an open tab's socket
+  // stamps it immediately while the polled list is up to a cycle behind, and a
+  // duration that starts a second late is a duration that is wrong.
+  liveTurnStart(m: { machineId: string; id: string; turn_started_at?: number }): number {
+    void this.connsVersion
+    const conn = this.conns.get(tabKey(m.machineId, m.id))
+    return conn?.turnStartedAt || m.turn_started_at || 0
+  }
+
   // busy reports whether any session is mid-turn or waiting on an answer, by the
   // freshest reading available. It sets the polling cadence: a status board is
   // only worth having if it is roughly current, and the cost of asking more often

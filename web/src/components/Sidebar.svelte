@@ -5,7 +5,7 @@
   import type { TaggedHistoryEntry, TaggedMeta } from '../lib/types'
   import { groupSessions, groupStartTarget } from '../lib/grouping'
   import { shortAgo } from '../lib/reltime'
-  import { hasWork, isAwaiting, isWorking, needsAttention, summarise } from '../lib/sidebar'
+  import { hasWork, isAwaiting, isWorking, needsAttention, summarise, workedFor } from '../lib/sidebar'
   import { isGitRepo } from '../lib/worktrees'
   import { updateAvailable } from '../lib/update'
   import { fetchQuery, keys, peek, SLOW_TTL } from '../lib/query.svelte'
@@ -148,6 +148,18 @@
   // that had already stopped to ask a question: the list is refreshed on a slow
   // beat by design, because a live session is supposed to report itself.
   const stateful = (m: TaggedMeta) => ({ state: app.liveState(m) })
+
+  // The clock behind every "working 17s". One timer for the whole list, not one
+  // per row, and it only runs while something is actually working: a sidebar
+  // full of finished sessions should not be waking the tab once a second to
+  // recompute durations that are not being shown.
+  let now = $state(Date.now())
+  $effect(() => {
+    if (!app.busy) return
+    const t = setInterval(() => (now = Date.now()), 1000)
+    now = Date.now()
+    return () => clearInterval(t)
+  })
 
   // Which folders are collapsed, remembered across reloads. A folder you closed
   // because you are not working in it today should stay closed tomorrow.
@@ -335,7 +347,14 @@
       {#if isAwaiting(stateful(m))}
         <span class="tail needs">needs you</span>
       {:else if isWorking(stateful(m))}
-        <span class="tail working">working</span>
+        <!-- How long, not just that. "working" reads the same at twenty seconds
+             and twenty minutes, and only one of those is worth getting up for.
+             The number is mono because it is data; the ring turns so a glance
+             tells you the row is live without reading anything. -->
+        <span class="tail working">
+          <span class="spin" aria-hidden="true"></span>
+          <span class="mono">{workedFor(app.liveTurnStart(m), now)}</span>
+        </span>
       {/if}
     </button>
     <SessionMenu
@@ -1252,7 +1271,36 @@
     }
   }
   .tail.working {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     color: var(--live);
+  }
+  /* A ring rather than a dot, because a dot is already the node on the stem and
+     two dots on one row would be two things to read. Drawn from a border with
+     one side transparent, so it costs no markup and no asset. */
+  .spin {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border: 1.5px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    opacity: 0.85;
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  /* Motion in the corner of the eye is exactly what somebody asks to be rid of,
+     and the ring is decoration: the duration beside it carries the meaning, so
+     stopping it loses nothing. */
+  @media (prefers-reduced-motion: reduce) {
+    .spin {
+      animation: none;
+    }
   }
   .tail.needs {
     color: var(--busy);

@@ -28,6 +28,27 @@ export function isWorking(s: Stateful): boolean {
   return s.state === 'running'
 }
 
+// workedFor is how long the running turn has been going, for the row that says
+// so. The point is the difference between busy and stuck: "working" alone is the
+// same word at twenty seconds and twenty minutes, and only one of those is worth
+// getting up for.
+//
+// Coarse on purpose. A ticking seconds count past the first minute is motion in
+// the corner of your eye for a number nobody reads that precisely, so it settles
+// to whole minutes and then to hours. Returns '' when there is no turn to
+// measure, which is what a resumed session honestly has: the timestamp comes
+// from the turn, never from when the tab was opened.
+export function workedFor(startedAtMs: number, nowMs: number): string {
+  if (!startedAtMs || nowMs < startedAtMs) return ''
+  const secs = Math.floor((nowMs - startedAtMs) / 1000)
+  if (secs < 60) return `${secs}s`
+  const mins = Math.floor(secs / 60)
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  const rem = mins % 60
+  return rem ? `${hours}h ${rem}m` : `${hours}h`
+}
+
 // isAwaiting is the permission gate: the agent has stopped and cannot continue
 // until you answer. This is the only state worth interrupting a glance for.
 export function isAwaiting(s: Stateful): boolean {

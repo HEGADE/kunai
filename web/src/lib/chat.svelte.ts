@@ -97,6 +97,12 @@ export class ChatConnection {
   // Resolvers waiting on the initial backlog (see whenReady).
   private readyWaiters: (() => void)[] = []
   sessionState = $state<SessionState>('idle')
+  // When the running turn began (unix ms), 0 when nothing is running. Set from
+  // the state frames rather than from Meta, because this socket is the fastest
+  // thing that knows. Not cleared on awaiting_permission: that is the same turn
+  // paused, and restarting the count on approval would make a long turn that
+  // stopped to ask look like it had just begun.
+  turnStartedAt = $state(0)
   // Sessions start in auto (see session.DefaultPermissionMode); seed it so the
   // composer doesn't flash "Ask" before the hello frame confirms it.
   mode = $state<PermissionMode>('auto')
@@ -441,7 +447,18 @@ export class ChatConnection {
         void this.refreshCheckpoints()
         break
       case 'state':
-        if (ev.state) this.sessionState = ev.state
+        if (ev.state) {
+          // The turn clock, kept beside the state it belongs to. An open tab
+          // learns a turn started the instant the socket says so, while the
+          // polled list is up to a cycle behind, so the sidebar prefers this the
+          // same way it already prefers this socket's state (see liveState).
+          if (ev.state === 'running' && this.sessionState !== 'running') {
+            this.turnStartedAt = Date.now()
+          } else if (ev.state === 'idle') {
+            this.turnStartedAt = 0
+          }
+          this.sessionState = ev.state
+        }
         break
       case 'mode':
         // The server changes this too, not just the picker: a loop borrows

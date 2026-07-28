@@ -130,6 +130,10 @@ export interface Meta {
   title: string
   state: SessionState
   created_at: string
+  // When the running turn began, unix milliseconds, absent when nothing runs.
+  // Lets the sidebar say how long a session has been working rather than only
+  // that it is: twenty seconds is thinking, twenty minutes is worth a look.
+  turn_started_at?: number
   pinned?: boolean // user override, merged from the server's session-metadata store
   // What the sidebar groups this session under instead of its directory. A user
   // override, merged in by the server like `pinned`.
