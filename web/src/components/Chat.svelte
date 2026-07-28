@@ -553,24 +553,11 @@
   {/if}
 
   <div class="dock" bind:clientHeight={dockH}>
-    <!-- A session that no longer exists, said once and plainly, with the only
-         thing that helps. kunai restarting ends every ordinary session, and a
-         self update does exactly that, so a tab open from before a release
-         pointed at nothing: the socket retried forever showing "offline", and
-         every control on it failed without a word. -->
-    {#if chat.status === 'gone'}
-      <div class="ended">
-        <span class="edot" aria-hidden="true"></span>
-        <span class="etext">This session has ended. kunai restarted, which closes running sessions.</span>
-        <button class="ebtn" onclick={() => app.reopenActive()}>Reopen it</button>
-      </div>
-    {/if}
-
     <!-- Why the last thing you asked for did not happen. It belongs here, beside
          the controls that asked, rather than in the sidebar where it used to go
          and where you cannot see it from a chat. -->
     {#if app.actionError}
-      <div class="ended warn">
+      <div class="actionbar">
         <span class="etext">{app.actionError}</span>
         <button class="ex" onclick={() => (app.actionError = '')} aria-label="Dismiss">✕</button>
       </div>
@@ -578,7 +565,22 @@
 
     <LoopBar {chat} />
     <Queued {chat} />
-    <div class="field">
+    <!-- A session that no longer exists says so INSIDE the composer, because the
+         composer is the thing that has stopped working. It was a bordered strip
+         above it, which competed with the field, ran wider than it (the field is
+         720px centred and the strip was not), and left the model, effort and
+         account controls on show underneath doing nothing. Replacing the field's
+         contents states it once and removes every control that would lie. -->
+    <div class="field" class:dead={chat.status === 'gone'}>
+      {#if chat.status === 'gone'}
+        <div class="deadrow">
+          <div class="deadtext">
+            <p class="dhead">This session has ended</p>
+            <p class="dsub">kunai restarted, which closes running sessions. The conversation is saved.</p>
+          </div>
+          <button class="dbtn" onclick={() => app.reopenActive()}>Reopen it</button>
+        </div>
+      {:else}
       {#if attachments.length}
         <div class="chips">
           {#each attachments as a (a.id)}
@@ -598,12 +600,7 @@
         enterkeyhint={isTouch ? 'enter' : 'send'}
         autocomplete="off"
         autocapitalize="sentences"
-        placeholder={chat.status === 'online'
-          ? 'Message Claude…'
-          : chat.status === 'gone'
-            ? 'This session has ended'
-            : 'Reconnecting…'}
-        disabled={chat.status === 'gone'}
+        placeholder={chat.status === 'online' ? 'Message Claude…' : 'Reconnecting…'}
       ></textarea>
       <div class="bar">
         <button class="attach" onclick={() => fileInput?.click()} aria-label="Attach file" title="Attach">
@@ -727,6 +724,7 @@
           aria-label={running ? 'Queue message' : 'Send'}
           title={running ? 'Queue this for when the current turn finishes' : 'Send'}>↑</button>
       </div>
+      {/if}
     </div>
   </div>
 </div>
@@ -1110,28 +1108,23 @@
   .dock {
     padding: 6px 16px calc(var(--safe-bottom) + 12px);
   }
-  /* A dead session, and a failed action, both sit directly above the composer:
-     the composer is where you were about to act, so it is where the reason you
-     cannot has to be. */
-  .ended {
+  /* Why the last action failed, directly above the composer that asked. It is
+     transient and dismissible, so unlike the ended state it stays a strip. It
+     matches the field's width and centring, which the old one did not: the field
+     is 720px centred and this was full-bleed, so it hung off both sides. */
+  .actionbar {
+    max-width: 720px;
+    margin: 0 auto 8px;
     display: flex;
     align-items: center;
     gap: 9px;
-    margin-bottom: 8px;
     padding: 9px 12px;
     background: var(--panel);
-    border: 1px solid var(--border);
+    border: 1px solid var(--alert);
     border-radius: var(--r);
   }
-  .ended.warn {
-    border-color: var(--alert);
-  }
-  .edot {
-    flex: none;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--text-4);
+  .actionbar .etext {
+    color: var(--alert);
   }
   .etext {
     flex: 1;
@@ -1139,21 +1132,6 @@
     font-size: 12px;
     line-height: 1.45;
     color: var(--text-3);
-  }
-  .ended.warn .etext {
-    color: var(--alert);
-  }
-  .ebtn {
-    flex: none;
-    height: 26px;
-    padding: 0 11px;
-    border: 0;
-    border-radius: 7px;
-    background: var(--white);
-    color: #0b0b0c;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
   }
   .ex {
     flex: none;
@@ -1188,6 +1166,71 @@
   }
   .field:focus-within {
     border-color: var(--text-4);
+  }
+  /* The ended composer. Quieter than a live one, not louder: the border drops
+     back to the faintest one available and the fill goes flat, so the thing you
+     cannot type into recedes instead of announcing itself. Nothing here can take
+     focus, so the focus-within lift is suppressed too. */
+  .field.dead {
+    background: transparent;
+    border-color: var(--border);
+    padding: 14px 16px;
+  }
+  .field.dead:focus-within {
+    border-color: var(--border);
+  }
+  .deadrow {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .deadtext {
+    flex: 1;
+    min-width: 0;
+  }
+  .dhead {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-2);
+  }
+  .dsub {
+    margin: 3px 0 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-4);
+  }
+  /* Outlined, not filled. It is the only control left, so it does not need
+     white to be found, and white here made a dead session the brightest thing
+     on the screen. Reserved accent stays reserved. */
+  .dbtn {
+    flex: none;
+    height: 30px;
+    padding: 0 14px;
+    border: 1px solid var(--border-2);
+    border-radius: 9px;
+    background: transparent;
+    color: var(--text-2);
+    font-size: 12px;
+    cursor: pointer;
+    transition:
+      border-color 0.12s,
+      color 0.12s,
+      background 0.12s;
+  }
+  .dbtn:hover {
+    background: var(--panel-2);
+    border-color: var(--text-4);
+    color: var(--text);
+  }
+  @media (max-width: 560px) {
+    .deadrow {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .dbtn {
+      align-self: stretch;
+    }
   }
   .chips {
     display: flex;
