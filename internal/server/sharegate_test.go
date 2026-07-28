@@ -66,6 +66,10 @@ func TestShareGateServesNothingButShareRoutes(t *testing.T) {
 		{"GET", "/api/worktrees"},
 		{"GET", "/api/sessions/abc/revert"},
 		{"POST", "/api/sessions/abc/revert"},
+		// Reading a file out of the session's folders is owner-only at EVERY tier,
+		// not gated on one: a share link is a public URL, and this route would hand
+		// whoever holds it every image in the project.
+		{"GET", "/api/sessions/abc/file?path=a.png"},
 		{"GET", "/ws/app/abc"},
 		{"GET", "/ws/fleet"},
 		{"GET", "/"},

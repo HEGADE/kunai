@@ -36,15 +36,54 @@
     },
   })
 
-  export function render(src: string, opts: { highlight?: boolean } = {}): string {
+  export function render(
+    src: string,
+    opts: { highlight?: boolean; fileBase?: string } = {},
+  ): string {
     const parser = opts.highlight === false ? marked : richMarked
-    return DOMPurify.sanitize(parser.parse(src ?? '', { async: false }) as string)
+    const html = DOMPurify.sanitize(parser.parse(src ?? '', { async: false }) as string)
+    return opts.fileBase ? withLocalImages(html, opts.fileBase) : html
+  }
+
+  // Point an image at a path on the machine to the endpoint that can actually
+  // serve it.
+  //
+  // An agent writing ![shot](/tmp/x.png) produced an <img> whose src the browser
+  // resolved against kunai's own origin -- and kunai answers every unmatched path
+  // with the app shell, so the image element received HTML and showed a broken
+  // icon. It failed identically in a browser on the machine itself; this was
+  // never about which device was looking.
+  //
+  // Rewritten on the already-sanitized HTML, walking real elements rather than
+  // running a regex over markup, so a src containing quotes or angle brackets
+  // cannot be used to reshape the document on the way through.
+  function withLocalImages(html: string, base: string): string {
+    const tpl = document.createElement('template')
+    tpl.innerHTML = html
+    for (const img of Array.from(tpl.content.querySelectorAll('img'))) {
+      const src = img.getAttribute('src') ?? ''
+      // Anything already addressable is left alone: a real URL, an inline data
+      // URI, and the endpoint's own output if this ever runs twice.
+      if (!src || /^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith(base)) continue
+      img.setAttribute('src', base + encodeURIComponent(src))
+      img.setAttribute('loading', 'lazy')
+    }
+    return tpl.innerHTML
   }
 </script>
 
 <script lang="ts">
+  import { getContext } from 'svelte'
+  import { FILE_BASE, type FileBase } from '../lib/filebase'
+
   let { text, live = false }: { text: string; live?: boolean } = $props()
-  const html = $derived(render(text, { highlight: !live }))
+  // Which session's files an image may come from. Taken from context rather than
+  // threaded through props: Markdown is rendered from half a dozen places, most
+  // of which have no idea which session they belong to, and passing it down every
+  // one of those chains to reach an <img> would be a lot of plumbing for a rare
+  // tag. A getter, not a string, so switching tabs cannot leave it stale.
+  const fileBase = getContext<FileBase | undefined>(FILE_BASE)
+  const html = $derived(render(text, { highlight: !live, fileBase: fileBase?.() }))
 
   // Copy handler via delegation — safe because committed blocks have stable text
   // (this component only re-derives html when `text` changes).

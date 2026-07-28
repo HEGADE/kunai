@@ -237,6 +237,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/effort", s.handleSetEffort)
 	mux.HandleFunc("POST /api/sessions/{id}/account", s.handleSetAccount)
 	mux.HandleFunc("GET /api/sessions/{id}/history", s.handleOlderTurns)
+	// An image the agent made, so a screenshot shows in the conversation. Owner
+	// side only: this must never be registered on the share gate. See
+	// sessionfile.go.
+	mux.HandleFunc("GET /api/sessions/{id}/file", s.handleSessionFile)
 	mux.HandleFunc("GET /api/sessions/{id}/checkpoints", s.handleListCheckpoints)
 	mux.HandleFunc("GET /api/sessions/{id}/revert", s.handleRevertPreview)
 	mux.HandleFunc("POST /api/sessions/{id}/revert", s.handleRevert)

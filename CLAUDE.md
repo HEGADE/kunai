@@ -523,6 +523,15 @@ Behavioral invariants that were bugs before (do not regress):
 - The claude process lifetime must never be bound to an HTTP request context.
 - Push payloads carry a generic wake-up string only, never session content. This is
   the relay-free promise of the project.
+- `GET /api/sessions/{id}/file` (`sessionfile.go`) serves an image the agent made,
+  so a screenshot appears in the conversation instead of as a path only the
+  machine can open. It is **owner-only at every tier and must never be registered
+  on the share gate**: a share link is a public URL, and a route that reads files
+  inside the session's folders would hand whoever holds it every image in the
+  project. Pinned by the gate's 404 list in `sharegate_test.go`. Confinement is
+  `pathguard` (symlinks resolved before the containment check), and the served
+  set is raster images only — SVG is refused because it is a scriptable document
+  and this serves from kunai's own origin.
 - The CORS wildcard is safe **only** because the tailnet is the entire auth
   perimeter and the API uses no cookies or credentials. Do not add cookie or session
   auth without tightening CORS first.

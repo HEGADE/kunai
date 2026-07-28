@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { tick } from 'svelte'
+  import { tick, setContext } from 'svelte'
   import { app } from '../lib/app.svelte'
+  import { FILE_BASE, fileBaseFor } from '../lib/filebase'
   import { uploadFile, getProviderModels, getShare } from '../lib/api'
   import type { ChatConnection } from '../lib/chat.svelte'
   import type { Attachment, Share } from '../lib/types'
@@ -30,6 +31,12 @@
   import ShareDialog from './ShareDialog.svelte'
 
   let { chat }: { chat: ChatConnection } = $props()
+
+  // An image path the agent wrote resolves against THIS session on ITS machine.
+  // Published once here, read wherever markdown is rendered (see lib/filebase).
+  // A getter, so a component set up under one session cannot keep serving
+  // another's id after the prop changes.
+  setContext(FILE_BASE, () => fileBaseFor(chat.origin, chat.sessionId))
 
   // Group the flat item stream into turns so a turn's tool activity can collapse
   // behind one summary and carry a files-changed footer.
