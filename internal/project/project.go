@@ -155,6 +155,17 @@ func countTree(info *Info, abs string) {
 	}
 }
 
+// Branch is the checked-out branch of the repository at dir, or "" when dir is
+// not a git checkout or is on a detached HEAD.
+//
+// Exported for the sidebar, which shows a session's branch on its row: without
+// it that line only had something to say for a kunai-made worktree, and every
+// ordinary session fell back to repeating its own folder name.
+func Branch(dir string) string {
+	b, _ := gitHead(dir)
+	return b
+}
+
 // gitHead reads the checked-out branch and origin URL straight from .git, which
 // is cheaper and safer than shelling out to git for two strings.
 func gitHead(abs string) (branch, remote string) {

@@ -880,9 +880,16 @@ jumping to the end.
   directory once closed. Naming it is what makes the grouping permanent.
 - A live session in the sidebar is a **three-line row**, read top to bottom:
   the codebase and what the agent is doing (`Working 17s`, or `Needs you`), then
-  the session's title bright and bold, then where the work lands (the worktree's
-  branch, else the folder) and the brand mark of the account paying for it
-  (`web/src/lib/providerMarks.ts`). The active row takes a filled card, which
+  the session's title bright and bold, then the branch the work lands on and the
+  brand mark of the account paying for it (`web/src/lib/providerMarks.ts`).
+  **Each line appears only when it has something to say that is not already on
+  screen**: the project is dropped when the group heading directly above already
+  says it, and the branch line is dropped when there is no branch, in which case
+  the mark rides on the title. Rendering all three unconditionally printed the
+  same folder name on the heading, the row's top line and inside its bottom line
+  at once. The branch is read from `.git/HEAD` for ANY session
+  (`project.Branch`, applied in `worktreeStore.tagRepos`), not just a kunai-made
+  worktree, or that line would be blank for most sessions. The active row takes a filled card, which
   earlier single-line rows deliberately avoided; with three lines the list needs
   a shape to say where one row ends. A past session stays a quiet single line.
   The status badge here was **tried once before and reverted for lying**, and

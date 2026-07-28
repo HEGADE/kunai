@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hegade/kunai/internal/project"
 	"github.com/hegade/kunai/internal/session"
 	"github.com/hegade/kunai/internal/worktree"
 )
@@ -321,6 +322,13 @@ func (s *worktreeStore) identify(cwd string) (repo, branch string) {
 func (s *worktreeStore) tagRepos(metas []session.Meta) {
 	for i := range metas {
 		metas[i].Repo, metas[i].Branch = s.identify(metas[i].Cwd)
+		// Not a worktree kunai made, so ask the checkout itself. The sidebar puts
+		// the branch on the session's row, and without this that line was blank for
+		// every ordinary session -- which is most of them. Read from .git/HEAD
+		// rather than shelled, and OUTSIDE identify's lock, since it touches disk.
+		if metas[i].Branch == "" {
+			metas[i].Branch = project.Branch(metas[i].Cwd)
+		}
 	}
 }
 

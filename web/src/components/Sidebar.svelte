@@ -283,22 +283,36 @@
     return m.title || m.cwd.replace(/\/+$/, '').split('/').slice(-1)[0] || 'session'
   }
 
-  // The codebase this session belongs to, for the row's top line. A worktree
-  // reports its MAIN checkout rather than its own directory, which is the whole
-  // point: five worktrees of one repo are five rows of the same project, not
-  // five projects.
-  function projectOf(m: TaggedMeta): string {
+  // The codebase this session belongs to, for the row's top line -- and ONLY
+  // when the group heading directly above does not already say it.
+  //
+  // The reference this row was built from has no headings: it is one flat list,
+  // so every row has to name its own project. kunai groups by project, so
+  // repeating it put the same word twice within about twenty pixels. The line
+  // still earns its place when the two genuinely differ, which is a session
+  // sitting under a workspace heading somebody named by hand.
+  function projectOf(m: TaggedMeta, heading: string): string {
     const base = m.repo || m.cwd
-    return base.replace(/\/+$/, '').split('/').slice(-1)[0] || 'session'
+    const name = base.replace(/\/+$/, '').split('/').slice(-1)[0] || ''
+    return name && name !== heading ? name : ''
   }
 
-  // Where the work lands: the branch for a worktree, the folder otherwise. The
-  // branch wins because that is what distinguishes two agents in one repository,
-  // and it is the thing you would type to go and look at their work.
+  // Where the work lands, when that is somewhere other than the obvious place.
+  //
+  // A worktree gives its branch, which is the point of the line: it is what
+  // tells two agents in one repository apart, and what you would type to go and
+  // look at their work. An ordinary session has no branch kunai knows about, so
+  // this used to fall back to the last two path segments -- which ends in the
+  // project's own folder name and so said it a THIRD time. It now returns the
+  // path BELOW the project, and nothing at all when the session sits at the
+  // project root, because there the row has already said everything true.
   function whereOf(m: TaggedMeta): string {
     if (m.repo && wtName(m)) return wtName(m)
     if (m.branch) return m.branch
-    return m.cwd.replace(/^.*\/(?=[^/]+\/[^/]+$)/, '')
+    const root = (m.repo || '').replace(/\/+$/, '')
+    const cwd = m.cwd.replace(/\/+$/, '')
+    if (root && cwd.startsWith(root + '/')) return cwd.slice(root.length + 1)
+    return ''
   }
   async function resume(h: TaggedHistoryEntry) {
     if (resuming) return
@@ -337,7 +351,17 @@
   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" /></svg>
 {/snippet}
 
-{#snippet activeRow(m: TaggedMeta)}
+{#snippet brand(mark: { color: string; d: string; label: string })}
+  <svg
+    class="mark"
+    width="12"
+    height="12"
+    viewBox="0 0 24 24"
+    style="color:{mark.color}"
+    aria-label={mark.label}><path fill="currentColor" d={mark.d} /></svg>
+{/snippet}
+
+{#snippet activeRow(m: TaggedMeta, heading: string)}
   <!-- A node on the group's stem, the way a commit sits on a branch line. This is
        the whole state display: colour says what the session is doing, and the
        active session's node is the one white mark in the list. It replaced a
@@ -345,6 +369,15 @@
        state, and the pill was the only rounded shape in a list of text. -->
   {@const mark = markFor(m.cli)}
   {@const st = stateful(m)}
+  <!-- The row grows only as far as it has something to say. A plain session
+       sitting idle in its project root is one line and a mark; a worktree
+       mid-turn is the full three. Rendering every line unconditionally is what
+       put the same folder name on the heading, the top line AND inside the
+       bottom line of a single row. -->
+  {@const proj = projectOf(m, heading)}
+  {@const where = whereOf(m)}
+  {@const working = isWorking(st)}
+  {@const awaiting = isAwaiting(st)}
   <div
     class="row"
     class:current={app.activeId === m.id && app.activeMachineId === m.machineId}
@@ -352,40 +385,48 @@
   >
     <span class="node" data-state={app.liveState(m)} aria-hidden="true"></span>
     <button class="hit card" onclick={() => app.open(m.machineId, m.id)}>
-      <!-- Top line: where the work is, and what it is doing. The two things you
-           scan a list of agents for, on the line your eye hits first. -->
-      <span class="l1">
-        <svg class="fold" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
-        <span class="proj">{projectOf(m)}</span>
-        <!-- Only the two states worth trusting are named. A resumed session
-             reports `starting` until its first prompt, so anything built on that
-             would sit there claiming work forever. -->
-        {#if isAwaiting(st)}
-          <span class="status needs">Needs you</span>
-        {:else if isWorking(st)}
-          <span class="status working">
-            <span class="spin" aria-hidden="true"></span>
-            Working <span class="mono">{workedFor(app.liveTurnStart(m), now)}</span>
-          </span>
-        {/if}
+      <!-- Top line: where the work is, and what it is doing. Only appears when
+           one of those is worth saying. -->
+      {#if proj || working || awaiting}
+        <span class="l1">
+          {#if proj}
+            <svg class="fold" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
+            <span class="proj">{proj}</span>
+          {:else}
+            <span class="grow"></span>
+          {/if}
+          <!-- Only the two states worth trusting are named. A resumed session
+               reports `starting` until its first prompt, so anything built on
+               that would sit there claiming work forever. -->
+          {#if awaiting}
+            <span class="status needs">Needs you</span>
+          {:else if working}
+            <span class="status working">
+              <span class="spin" aria-hidden="true"></span>
+              Working <span class="mono">{workedFor(app.liveTurnStart(m), now)}</span>
+            </span>
+          {/if}
+        </span>
+      {/if}
+
+      <!-- The title: what the agent is actually doing, which is the row's reason
+           to exist, so it is the one thing set bright and bold. It carries the
+           account mark itself when there is no branch line to put it on. -->
+      <span class="l2">
+        <span class="tname">{shortName(m)}</span>
+        {#if !where}{@render brand(mark)}{/if}
       </span>
 
-      <!-- Middle line: what the agent is actually doing, which is the row's
-           reason to exist, so it is the one thing set bright and bold. -->
-      <span class="l2">{shortName(m)}</span>
-
-      <!-- Bottom line: which branch or folder the work lands in, and which
-           account is paying for it. Both are reference, so both are quiet. -->
-      <span class="l3">
-        <span class="where mono">{whereOf(m)}</span>
-        <svg
-          class="mark"
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          style="color:{mark.color}"
-          aria-label={mark.label}><path fill="currentColor" d={mark.d} /></svg>
-      </span>
+      <!-- Where the work lands, when that is somewhere other than the obvious
+           place: a worktree's branch, or a subdirectory of the project. Omitted
+           for a session sitting at the project root, where the heading has
+           already said it. -->
+      {#if where}
+        <span class="l3">
+          <span class="where mono">{where}</span>
+          {@render brand(mark)}
+        </span>
+      {/if}
     </button>
     <SessionMenu
       machineId={m.machineId}
@@ -582,7 +623,7 @@
     {#if hasPinned}
       <div class="sec">Pinned</div>
       {#each pinnedActive as m (m.machineId + ':' + m.id)}
-        {@render activeRow(m)}
+        {@render activeRow(m, '')}
       {/each}
       {#each pinnedRecent as h (h.machineId + ':' + h.id)}
         {@render recentRow(h)}
@@ -603,7 +644,7 @@
         <div class="kids" class:stemmed={sessionGroups.length > 1}>
           {#each g.items as it (it.kind + ':' + it.machineId + ':' + rowId(it))}
             {#if it.kind === 'live'}
-              {@render activeRow(it.m)}
+              {@render activeRow(it.m, g.label)}
             {:else}
               {@render recentRow(it.h)}
             {/if}
@@ -1175,7 +1216,8 @@
   .row.current .card {
     background: var(--panel-2);
   }
-  .row.current .l2 {
+  .row.current .l2,
+  .row.current .tname {
     color: var(--text);
   }
   /* An awaiting row is the one thing in this list actually blocked on you, so it
@@ -1224,10 +1266,18 @@
   }
   /* The row's reason to exist, so it is the one thing set bright and heavy. */
   .l2 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
     font-size: 14px;
     font-weight: 550;
     line-height: 1.3;
     color: var(--text-2);
+  }
+  .tname {
+    flex: 1;
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     /* A fade rather than an ellipsis, which is the list's existing habit: a
@@ -1237,6 +1287,9 @@
   }
   .row:hover .l2 {
     color: var(--text);
+  }
+  .grow {
+    flex: 1;
   }
   .where {
     flex: 1;
