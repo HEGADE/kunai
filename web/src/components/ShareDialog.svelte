@@ -353,20 +353,31 @@
           </div>
         </section>
       {:else}
-        <div class="linkbox">
+        <div class="linkbox" class:unreachable={!share.reachable}>
           <div class="linkrow">
             <input class="link mono" readonly value={share.url} onclick={(e) => e.currentTarget.select()} />
             <button class="copy" class:done={copied} onclick={copyLink}>{copied ? 'Copied' : 'Copy'}</button>
           </div>
+          <!-- Said as what the OTHER person will see, next to the link itself.
+               "Tailnet only" was already here as a four-word aside beside a
+               perfectly ordinary-looking URL, and it did not stop the link being
+               sent: a .ts.net name is not in public DNS at all until Funnel serves
+               it, so the recipient does not get a refusal or a blank page, they
+               get "this site can't be reached" and no reason to think the link
+               was ever different from any other. Naming their exact error is what
+               makes it obvious this one is not ready to send. -->
+          {#if !share.reachable}
+            <p class="notready">
+              <b>Do not send this yet.</b> Outside your tailnet this address does not
+              exist, so they will get "This site can't be reached"
+              (<span class="mono">ERR_NAME_NOT_RESOLVED</span>) rather than your session.
+              Turn on public access below first.
+            </p>
+          {/if}
           <p class="summary">
             <span class="tag">{liveRung?.name ?? share.tier}</span>
             <span class="mono">{expiryWords(share.expires_at * 1000, now)}</span>
             {#if share.detail.ToolInputs}<span class="mono">· full detail</span>{/if}
-            <!-- Said next to the link itself, not only in the panel below. Until
-                 Funnel serves it this URL carries the tailnet port, so copying it
-                 hands somebody an address that resolves for you and for nobody
-                 else. -->
-            {#if !share.reachable}<span class="warn">· tailnet only so far</span>{/if}
           </p>
         </div>
 
@@ -823,6 +834,24 @@
     display: flex;
     gap: 6px;
   }
+  /* A link that cannot work yet is dimmed rather than hidden: you may still want
+     to read it, or use it from your own tailnet, but it should not look like the
+     finished thing sitting there ready to paste into a message. */
+  .unreachable .link {
+    color: var(--text-4);
+  }
+  .notready {
+    margin: 0;
+    padding: 8px 10px;
+    border: 1px solid var(--alert);
+    border-radius: 9px;
+    color: var(--text-2);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .notready b {
+    color: var(--alert);
+  }
   .link {
     flex: 1;
     min-width: 0;
@@ -857,9 +886,6 @@
     margin: 0;
     font-size: 11.5px;
     color: var(--text-4);
-  }
-  .warn {
-    color: var(--busy);
   }
   .tag {
     padding: 2px 7px;

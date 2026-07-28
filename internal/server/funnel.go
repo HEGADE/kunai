@@ -14,6 +14,7 @@ package server
 // so a test asserts the exact argv instead of reshaping the machine's network.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net"
@@ -107,6 +108,10 @@ func (s *Server) funnelStatus(gatePort int) funnelState {
 		// off the air, and it stayed off after the share expired, because the
 		// Funnel mapping outlives the link. So the question has to be "is anything
 		// here already on that port", not "is it me".
+		if port == s.ownPort() {
+			out.InUse[port] = "kunai itself is serving on this port"
+			continue
+		}
 		if who := listenerOn(port); who != "" {
 			out.InUse[port] = who
 			continue
@@ -151,15 +156,55 @@ func (s *Server) funnelStatus(gatePort int) funnelState {
 //
 // A var so the tests can answer without opening sockets.
 var listenerOn = func(port int) string {
-	ln, err := net.Listen("tcp", ":"+strconv.Itoa(port))
+	// SO_REUSEADDR is turned OFF for this probe, and that is the whole reason it
+	// works on a Mac.
+	//
+	// Go sets SO_REUSEADDR on every listener it opens. On Linux that still refuses
+	// a wildcard bind while another socket holds the port on a specific address,
+	// so the probe answered correctly. On BSD and macOS the same option PERMITS
+	// exactly that bind -- so the probe succeeded, reported the port free, and the
+	// dialog offered 8443: the port kunai itself is serving on. Turning Funnel on
+	// there hands kunai's own port to the share gate and takes the machine off its
+	// tailnet, which is the outage this function exists to prevent.
+	lc := net.ListenConfig{
+		Control: func(_, _ string, c syscall.RawConn) error {
+			var serr error
+			if err := c.Control(func(fd uintptr) {
+				serr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 0)
+			}); err != nil {
+				return err
+			}
+			return serr
+		},
+	}
+	ln, err := lc.Listen(context.Background(), "tcp", ":"+strconv.Itoa(port))
 	if err == nil {
 		_ = ln.Close()
 		return ""
 	}
-	if errors.Is(err, syscall.EADDRINUSE) {
+	if errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, syscall.EADDRNOTAVAIL) {
 		return "already in use on this machine"
 	}
 	return ""
+}
+
+// ownPort is the port kunai itself is serving on, or 0 if it cannot be read.
+//
+// Belt and braces beside the bind probe above, and deliberately not a
+// replacement for it: this one needs no reasoning about socket options on any
+// platform. Whatever a probe concludes, the port this process is listening on is
+// never free, and pointing Funnel at it is the one mistake that costs the
+// machine its tailnet.
+func (s *Server) ownPort() int {
+	_, p, err := net.SplitHostPort(s.cfg.Addr)
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(p)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // whyTailscaleRefused is the command's own complaint, trimmed to something a
@@ -235,6 +280,12 @@ func (s *Server) handleFunnelOn(w http.ResponseWriter, r *http.Request) {
 	// is the request that actually takes the port, and taking one already in use
 	// does not fail loudly, it quietly makes the app that was there unreachable.
 	// That is how a nightly install knocked the stable one off the air.
+	if body.Port == s.ownPort() {
+		writeErr(w, http.StatusConflict,
+			"kunai is serving on port "+strconv.Itoa(body.Port)+
+				", and Funnel would take it over and cut this machine off its own tailnet")
+		return
+	}
 	if who := listenerOn(body.Port); who != "" {
 		writeErr(w, http.StatusConflict,
 			"port "+strconv.Itoa(body.Port)+" is "+who+

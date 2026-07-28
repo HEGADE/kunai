@@ -446,3 +446,45 @@ func TestShareURLSurvivesAnIPv6Origin(t *testing.T) {
 		}
 	}
 }
+
+// kunai's own port is never offered to Funnel, whatever the bind probe says.
+//
+// This is the failure the probe was supposed to catch and could not on a Mac. Go
+// sets SO_REUSEADDR on every listener; Linux still refuses a wildcard bind while
+// another socket holds the port on a specific address, but BSD and macOS PERMIT
+// it. So the probe reported 8443 free on a Mac -- the port kunai is serving on --
+// and turning Funnel on there hands kunai's own port to the share gate and cuts
+// the machine off its tailnet. The probe now clears SO_REUSEADDR, and this check
+// needs no reasoning about socket options on any platform.
+func TestFunnelNeverOffersKunaisOwnPort(t *testing.T) {
+	prevOut, prevLn, prevBin := execOut, listenerOn, tailscaleBin
+	defer func() { execOut, listenerOn, tailscaleBin = prevOut, prevLn, prevBin }()
+	tailscaleBin = func() string { return "/usr/bin/tailscale" }
+	execOut = func(string, ...string) (string, error) { return `{}`, nil }
+	// The probe answering "free" for every port is exactly the macOS behaviour.
+	listenerOn = func(int) string { return "" }
+
+	s := &Server{cfg: Config{Addr: "100.90.239.81:8443"}}
+	st := s.funnelStatus(41234)
+
+	for _, p := range st.Free {
+		if p == 8443 {
+			t.Fatal("offered 8443, the port kunai is serving on: Funnel there cuts the machine off its tailnet")
+		}
+	}
+	if st.InUse[8443] == "" {
+		t.Error("8443 should be reported as taken, with a reason the owner can read")
+	}
+	if len(st.Free) == 0 {
+		t.Error("no port was offered at all, so nothing can ever be shared")
+	}
+
+	// And the request that actually takes the port refuses too, since the status
+	// is advisory and can be seconds old.
+	rec := httptest.NewRecorder()
+	s.gate = newShareGate(nil, nil, nil)
+	s.handleFunnelOn(rec, httptest.NewRequest("POST", "/api/funnel", strings.NewReader(`{"port":8443}`)))
+	if rec.Code != http.StatusConflict {
+		t.Errorf("turning Funnel on for kunai's own port returned %d, want 409", rec.Code)
+	}
+}
