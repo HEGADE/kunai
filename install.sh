@@ -399,61 +399,6 @@ else
 fi
 phase "service"
 
-# --- /kunai, the terminal handoff ---------------------------------------------
-#
-# You are working in `claude` in a terminal and want to carry on from your phone.
-# The conversation is already on this machine, in the transcript the CLI writes,
-# which is the same file kunai's Recent list reopens from -- so nothing has to be
-# transferred. All that is missing is a way to say "this one" and get a link.
-#
-# A running session exports CLAUDE_CODE_SESSION_ID, which is exactly the
-# transcript's name, so the command reads its own id rather than guessing.
-#
-# The link is not opened by kunai and the session is not started here: the
-# terminal's own `claude` is still alive at this moment, and two processes
-# appending to one transcript is how a conversation gets corrupted. Opening the
-# link performs the resume, by which time this terminal has exited.
-echo "$PUBLIC_URL" > "$DATA_DIR/url"
-CMD_DIR="$HOME/.claude/commands"
-mkdir -p "$CMD_DIR"
-{
-  printf -- '---\n'
-  printf 'description: Continue this session in kunai, and close the terminal\n'
-  printf -- 'allowed-tools: Bash(sh:*)\n'
-  printf -- '---\n\n'
-  printf '!`sh %s/handoff.sh`\n\n' "$DATA_DIR"
-  printf 'Report the link above to the user in one short line and nothing else.\n'
-  printf 'Do not offer to do anything further: this terminal is about to exit.\n'
-} > "$CMD_DIR/kunai.md"
-
-{
-  printf '#!/bin/sh\n'
-  printf '# Written by kunai'\''s installer. Hands this terminal session to kunai.\n'
-  printf 'set -u\n'
-  printf 'base=${KUNAI_URL:-$(cat "%s/url" 2>/dev/null)}\n' "$DATA_DIR"
-  printf '[ -n "${base:-}" ] || { echo "kunai: no server URL; set KUNAI_URL"; exit 1; }\n'
-  printf 'id=${CLAUDE_CODE_SESSION_ID:-}\n'
-  printf '[ -n "$id" ] || { echo "kunai: run this inside a Claude Code session"; exit 1; }\n'
-  printf 'body=$(printf '\''{"session_id":"%%s","cwd":"%%s"}'\'' "$id" "$PWD")\n'
-  printf 'out=$(curl -sk --max-time 10 -X POST "$base/api/handoff" -H "content-type: application/json" -d "$body")\n'
-  printf 'url=$(printf %%s "$out" | sed -n '\''s/.*"url":"\\([^"]*\\)".*/\\1/p'\'')\n'
-  printf '[ -n "$url" ] || { echo "kunai: handoff failed: $out"; exit 1; }\n'
-  printf '# Straight to the terminal as well as to stdout, so the link survives the\n'
-  printf '# exit below even though the CLI captures this command'\''s output.\n'
-  printf '[ -w /dev/tty ] && printf "\\nContinue here: %%s\\n\\n" "$url" > /dev/tty\n'
-  printf 'echo "$url"\n'
-  printf '# Best effort, and never fatal: a headless box has no browser and printing\n'
-  printf '# the link is the whole fallback.\n'
-  printf 'for o in xdg-open open; do command -v "$o" >/dev/null 2>&1 && { "$o" "$url" >/dev/null 2>&1 & break; }; done\n'
-  printf '# Leave after the turn has rendered. The resume happens when the link is\n'
-  printf '# opened, so this only has to be gone before somebody clicks.\n'
-  printf '[ -n "${CLAUDE_PID:-}" ] && (sleep 2; kill "$CLAUDE_PID" >/dev/null 2>&1) &\n'
-  printf 'exit 0\n'
-} > "$DATA_DIR/handoff.sh"
-chmod +x "$DATA_DIR/handoff.sh"
-say "  /kunai in a terminal session hands it to $PUBLIC_URL"
-phase "handoff"
-
 # --- thermal safety privileges (opt-in) ---------------------------------------
 #
 # The thermal guard's default action (stop everything, let the machine sleep to

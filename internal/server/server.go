@@ -326,6 +326,9 @@ func (s *Server) Handler() http.Handler {
 // Run starts the HTTP(S) server and blocks until ctx is cancelled.
 func (s *Server) Run(ctx context.Context) error {
 	s.baseCtx = ctx // so a provider added at runtime can start the sidecar
+	// The /kunai terminal-handoff command, kept in step with this binary. Written
+	// here rather than by install.sh so a self-update is enough to get it.
+	writeHandoffCommand(s.cfg.DataDir, s.cfg.PublicURL)
 	srv := &http.Server{
 		Addr:              s.cfg.Addr,
 		Handler:           s.Handler(),

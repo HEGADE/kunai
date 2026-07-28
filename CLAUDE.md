@@ -524,8 +524,10 @@ Behavioral invariants that were bugs before (do not regress):
 - Push payloads carry a generic wake-up string only, never session content. This is
   the relay-free promise of the project.
 - `POST /api/handoff` (`handoff.go`) turns a terminal Claude Code session into a
-  kunai link, for the `/kunai` slash command `install.sh` writes to
-  `~/.claude/commands/kunai.md`. Nothing has to be transferred: the CLI already
+  kunai link, for the `/kunai` slash command the server itself writes to
+  `~/.claude/commands/kunai.md` on every boot (`handoffcmd.go`, so a self-update
+  alone is enough; it briefly lived in `install.sh`, which a self-update never
+  runs). Nothing has to be transferred: the CLI already
   wrote the conversation to the transcript kunai's Recent list reopens from, and
   a running session exports `CLAUDE_CODE_SESSION_ID`, which is exactly that
   file's name (verified). The endpoint deliberately **does not start the
