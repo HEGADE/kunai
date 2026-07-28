@@ -183,7 +183,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	// only available with a data dir. The gate is constructed either way and simply
 	// never started when there is nothing to serve.
 	s.shares = share.NewStore(shareStorePath(cfg.DataDir))
-	s.gate = newShareGate(s.shares, mgr, s.pwa)
+	s.gate = newShareGate(s.shares, mgr, s.pwa, gatePortFile(cfg.DataDir))
 	if cfg.DataDir != "" {
 		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))
 		// New accounts log in with the same binary as the default profile, into a

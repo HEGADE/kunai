@@ -24,6 +24,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -42,6 +44,9 @@ type shareGate struct {
 	// would make "what can a guest reach" a question about every field on it.
 	sessions sessionLookup
 	pwa      fs.FS
+	// portFile remembers the port to bind, so a Funnel mapping made once keeps
+	// working across restarts. Empty means "do not remember" (tests).
+	portFile string
 
 	mu      sync.Mutex
 	port    int
@@ -68,8 +73,8 @@ type sessionLookup interface {
 	Get(id string) (*session.Session, bool)
 }
 
-func newShareGate(shares *share.Store, sessions sessionLookup, pwa fs.FS) *shareGate {
-	return &shareGate{shares: shares, sessions: sessions, pwa: pwa}
+func newShareGate(shares *share.Store, sessions sessionLookup, pwa fs.FS, portFile string) *shareGate {
+	return &shareGate{shares: shares, sessions: sessions, pwa: pwa, portFile: portFile}
 }
 
 // Port is the localhost port the gate listens on, 0 until started. This is what
@@ -93,7 +98,22 @@ func (g *shareGate) start(ctx context.Context) error {
 		g.mu.Unlock()
 		return nil
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	// The same port every time, remembered on disk.
+	//
+	// This used to be a bare 127.0.0.1:0, a fresh ephemeral port on every start.
+	// A Funnel mapping is permanent and points at a NUMBER, so each restart left
+	// the previous mapping aimed at a port that no longer existed: the link
+	// stopped working, kunai no longer recognised the mapping as its own, and the
+	// port was reported busy. Turning public access on again just consumed the
+	// next Funnel port, and there are only three. That is how all three came to be
+	// pointed at dead gates on one machine.
+	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(g.rememberedPort()))
+	if err != nil {
+		// Something else took it while we were away; fall back to any free port and
+		// remember the new one. A stale mapping is repointed by funnelStatus, which
+		// treats a mapping at a dead loopback port as reclaimable.
+		ln, err = net.Listen("tcp", "127.0.0.1:0")
+	}
 	if err != nil {
 		g.mu.Unlock()
 		return err
@@ -109,6 +129,7 @@ func (g *shareGate) start(ctx context.Context) error {
 	g.srv = srv
 	g.started = true
 	g.mu.Unlock()
+	g.rememberPort(g.Port())
 
 	log.Printf("share gate listening on 127.0.0.1:%d", g.Port())
 	go func() {
@@ -126,6 +147,31 @@ func (g *shareGate) start(ctx context.Context) error {
 		g.mu.Unlock()
 	}()
 	return nil
+}
+
+// rememberedPort is the port this gate last served on, or 0 for "any free one".
+// Kept beside the shares it serves, because a Funnel mapping outlives the
+// process and points at a number.
+func (g *shareGate) rememberedPort() int {
+	if g.portFile == "" {
+		return 0
+	}
+	b, err := os.ReadFile(g.portFile)
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || n < 1024 || n > 65535 {
+		return 0
+	}
+	return n
+}
+
+func (g *shareGate) rememberPort(port int) {
+	if g.portFile == "" || port == 0 {
+		return
+	}
+	_ = os.WriteFile(g.portFile, []byte(strconv.Itoa(port)), 0o600)
 }
 
 // stop shuts the listener down and forgets its port, so start can bind a fresh
@@ -407,4 +453,13 @@ func shareURL(origin string, funnelPort int, token string) string {
 		}
 	}
 	return origin + "/s/" + token
+}
+
+// gatePortFile is where the share gate's port is remembered. Empty data dir
+// means an ephemeral port and no memory, which is right for a dev run.
+func gatePortFile(dataDir string) string {
+	if dataDir == "" {
+		return ""
+	}
+	return filepath.Join(dataDir, "gate-port")
 }

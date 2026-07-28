@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 
+	"context"
 	"encoding/json"
 	"io/fs"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +29,7 @@ func (noSessions) Get(string) (*session.Session, bool) { return nil, false }
 func testGate(t *testing.T) (*shareGate, *share.Store) {
 	t.Helper()
 	store := share.NewStore(filepath.Join(t.TempDir(), "shares.json"))
-	return newShareGate(store, noSessions{}, testPWA{}), store
+	return newShareGate(store, noSessions{}, testPWA{}, ""), store
 }
 
 // testPWA is an empty asset tree. The routing is what these tests are about, so
@@ -364,7 +366,7 @@ func TestListenerProbeIgnoresPermissionErrors(t *testing.T) {
 // could not be seen. It is also what DELETE is supposed to mean.
 func TestRevokingAnAlreadyGoneShareSucceeds(t *testing.T) {
 	s := &Server{shares: share.NewStore(filepath.Join(t.TempDir(), "shares.json")), mgr: session.NewManager()}
-	s.gate = newShareGate(s.shares, s.mgr, testPWA{})
+	s.gate = newShareGate(s.shares, s.mgr, testPWA{}, "")
 
 	for _, token := range []string{"never-existed", ""} {
 		rec := httptest.NewRecorder()
@@ -413,7 +415,7 @@ func TestDeviceKeyIsHeaderOnlyExceptOnTheSocket(t *testing.T) {
 // bounded by anything the owner controls. Every one of them subscribes to the
 // session and is fanned out to on every event.
 func TestGuestSocketsAreCapped(t *testing.T) {
-	g := newShareGate(nil, nil, nil)
+	g := newShareGate(nil, nil, nil, "")
 	for i := 0; i < maxGuestSockets; i++ {
 		if !g.enterGuest() {
 			t.Fatalf("refused guest %d, below the cap", i)
@@ -482,7 +484,7 @@ func TestFunnelNeverOffersKunaisOwnPort(t *testing.T) {
 	// And the request that actually takes the port refuses too, since the status
 	// is advisory and can be seconds old.
 	rec := httptest.NewRecorder()
-	s.gate = newShareGate(nil, nil, nil)
+	s.gate = newShareGate(nil, nil, nil, "")
 	s.handleFunnelOn(rec, httptest.NewRequest("POST", "/api/funnel", strings.NewReader(`{"port":8443}`)))
 	if rec.Code != http.StatusConflict {
 		t.Errorf("turning Funnel on for kunai's own port returned %d, want 409", rec.Code)
@@ -502,11 +504,21 @@ func TestFunnelSeesItsOwnMappingEvenThoughTailscaleBindsThePort(t *testing.T) {
 	prevOut, prevLn, prevBin := execOut, listenerOn, tailscaleBin
 	defer func() { execOut, listenerOn, tailscaleBin = prevOut, prevLn, prevBin }()
 	tailscaleBin = func() string { return "/usr/bin/tailscale" }
+	// A real listener stands in for the other app on 443, because a target is now
+	// judged by whether anything answers there.
+	live, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer live.Close()
+	livePort := live.Addr().(*net.TCPAddr).Port
+
 	// tailscale is serving 10000 -> our gate on 41234, and 443 -> somebody else.
 	execOut = func(string, ...string) (string, error) {
 		return `{"Web":{
 			"box.tail1.ts.net:10000":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:41234"}}},
-			"box.tail1.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8501"}}}
+			"box.tail1.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:` +
+			strconv.Itoa(livePort) + `"}}}
 		}}`, nil
 	}
 	// Every served port is bound by tailscaled, which is what used to mask this.
@@ -524,10 +536,99 @@ func TestFunnelSeesItsOwnMappingEvenThoughTailscaleBindsThePort(t *testing.T) {
 		t.Errorf("Port = %d, want 10000: kunai cannot see that Funnel is already serving its gate", st.Port)
 	}
 	// And a port held by something else names what, so it can be freed.
-	if got := st.InUse[443]; !strings.Contains(got, "8501") {
+	if got := st.InUse[443]; !strings.Contains(got, strconv.Itoa(livePort)) {
 		t.Errorf("443 reported as %q; it should name what is serving there", got)
 	}
 	if got := st.InUse[8443]; !strings.Contains(got, "kunai itself") {
 		t.Errorf("8443 reported as %q; kunai serves on it", got)
+	}
+}
+
+// A Funnel mapping left pointing at a share gate that is gone must be offered
+// back, not counted as busy.
+//
+// This is the state one Mac reached: all three Funnel ports mapped to loopback
+// ports nothing was listening on, and the dialog reporting "every port Funnel
+// can use is taken" with no way forward. The gate used to bind a fresh ephemeral
+// port on every start, so each restart orphaned the mapping made for the
+// previous one, and there are only three ports to burn.
+func TestAFunnelMappingToADeadGateIsReclaimable(t *testing.T) {
+	prevOut, prevLn, prevBin := execOut, listenerOn, tailscaleBin
+	defer func() { execOut, listenerOn, tailscaleBin = prevOut, prevLn, prevBin }()
+	tailscaleBin = func() string { return "/usr/bin/tailscale" }
+	listenerOn = func(int) string { return "" }
+
+	// A port nothing is listening on: bind one, read its number, release it.
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dead := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	execOut = func(string, ...string) (string, error) {
+		return `{"Web":{
+			"box.tail1.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:` + strconv.Itoa(dead) + `"}}},
+			"box.tail1.ts.net:10000":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:` + strconv.Itoa(dead) + `"}}}
+		}}`, nil
+	}
+
+	s := &Server{cfg: Config{Addr: "100.0.0.1:9999"}}
+	st := s.funnelStatus(41234)
+
+	for _, want := range []int{443, 10000} {
+		found := false
+		for _, p := range st.Free {
+			if p == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%d maps to a gate that no longer exists and was not offered back (in use: %q)",
+				want, st.InUse[want])
+		}
+	}
+}
+
+// And the gate keeps its port across restarts, which is what stops those stale
+// mappings being created in the first place.
+func TestTheGateKeepsItsPortAcrossRestarts(t *testing.T) {
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	g := newShareGate(nil, nil, nil, gatePortFile(dir))
+	if err := g.start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first := g.Port()
+	if first == 0 {
+		t.Fatal("gate did not bind")
+	}
+	cancel()
+	g.stop()
+	// The port is remembered the moment it is bound, which is the contract.
+	if got := g.rememberedPort(); got != first {
+		t.Fatalf("remembered %d, served %d", got, first)
+	}
+	// Shutdown releases the listener asynchronously; a real restart is a new
+	// process and never races itself, so wait rather than encode the race.
+	for i := 0; i < 100; i++ {
+		c, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(first), 50*time.Millisecond)
+		if err != nil {
+			break
+		}
+		c.Close()
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	g2 := newShareGate(nil, nil, nil, gatePortFile(dir))
+	if err := g2.start(ctx2); err != nil {
+		t.Fatal(err)
+	}
+	defer g2.stop()
+	if g2.Port() != first {
+		t.Errorf("gate came back on %d, was %d: a Funnel mapping made for the old port is now dead",
+			g2.Port(), first)
 	}
 }

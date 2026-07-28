@@ -19,6 +19,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"syscall"
@@ -137,6 +138,13 @@ func (s *Server) funnelStatus(gatePort int) funnelState {
 		switch {
 		case served && gatePort != 0 && proxy == target:
 			out.Port = port // already serving this machine's share gate
+		case served && staleLoopback(proxy):
+			// Pointed at a loopback port with nothing behind it: a mapping kunai
+			// made for a share gate that has since gone. Offered back rather than
+			// reported busy, because otherwise every restart burned one of the three
+			// Funnel ports permanently and the third attempt left nothing to share
+			// with at all. Turning it on again simply repoints it.
+			out.Free = append(out.Free, port)
 		case served && proxy != "":
 			out.InUse[port] = "tailscale is serving " + proxy + " here"
 		case served:
@@ -387,3 +395,35 @@ func allowedFunnelPort(p int) bool {
 }
 
 var errNoFunnelPort = errors.New("every Funnel port is already serving something else")
+
+// staleLoopback reports whether a serve target points at a port on this machine
+// that nothing is listening on any more.
+//
+// That is the signature of a mapping left behind by an earlier share gate: the
+// gate used to take a fresh ephemeral port on every start, so each restart
+// orphaned the mapping made for the previous one. Only loopback counts -- a
+// target on another host is somebody else's business and this cannot tell
+// whether it is up.
+func staleLoopback(proxy string) bool {
+	u, err := url.Parse(proxy)
+	if err != nil {
+		return false
+	}
+	host, port, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		return false
+	}
+	switch host {
+	case "127.0.0.1", "localhost", "::1", "[::1]":
+	default:
+		return false
+	}
+	// Reachable means something is serving it; a refused connection on loopback
+	// means the thing that mapping was made for is gone.
+	c, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", port), 400*time.Millisecond)
+	if err != nil {
+		return true
+	}
+	_ = c.Close()
+	return false
+}
