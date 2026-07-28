@@ -632,3 +632,56 @@ func TestTheGateKeepsItsPortAcrossRestarts(t *testing.T) {
 			g2.Port(), first)
 	}
 }
+
+// A port the dialog OFFERS must be one the request will accept.
+//
+// These were two separate checks and they diverged: funnelStatus learned to
+// reclaim a mapping left pointing at a share gate that no longer exists, while
+// handleFunnelOn still ran a raw bind probe -- and tailscaled binds a port it
+// serves, so the probe saw "in use". The dialog offered 443 and the button
+// refused it in the same breath. Any check written twice eventually disagrees
+// with itself, so the handler now asks funnelStatus.
+func TestEveryOfferedPortIsAccepted(t *testing.T) {
+	prevOut, prevLn, prevBin := execOut, listenerOn, tailscaleBin
+	defer func() { execOut, listenerOn, tailscaleBin = prevOut, prevLn, prevBin }()
+	tailscaleBin = func() string { return "/usr/bin/tailscale" }
+	listenerOn = func(int) string { return "" }
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dead := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	// The Mac's state: every Funnel port mapped to a share gate that is gone.
+	execOut = func(name string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "serve" {
+			return `{"Web":{
+				"box.tail1.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:` + strconv.Itoa(dead) + `"}}},
+				"box.tail1.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:` + strconv.Itoa(dead) + `"}}},
+				"box.tail1.ts.net:10000":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:` + strconv.Itoa(dead) + `"}}}
+			}}`, nil
+		}
+		return "", nil // the funnel command itself
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &Server{cfg: Config{Addr: "100.0.0.1:9999"}, baseCtx: ctx}
+	s.gate = newShareGate(nil, nil, nil, "")
+	defer s.gate.stop()
+
+	offered := s.funnelStatus(s.gate.Port()).Free
+	if len(offered) == 0 {
+		t.Fatal("nothing was offered, so there is no way out of this state at all")
+	}
+	for _, port := range offered {
+		rec := httptest.NewRecorder()
+		s.handleFunnelOn(rec, httptest.NewRequest("POST", "/api/funnel",
+			strings.NewReader(`{"port":`+strconv.Itoa(port)+`}`)))
+		if rec.Code != http.StatusOK {
+			t.Errorf("port %d was offered but refused with %d: %s", port, rec.Code, rec.Body.String())
+		}
+	}
+}

@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -304,27 +305,40 @@ func (s *Server) handleFunnelOn(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Funnel only serves 443, 8443 or 10000")
 		return
 	}
-	// Refuse a port something here is already serving, checked HERE and not only
-	// when the list was built. The status is advisory and can be seconds old; this
-	// is the request that actually takes the port, and taking one already in use
-	// does not fail loudly, it quietly makes the app that was there unreachable.
-	// That is how a nightly install knocked the stable one off the air.
-	if body.Port == s.ownPort() {
-		writeErr(w, http.StatusConflict,
-			"kunai is serving on port "+strconv.Itoa(body.Port)+
-				", and Funnel would take it over and cut this machine off its own tailnet")
-		return
-	}
-	if who := listenerOn(body.Port); who != "" {
-		writeErr(w, http.StatusConflict,
-			"port "+strconv.Itoa(body.Port)+" is "+who+
-				", and Funnel would take it over and make that unreachable")
-		return
-	}
 	// The gate must be listening before anything is pointed at it, or the first
-	// visitor gets a connection refused from a port that looks live.
+	// visitor gets a connection refused from a port that looks live. It also has
+	// to come first because the check below is computed against its port.
 	if err := s.gate.start(s.baseCtx); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Whether a port may be taken is asked of funnelStatus, the same function
+	// that decided what to OFFER, rather than re-derived here.
+	//
+	// It was re-derived, with a raw bind probe, and the two answers diverged the
+	// moment funnelStatus learned to reclaim a mapping left pointing at a share
+	// gate that no longer exists: the dialog offered 443 and this handler refused
+	// it in the same breath, because tailscaled binds a port it serves and the
+	// probe could only see that. A button that is offered and then rejected is
+	// worse than one that was never offered, and any check written twice will
+	// eventually disagree with itself.
+	//
+	// Freshly computed, not cached, because this is the request that actually
+	// takes the port: the list the dialog was drawn from can be seconds old, and
+	// taking a port already in use does not fail loudly, it quietly makes
+	// whatever was there unreachable.
+	st := s.funnelStatus(s.gate.Port())
+	if st.Port == body.Port {
+		writeJSON(w, http.StatusOK, st) // already serving our gate; nothing to do
+		return
+	}
+	if !slices.Contains(st.Free, body.Port) {
+		why := st.InUse[body.Port]
+		if why == "" {
+			why = "it is not available on this machine"
+		}
+		writeErr(w, http.StatusConflict,
+			"port "+strconv.Itoa(body.Port)+" cannot be used: "+why)
 		return
 	}
 	args := funnelOnArgs(body.Port, s.gate.Port())

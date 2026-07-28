@@ -93,6 +93,13 @@ func (g *shareGate) Port() int {
 // off, the gate is bound and simply unreachable from anywhere, which is the
 // right resting state.
 func (g *shareGate) start(ctx context.Context) error {
+	// A nil ctx would panic in the shutdown goroutine below, which is not a
+	// failed request but a dead process: the panic is on a goroutine nobody
+	// recovers. The server's base context is set in Run, so any path that starts
+	// the gate earlier would take the whole thing down.
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	g.mu.Lock()
 	if g.started {
 		g.mu.Unlock()
