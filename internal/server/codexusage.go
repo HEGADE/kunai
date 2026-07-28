@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -115,7 +114,7 @@ func fetchCodexUsage(ctx context.Context, token, account string) (*Usage, error)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("codex usage: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	var r codexUsageResp
 	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
@@ -140,7 +139,7 @@ func fetchCodexUsage(ctx context.Context, token, account string) (*Usage, error)
 		}
 	}
 	if u.Session == nil && u.Weekly == nil {
-		return nil, fmt.Errorf("codex usage: no windows in response")
+		return nil, fmt.Errorf("no windows in the response")
 	}
 	return u, nil
 }
@@ -159,29 +158,38 @@ func isCodexModel(model string) bool {
 }
 
 // codexUsageCache serves the Codex quota with a short TTL (the endpoint is a real
-// network round trip, and the numbers move slowly).
+// network round trip, and the numbers move slowly), and remembers a failure for
+// the same period so a stale login is asked about once a minute rather than once
+// per caller. See usagefail.go.
 type codexUsageCache struct {
-	mu  sync.Mutex
-	u   *Usage
-	exp time.Time
+	mu   sync.Mutex
+	u    *Usage
+	exp  time.Time
+	fail usageFailure
 }
 
 func (c *codexUsageCache) get(ctx context.Context, dataDir string) *Usage {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.u != nil && time.Now().Before(c.exp) {
+	now := time.Now()
+	if c.u != nil && now.Before(c.exp) {
 		return c.u
+	}
+	if c.fail.holding(now) {
+		return nil // already asked recently and could not get an answer
 	}
 	token, account, ok := codexCreds(dataDir)
 	if !ok {
-		log.Printf("codex usage: no token found (checked managed sidecar auth dir and ~/.codex)")
+		c.fail.report(now, providerUsageFailTTL, "codex quota",
+			"no token found (checked the managed sidecar auth dir and ~/.codex)")
 		return nil
 	}
 	u, err := fetchCodexUsage(ctx, token, account)
 	if err != nil {
-		log.Printf("codex usage: %v (account=%q)", err, account)
+		c.fail.report(now, providerUsageFailTTL, "codex quota", err.Error()+" (account "+account+")")
 		return nil
 	}
-	c.u, c.exp = u, time.Now().Add(60*time.Second)
+	c.fail.clear()
+	c.u, c.exp = u, now.Add(usageTTL)
 	return u
 }

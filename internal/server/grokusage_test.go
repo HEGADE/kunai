@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -40,5 +42,42 @@ func TestFetchGrokBillingFreeReturnsNil(t *testing.T) {
 	u, err := fetchGrokBilling(context.Background(), "tok")
 	if err != nil || u != nil {
 		t.Errorf("free tier should map to nil billing, got %+v err=%v", u, err)
+	}
+}
+
+// The wiring, not just the helper: a refused quota request must not be repeated
+// by the next caller, and must be logged once rather than once per caller.
+//
+// This is the shape that filled the journal. grokUsageCache stored only success,
+// so a stale login meant every /api/stats hit xAI again and wrote another line.
+func TestGrokQuotaStopsAskingAfterARefusal(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".grok"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".grok", "auth.json"),
+		[]byte(`{"iss::1":{"key":"tok"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	prev := grokBillingURL
+	grokBillingURL = srv.URL
+	defer func() { grokBillingURL = prev }()
+
+	var c grokUsageCache
+	for i := 0; i < 10; i++ {
+		if u := c.get(context.Background()); u != nil {
+			t.Fatalf("call %d returned a quota although the endpoint refused", i)
+		}
+	}
+	if hits != 1 {
+		t.Errorf("asked xAI %d times for a credential it refused on the first try; want 1", hits)
 	}
 }

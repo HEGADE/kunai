@@ -13,7 +13,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -81,7 +80,13 @@ func fetchGrokBilling(ctx context.Context, token string) (*Usage, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("grok billing: HTTP %d", resp.StatusCode)
+		// No "grok billing:" prefix here. The caller names what failed when it
+		// logs, and carrying it in the error too produced the doubled
+		// "grok billing: grok billing: HTTP 401" that ran down the journal.
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return nil, fmt.Errorf("HTTP %d, the grok login is no longer valid (run `grok` to sign in again)", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	var b grokBilling
 	if err := json.NewDecoder(resp.Body).Decode(&b); err != nil {
@@ -106,31 +111,40 @@ func fetchGrokBilling(ctx context.Context, token string) (*Usage, error) {
 
 const grokClientVersionForUsage = "0.2.111"
 
-// grokUsageCache serves the Grok billing quota with a short TTL.
+// grokUsageCache serves the Grok billing quota with a short TTL, and remembers a
+// failure for the same period so a dead login is asked about once a minute rather
+// than once per caller. See usagefail.go.
 type grokUsageCache struct {
-	mu  sync.Mutex
-	u   *Usage
-	exp time.Time
+	mu   sync.Mutex
+	u    *Usage
+	exp  time.Time
+	fail usageFailure
 }
 
 func (c *grokUsageCache) get(ctx context.Context) *Usage {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.u != nil && time.Now().Before(c.exp) {
+	now := time.Now()
+	if c.u != nil && now.Before(c.exp) {
 		return c.u
+	}
+	if c.fail.holding(now) {
+		return nil // already asked recently and was refused
 	}
 	token, ok := grokTokenFromFile()
 	if !ok {
+		c.fail.report(now, providerUsageFailTTL, "grok quota", "no grok login found (~/.grok/auth.json)")
 		return nil
 	}
 	u, err := fetchGrokBilling(ctx, token)
 	if err != nil {
-		log.Printf("grok billing: %v", err)
+		c.fail.report(now, providerUsageFailTTL, "grok quota", err.Error())
 		return nil
 	}
+	c.fail.clear()
 	if u == nil {
 		return nil // free tier; caller falls back to the captured token quota
 	}
-	c.u, c.exp = u, time.Now().Add(60*time.Second)
+	c.u, c.exp = u, now.Add(usageTTL)
 	return u
 }
