@@ -1074,7 +1074,11 @@ class AppStore {
     // clicks, that terminal has exited.
     const handoff = location.pathname.match(/^\/resume\/([^/?#]+)/)
     if (handoff) {
-      void this.resumeById(decodeURIComponent(handoff[1]))
+      // The folder rides on the link, because a conversation handed off minutes
+      // after it started may not be in Recent yet and one handed off during its
+      // first turn is not on disk at all when the link is minted.
+      const cwd = new URLSearchParams(location.search).get('cwd') ?? ''
+      void this.resumeById(decodeURIComponent(handoff[1]), cwd)
       return
     }
     const { machineId, id } = this.currentPath()
@@ -1103,7 +1107,7 @@ class AppStore {
   // live session to open: the transcript is looked up in Recent for the folder,
   // title and account it belongs to, and the session is created resuming it. An
   // id that is already live just opens, so clicking the link twice is harmless.
-  async resumeById(id: string) {
+  async resumeById(id: string, cwd = '') {
     this.actionError = ''
     history.replaceState({}, '', '/') // the /resume link is single-use; do not leave it in the bar
     const live = this.sessions.find((s) => s.id === id)
@@ -1111,21 +1115,29 @@ class AppStore {
       this.open(live.machineId, live.id)
       return
     }
-    if (!this.history.length) await this.refresh()
+    // Recent is refreshed rather than trusted: this link was minted seconds ago
+    // by a terminal that has only just exited, and a stale list is the common
+    // case rather than the exception.
+    await this.refresh()
     const h = this.history.find((r: TaggedHistoryEntry) => r.id === id)
-    if (!h) {
+    // The link's own folder is the fallback, so a conversation too young to be
+    // in Recent still resumes. Without it the first-turn handoff -- the one
+    // somebody actually reaches for, having just started work -- was the one
+    // case that could not work.
+    const target = h ?? (cwd ? { machineId: this.selfId(), id, cwd, title: '', cli: '' } : null)
+    if (!target) {
       this.actionError =
         'That conversation is not on this machine. A handoff link only works on the machine the terminal was running on.'
       return
     }
     try {
-      const meta = await createSession(this.baseForMachine(h.machineId), {
-        cwd: h.cwd,
-        resume: h.id,
-        title: h.title,
-        cli: h.cli, // reopen on the account it belongs to
+      const meta = await createSession(this.baseForMachine(target.machineId), {
+        cwd: target.cwd,
+        resume: id,
+        title: target.title,
+        cli: target.cli, // reopen on the account it belongs to
       })
-      this.open(h.machineId, meta.id)
+      this.open(target.machineId, meta.id)
       this.refresh()
     } catch (e) {
       this.actionError = switchFailure('', e as Error)

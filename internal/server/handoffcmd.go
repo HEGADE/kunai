@@ -51,10 +51,17 @@ id=${CLAUDE_CODE_SESSION_ID:-}
 body=$(printf '{"session_id":"%s","cwd":"%s"}' "$id" "$PWD")
 out=$(curl -sk --max-time 10 -X POST "$base/api/handoff" -H "content-type: application/json" -d "$body")
 url=$(printf %s "$out" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p')
-[ -n "$url" ] || { echo "kunai: handoff failed: $out"; exit 1; }
+if [ -z "$url" ]; then
+  # Report what kunai said, not the JSON it said it in: the message is written
+  # for a person and the braces only get in the way.
+  msg=$(printf %s "$out" | sed -n 's/.*"error":"\([^"]*\)".*/\1/p')
+  [ -n "$msg" ] || msg="kunai did not answer (is it running at $base?)"
+  echo "kunai: $msg"
+  exit 1
+fi
 # Straight to the terminal as well as to stdout, so the link survives the
 # exit below even though the CLI captures this command's output.
-[ -w /dev/tty ] && printf "\nContinue here: %s\n\n" "$url" > /dev/tty
+( printf "\nContinue here: %s\n\n" "$url" > /dev/tty ) 2>/dev/null || true
 echo "$url"
 # Best effort, and never fatal: a headless box has no browser and printing
 # the link is the whole fallback.
