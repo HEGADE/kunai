@@ -162,6 +162,12 @@ type Session struct {
 
 	mu        sync.Mutex
 	sessionID string
+	// procMu guards cmd and procCancel, which Start writes while Close may
+	// already be reading them. Close races Start whenever a session is ended
+	// while it is still booting, which is not exotic: the thermal guard stops
+	// every session including a starting one, a restart closes and re-creates,
+	// and a tab closed straight after opening does it by hand.
+	procMu sync.Mutex
 
 	closeOnce sync.Once
 	closed    chan struct{}
@@ -238,7 +244,10 @@ func (s *Session) Start(ctx context.Context) error {
 	// The process lifetime is owned by the session, NOT the caller's ctx: the
 	// caller's ctx only bounds the readiness wait below. Binding the process to a
 	// request context would kill claude the moment the HTTP handler returns.
-	s.procCtx, s.procCancel = context.WithCancel(context.Background())
+	procCtx, procCancel := context.WithCancel(context.Background())
+	s.procMu.Lock()
+	s.procCtx, s.procCancel = procCtx, procCancel
+	s.procMu.Unlock()
 	bin := s.opts.Bin
 	if bin == "" {
 		bin = "claude"
@@ -259,7 +268,9 @@ func (s *Session) Start(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("spawn claude: %w", err)
 	}
+	s.procMu.Lock()
 	s.cmd = cmd
+	s.procMu.Unlock()
 	s.stdin = stdin
 
 	// Send initialize directly, before the write loop starts draining queued
@@ -336,11 +347,14 @@ func (s *Session) SetPermissionMode(mode string) error {
 
 // Close terminates the session and its process.
 func (s *Session) Close() error {
-	if s.procCancel != nil {
-		s.procCancel()
+	s.procMu.Lock()
+	cancel, cmd := s.procCancel, s.cmd
+	s.procMu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
-	if s.cmd != nil && s.cmd.Process != nil {
-		_ = s.cmd.Process.Kill()
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
 	}
 	s.shutdown()
 	return nil

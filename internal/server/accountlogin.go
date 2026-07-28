@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -379,18 +380,56 @@ func (m *loginManager) finish(id, code string) (CLIProfile, error) {
 		// "<code>#<state>" shape it splits on.
 		typed := pasteCode(code, f.authState)
 		f.tail.hide(typed)
+		// A paste with no "#" is one the CLI will certainly refuse: it does
+		// `let [code, state] = pasted.split("#")` and rejects when either half is
+		// missing. kunai normally supplies the state it scraped, so this only
+		// happens when that scrape came back without one -- and then submitting it
+		// anyway bought a rejection, a re-prompt, and ninety seconds of silence
+		// ending in "the login timed out". Say what to do instead.
+		if !strings.Contains(typed, "#") {
+			m.mu.Lock()
+			m.flows[id] = f // still live; the user can paste again without restarting
+			m.mu.Unlock()
+			return CLIProfile{}, fmt.Errorf(
+				"that code has no state on it, and the CLI needs both halves. " +
+					"Copy the whole value after \"code=\" from the page's address bar, " +
+					"including the part after the #")
+		}
 		if _, err := f.tty.Write([]byte(typed + "\n")); err != nil {
 			return CLIProfile{}, fmt.Errorf("could not submit the code: %w", err)
 		}
 	}
 
-	// The watcher finalizes when the CLI exits; wait for that, then report.
-	if !f.awaitDone(loginDoneTimeout) {
+	// Wait for the CLI to exit, but watch what it says meanwhile: a refused code
+	// does not end the process, it prints why and prompts again. Reporting the
+	// refusal as it happens is the difference between a sentence you can act on
+	// and a minute and a half of nothing.
+	if err := f.awaitDoneOrRejection(loginDoneTimeout); err != nil {
 		_ = f.cmd.Process.Kill()
-		return CLIProfile{}, withTail("the login timed out", f.tail)
+		m.forget(id)
+		return CLIProfile{}, err
 	}
 	m.forget(id)
 	return f.outcome()
+}
+
+// awaitDoneOrRejection waits for the login to finalize, and gives up early if the
+// CLI says it will not accept what was submitted. Returns nil when the flow
+// finished (however it finished), or the reason it cannot.
+func (f *loginFlow) awaitDoneOrRejection(timeout time.Duration) error {
+	from := f.tail.size()
+	deadline := time.Now().Add(timeout)
+	for {
+		if f.awaitDone(400 * time.Millisecond) {
+			return nil
+		}
+		if why := f.tail.rejected(from); why != "" {
+			return errors.New(strings.ToLower(why[:1]) + why[1:])
+		}
+		if time.Now().After(deadline) {
+			return withTail("the login timed out", f.tail)
+		}
+	}
 }
 
 // poll reports whether a login has completed on its own (the browser hit the
@@ -552,6 +591,45 @@ func (t *ptyTail) Write(p []byte) (int, error) {
 	t.mu.Unlock()
 	return len(p), nil
 }
+
+// rejected reports the CLI's own complaint about a submitted code, if it has
+// made one since `since` bytes of output.
+//
+// The CLI does not exit when it dislikes a code: it prints why and prompts
+// again. finish waited only for the process to end, so a rejection turned into
+// ninety seconds of nothing followed by "the login timed out", with the real
+// sentence buried at the end of a wall of redacted URL. The answer was on screen
+// the whole time.
+func (t *ptyTail) rejected(since int) string {
+	t.mu.Lock()
+	raw := t.buf
+	if since < len(raw) {
+		raw = raw[since:]
+	} else {
+		raw = nil
+	}
+	s := string(raw)
+	t.mu.Unlock()
+	s = ansiSeq.ReplaceAllString(s, "")
+	if m := loginRejection.FindString(s); m != "" {
+		return strings.TrimSpace(m)
+	}
+	return ""
+}
+
+// size is how much output has been captured, so a caller can look only at what
+// arrives after the moment it acted.
+func (t *ptyTail) size() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.buf)
+}
+
+// loginRejection matches the CLI saying it will not accept what was submitted.
+// Both phrasings were measured against claude 2.1.220: a code with no "#state"
+// half draws "Invalid code. Please make sure the full code was copied", and a
+// well-formed code that fails the token exchange draws "Login failed: ...".
+var loginRejection = regexp.MustCompile(`(?i)(Invalid code\.[^\r\n]*|Login failed:[^\r\n]*)`)
 
 // hide registers a literal to strip from the captured text: the pasted code, so
 // it never survives into a log even though it was typed into the PTY.
