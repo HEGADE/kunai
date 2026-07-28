@@ -1067,6 +1067,16 @@ class AppStore {
   }
 
   private applyPath() {
+    // /resume/<id> is the handoff link a terminal session hands out. The resume
+    // happens HERE, on open, rather than when the link was minted: the terminal's
+    // own claude is still running at that moment, and two processes appending to
+    // one transcript is how a conversation gets corrupted. By the time somebody
+    // clicks, that terminal has exited.
+    const handoff = location.pathname.match(/^\/resume\/([^/?#]+)/)
+    if (handoff) {
+      void this.resumeById(decodeURIComponent(handoff[1]))
+      return
+    }
     const { machineId, id } = this.currentPath()
     this.navigating = true
     try {
@@ -1084,6 +1094,41 @@ class AppStore {
       }
     } finally {
       this.navigating = false
+    }
+  }
+
+  // resumeById continues a conversation this machine has on disk, by its id.
+  //
+  // The id comes from a terminal session that has since exited, so there is no
+  // live session to open: the transcript is looked up in Recent for the folder,
+  // title and account it belongs to, and the session is created resuming it. An
+  // id that is already live just opens, so clicking the link twice is harmless.
+  async resumeById(id: string) {
+    this.actionError = ''
+    history.replaceState({}, '', '/') // the /resume link is single-use; do not leave it in the bar
+    const live = this.sessions.find((s) => s.id === id)
+    if (live) {
+      this.open(live.machineId, live.id)
+      return
+    }
+    if (!this.history.length) await this.refresh()
+    const h = this.history.find((r: TaggedHistoryEntry) => r.id === id)
+    if (!h) {
+      this.actionError =
+        'That conversation is not on this machine. A handoff link only works on the machine the terminal was running on.'
+      return
+    }
+    try {
+      const meta = await createSession(this.baseForMachine(h.machineId), {
+        cwd: h.cwd,
+        resume: h.id,
+        title: h.title,
+        cli: h.cli, // reopen on the account it belongs to
+      })
+      this.open(h.machineId, meta.id)
+      this.refresh()
+    } catch (e) {
+      this.actionError = switchFailure('', e as Error)
     }
   }
 

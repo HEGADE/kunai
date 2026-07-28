@@ -241,6 +241,8 @@ func (s *Server) Handler() http.Handler {
 	// side only: this must never be registered on the share gate. See
 	// sessionfile.go.
 	mux.HandleFunc("GET /api/sessions/{id}/file", s.handleSessionFile)
+	// Hand a terminal Claude Code session over to kunai. See handoff.go.
+	mux.HandleFunc("POST /api/handoff", s.handleHandoff)
 	mux.HandleFunc("GET /api/sessions/{id}/checkpoints", s.handleListCheckpoints)
 	mux.HandleFunc("GET /api/sessions/{id}/revert", s.handleRevertPreview)
 	mux.HandleFunc("POST /api/sessions/{id}/revert", s.handleRevert)

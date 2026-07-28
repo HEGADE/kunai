@@ -523,6 +523,19 @@ Behavioral invariants that were bugs before (do not regress):
 - The claude process lifetime must never be bound to an HTTP request context.
 - Push payloads carry a generic wake-up string only, never session content. This is
   the relay-free promise of the project.
+- `POST /api/handoff` (`handoff.go`) turns a terminal Claude Code session into a
+  kunai link, for the `/kunai` slash command `install.sh` writes to
+  `~/.claude/commands/kunai.md`. Nothing has to be transferred: the CLI already
+  wrote the conversation to the transcript kunai's Recent list reopens from, and
+  a running session exports `CLAUDE_CODE_SESSION_ID`, which is exactly that
+  file's name (verified). The endpoint deliberately **does not start the
+  session**: the terminal's own `claude` is still alive when the command fires,
+  and two processes appending to one transcript corrupts it. The link resumes on
+  **open** (`/resume/<id>` -> `AppStore.resumeById`), by which time the script has
+  exited the terminal (`kill $CLAUDE_PID`, after a delay so the turn renders).
+  The URL is also written straight to `/dev/tty`, because the CLI captures the
+  command's stdout and the link has to survive that exit. `--fork-session` was
+  rejected as the default: a fork diverges silently, and the ask is to continue.
 - `GET /api/sessions/{id}/file` (`sessionfile.go`) serves an image the agent made,
   so a screenshot appears in the conversation instead of as a path only the
   machine can open. It is **owner-only at every tier and must never be registered
