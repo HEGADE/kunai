@@ -108,32 +108,50 @@ func (s *Server) funnelStatus(gatePort int) funnelState {
 		// off the air, and it stayed off after the share expired, because the
 		// Funnel mapping outlives the link. So the question has to be "is anything
 		// here already on that port", not "is it me".
-		if port == s.ownPort() {
-			out.InUse[port] = "kunai itself is serving on this port"
-			continue
-		}
-		if who := listenerOn(port); who != "" {
-			out.InUse[port] = who
-			continue
-		}
+		// What tailscale itself says about the port is read FIRST, and the order
+		// matters twice over.
+		//
+		// tailscaled BINDS a port it serves. So the bind probe below reports every
+		// served port as "in use" -- including one already Funnelled to our own
+		// gate. Running the probe first therefore hid the one answer that matters:
+		// kunai could never see that Funnel was already on, so `reachable` stayed
+		// false forever, the dialog kept saying nobody outside could open the link,
+		// and the URL kept the tailnet port even after public access was working.
+		//
+		// And when the port belongs to something else, tailscale knows WHAT it is
+		// pointed at, which is what somebody needs in order to free it. The probe
+		// can only ever say "something". Asking the informed source first is how
+		// "443 already in use on this machine" becomes "443 is serving
+		// http://127.0.0.1:8501".
 		key := ":" + strconv.Itoa(port)
-		web, served := st.Web[hostSuffix(st, key)]
-		if !served {
-			out.Free = append(out.Free, port)
-			continue
-		}
 		proxy := ""
-		for _, h := range web.Handlers {
-			if h.Proxy != "" {
-				proxy = h.Proxy
-				break
+		web, served := st.Web[hostSuffix(st, key)]
+		if served {
+			for _, h := range web.Handlers {
+				if h.Proxy != "" {
+					proxy = h.Proxy
+					break
+				}
 			}
 		}
-		if gatePort != 0 && proxy == target {
-			out.Port = port
-			continue
+		switch {
+		case served && gatePort != 0 && proxy == target:
+			out.Port = port // already serving this machine's share gate
+		case served && proxy != "":
+			out.InUse[port] = "tailscale is serving " + proxy + " here"
+		case served:
+			out.InUse[port] = "tailscale is already serving this port"
+		case port == s.ownPort():
+			out.InUse[port] = "kunai itself is serving on this port"
+		default:
+			// Anything tailscale does not know about: another kunai, or an app that
+			// has nothing to do with either. Only a bind can see those.
+			if who := listenerOn(port); who != "" {
+				out.InUse[port] = who
+			} else {
+				out.Free = append(out.Free, port)
+			}
 		}
-		out.InUse[port] = proxy
 	}
 	return out
 }
@@ -182,7 +200,10 @@ var listenerOn = func(port int) string {
 		_ = ln.Close()
 		return ""
 	}
-	if errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, syscall.EADDRNOTAVAIL) {
+	// Only EADDRINUSE. EADDRNOTAVAIL was briefly accepted here too, on no evidence
+	// at all, and a probe that guesses wrong in this direction reports every port
+	// taken and leaves somebody with no way to share anything.
+	if errors.Is(err, syscall.EADDRINUSE) {
 		return "already in use on this machine"
 	}
 	return ""

@@ -488,3 +488,46 @@ func TestFunnelNeverOffersKunaisOwnPort(t *testing.T) {
 		t.Errorf("turning Funnel on for kunai's own port returned %d, want 409", rec.Code)
 	}
 }
+
+// Funnel already serving our own gate must be RECOGNISED, not reported as a busy
+// port.
+//
+// tailscaled binds a port it serves, so the bind probe reports every served port
+// as in use -- including one already Funnelled here. Running that probe before
+// reading tailscale's own config hid the single answer that matters: kunai could
+// not see that public access was already on, so the share stayed "reachable:
+// false" forever, the dialog kept saying nobody outside could open the link, and
+// the URL kept the tailnet port after Funnel was working.
+func TestFunnelSeesItsOwnMappingEvenThoughTailscaleBindsThePort(t *testing.T) {
+	prevOut, prevLn, prevBin := execOut, listenerOn, tailscaleBin
+	defer func() { execOut, listenerOn, tailscaleBin = prevOut, prevLn, prevBin }()
+	tailscaleBin = func() string { return "/usr/bin/tailscale" }
+	// tailscale is serving 10000 -> our gate on 41234, and 443 -> somebody else.
+	execOut = func(string, ...string) (string, error) {
+		return `{"Web":{
+			"box.tail1.ts.net:10000":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:41234"}}},
+			"box.tail1.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8501"}}}
+		}}`, nil
+	}
+	// Every served port is bound by tailscaled, which is what used to mask this.
+	listenerOn = func(port int) string {
+		if port == 10000 || port == 443 {
+			return "already in use on this machine"
+		}
+		return ""
+	}
+
+	s := &Server{cfg: Config{Addr: "100.0.0.1:8443"}}
+	st := s.funnelStatus(41234)
+
+	if st.Port != 10000 {
+		t.Errorf("Port = %d, want 10000: kunai cannot see that Funnel is already serving its gate", st.Port)
+	}
+	// And a port held by something else names what, so it can be freed.
+	if got := st.InUse[443]; !strings.Contains(got, "8501") {
+		t.Errorf("443 reported as %q; it should name what is serving there", got)
+	}
+	if got := st.InUse[8443]; !strings.Contains(got, "kunai itself") {
+		t.Errorf("8443 reported as %q; kunai serves on it", got)
+	}
+}
