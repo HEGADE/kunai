@@ -1241,7 +1241,14 @@
     flex-direction: column;
     align-items: stretch;
     gap: 3px;
-    padding: 9px 10px 9px 14px;
+    /* The right gutter is for the row menu, which is a 26px circle absolutely
+       positioned against the row at right:6px and vertically centred. A
+       single-line row shared that slot with its status and hid the status on
+       hover; a three-line row has no single slot to share, so whichever line the
+       circle happens to cross would sit underneath it -- which is how the
+       account mark ended up behind the three dots. Reserved permanently rather
+       than on hover, so revealing the menu never shifts the text. */
+    padding: 9px 36px 9px 14px;
     border-radius: 11px;
   }
   .l1,
