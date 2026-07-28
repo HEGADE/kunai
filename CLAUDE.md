@@ -878,13 +878,24 @@ jumping to the end.
   list died with it, so `Meta.Projects` (the count that marks a session as worth
   naming) is live-only, and an *unnamed* multi-project session falls back to its
   directory once closed. Naming it is what makes the grouping permanent.
-- Sessions in the sidebar are single-line rows: a chat-bubble icon and the title,
-  with a right-edge fade instead of a hard ellipsis (no path, time, or machine
-  chip). Active sessions get a small presence dot on the icon. (A text status
-  badge per row was tried and reverted: the wire `state` is unreliable for a
-  resumed session (it reads `starting` until the first prompt and never carries
-  a turn's numbers on reopen), so any label built on it kept lying. Left out
-  until the server exposes a state a badge can trust.)
+- A live session in the sidebar is a **three-line row**, read top to bottom:
+  the codebase and what the agent is doing (`Working 17s`, or `Needs you`), then
+  the session's title bright and bold, then where the work lands (the worktree's
+  branch, else the folder) and the brand mark of the account paying for it
+  (`web/src/lib/providerMarks.ts`). The active row takes a filled card, which
+  earlier single-line rows deliberately avoided; with three lines the list needs
+  a shape to say where one row ends. A past session stays a quiet single line.
+  The status badge here was **tried once before and reverted for lying**, and
+  what makes it honest now is data rather than presentation: only `running` and
+  `awaiting_permission` are ever named (a resumed session reports `starting`
+  until its first prompt), and the duration comes from `Meta.TurnStartedAt`,
+  stamped in `startTurnLocked` and zeroed when the session goes idle -- never on
+  `awaiting_permission`, which is the same turn paused, so approving does not
+  restart the clock. A resumed session has no running turn and therefore shows
+  no duration, which is the honest answer rather than a clock started at reopen.
+  The client prefers an open tab's socket over the polled list for both the
+  state and the start time (`liveState`, `liveTurnStart`), because the poll is a
+  cycle behind by design.
 - Open sessions live in a tab strip (`Tabs.svelte`), terminal-style, rendered as
   the **left of the header's top row** so the session actions ride the same line
   to its right (Chat.svelte's `.toprow`); the path sits on a quieter second row

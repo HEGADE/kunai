@@ -6,6 +6,7 @@
   import { groupSessions, groupStartTarget } from '../lib/grouping'
   import { shortAgo } from '../lib/reltime'
   import { hasWork, isAwaiting, isWorking, needsAttention, summarise, workedFor } from '../lib/sidebar'
+  import { markFor } from '../lib/providerMarks'
   import { isGitRepo } from '../lib/worktrees'
   import { updateAvailable } from '../lib/update'
   import { fetchQuery, keys, peek, SLOW_TTL } from '../lib/query.svelte'
@@ -281,6 +282,24 @@
   function shortName(m: TaggedMeta): string {
     return m.title || m.cwd.replace(/\/+$/, '').split('/').slice(-1)[0] || 'session'
   }
+
+  // The codebase this session belongs to, for the row's top line. A worktree
+  // reports its MAIN checkout rather than its own directory, which is the whole
+  // point: five worktrees of one repo are five rows of the same project, not
+  // five projects.
+  function projectOf(m: TaggedMeta): string {
+    const base = m.repo || m.cwd
+    return base.replace(/\/+$/, '').split('/').slice(-1)[0] || 'session'
+  }
+
+  // Where the work lands: the branch for a worktree, the folder otherwise. The
+  // branch wins because that is what distinguishes two agents in one repository,
+  // and it is the thing you would type to go and look at their work.
+  function whereOf(m: TaggedMeta): string {
+    if (m.repo && wtName(m)) return wtName(m)
+    if (m.branch) return m.branch
+    return m.cwd.replace(/^.*\/(?=[^/]+\/[^/]+$)/, '')
+  }
   async function resume(h: TaggedHistoryEntry) {
     if (resuming) return
     resuming = h.id
@@ -324,38 +343,49 @@
        active session's node is the one white mark in the list. It replaced a
        filled pill plus a left bar plus bold text, which was three signals for one
        state, and the pill was the only rounded shape in a list of text. -->
+  {@const mark = markFor(m.cli)}
+  {@const st = stateful(m)}
   <div
     class="row"
     class:current={app.activeId === m.id && app.activeMachineId === m.machineId}
-    class:waiting={isAwaiting(stateful(m))}
+    class:waiting={isAwaiting(st)}
   >
     <span class="node" data-state={app.liveState(m)} aria-hidden="true"></span>
-    <button class="hit" onclick={() => app.open(m.machineId, m.id)}>
-      <span class="name">{shortName(m)}</span>
-      <!-- A worktree session sits under its repository's heading like any other,
-           so the branch is what tells it apart from a session in the main
-           checkout. Skipped when the session has no title of its own yet, since
-           the name is then already the worktree's directory and the chip would
-           just say it twice. -->
-      {#if m.repo && wtName(m) && wtName(m) !== shortName(m)}
-        <span class="wtchip mono" title="On {m.branch} in {m.cwd}">{wtName(m)}</span>
-      {/if}
-      <!-- A live session says what it is doing where a past one says how long
-           ago it was. Only the two states worth trusting are named: a resumed
-           session reports `starting` until its first prompt, so anything built on
-           that would sit there claiming work forever. -->
-      {#if isAwaiting(stateful(m))}
-        <span class="tail needs">needs you</span>
-      {:else if isWorking(stateful(m))}
-        <!-- How long, not just that. "working" reads the same at twenty seconds
-             and twenty minutes, and only one of those is worth getting up for.
-             The number is mono because it is data; the ring turns so a glance
-             tells you the row is live without reading anything. -->
-        <span class="tail working">
-          <span class="spin" aria-hidden="true"></span>
-          <span class="mono">{workedFor(app.liveTurnStart(m), now)}</span>
-        </span>
-      {/if}
+    <button class="hit card" onclick={() => app.open(m.machineId, m.id)}>
+      <!-- Top line: where the work is, and what it is doing. The two things you
+           scan a list of agents for, on the line your eye hits first. -->
+      <span class="l1">
+        <svg class="fold" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
+        <span class="proj">{projectOf(m)}</span>
+        <!-- Only the two states worth trusting are named. A resumed session
+             reports `starting` until its first prompt, so anything built on that
+             would sit there claiming work forever. -->
+        {#if isAwaiting(st)}
+          <span class="status needs">Needs you</span>
+        {:else if isWorking(st)}
+          <span class="status working">
+            <span class="spin" aria-hidden="true"></span>
+            Working <span class="mono">{workedFor(app.liveTurnStart(m), now)}</span>
+          </span>
+        {/if}
+      </span>
+
+      <!-- Middle line: what the agent is actually doing, which is the row's
+           reason to exist, so it is the one thing set bright and bold. -->
+      <span class="l2">{shortName(m)}</span>
+
+      <!-- Bottom line: which branch or folder the work lands in, and which
+           account is paying for it. Both are reference, so both are quiet. -->
+      <span class="l3">
+        <span class="where mono">{whereOf(m)}</span>
+        <svg
+          class="mark"
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          style="color:{mark.color}"
+          aria-label={mark.label}><path fill="currentColor" d={mark.d} /></svg>
+      </span>
     </button>
     <SessionMenu
       machineId={m.machineId}
@@ -1137,12 +1167,15 @@
   .row:hover {
     background: var(--panel);
   }
-  /* The active session is one signal, not three. It was a filled pill plus a left
-     bar plus bold text; the pill was the only rounded shape in a column of text,
-     so it read as a button dropped into the list. Now the node goes white and the
-     title brightens -- selection expressed IN the structure rather than layered
-     over it. */
-  .row.current .name {
+  /* The active session gets a filled card. An earlier version expressed selection
+     only through the node and the title's brightness, on the reasoning that a
+     pill was the one rounded shape in a column of text. That held while the rows
+     were single lines; with three lines each, the list needs a shape to say where
+     one row ends and the next begins, and the fill does both jobs at once. */
+  .row.current .card {
+    background: var(--panel-2);
+  }
+  .row.current .l2 {
     color: var(--text);
   }
   /* An awaiting row is the one thing in this list actually blocked on you, so it
@@ -1157,6 +1190,85 @@
     gap: 8px;
     text-align: left;
     padding: 8px 10px 8px 14px;
+  }
+  /* The three-line session row: where the work is and what it is doing, then what
+     it is doing it to, then where it lands and who pays. Read top to bottom, so
+     it is laid out that way rather than as one line with things hung off it. */
+  .hit.card {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+    padding: 9px 10px 9px 14px;
+    border-radius: 11px;
+  }
+  .l1,
+  .l3 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .fold {
+    flex: none;
+    color: var(--text-4);
+  }
+  .proj {
+    flex: 1;
+    min-width: 0;
+    font-size: 12.5px;
+    color: var(--text-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* The row's reason to exist, so it is the one thing set bright and heavy. */
+  .l2 {
+    font-size: 14px;
+    font-weight: 550;
+    line-height: 1.3;
+    color: var(--text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    /* A fade rather than an ellipsis, which is the list's existing habit: a
+       clipped title still shows you it continues without spending characters. */
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+  }
+  .row:hover .l2 {
+    color: var(--text);
+  }
+  .where {
+    flex: 1;
+    min-width: 0;
+    font-size: 11.5px;
+    color: var(--text-4);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* The account or provider paying for this session, as its own mark. On a
+     Claude-only machine every row carries the same one and it reads as texture;
+     the moment a Codex or Grok session appears it is the fastest way to tell
+     them apart. */
+  .mark {
+    flex: none;
+    opacity: 0.9;
+  }
+  .status {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    font-weight: 550;
+    font-variant-numeric: tabular-nums;
+  }
+  .status.working {
+    color: var(--live);
+  }
+  .status.needs {
+    color: var(--busy);
   }
   .hit:disabled {
     opacity: 0.55;
@@ -1270,24 +1382,17 @@
       padding-right: 34px;
     }
   }
-  .tail.working {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    color: var(--live);
-  }
-  /* A ring rather than a dot, because a dot is already the node on the stem and
-     two dots on one row would be two things to read. Drawn from a border with
-     one side transparent, so it costs no markup and no asset. */
+  /* A dashed ring, matching the reference: it reads as motion even at 8px, where
+     a solid arc just looks like a comma. Drawn from a border with one side
+     transparent, so it costs no markup and no asset. */
   .spin {
     flex: none;
-    width: 8px;
-    height: 8px;
-    border: 1.5px solid currentColor;
-    border-top-color: transparent;
+    width: 10px;
+    height: 10px;
+    border: 1.5px dashed currentColor;
     border-radius: 50%;
-    opacity: 0.85;
-    animation: spin 0.9s linear infinite;
+    opacity: 0.95;
+    animation: spin 2.4s linear infinite;
   }
   @keyframes spin {
     to {
@@ -1301,9 +1406,6 @@
     .spin {
       animation: none;
     }
-  }
-  .tail.needs {
-    color: var(--busy);
   }
   /* The per-row menu (SessionMenu) lives where the close button used to; reveal
      its trigger on row hover, matching the old close affordance. */
