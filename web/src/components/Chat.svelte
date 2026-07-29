@@ -24,6 +24,7 @@
   import BlockView from './BlockView.svelte'
   import ScheduleAfter from './ScheduleAfter.svelte'
   import ToolGroup from './ToolGroup.svelte'
+  import LiveActivity from './LiveActivity.svelte'
   import Tabs from './Tabs.svelte'
   import SessionInfo from './SessionInfo.svelte'
   import WorktreeCard from './WorktreeCard.svelte'
@@ -150,6 +151,11 @@
     const m = Math.floor((s % 3600) / 60)
     return h ? `${h}h ${m}m` : `${m}m`
   }
+  // Whether the live activity stream is expanded. Held here rather than inside
+  // the component so it survives the turn's re-renders: a disclosure that closed
+  // itself every time a tool call came back would be unusable exactly while you
+  // were trying to read it.
+  let liveOpen = $state(false)
   let modeOpen = $state(false)
   let modelOpen = $state(false)
   let effortOpen = $state(false)
@@ -509,7 +515,12 @@
             <div class="turn">
               <div class="assistant">
                 {#if live}
-                  {#each turn.blocks as b, j (j)}
+                  <!-- While it runs, one line saying what it is doing now, with
+                       the stream behind a disclosure. Rendering every block
+                       inline is what made watching an agent read forty files
+                       push the work off the screen. -->
+                  <LiveActivity blocks={turn.blocks} {chat} bind:open={liveOpen} />
+                  {#each turn.blocks.filter((b) => b.type !== 'tool_use') as b, j (j)}
                     <BlockView block={b} {chat} />
                   {/each}
                 {:else}
