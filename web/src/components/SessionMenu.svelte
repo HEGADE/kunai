@@ -116,6 +116,14 @@
   }
 </script>
 
+<!-- Escape closes the menu itself, not only the rename field inside it. A
+     popover you can open with the keyboard and only dismiss with the mouse is
+     half a control. -->
+<svelte:window
+  onkeydown={(e) => {
+    if (open && e.key === 'Escape') close()
+  }} />
+
 <div class="wrap" class:open>
   <button
     class="trigger"
@@ -191,11 +199,21 @@
 </div>
 
 <style>
+  /* Centred with a margin rather than a transform, and that is a fix rather than
+     a preference.
+     A transform makes the element the containing block for any position:fixed
+     DESCENDANT. The close scrim below is position:fixed inset:0, so instead of
+     covering the viewport it covered this 26px trigger -- a scrim exactly the
+     size and place of the button that opens the menu. Clicking the dots closed
+     it (the trigger toggles) and clicking anywhere else did nothing at all,
+     because there was nothing there to click.
+     -13px is half the trigger's 26px height; .wrap is sized by the trigger,
+     since the popover and the scrim are both out of flow. */
   .wrap {
     position: absolute;
     right: 6px;
     top: 50%;
-    transform: translateY(-50%);
+    margin-top: -13px;
   }
   .trigger {
     display: flex;
