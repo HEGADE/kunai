@@ -128,7 +128,11 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 	// immediately and watches the review happen, exactly like any other session.
 	go s.collectDraft(sess, files)
 
-	if err := sess.Prompt(prompt, nil, nil); err != nil {
+	// Sent as a brief rather than as a prompt: the instructions and the whole diff
+	// are context the model must read, not something the user said, and printing
+	// them into the chat buried the review under several screens of schema.
+	brief := fmt.Sprintf("Review %s#%d", repo, number)
+	if err := sess.PromptBrief(prompt, brief); err != nil {
 		return nil, fmt.Errorf("the review session was created but would not start: %w", err)
 	}
 	return sess, nil
@@ -172,8 +176,8 @@ func (s *Server) collectDraft(sess *session.Session, files []ghapp.FileDiff) {
 	consider := func(ev session.AppEvent) bool {
 		switch ev.T {
 		case session.EvAssistant:
-			if ev.Text != "" {
-				text.WriteString(ev.Text)
+			if s := assistantBlockText(ev); s != "" {
+				text.WriteString(s)
 				text.WriteString("\n")
 			}
 		case session.EvResult:
@@ -196,6 +200,28 @@ func (s *Server) collectDraft(sess *session.Session, files []ghapp.FileDiff) {
 	// The channel closed without a result: the session went away mid-review, and
 	// there is nothing to save. The record stays, so the UI can say the review did
 	// not finish rather than showing an empty draft for ever.
+}
+
+// assistantBlockText is what the model said out loud in one message.
+//
+// From Blocks, NOT from Text, and that distinction is the whole of a bug that
+// made this feature never work: a completed assistant message carries its
+// content as blocks, while Text is only ever set on delta, thinking and user
+// events. Reading Text here collected the empty string from every message, so
+// the draft was always empty and every review recorded a parse error, which
+// read as the model failing to follow the output format rather than as kunai
+// never having seen the answer.
+//
+// Thinking and tool calls are excluded for the same reason the loop's promise
+// check excludes them: they are the model working, not the model answering.
+func assistantBlockText(ev session.AppEvent) string {
+	var b strings.Builder
+	for _, blk := range ev.Blocks {
+		if blk.Type == "text" && blk.Text != "" {
+			b.WriteString(blk.Text)
+		}
+	}
+	return b.String()
 }
 
 // saveDraft parses the agent's answer and records it against the session.

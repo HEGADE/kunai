@@ -10,12 +10,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/hegade/kunai/internal/ghapp"
 	"github.com/hegade/kunai/internal/review"
+	"github.com/hegade/kunai/internal/session"
 )
 
 // GitHub rejects a zero start_line, so a single-line comment must OMIT the field
@@ -114,6 +116,35 @@ func TestEnrichSurvivesAFailedDetailLookup(t *testing.T) {
 		[]ghapp.PullRequest{{Number: 4, Title: "still listed"}})
 	if len(got) != 1 || got[0].Title != "still listed" {
 		t.Fatalf("got %+v, want the row kept despite the failed lookup", got)
+	}
+}
+
+// The findings are in an assistant message's BLOCKS, never in its Text.
+//
+// This shipped reading ev.Text on an assistant event, which is only ever set on
+// delta, thinking and user events. So the collected draft was the empty string,
+// every review recorded a parse error, and it read as the model failing to
+// follow the output format rather than as kunai never seeing the answer. The
+// review of PR #4 found it before this test did.
+func TestDraftTextComesFromAssistantBlocks(t *testing.T) {
+	ev := session.AppEvent{
+		T: session.EvAssistant,
+		Blocks: []session.AppBlock{
+			{Type: "thinking", Text: "considering"},
+			{Type: "tool_use", Name: "Read"},
+			{Type: "text", Text: "Here is what I found."},
+		},
+	}
+	if ev.Text != "" {
+		t.Fatal("this test's premise is wrong: an assistant event now carries Text")
+	}
+	got := assistantBlockText(ev)
+	if got != "Here is what I found." {
+		t.Errorf("collected %q, want the text block's content", got)
+	}
+	// Thinking and tool calls are not the answer and must not reach the parser.
+	if strings.Contains(got, "considering") || strings.Contains(got, "Read") {
+		t.Errorf("collected non-answer blocks: %q", got)
 	}
 }
 

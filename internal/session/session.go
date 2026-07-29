@@ -711,6 +711,18 @@ func (s *Session) AddProject(info project.Info) error {
 	})
 }
 
+// PromptBrief sends the model a body of context it must read but nobody wants to
+// read back: a pull request's diff and the instructions for reviewing it.
+//
+// Silent, because a prompt is shown as something you said and this is not that.
+// Sent as an ordinary user turn it printed the entire brief into the chat, a
+// wall of schema and rules above the work, and the actual conversation started
+// several screens down. The label is what the queue shows if the turn has to
+// wait, and the card the caller renders is the conversation's record of it.
+func (s *Session) PromptBrief(text, label string) error {
+	return s.prompt(&queuedPrompt{Text: text, label: label, silent: true})
+}
+
 // Projects lists the codebases this session has context for.
 // DisallowedTools is the toolset currently withheld from this session, so a
 // caller can tell whether a respawn would actually change anything.
