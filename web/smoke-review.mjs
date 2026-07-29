@@ -20,11 +20,19 @@ page.on('pageerror', (e) => crashes.push(e.message))
 await page.goto(url)
 await page.waitForTimeout(1500)
 
-// 1. With no App configured, the dashboard still works and the card stays out of
-// the way rather than showing an error nobody can act on from here.
+// 1. With no App configured the dashboard still works, and the card is ABSENT
+// rather than reporting a capability nobody asked for as a failure.
+//
+// The second half is the assertion that matters. Without it this shipped an
+// error onto the dashboard of every user who does not review pull requests,
+// and the test passed because it only checked that the page rendered at all.
 // A placeholder is an attribute, not text, so it is matched as one.
 if (!(await page.locator('textarea[placeholder="What should Claude work on?"]').count())) {
   fail('the dashboard did not render')
+}
+if (await page.locator('.prs').count()) {
+  fail('the pull requests card appeared with no GitHub App configured: ' +
+    (await page.locator('.prs').first().innerText()))
 }
 
 // 2. Settings explains what to do, and never shows key material. Opened from the
