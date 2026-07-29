@@ -58,9 +58,19 @@ type FileSummary struct {
 }
 
 // Prompt builds the instruction sent as the review session's first turn.
+//
+// Wrapped in a tag, which is load-bearing rather than decoration. The brief is
+// sent silently so it never renders as something you said, but the CLI still
+// writes it to the transcript, and reopening a session replays that file. A
+// review reopened after the fact therefore printed its entire instruction set
+// and file list back as a user message, which is the same bug the loop's
+// <loop-iteration> wrapper exists to prevent. Transcript seeding skips any user
+// turn that opens with a tag, so this costs one line and reuses a convention
+// that is already there.
 func Prompt(r Request) string {
 	var b strings.Builder
 
+	b.WriteString("<kunai-review>\n")
 	b.WriteString("You are reviewing a pull request. You are checked out in a worktree at its head commit, so you can read any file in this repository at the exact version being proposed.\n\n")
 
 	fmt.Fprintf(&b, "Repository: %s\n", r.Repo)
@@ -104,6 +114,7 @@ func Prompt(r Request) string {
 
 	b.WriteString("\n## Your answer\n\n")
 	b.WriteString(answerFormat())
+	b.WriteString("\n</kunai-review>")
 
 	return b.String()
 }

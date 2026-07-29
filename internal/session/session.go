@@ -114,7 +114,11 @@ type Session struct {
 	// is spent (failover reacts to that); inLoop says a self-prompting run was
 	// still going when the turn began, so a handler that must not act mid-run can
 	// tell even though the loop may have stopped by the time it is called.
-	onTurnEnd   func(rateLimited, inLoop bool)
+	onTurnEnd func(rateLimited, inLoop bool)
+	// onAnswer is given the model's spoken text at the end of every turn.
+	// Separate from onTurnEnd because a session has one of those and failover
+	// owns it, and because this one must not be missable: see answer.go.
+	onAnswer    func(text string)
 	loopPersist func(LoopPersist) // save/clear a running loop so it survives a restart
 	// checkpointHook, if set, snapshots the working tree at the start of a turn --
 	// synchronously, BEFORE the prompt reaches the CLI, so the checkpoint is the true
