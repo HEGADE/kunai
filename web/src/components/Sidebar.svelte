@@ -5,7 +5,9 @@
   import type { TaggedHistoryEntry, TaggedMeta } from '../lib/types'
   import { groupSessions, groupStartTarget } from '../lib/grouping'
   import { shortAgo } from '../lib/reltime'
-  import { hasWork, isAwaiting, isWorking, needsAttention, summarise, workedFor } from '../lib/sidebar'
+  import { hasWork, isAwaiting, isUnreadDone, isWorking, needsAttention, recedes, summarise, workedFor } from '../lib/sidebar'
+  import { isSnoozed, isWoke, snoozeIn } from '../lib/snooze'
+  import { visited } from '../lib/visited.svelte'
   import { markFor } from '../lib/providerMarks'
   import { isGitRepo } from '../lib/worktrees'
   import { updateAvailable } from '../lib/update'
@@ -63,14 +65,40 @@
           machineLabel(h.machineId).toLowerCase().includes(query)),
     ),
   )
+  // The lifecycle clock. Separate from the per-second turn clock below, which
+  // only runs while something is working: snooze expiry has to be noticed on a
+  // quiet sidebar too, and a half-minute beat is plenty for a shelf measured in
+  // hours.
+  let nowSlow = $state(Date.now())
+  $effect(() => {
+    const t = setInterval(() => (nowSlow = Date.now()), 30_000)
+    return () => clearInterval(t)
+  })
+
+  // Snoozed rows leave the list for the shelf. The wake rule (lib/snooze.ts)
+  // reads the session's state, so a live row is judged on its socket-preferred
+  // state: a snoozed agent that stops to ask permission comes off the shelf on
+  // the next beat, not the next poll.
+  const liveSnoozeView = (m: TaggedMeta) => ({ ...m, state: app.liveState(m) })
+  const isShelved = (x: TaggedMeta | TaggedHistoryEntry) =>
+    'state' in x ? isSnoozed(liveSnoozeView(x as TaggedMeta), nowSlow) : isSnoozed(x, nowSlow)
+  const snoozedActive = $derived(activeList.filter((m) => isShelved(m)))
+  const snoozedRecent = $derived(recentList.filter((h) => isShelved(h)))
+  const snoozedCount = $derived(snoozedActive.length + snoozedRecent.length)
+  const activeAwake = $derived(activeList.filter((m) => !isShelved(m)))
+  const recentAwake = $derived(recentList.filter((h) => !isShelved(h)))
+  // Collapsed by default: the shelf's job is to be out of the way, and the
+  // count in its heading already answers "is anything parked".
+  let snoozeOpen = $state(false)
+
   // Pinned sessions rise to the top in their own section, drawn from both the
   // live list and Recent (an id is in exactly one). They keep their own kind, so
   // a pinned live session still opens and a pinned past one still resumes.
-  const pinnedActive = $derived(activeList.filter((m) => m.pinned))
-  const pinnedRecent = $derived(recentList.filter((h) => h.pinned))
+  const pinnedActive = $derived(activeAwake.filter((m) => m.pinned))
+  const pinnedRecent = $derived(recentAwake.filter((h) => h.pinned))
   const hasPinned = $derived(pinnedActive.length > 0 || pinnedRecent.length > 0)
-  const activeUnpinned = $derived(activeList.filter((m) => !m.pinned))
-  const recentUnpinned = $derived(recentList.filter((h) => !h.pinned))
+  const activeUnpinned = $derived(activeAwake.filter((m) => !m.pinned))
+  const recentUnpinned = $derived(recentAwake.filter((h) => !h.pinned))
   // Keep the sidebar tidy: show only the most recent few; the rest live behind
   // "View all sessions" (a full, searchable, paginated view).
   const RECENT_MAX = 8
@@ -378,16 +406,28 @@
   {@const where = whereOf(m)}
   {@const working = isWorking(st)}
   {@const awaiting = isAwaiting(st)}
+  {@const isCurrent = app.activeId === m.id && app.activeMachineId === m.machineId}
+  <!-- The attention model, borrowed from t3code's sidebar: a working row RECEDES
+       (there is nothing for you in it until it stops) and the prominence goes to
+       the one that finished while you were away. Woke is a session back from a
+       snooze; it outranks Done because you explicitly asked to be re-shown it. -->
+  {@const seenAt = visited.at(m.machineId, m.id)}
+  {@const attention = { state: st.state, turn_ended_at: m.turn_ended_at }}
+  {@const doneUnread = isUnreadDone(attention, seenAt)}
+  {@const woke = isWoke({ ...m, state: st.state }, nowSlow)}
+  {@const receding = recedes(attention, seenAt, isCurrent)}
   <div
     class="row"
-    class:current={app.activeId === m.id && app.activeMachineId === m.machineId}
+    class:current={isCurrent}
     class:waiting={isAwaiting(st)}
+    class:receding
+    class:unread={doneUnread || woke}
   >
     <span class="node" data-state={app.liveState(m)} aria-hidden="true"></span>
     <button class="hit card" onclick={() => app.open(m.machineId, m.id)}>
       <!-- Top line: where the work is, and what it is doing. Only appears when
            one of those is worth saying. -->
-      {#if proj || working || awaiting}
+      {#if proj || working || awaiting || woke || doneUnread}
         <span class="l1">
           {#if proj}
             <svg class="fold" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
@@ -395,15 +435,24 @@
           {:else}
             <span class="grow"></span>
           {/if}
-          <!-- Only the two states worth trusting are named. A resumed session
-               reports `starting` until its first prompt, so anything built on
-               that would sit there claiming work forever. -->
+          <!-- Named states, in priority: blocked on you, then in motion, then
+               back from a snooze, then finished-unseen. Only states worth
+               trusting are named: a resumed session reports `starting` until
+               its first prompt, so anything built on that would sit there
+               claiming work forever. -->
           {#if awaiting}
             <span class="status needs">Needs you</span>
           {:else if working}
             <span class="status working">
               <span class="spin" aria-hidden="true"></span>
               Working <span class="mono">{workedFor(app.liveTurnStart(m), now)}</span>
+            </span>
+          {:else if woke}
+            <span class="status wokep">Woke</span>
+          {:else if doneUnread}
+            <span class="status done">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5" /></svg>
+              Done
             </span>
           {/if}
         </span>
@@ -435,6 +484,7 @@
       pinned={m.pinned}
       workspace={m.workspace ?? ''}
       projects={m.projects ?? 0}
+      snoozedUntil={m.snoozed_until ?? 0}
       kind="live"
     />
   </div>
@@ -540,14 +590,19 @@
   <!-- A past session gets no node: the stem simply passes it. Marks are for
        sessions with something to say, so a folder of finished work reads as a
        quiet line rather than a column of dots. -->
-  <div class="row" class:stale={isStale(h.mtime)}>
+  {@const woke = isWoke(h, nowSlow)}
+  <div class="row" class:stale={isStale(h.mtime) && !woke} class:unread={woke}>
     <span class="node" data-state="past" aria-hidden="true"></span>
     <button class="hit" onclick={() => resume(h)} disabled={!!resuming}>
       <span class="name">{resuming === h.id ? 'Resuming…' : h.title}</span>
       {#if h.repo && wtName(h) && wtName(h) !== h.title}
         <span class="wtchip mono" title="On {h.branch} in {h.cwd}">{wtName(h)}</span>
       {/if}
-      <span class="tail mono" title={h.mtime}>{shortAgo(h.mtime)}</span>
+      {#if woke}
+        <span class="status wokep">Woke</span>
+      {:else}
+        <span class="tail mono" title={h.mtime}>{shortAgo(h.mtime)}</span>
+      {/if}
     </button>
     <SessionMenu
       machineId={h.machineId}
@@ -555,8 +610,22 @@
       title={h.title}
       pinned={h.pinned}
       workspace={h.workspace ?? ''}
+      snoozedUntil={h.snoozed_until ?? 0}
       kind="recent"
     />
+  </div>
+{/snippet}
+
+{#snippet snoozedRow(machineId: string, id: string, title: string, until: number, kind: 'live' | 'recent', activate: () => void)}
+  <!-- Opening a snoozed session IS waking it: app.open clears the snooze, so
+       there is no separate wake affordance on the row beyond the menu's. -->
+  <div class="row snz">
+    <span class="node" data-state="past" aria-hidden="true"></span>
+    <button class="hit" onclick={activate} disabled={!!resuming}>
+      <span class="name">{resuming === id ? 'Resuming…' : title}</span>
+      <span class="tail mono snin">in {snoozeIn(until, nowSlow)}</span>
+    </button>
+    <SessionMenu {machineId} {id} {title} snoozedUntil={until} {kind} />
   </div>
 {/snippet}
 
@@ -652,6 +721,26 @@
         </div>
       {/if}
     {/each}
+
+    <!-- The snoozed shelf: sessions parked until a time, or until they need you,
+         whichever comes first. Collapsed by default because its whole job is to
+         be out of the way; the count answers "is anything parked" without
+         opening it. A row here is slim -- the return ticket is its whole story. -->
+    {#if snoozedCount > 0}
+      <button class="snhead" onclick={() => (snoozeOpen = !snoozeOpen)} aria-expanded={snoozeOpen}>
+        <svg class="snchev" class:openc={snoozeOpen} width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+        Snoozed
+        <span class="sncount mono">{snoozedCount}</span>
+      </button>
+      {#if snoozeOpen}
+        {#each snoozedActive as m (m.machineId + ':' + m.id)}
+          {@render snoozedRow(m.machineId, m.id, shortName(m), m.snoozed_until ?? 0, 'live', () => app.open(m.machineId, m.id))}
+        {/each}
+        {#each snoozedRecent as h (h.machineId + ':' + h.id)}
+          {@render snoozedRow(h.machineId, h.id, h.title, h.snoozed_until ?? 0, 'recent', () => resume(h))}
+        {/each}
+      {/if}
+    {/if}
 
     {#if app.history.length > 0}
       <!-- No icon: the gutter is 14px wide and holds row state marks, so an icon
@@ -1326,9 +1415,60 @@
   }
   .status.working {
     color: var(--live);
+    /* Duty-cycled breathe (a t3code trick worth copying exactly): steps() with
+       long holds means the compositor paints a handful of discrete frames per
+       cycle instead of every vsync, so a sidebar of working agents costs
+       almost nothing to keep alive. */
+    animation: breathe 3.4s steps(8) infinite;
+  }
+  @keyframes breathe {
+    0%,
+    38% {
+      opacity: 1;
+    }
+    52%,
+    72% {
+      opacity: 0.65;
+    }
+    86%,
+    100% {
+      opacity: 1;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .status.working {
+      animation: none;
+    }
   }
   .status.needs {
     color: var(--busy);
+  }
+  /* Finished while you were away. White, not a new colour: brightness is this
+     design's attention mechanism, and the check plus a full-brightness title is
+     what "worth opening" looks like in a monochrome list. */
+  .status.done {
+    color: var(--text);
+  }
+  /* Back from a snooze, unvisited: amber, because you asked to be re-shown it
+     and it is now waiting on your look. */
+  .status.wokep {
+    color: var(--busy);
+  }
+  /* A working row recedes: nothing in it needs you until it stops, so it steps
+     back and lets the finished rows carry the brightness. Hover restores it,
+     and the colored status label keeps its full strength throughout. */
+  .row.receding .hit {
+    opacity: 0.68;
+    transition: opacity 0.15s;
+  }
+  .row.receding:hover .hit,
+  .row.receding.current .hit {
+    opacity: 1;
+  }
+  /* Unread rows are the loud ones: the title takes full brightness. */
+  .row.unread .tname,
+  .row.unread .name {
+    color: var(--text);
   }
   .hit:disabled {
     opacity: 0.55;
@@ -1372,7 +1512,8 @@
   }
   .node[data-state='running'] {
     background: var(--live);
-    animation: soften 1.6s ease-in-out infinite;
+    /* steps(), like the working label: discrete frames, not a vsync-rate tween. */
+    animation: soften 2s steps(6) infinite;
   }
   .node[data-state='awaiting_permission'] {
     background: var(--busy);
@@ -1479,6 +1620,55 @@
     background: var(--panel);
     z-index: 20;
   }
+  /* The snoozed shelf's heading: a section heading with a disclosure, quieter
+     than the group headings above it because its contents are deliberately out
+     of the way. */
+  .snhead {
+    position: relative; /* anchors the chevron in the gutter, like .gchev */
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 10px 6px 14px;
+    margin-top: 10px;
+    font-size: 11.5px;
+    font-weight: 550;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    text-align: left;
+  }
+  .snhead:hover {
+    color: var(--text-2);
+  }
+  .snchev {
+    position: absolute;
+    left: 2px;
+    transform: rotate(-90deg);
+    transition: transform var(--t) var(--ease);
+  }
+  .snchev.openc {
+    transform: rotate(0deg);
+  }
+  .sncount {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-4);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  /* A shelved row is quiet by construction: its countdown is the one thing it
+     says, and like every tail it yields its slot to the menu on hover. */
+  .row.snz .name {
+    color: var(--text-3);
+  }
+  .row.snz:hover .name {
+    color: var(--text-2);
+  }
+  .snin {
+    color: var(--text-4);
+  }
+
   .viewall {
     width: 100%;
     display: block;

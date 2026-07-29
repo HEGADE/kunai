@@ -134,6 +134,15 @@ export interface Meta {
   // Lets the sidebar say how long a session has been working rather than only
   // that it is: twenty seconds is thinking, twenty minutes is worth a look.
   turn_started_at?: number
+  // When the last turn finished, unix milliseconds, absent until one has. The
+  // other half of the attention story: compared against this device's
+  // last-visited stamp to mark a session Done and unread.
+  turn_ended_at?: number
+  // Parked on the snoozed shelf until this time (unix ms), with when the snooze
+  // was set. Merged from the server's session-metadata store like `pinned`; the
+  // client wakes the row early when the session needs its person.
+  snoozed_until?: number
+  snoozed_at?: number
   pinned?: boolean // user override, merged from the server's session-metadata store
   // What the sidebar groups this session under instead of its directory. A user
   // override, merged in by the server like `pinned`.
@@ -347,6 +356,8 @@ export interface HistoryEntry {
   workspace?: string // user-set group; a closed session has no project list to infer one
   repo?: string // the main checkout, when cwd is a git worktree of it
   branch?: string // that worktree's branch, which outlives its directory name
+  snoozed_until?: number // parked on the snoozed shelf until this time (unix ms)
+  snoozed_at?: number // when the snooze was set
 }
 
 // --- multi-machine ---

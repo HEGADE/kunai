@@ -159,7 +159,7 @@ func (s *Server) pastSessions(limit int) []HistoryEntry {
 	}
 	var keep map[string]bool
 	if s.sessionMeta != nil {
-		keep = s.sessionMeta.pinnedIDs()
+		keep = s.sessionMeta.keepIDs()
 	}
 	return scanHistory(live, limit, s.accountRoots(), keep)
 }

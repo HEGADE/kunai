@@ -37,6 +37,11 @@ type HistoryEntry struct {
 	Repo string `json:"repo,omitempty"`
 	// Branch is that worktree's branch, which outlives its directory name.
 	Branch string `json:"branch,omitempty"`
+	// SnoozedUntil and SnoozedAt (unix ms) park this session on the snoozed
+	// shelf, merged from the metadata store the same way Pinned is: a snooze set
+	// while the session ran must still hold once it is a transcript.
+	SnoozedUntil int64 `json:"snoozed_until,omitempty"`
+	SnoozedAt    int64 `json:"snoozed_at,omitempty"`
 }
 
 // claudeRoot is the transcripts folder for a Claude config dir. An empty configDir
@@ -79,6 +84,8 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 			}
 			entries[i].Pinned = o.Pinned
 			entries[i].Workspace = o.Workspace
+			entries[i].SnoozedUntil = o.SnoozedUntil
+			entries[i].SnoozedAt = o.SnoozedAt
 		}
 	}
 	writeJSON(w, http.StatusOK, entries)

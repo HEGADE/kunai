@@ -19,7 +19,7 @@ func TestSessionMetaStoreUpdateAndClear(t *testing.T) {
 
 	name := "My session"
 	pin := true
-	st.update("abc", &name, &pin, nil)
+	st.update("abc", metaPatch{Name: &name, Pinned: &pin})
 	if got := st.get("abc"); got.Name != "My session" || !got.Pinned {
 		t.Fatalf("after update: got %+v", got)
 	}
@@ -31,7 +31,7 @@ func TestSessionMetaStoreUpdateAndClear(t *testing.T) {
 
 	// A partial update leaves the untouched field alone.
 	unpin := false
-	st.update("abc", nil, &unpin, nil)
+	st.update("abc", metaPatch{Pinned: &unpin})
 	if got := st.get("abc"); got.Name != "My session" || got.Pinned {
 		t.Fatalf("after unpin: got %+v", got)
 	}
@@ -39,7 +39,7 @@ func TestSessionMetaStoreUpdateAndClear(t *testing.T) {
 	// Clearing the name with no pin left drops the entry entirely, so the file
 	// only holds customized sessions.
 	empty := ""
-	st.update("abc", &empty, nil, nil)
+	st.update("abc", metaPatch{Name: &empty})
 	if got := st.get("abc"); got.Name != "" || got.Pinned {
 		t.Fatalf("after clear: expected empty, got %+v", got)
 	}
@@ -192,7 +192,7 @@ func TestWorkspaceSurvivesReload(t *testing.T) {
 	path := filepath.Join(dir, "sessionmeta.json")
 
 	ws := "Kunai + docs"
-	newSessionMetaStore(path).update("abc", nil, nil, &ws)
+	newSessionMetaStore(path).update("abc", metaPatch{Workspace: &ws})
 
 	if got := newSessionMetaStore(path).get("abc").Workspace; got != ws {
 		t.Fatalf("workspace = %q after reload, want %q", got, ws)
@@ -205,8 +205,8 @@ func TestWorkspaceIsIndependentOfNameAndPin(t *testing.T) {
 	st := newSessionMetaStore(filepath.Join(t.TempDir(), "m.json"))
 	name, pin, ws := "My session", true, "Platform"
 
-	st.update("abc", &name, &pin, nil)
-	st.update("abc", nil, nil, &ws)
+	st.update("abc", metaPatch{Name: &name, Pinned: &pin})
+	st.update("abc", metaPatch{Workspace: &ws})
 
 	got := st.get("abc")
 	if got.Name != name || !got.Pinned || got.Workspace != ws {
@@ -220,11 +220,52 @@ func TestClearingWorkspaceDropsAnOtherwiseEmptyEntry(t *testing.T) {
 	st := newSessionMetaStore(filepath.Join(t.TempDir(), "m.json"))
 	ws, blank := "Platform", ""
 
-	st.update("abc", nil, nil, &ws)
-	st.update("abc", nil, nil, &blank)
+	st.update("abc", metaPatch{Workspace: &ws})
+	st.update("abc", metaPatch{Workspace: &blank})
 
 	if got := st.get("abc"); got != (sessionMeta{}) {
 		t.Fatalf("entry survived as %+v, want it dropped", got)
+	}
+}
+
+// A snooze is a promise to bring the session back, so it must survive a restart
+// and carry its reference point (SnoozedAt, stamped by the store so there is one
+// clock) for the client's "did the agent do anything since" wake rule.
+func TestSnoozePersistsAndClears(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "m.json")
+	st := newSessionMetaStore(path)
+
+	until := time.Now().Add(2 * time.Hour).UnixMilli()
+	st.update("abc", metaPatch{SnoozedUntil: &until})
+	got := st.get("abc")
+	if got.SnoozedUntil != until || got.SnoozedAt == 0 {
+		t.Fatalf("after snooze: %+v, want until kept and SnoozedAt stamped", got)
+	}
+	if reloaded := newSessionMetaStore(path).get("abc"); reloaded.SnoozedUntil != until {
+		t.Fatalf("snooze lost on reload: %+v", reloaded)
+	}
+
+	// Clearing (0) drops both fields, and an entry with nothing else set.
+	zero := int64(0)
+	st.update("abc", metaPatch{SnoozedUntil: &zero})
+	if got := st.get("abc"); got != (sessionMeta{}) {
+		t.Fatalf("after clear: %+v, want the entry dropped", got)
+	}
+}
+
+// A snoozed session outside the newest-N history window must survive the clamp
+// like a pinned one: a shelf that promised to bring a session back cannot have
+// the scan quietly age it out.
+func TestKeepIDsCoversSnoozedAndPinned(t *testing.T) {
+	st := newSessionMetaStore(filepath.Join(t.TempDir(), "m.json"))
+	pin := true
+	until := time.Now().Add(time.Hour).UnixMilli()
+	st.update("pinned", metaPatch{Pinned: &pin})
+	st.update("snoozed", metaPatch{SnoozedUntil: &until})
+
+	keep := st.keepIDs()
+	if !keep["pinned"] || !keep["snoozed"] {
+		t.Fatalf("keepIDs = %v, want both the pin and the snooze", keep)
 	}
 }
 

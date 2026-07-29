@@ -31,6 +31,7 @@ import {
 } from './update'
 import { startWorktree, type WorktreeChoice } from './worktrees'
 import { FleetSocket } from './fleet'
+import { visited } from './visited.svelte'
 import type { Job, Machine, Meta, PermissionMode, Stats, TaggedHistoryEntry, TaggedJob, TaggedMeta } from './types'
 
 // Top-level app state. One installed client can drive Claude sessions across
@@ -675,6 +676,18 @@ class AppStore {
     this.activeKey = key
     this.showNew = false
     this.syncUrl()
+    // Looking at a session is what retires its attention: the unread-Done
+    // brightness (per-device) and any snooze or Woke pill (server-side, so the
+    // wake also clears on your other devices).
+    visited.touch(machineId, id)
+    const here = (x: { machineId: string; id: string; snoozed_until?: number }) =>
+      x.machineId === machineId && x.id === id && !!x.snoozed_until
+    if (this.sessions.some(here) || this.history.some(here)) {
+      void this.setSnooze(machineId, id, 0).catch(() => {
+        // The next open retries; a snooze that outlives one failed clear is
+        // an inconvenience, not a loss.
+      })
+    }
   }
 
   // closeTab detaches the view only: the session keeps running on its machine and
@@ -851,6 +864,22 @@ class AppStore {
     this.sessions = this.sessions.map((s) => (s.machineId === machineId && s.id === id ? { ...s, pinned } : s))
     this.history = this.history.map((h) => (h.machineId === machineId && h.id === id ? { ...h, pinned } : h))
     this.refresh({ history: true })
+  }
+
+  // setSnooze parks a session on the sidebar's snoozed shelf until `untilMs`
+  // (0 wakes it now). Applied optimistically to both lists so the row moves at
+  // the click, not at the next poll; the server's copy is what makes it hold
+  // across devices.
+  async setSnooze(machineId: string, id: string, untilMs: number) {
+    await updateSessionMeta(this.baseForMachine(machineId), id, { snoozed_until: untilMs })
+    const stamp = untilMs > 0 ? Date.now() : undefined
+    const until = untilMs > 0 ? untilMs : undefined
+    const apply = <T extends { machineId: string; id: string }>(x: T) =>
+      x.machineId === machineId && x.id === id
+        ? { ...x, snoozed_until: until, snoozed_at: stamp }
+        : x
+    this.sessions = this.sessions.map(apply)
+    this.history = this.history.map(apply)
   }
 
   // deleteSession permanently removes a past session's transcript (and its pin/

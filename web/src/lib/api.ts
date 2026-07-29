@@ -66,7 +66,7 @@ export function closeSession(base: string, id: string): Promise<void> {
 export function updateSessionMeta(
   base: string,
   id: string,
-  patch: { name?: string; pinned?: boolean; workspace?: string },
+  patch: { name?: string; pinned?: boolean; workspace?: string; snoozed_until?: number },
 ): Promise<void> {
   return fetch(at(base, `/api/sessions/${id}`), {
     method: 'PATCH',

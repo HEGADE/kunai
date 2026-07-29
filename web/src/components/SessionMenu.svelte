@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
+  import { snoozePresets, type SnoozePreset } from '../lib/snooze'
 
   // Per-row actions for a session, live or past. Keyed by the shared id, so a pin
   // or rename set here follows the session across the live -> resumable boundary.
@@ -12,6 +13,7 @@
     pinned = false,
     workspace = '',
     projects = 0,
+    snoozedUntil = 0,
     kind,
   }: {
     machineId: string
@@ -23,11 +25,17 @@
     // into a question worth answering by hand.
     workspace?: string
     projects?: number
+    // When the session is parked on the snoozed shelf (unix ms, 0 for not).
+    // The menu offers Wake instead of Snooze while it holds.
+    snoozedUntil?: number
     kind: 'live' | 'recent'
   } = $props()
 
   let open = $state(false)
-  let mode = $state<'menu' | 'edit' | 'confirm'>('menu')
+  let mode = $state<'menu' | 'edit' | 'confirm' | 'snooze'>('menu')
+  // Resolved when the submenu opens, not when the row mounted: "this evening"
+  // computed at mount would drift stale in a long-lived tab.
+  let presets = $state<SnoozePreset[]>([])
   // Renaming the session and naming its workspace are the same interaction over
   // a different field, so they share one editor rather than two near-identical
   // ones. `field` is which of them is being edited.
@@ -83,6 +91,19 @@
       err = (e as Error).message
     } finally {
       busy = false
+    }
+  }
+
+  function openSnooze() {
+    presets = snoozePresets(new Date())
+    mode = 'snooze'
+  }
+  async function snooze(untilMs: number) {
+    close()
+    try {
+      await app.setSnooze(machineId, id, untilMs)
+    } catch (e) {
+      void e // the next list refresh shows the truth
     }
   }
 
@@ -154,6 +175,18 @@
             {workspace ? 'Rename workspace' : 'Name workspace'}
           </button>
         {/if}
+        {#if snoozedUntil > 0}
+          <button class="item" role="menuitem" onclick={(e) => { e.stopPropagation(); snooze(0) }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2.5" /><path d="M5 3L2 6M19 3l3 3" /></svg>
+            Wake now
+          </button>
+        {:else}
+          <button class="item" role="menuitem" onclick={(e) => { e.stopPropagation(); openSnooze() }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2.5" /><path d="M5 3L2 6M19 3l3 3" /></svg>
+            Snooze
+            <svg class="sub" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
+          </button>
+        {/if}
         {#if kind === 'live'}
           <button class="item" role="menuitem" onclick={(e) => { e.stopPropagation(); doClose() }}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
@@ -165,6 +198,18 @@
             Delete
           </button>
         {/if}
+      {:else if mode === 'snooze'}
+        <!-- The presets, not a time picker: four times cover "later today",
+             "tonight", "tomorrow" and "not this week", and anything finer is
+             precision nobody asked of a shelf. A snoozed session still comes
+             back early the moment it needs you (see lib/snooze.ts). -->
+        <p class="hint">Hides the session until then. It comes back early if it needs you.</p>
+        {#each presets as p (p.label)}
+          <button class="item" role="menuitem" onclick={(e) => { e.stopPropagation(); snooze(p.until) }}>
+            {p.label}
+            <span class="when mono">{new Date(p.until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+          </button>
+        {/each}
       {:else if mode === 'edit'}
         <div class="rename">
           {#if field === 'workspace'}
@@ -274,6 +319,16 @@
   }
   .item svg {
     flex: none;
+    color: var(--text-4);
+  }
+  /* The submenu chevron and a preset's resolved time both sit at the right
+     edge, quiet: they qualify the item, they are not the item. */
+  .item .sub {
+    margin-left: auto;
+  }
+  .item .when {
+    margin-left: auto;
+    font-size: 11px;
     color: var(--text-4);
   }
   .item:hover {

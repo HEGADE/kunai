@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hegade/kunai/internal/session"
 )
@@ -26,6 +27,28 @@ type sessionMeta struct {
 	// workspace while running must still be in that workspace tomorrow, when it
 	// is a transcript in Recent and its project list is no longer in memory.
 	Workspace string `json:"workspace,omitempty"`
+	// SnoozedUntil parks the session on the sidebar's snoozed shelf until this
+	// time (unix ms). It is a display promise, not a control: the session keeps
+	// running, and the client wakes the row early the moment it has something
+	// for you (a permission ask, a finished turn). Server-side so a session
+	// snoozed on the phone stays snoozed on the laptop.
+	SnoozedUntil int64 `json:"snoozed_until,omitempty"`
+	// SnoozedAt is when the snooze was set, the reference point for "did the
+	// agent do anything since I parked this": a turn that ended after it is what
+	// wakes the row early.
+	SnoozedAt int64 `json:"snoozed_at,omitempty"`
+}
+
+// metaPatch is a partial update: a nil field is left as-is. It exists so adding
+// a field means one struct member, not another positional pointer argument at
+// every call site.
+type metaPatch struct {
+	Name      *string
+	Pinned    *bool
+	Workspace *string
+	// SnoozedUntil > 0 sets the snooze (the store stamps SnoozedAt itself, so
+	// there is one clock); 0 clears both fields.
+	SnoozedUntil *int64
 }
 
 type sessionMetaStore struct {
@@ -62,37 +85,46 @@ func (s *sessionMetaStore) get(id string) sessionMeta {
 	return s.data[id]
 }
 
-// pinnedIDs is the set of pinned session ids, used so the Recent scan keeps a
-// pinned session even when it falls outside the newest-N window.
-func (s *sessionMetaStore) pinnedIDs() map[string]bool {
+// keepIDs is the set of session ids the Recent scan must keep even when they
+// fall outside the newest-N window: pinned ones (they sit above the list) and
+// snoozed ones (they sit on the snoozed shelf, and a shelf whose rows silently
+// age out of the scan would lose sessions it promised to bring back).
+func (s *sessionMetaStore) keepIDs() map[string]bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := map[string]bool{}
 	for id, m := range s.data {
-		if m.Pinned {
+		if m.Pinned || m.SnoozedUntil > 0 {
 			out[id] = true
 		}
 	}
 	return out
 }
 
-// update applies a partial change: a nil field is left as-is. Once a session has
-// neither a name nor a pin its entry is dropped, so the file only ever holds
-// sessions the user actually customized.
-func (s *sessionMetaStore) update(id string, name *string, pinned *bool, workspace *string) sessionMeta {
+// update applies a metaPatch. Once a session has no override left its entry is
+// dropped, so the file only ever holds sessions the user actually customized.
+func (s *sessionMetaStore) update(id string, p metaPatch) sessionMeta {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m := s.data[id]
-	if name != nil {
-		m.Name = strings.TrimSpace(*name)
+	if p.Name != nil {
+		m.Name = strings.TrimSpace(*p.Name)
 	}
-	if pinned != nil {
-		m.Pinned = *pinned
+	if p.Pinned != nil {
+		m.Pinned = *p.Pinned
 	}
-	if workspace != nil {
-		m.Workspace = strings.TrimSpace(*workspace)
+	if p.Workspace != nil {
+		m.Workspace = strings.TrimSpace(*p.Workspace)
 	}
-	if m.Name == "" && !m.Pinned && m.Workspace == "" {
+	if p.SnoozedUntil != nil {
+		if *p.SnoozedUntil > 0 {
+			m.SnoozedUntil = *p.SnoozedUntil
+			m.SnoozedAt = time.Now().UnixMilli()
+		} else {
+			m.SnoozedUntil, m.SnoozedAt = 0, 0
+		}
+	}
+	if m.Name == "" && !m.Pinned && m.Workspace == "" && m.SnoozedUntil == 0 {
 		delete(s.data, id)
 	} else {
 		s.data[id] = m
@@ -127,7 +159,7 @@ func (s *sessionMetaStore) saveLocked() {
 }
 
 // mergeMeta overlays custom names and pins onto the live session list. A custom
-// name replaces the derived title; the pin rides alongside.
+// name replaces the derived title; the pin, workspace and snooze ride alongside.
 func mergeMeta(metas []session.Meta, over map[string]sessionMeta) {
 	for i := range metas {
 		if o, ok := over[metas[i].ID]; ok {
@@ -136,31 +168,37 @@ func mergeMeta(metas []session.Meta, over map[string]sessionMeta) {
 			}
 			metas[i].Pinned = o.Pinned
 			metas[i].Workspace = o.Workspace
+			metas[i].SnoozedUntil = o.SnoozedUntil
+			metas[i].SnoozedAt = o.SnoozedAt
 		}
 	}
 }
 
 // --- HTTP ---
 
-// handleUpdateSessionMeta renames and/or pins a session by id. Because the id is
-// shared by a live session and its resumable transcript, this works whether the
-// session is running or sitting in Recent. Body: {"name": "...", "pinned": true};
-// both fields are optional, and omitting one leaves it unchanged.
+// handleUpdateSessionMeta renames, pins and/or snoozes a session by id. Because
+// the id is shared by a live session and its resumable transcript, this works
+// whether the session is running or sitting in Recent. Body:
+// {"name": "...", "pinned": true, "workspace": "...", "snoozed_until": 0};
+// every field is optional, and omitting one leaves it unchanged.
 func (s *Server) handleUpdateSessionMeta(w http.ResponseWriter, r *http.Request) {
 	if s.sessionMeta == nil {
 		writeErr(w, http.StatusServiceUnavailable, "no data dir configured")
 		return
 	}
 	var req struct {
-		Name      *string `json:"name"`
-		Pinned    *bool   `json:"pinned"`
-		Workspace *string `json:"workspace"`
+		Name         *string `json:"name"`
+		Pinned       *bool   `json:"pinned"`
+		Workspace    *string `json:"workspace"`
+		SnoozedUntil *int64  `json:"snoozed_until"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	m := s.sessionMeta.update(r.PathValue("id"), req.Name, req.Pinned, req.Workspace)
+	m := s.sessionMeta.update(r.PathValue("id"), metaPatch{
+		Name: req.Name, Pinned: req.Pinned, Workspace: req.Workspace, SnoozedUntil: req.SnoozedUntil,
+	})
 	writeJSON(w, http.StatusOK, m)
 }
 
