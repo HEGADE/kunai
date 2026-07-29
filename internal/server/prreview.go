@@ -52,6 +52,10 @@ import (
 // keep in step and no way to hand a stranger's diff more than it should have.
 var reviewToolset = []string{"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Task"}
 
+// reviewToolsOwner marks a review's restriction as the review's own, so nothing
+// else lifts it. See session.CreateOptions.ToolsOwner.
+const reviewToolsOwner = "pr-review"
+
 // startReview creates the worktree and the session for one pull request review.
 func (s *Server) startReview(ctx context.Context, repoDir string, number int, requester string) (*session.Session, error) {
 	app, err := s.githubApp()
@@ -142,6 +146,11 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 		// to ask would strand a review nobody is watching.
 		Mode:            session.LoopPermissionMode,
 		DisallowedTools: reviewToolset,
+		// Claimed, so the share reconciler leaves it alone. Without this it read a
+		// review's withheld tools as an expired share and respawned the session
+		// about a minute in, which ended the running turn and looked from the
+		// outside like the review stopping by itself.
+		ToolsOwner: reviewToolsOwner,
 	})
 	if err != nil {
 		_ = worktree.RemoveReview(wt)

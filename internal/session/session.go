@@ -72,11 +72,17 @@ type Session struct {
 	// It is spawn-time only, so like effort it has to be carried across a restart
 	// or an effort/account change would silently drop it.
 	appendPrompt string
-	// disallowedTools is the toolset withheld while this session is shared with
-	// somebody who is not its owner. Spawn-time, like appendPrompt, and carried by
-	// spawnSpec for the same reason with a much sharper edge: losing it hands a
-	// guest the tools the share exists to withhold.
+	// disallowedTools is the toolset withheld from this session. Spawn-time, like
+	// appendPrompt, and carried by spawnSpec for the same reason with a much
+	// sharper edge: losing it hands a guest the tools the share exists to withhold.
 	disallowedTools []string
+	// toolsOwner names the feature that withheld them, and exists because more
+	// than one now does. A share reconciles restrictions against its own store and
+	// gives back the toolset of any session whose share has ended; with no owner to
+	// check it read "has withheld tools" as "was shared", so it respawned a pull
+	// request review a minute after it started and killed the running turn. Whoever
+	// imposed a restriction is the only one who may lift it.
+	toolsOwner      string
 	title           string
 	claudeSessionID string // CLI-assigned id, for --resume cold-start
 	state           string
@@ -734,6 +740,14 @@ func (s *Session) DisallowedTools() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.disallowedTools...)
+}
+
+// ToolsOwner names whatever withheld those tools, so a feature that reconciles
+// its own restrictions can tell them apart from somebody else's.
+func (s *Session) ToolsOwner() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.toolsOwner
 }
 
 // HighSeq is the newest event number this session has emitted. A share made
