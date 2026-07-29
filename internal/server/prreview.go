@@ -30,19 +30,27 @@ import (
 	"github.com/hegade/kunai/internal/worktree"
 )
 
-// forkToolset is withheld from a session reviewing code from a fork.
+// reviewToolset is withheld from every review, its own pull request or a
+// stranger's.
 //
-// Reading is untouched: Read, Grep and Glob are how a review earns its keep, and
-// none of them execute anything. What goes is the ability to run commands and to
-// write, because the diff was authored by somebody who cannot push to this
-// repository and the agent is about to read all of it. Tests do not run on a fork
-// PR, and that is the trade being made deliberately.
-var forkToolset = []string{"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Task"}
-
-// trustedToolset is withheld even on your own team's pull requests. A review
-// reads and reports; it has no reason to edit the checkout it is reading, and a
-// review that modifies files would make its own findings unreproducible.
-var trustedToolset = []string{"Write", "Edit", "MultiEdit", "NotebookEdit"}
+// Reading is untouched, and reading is the whole job: Read, Grep and Glob are how
+// a review earns its keep over a diff read in isolation, and none of them execute
+// anything or need permission.
+//
+// Bash is withheld even on your own team's code, which is a change of mind and
+// worth recording. It was allowed there so a review could run the tests, which is
+// a real gain in quality. But a permission mode that runs safe work still stops
+// to ask about a risky command, and a review is watched by nobody by design: the
+// dashboard sends you away from it deliberately. So the first unusual command
+// parked the whole review on a question nobody was there to answer, and the view
+// reported "nothing worth reporting" because no findings had arrived. A reviewer
+// that hangs silently is worth less than one that cannot run tests, and this is
+// the same trade the loop already makes when it borrows acceptEdits.
+//
+// The happy consequence is that the toolset no longer depends on trust: a fork
+// and your own branch get exactly the same one, so there is no second list to
+// keep in step and no way to hand a stranger's diff more than it should have.
+var reviewToolset = []string{"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Task"}
 
 // startReview creates the worktree and the session for one pull request review.
 func (s *Server) startReview(ctx context.Context, repoDir string, number int, requester string) (*session.Session, error) {
@@ -133,7 +141,7 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 		// safe by construction once the dangerous tools are withheld, and stopping
 		// to ask would strand a review nobody is watching.
 		Mode:            session.LoopPermissionMode,
-		DisallowedTools: toolsetFor(fromFork),
+		DisallowedTools: reviewToolset,
 	})
 	if err != nil {
 		_ = worktree.RemoveReview(wt)
@@ -204,15 +212,6 @@ func (s *Server) worktreeRoot() string {
 // at a second account or a provider is the obvious next control, and having the
 // call site already ask for one means adding it does not touch this file.
 func (s *Server) reviewAccount() string { return "" }
-
-// toolsetFor is the trust decision, in one place so it cannot be made twice and
-// differently.
-func toolsetFor(fromFork bool) []string {
-	if fromFork {
-		return forkToolset
-	}
-	return trustedToolset
-}
 
 // saveDraft parses the agent's answer and records it against the session.
 func (s *Server) saveDraft(sessionID, text string, files []ghapp.FileDiff) {

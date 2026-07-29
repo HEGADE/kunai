@@ -34,7 +34,14 @@
   // Named sessionState, not state: a variable called `state` shadows the $state
   // rune for the whole component.
   const sessionState = $derived(meta ? app.liveState(meta) : '')
-  const running = $derived(sessionState === 'running' || sessionState === 'starting')
+  // Blocked on a permission answer. Its own state, not folded into "running",
+  // because it is the one the empty case got wrong: awaiting_permission is
+  // neither running nor finished, so a review parked on a question fell through
+  // to "nothing worth reporting" and claimed a clean bill of health for a review
+  // that had not started looking. Reviews no longer ask (the toolset makes that
+  // impossible), but a UI that lies when it happens is worth fixing anyway.
+  const blocked = $derived(sessionState === 'awaiting_permission')
+  const running = $derived(sessionState === 'running' || sessionState === 'starting' || blocked)
 
   // The clock behind "Reviewing 2m".
   let now = $state(Date.now())
@@ -158,7 +165,15 @@
 
   <!-- Honest progress: what the session is actually doing, not a phase invented
        to fill a bar. -->
-  {#if running}
+  {#if blocked}
+    <!-- Stopped on a question. Said plainly, with the way to answer it, because
+         a review that is waiting and a review that found nothing look identical
+         from here otherwise. -->
+    <div class="prog needs">
+      This review is waiting for an answer before it can carry on.
+      <button class="inline" onclick={() => (app.reviewChat = true)}>Answer it →</button>
+    </div>
+  {:else if running}
     <div class="prog">
       <span class="spin" aria-hidden="true"></span>
       Reviewing <span class="mono">{workedFor(app.liveTurnStart(meta ?? ({} as never)), now)}</span>
@@ -291,6 +306,17 @@
   }
   .prog.quiet {
     color: var(--text-4);
+  }
+  /* Amber, the colour this app already reserves for "blocked on you". */
+  .prog.needs {
+    color: var(--busy);
+  }
+  .inline {
+    color: var(--busy);
+    font-size: 12px;
+    font-weight: 550;
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
   .sofar {
     color: var(--text-4);

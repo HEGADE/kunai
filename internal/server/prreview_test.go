@@ -151,30 +151,30 @@ func TestKeptFiltersTheDraft(t *testing.T) {
 	}
 }
 
-// The trust decision has one home, so it cannot be made twice and differently.
-// The distinction is what decides whether the reviewing agent can execute
-// anything at all while reading a stranger's diff.
-func TestToolsetForWithholdsExecutionOnForks(t *testing.T) {
-	fork := toolsetFor(true)
-	if !contains(fork, "Bash") {
-		t.Error("a fork review was given Bash; a stranger's diff must not be able to run anything")
-	}
-	for _, tool := range []string{"Write", "Edit", "MultiEdit"} {
-		if !contains(fork, tool) {
-			t.Errorf("a fork review can still %s", tool)
+// A review reads and reports, and can do nothing else.
+//
+// Bash is withheld even on your own team's code, which is a change of mind. It
+// was allowed there so a review could run the tests. But a permission mode that
+// runs safe work still STOPS to ask about a risky command, and nobody is watching
+// a review by design, so the first unusual command parked the whole thing on a
+// question that would never be answered. A reviewer that hangs silently is worth
+// less than one that cannot run tests.
+//
+// The consequence worth keeping is that the toolset no longer depends on trust:
+// there is one list, so there is no second list to keep in step and no way for a
+// stranger's diff to be handed more than your own branch gets.
+func TestAReviewCanOnlyRead(t *testing.T) {
+	for _, tool := range []string{"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Task"} {
+		if !contains(reviewToolset, tool) {
+			t.Errorf("a review can still use %s, which is either a way to change the tree it is reading or a way to hang on a permission ask", tool)
 		}
 	}
-
-	// On your own team's pull request the agent may run tests, which is a real
-	// step up in review quality, but it still has no business editing the tree it
-	// is reading: a review that modifies files makes its own findings
-	// unreproducible.
-	trusted := toolsetFor(false)
-	if contains(trusted, "Bash") {
-		t.Error("a trusted review lost Bash, so it cannot run the tests")
-	}
-	if !contains(trusted, "Write") || !contains(trusted, "Edit") {
-		t.Error("a review should never be able to edit the checkout it is reviewing")
+	// Reading is the whole job, and none of these ever needs permission, which is
+	// what makes an unwatched review possible at all.
+	for _, tool := range []string{"Read", "Grep", "Glob"} {
+		if contains(reviewToolset, tool) {
+			t.Errorf("%s is withheld, so the review cannot read the code it is reviewing", tool)
+		}
 	}
 }
 
