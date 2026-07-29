@@ -641,6 +641,23 @@ Behavioral invariants that were bugs before (do not regress):
   not always come from a click: a loop borrows `acceptEdits` and hands it back, so
   a mode set server-side has to reach attached clients or the composer keeps
   showing the mode you last picked while the session runs in another one.
+- The turn-end hook must never be called inline, and the respawn's wait for the
+  old driver must never be unbounded. `Session.afterTurn` runs ON the driver event
+  pump, and that goroutine's exit is what closes `Done()`; the hook's job is to
+  respawn the session, and `Manager.restart` waits on `Done()`. So calling it
+  inline deadlocked the pump against itself: auto-failover reacting to a spent
+  window killed the CLI and then waited 37 minutes for the goroutine it was
+  running on to return. The session was left with a dead process while still
+  listed idle on the walled account, and because that `Done()` could now never
+  close, every later restart piled up behind it: four manual account switches from
+  the app blocked on the same channel, so the POST never answered and the app went
+  on showing the account it was already using. The wall is exactly when somebody
+  needs to move accounts, so the two failures arrived together. Both halves are
+  load-bearing: the hook is dispatched with `go` (as the driver-ended path in
+  `pump` already did, and for this reason), and the wait has a `closeGrace` bound
+  that logs and proceeds, because `Close()` has already cancelled and killed the
+  process so respawning is safe, and a UI action must answer even when a pump is
+  wedged for some other reason. Pinned by `TestTurnEndHookDoesNotDeadlockRespawn`.
 - The thermal guardian (`internal/server/guardian.go`) is a whole-machine safety
   net for unattended work, not a loop feature: a loop or a session a phone walked
   away from can pin the CPU for hours, and with the lid shut that cooks a laptop.
