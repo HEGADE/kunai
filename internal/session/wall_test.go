@@ -147,6 +147,49 @@ func TestASuccessfulTurnClearsATextWall(t *testing.T) {
 	}
 }
 
+// The clear must be TOLD to attached clients, not just latched. recordWall
+// broadcast "rejected" to raise the banner, and a client has no event to lower
+// it on: it sat on "Rate-limited ... resets in 0m" for ever after the window
+// reset (the reported bug).
+func TestClearingATextWallIsBroadcast(t *testing.T) {
+	f := newFakeDriver()
+	s := newSession("lower", "/tmp/p", "", f)
+	defer s.Close()
+	_, _, sub := s.Attach(0)
+
+	if err := s.Prompt("first", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	waitPrompts(t, f, 1)
+	endTurnErr(f, "Claude AI usage limit reached|1753849800")
+	quiet()
+
+	if err := s.Prompt("after the reset", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	waitPrompts(t, f, 2)
+	endTurn(f, 0.01)
+	quiet()
+
+	var got []AppEvent
+	for done := false; !done; {
+		select {
+		case ev := <-sub.ch:
+			if ev.T == EvRateLimit {
+				got = append(got, ev)
+			}
+		default:
+			done = true
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("saw %d rate_limit events %+v, want the raise then the all-clear", len(got), got)
+	}
+	if got[0].LimitStatus != "rejected" || got[1].LimitStatus != "allowed" {
+		t.Fatalf("got %q then %q, want rejected then allowed", got[0].LimitStatus, got[1].LimitStatus)
+	}
+}
+
 // A control frame is the CLI's own answer and must not be undone by a turn that
 // happened to succeed, which is the pre-existing behaviour this change had to
 // leave alone.

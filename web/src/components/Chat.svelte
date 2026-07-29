@@ -108,8 +108,23 @@
     }
   }
 
+  // The rate-limit banner is a statement about a clock, so it has to obey one:
+  // `now` ticks so the countdown moves, and so the banner leaves on its own the
+  // moment the reset passes. Without this it froze at whatever the last event
+  // happened to render ("resets in 0m", for ever).
+  let now = $state(Date.now())
+  $effect(() => {
+    const t = setInterval(() => (now = Date.now()), 30_000)
+    return () => clearInterval(t)
+  })
+  // Limited, and the reset has not passed yet. A wall whose reset time is
+  // unknown (0) stays up until a completed turn proves it over.
+  const rateLimitedNow = $derived(
+    !!chat.rateLimit?.limited && (chat.rateLimit.resetsAt === 0 || now / 1000 < chat.rateLimit.resetsAt),
+  )
+
   function resetRel(unixSec: number): string {
-    let s = Math.round(unixSec - Date.now() / 1000)
+    let s = Math.round(unixSec - now / 1000)
     if (s < 0) s = 0
     const h = Math.floor(s / 3600)
     const m = Math.floor((s % 3600) / 60)
@@ -552,7 +567,7 @@
         onClose={() => (schedOpen = false)}
       />
     </div>
-  {:else if chat.rateLimit?.limited}
+  {:else if rateLimitedNow && chat.rateLimit}
     <div class="ratebanner">
       <span class="rl">Rate-limited · {chat.rateLimit.window === 'seven_day' ? 'weekly' : '5-hour'} quota resets in {resetRel(chat.rateLimit.resetsAt)}</span>
       <button onclick={() => (schedOpen = true)}>Schedule after reset</button>

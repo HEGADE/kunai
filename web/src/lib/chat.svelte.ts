@@ -442,6 +442,12 @@ export class ChatConnection {
             }
           }
         }
+        // A turn that ran to a clean result is proof the window is not spent,
+        // so the banner comes down (the client-side mirror of the server's
+        // clearWall). An errored result keeps it: the error may BE the wall.
+        if (!ev.is_error && this.rateLimit?.limited) {
+          this.rateLimit = { ...this.rateLimit, limited: false }
+        }
         // A turn just finished; its pre-turn checkpoint is now recorded, so the
         // changed-files card can offer to revert it.
         void this.refreshCheckpoints()
@@ -465,21 +471,24 @@ export class ChatConnection {
         // acceptEdits while it runs and gives the mode back when it ends.
         if (ev.mode) this.mode = ev.mode as PermissionMode
         break
-      case 'rate_limit':
+      case 'rate_limit': {
+        // Only a hard "rejected" means the window is spent. "allowed_warning"
+        // is the CLI approaching the limit (e.g. 91%), not a wall, so it must
+        // not raise the "rate-limited" banner.
+        const limited =
+          !!ev.limit_status &&
+          ev.limit_status !== 'allowed' &&
+          ev.limit_status !== 'allowed_warning'
         if (ev.resets_at) {
-          this.rateLimit = {
-            window: ev.window ?? 'five_hour',
-            resetsAt: ev.resets_at,
-            // Only a hard "rejected" means the window is spent. "allowed_warning"
-            // is the CLI approaching the limit (e.g. 91%), not a wall, so it must
-            // not raise the "rate-limited" banner.
-            limited:
-              !!ev.limit_status &&
-              ev.limit_status !== 'allowed' &&
-              ev.limit_status !== 'allowed_warning',
-          }
+          this.rateLimit = { window: ev.window ?? 'five_hour', resetsAt: ev.resets_at, limited }
+        } else if (!limited && this.rateLimit) {
+          // An all-clear carries no reset time (there is no window to reset),
+          // but it still has to lower the banner. This is the frame the server
+          // sends when a turn completing proves the window is not spent.
+          this.rateLimit = { ...this.rateLimit, limited: false }
         }
         break
+      }
       case 'error':
         this.errorLine = ev.message ?? 'error'
         // A rate-limit-flavored error also flips the banner on, in case the CLI

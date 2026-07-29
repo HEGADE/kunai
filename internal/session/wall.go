@@ -90,12 +90,22 @@ func (s *Session) recordWall(resetsAt int64) {
 // Only the text-derived latch is cleared. A control frame is the CLI's own
 // considered answer and outranks an inference drawn from a turn that happened to
 // succeed, so it keeps its existing behaviour untouched.
+//
+// The clear is broadcast, not just latched: recordWall told every attached
+// client the window was spent, and a client has no clock-independent way to
+// learn it no longer is. Clearing silently left the "Rate-limited" banner up
+// for ever ("resets in 0m") on every client that saw the wall.
 func (s *Session) clearWall() {
 	s.mu.Lock()
-	if s.wallFromText {
+	cleared := s.wallFromText
+	if cleared {
 		s.rateLimited, s.wallFromText = false, false
 	}
+	window := s.limitWindow
 	s.mu.Unlock()
+	if cleared {
+		s.broadcast(AppEvent{T: EvRateLimit, Window: window, LimitStatus: "allowed"})
+	}
 }
 
 // resultText digs out the human-readable message a result frame carries, which
