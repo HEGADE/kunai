@@ -169,6 +169,10 @@ type Session struct {
 	// and a tab closed straight after opening does it by hand.
 	procMu sync.Mutex
 
+	// errTail keeps the CLI's last words to stderr, so the reason it exited
+	// survives the exit; see exitReason.
+	errTail stderrTail
+
 	closeOnce sync.Once
 	closed    chan struct{}
 }
@@ -255,7 +259,11 @@ func (s *Session) Start(ctx context.Context) error {
 	cmd := exec.CommandContext(s.procCtx, bin, s.args()...)
 	cmd.Dir = s.opts.Cwd
 	cmd.Env = append(os.Environ(), s.opts.Env...)
-	cmd.Stderr = os.Stderr
+	// Still to the service log, but kept as well: the CLI's parting words are the
+	// only account of why it left, and sending them somewhere kunai cannot read
+	// meant a session could die with the reason sitting in a journal nobody had
+	// correlated to it.
+	cmd.Stderr = io.MultiWriter(os.Stderr, &s.errTail)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -285,8 +293,18 @@ func (s *Session) Start(ctx context.Context) error {
 	go s.writeLoop(stdin)
 	go s.readLoop(stdout)
 	go func() {
-		// When the process exits, close down the session.
-		_ = cmd.Wait()
+		// When the process exits, say WHY before closing down.
+		//
+		// This was `_ = cmd.Wait()`, throwing away the only signal available, with
+		// stderr going straight to the service log where nothing could reason about
+		// it. So a CLI that quit mid-conversation -- which is what hitting the usage
+		// wall looks like -- ended the session in silence: no reason for the person
+		// watching, and nothing for auto-failover to act on. Every later prompt then
+		// failed with "session closed" and no explanation of what had closed it.
+		werr := cmd.Wait()
+		if reason := exitReason(werr, s.errTail.text()); reason != "" {
+			s.emit(Event{Kind: EventError, Err: errors.New(reason)})
+		}
 		s.shutdown()
 	}()
 
@@ -533,4 +551,64 @@ func randHex(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// stderrTail keeps the last few KB the CLI wrote to stderr, so the reason it
+// exited survives the exit. Bounded, because a chatty process should not be able
+// to grow this without limit, and only the end matters: the complaint that comes
+// immediately before quitting.
+type stderrTail struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+const stderrTailMax = 4096
+
+func (t *stderrTail) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > stderrTailMax {
+		t.buf = t.buf[len(t.buf)-stderrTailMax:]
+	}
+	t.mu.Unlock()
+	return len(p), nil
+}
+
+func (t *stderrTail) text() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return strings.TrimSpace(string(t.buf))
+}
+
+// exitReason turns a process exit into a sentence worth showing, or "" when the
+// exit needs no explanation.
+//
+// A clean exit after Close is the ordinary case and says nothing. Anything else
+// ended the conversation without being asked to, and the person watching is
+// owed the reason: the CLI's own last words when it left any, and its exit
+// status when it left none, which is still better than a session that simply
+// stops.
+func exitReason(waitErr error, tail string) string {
+	if waitErr == nil && tail == "" {
+		return ""
+	}
+	// One line, so it fits where an error is shown. The CLI's complaint is
+	// usually the last thing it printed.
+	last := ""
+	for _, ln := range strings.Split(tail, "\n") {
+		if ln = strings.TrimSpace(ln); ln != "" {
+			last = ln
+		}
+	}
+	if len(last) > 300 {
+		last = last[:300] + "…"
+	}
+	switch {
+	case last != "" && waitErr != nil:
+		return "claude exited (" + waitErr.Error() + "): " + last
+	case last != "":
+		return "claude exited: " + last
+	default:
+		return "claude exited unexpectedly (" + waitErr.Error() + ")"
+	}
 }

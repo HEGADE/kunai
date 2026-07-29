@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,9 @@ import (
 type fakeDriver struct {
 	events chan claude.Event
 
+	done      chan struct{}
+	closeOnce sync.Once
+
 	mu        sync.Mutex
 	resolved  map[string]claude.PermissionResult
 	prompts   []string
@@ -20,12 +24,29 @@ type fakeDriver struct {
 }
 
 func newFakeDriver() *fakeDriver {
-	return &fakeDriver{events: make(chan claude.Event, 64), resolved: map[string]claude.PermissionResult{}}
+	return &fakeDriver{events: make(chan claude.Event, 64), done: make(chan struct{}), resolved: map[string]claude.PermissionResult{}}
 }
 
 func (f *fakeDriver) Events() <-chan claude.Event { return f.events }
-func (f *fakeDriver) SendUser(content any) error  { return nil }
+
+// errFakeClosed mirrors what the real driver returns once its process is gone:
+// "claude: session closed". The fake used to accept sends for ever and close its
+// channel twice, neither of which the real one does, and the difference hid a
+// prompt that was claimed as a running turn and then refused.
+var errFakeClosed = errors.New("claude: session closed")
+
+func (f *fakeDriver) SendUser(content any) error {
+	return f.send("")
+}
 func (f *fakeDriver) SendUserText(text string) error {
+	return f.send(text)
+}
+func (f *fakeDriver) send(text string) error {
+	select {
+	case <-f.done:
+		return errFakeClosed
+	default:
+	}
 	f.mu.Lock()
 	f.prompts = append(f.prompts, text)
 	f.mu.Unlock()
@@ -45,7 +66,13 @@ func (f *fakeDriver) Interrupt() error {
 }
 func (f *fakeDriver) SetModel(model string) error         { return nil }
 func (f *fakeDriver) SetPermissionMode(mode string) error { return nil }
-func (f *fakeDriver) Close() error                        { close(f.events); return nil }
+
+// Close is idempotent, as the real driver's is (closeOnce): a session closed
+// twice is ordinary, not a panic.
+func (f *fakeDriver) Close() error {
+	f.closeOnce.Do(func() { close(f.done); close(f.events) })
+	return nil
+}
 
 // drain reads n events from a Subscriber (fails the test on timeout).
 func drain(t *testing.T, sub *Subscriber, n int) []AppEvent {

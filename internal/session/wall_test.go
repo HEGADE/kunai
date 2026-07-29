@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 
@@ -170,5 +171,100 @@ func TestASuccessfulTurnDoesNotClearARejectedControlFrame(t *testing.T) {
 	defer mu.Unlock()
 	if len(calls) != 1 || !calls[0] {
 		t.Fatalf("hook calls=%v, want the rejected frame to win", calls)
+	}
+}
+
+// A prompt the CLI never accepted must not leave the session on "Working".
+//
+// The reported failure: after the usage window reset, a message was sent and the
+// app spun on "Working" for ever, with nothing spent because nothing had reached
+// Anthropic. The CLI process was already gone, the driver refused with "claude:
+// session closed", and the error went to the service log -- but the turn had
+// been claimed and broadcast as running BEFORE the ask, and nothing rolled it
+// back. drainQueue already handled this; the direct send did not, so the same
+// failure behaved differently depending on whether a turn happened to be running
+// when you pressed send.
+func TestAPromptTheCLIRefusedDoesNotStrandTheSessionOnWorking(t *testing.T) {
+	f := newFakeDriver()
+	s := newSession("dead", "/tmp/p", "", f)
+
+	// The process is gone: exactly what the driver reports once it has closed.
+	f.Close()
+	quiet()
+
+	err := s.Prompt("are you there", nil, nil)
+	if err == nil {
+		t.Fatal("a prompt to a closed driver reported success")
+	}
+	quiet()
+
+	if got := s.Meta().State; got == StateRunning {
+		t.Errorf("state is %q: the app sits on \"Working\" for a turn that never left the machine", got)
+	}
+	if s.Meta().TurnStartedAt != 0 {
+		t.Error("the turn clock is still running for a turn that never started")
+	}
+}
+
+// The wall can arrive as the CLI's parting words rather than inside a turn, and
+// that has to reach the latch too, or a session that dies at the wall looks like
+// an ordinary crash.
+func TestAWallInTheDriversExitIsStillAWall(t *testing.T) {
+	f := newFakeDriver()
+	s := newSession("exit", "/tmp/p", "", f)
+	defer s.Close()
+
+	var mu sync.Mutex
+	var calls []bool
+	s.SetTurnEndHook(func(rl, _ bool) { mu.Lock(); calls = append(calls, rl); mu.Unlock() })
+
+	if err := s.Prompt("go", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	waitPrompts(t, f, 1)
+	// The CLI complains and leaves, rather than answering.
+	f.events <- claude.Event{Kind: claude.EventError,
+		Err: errors.New("claude exited (exit status 1): Claude AI usage limit reached|1753849800")}
+	quiet()
+	f.Close()
+	quiet()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(calls) == 0 {
+		t.Fatal("the turn-end hook never fired, so auto-failover was never asked")
+	}
+	if !calls[len(calls)-1] {
+		t.Error("the hook fired but did not report the wall, so failover would decline to act")
+	}
+}
+
+// And a process that dies for some other reason must NOT look like a wall, or
+// failover would roll a healthy session onto another account on a crash.
+func TestAnOrdinaryCrashIsNotAWall(t *testing.T) {
+	f := newFakeDriver()
+	s := newSession("crash", "/tmp/p", "", f)
+	defer s.Close()
+
+	var mu sync.Mutex
+	var calls []bool
+	s.SetTurnEndHook(func(rl, _ bool) { mu.Lock(); calls = append(calls, rl); mu.Unlock() })
+
+	if err := s.Prompt("go", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	waitPrompts(t, f, 1)
+	f.events <- claude.Event{Kind: claude.EventError, Err: errors.New("claude exited (signal: killed)")}
+	quiet()
+	f.Close()
+	quiet()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(calls) == 0 {
+		t.Fatal("the hook did not fire at all")
+	}
+	if calls[len(calls)-1] {
+		t.Error("a crash was reported as a wall; failover would move the session for nothing")
 	}
 }

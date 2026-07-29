@@ -479,6 +479,12 @@ func (s *Session) pump() {
 			s.broadcast(AppEvent{T: EvRateLimit, Window: ev.Window, ResetsAt: ev.ResetsAt, LimitStatus: ev.LimitStatus})
 
 		case claude.EventError:
+			// A driver error can itself be the wall: the CLI reports a spent window
+			// on its way out as well as inside a turn, and read only in the turn it
+			// was invisible whenever the process left rather than replied.
+			if reset, isWall := parseWall(ev.Err.Error()); isWall {
+				s.recordWall(reset)
+			}
 			s.broadcast(AppEvent{T: EvError, Message: ev.Err.Error()})
 		}
 	}
@@ -487,11 +493,30 @@ func (s *Session) pump() {
 	s.closed = true
 	subs := s.subs
 	s.subs = make(map[*Subscriber]struct{})
+	// Was a turn still in flight when the process went? That is a turn that ended,
+	// however badly, and the turn-end hook is what auto-failover listens to.
+	diedMidTurn := s.state == StateRunning || s.state == StateAwaiting
+	hook, rl := s.onTurnEnd, s.rateLimited
 	s.mu.Unlock()
 	for sub := range subs {
 		close(sub.ch)
 	}
 	close(s.done)
+
+	// Fired after done is closed, and that ordering is required: failover
+	// responds by respawning the session, and the respawn waits on Done().
+	//
+	// Until now the hook only ran on a result frame, so a CLI that EXITED mid-turn
+	// -- which is what hitting the usage wall looks like -- ended the session
+	// without failover ever being asked. It reported nothing because it was never
+	// called, which is indistinguishable from working correctly and finding
+	// nothing to do. rl carries what is actually known: a wall seen in a control
+	// frame or in the CLI's parting words means failover may act, and a process
+	// that died for some other reason only clears the chain, rather than rolling a
+	// healthy session onto another account on the strength of a crash.
+	if diedMidTurn && hook != nil {
+		go hook(rl, false)
+	}
 }
 
 func (s *Session) onPermission(ask *claude.PermissionAsk) {
@@ -590,7 +615,33 @@ func (s *Session) prompt(q *queuedPrompt) error {
 	userSeq := s.startTurnLocked(q)
 	s.mu.Unlock()
 	s.runCheckpointHook(userSeq) // snapshot the pre-turn tree before the CLI can edit it
-	return s.deliver(q.Text, q.content)
+	if err := s.deliver(q.Text, q.content); err != nil {
+		s.abandonTurn("that message could not be sent: " + err.Error())
+		return err
+	}
+	return nil
+}
+
+// abandonTurn undoes a turn that was claimed but never reached the CLI.
+//
+// The turn is marked running and broadcast BEFORE the CLI is asked to run it,
+// which is right: the claim is what stops a second prompt racing into the same
+// process. But when the ask itself fails there is no turn, and leaving the
+// session marked running strands every attached client on "Working" for a
+// prompt that never left the machine. That is what a dead CLI looked like: the
+// driver refused with "claude: session closed", the error went to the log, and
+// the app sat spinning on a request that had not been made and never would be,
+// with nothing spent and nothing to show.
+//
+// drainQueue already did this for a queued prompt; the direct path did not, so
+// the same failure behaved differently depending on whether a turn happened to
+// be running when you pressed send.
+func (s *Session) abandonTurn(why string) {
+	s.mu.Lock()
+	s.turnStartedAt = 0
+	s.mu.Unlock()
+	s.broadcast(AppEvent{T: EvError, Message: why})
+	s.setState(StateIdle)
 }
 
 // display is what a queued prompt shows in the queue.
@@ -698,8 +749,7 @@ func (s *Session) drainQueue() {
 	s.runCheckpointHook(userSeq) // snapshot the pre-turn tree before the CLI can edit it
 
 	if err := s.deliver(q.Text, q.content); err != nil {
-		s.broadcast(AppEvent{T: EvError, Message: "queued prompt failed: " + err.Error()})
-		s.setState(StateIdle)
+		s.abandonTurn("that queued message could not be sent: " + err.Error())
 	}
 }
 
