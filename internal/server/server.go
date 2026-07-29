@@ -113,6 +113,9 @@ type Server struct {
 	ghMu      sync.Mutex
 	gh        *ghapp.App
 	prReviews *prReviewStore
+	// reviewCfg is which account and model reviews run on, kept apart from the
+	// session defaults so a review can never spend the window you are working in.
+	reviewCfg *reviewConfigStore
 	// shares and gate are session sharing: a link worth one conversation, served
 	// on a listener of its own so a guest can never reach the routes above. See
 	// sharegate.go for why that is a separate mux rather than a middleware.
@@ -182,6 +185,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	s.cliproxyLogin = newCLIProxyLoginManager(s.cliproxy)
 	s.codexUC = &codexUsageCache{}
 	s.grokUC = &grokUsageCache{}
+	s.reviewCfg = newReviewConfigStore(cfg.DataDir)
 	s.failover = newFailoverController(s)
 	s.failover.load()            // re-apply the persisted opt-in on boot (default off)
 	go s.discoverModelVersions() // warm the model-version cache off the request path
@@ -289,6 +293,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/github/app", s.handleGitHubStatus)
 	mux.HandleFunc("POST /api/github/app", s.handleSetGitHubApp)
 	mux.HandleFunc("GET /api/github/pulls", s.handlePullRequests)
+	mux.HandleFunc("GET /api/github/review-config", s.handleReviewConfig)
+	mux.HandleFunc("POST /api/github/review-config", s.handleReviewConfig)
 	mux.HandleFunc("POST /api/github/review", s.handleStartReview)
 	mux.HandleFunc("GET /api/sessions/{id}/review", s.handleReviewDraft)
 	mux.HandleFunc("POST /api/sessions/{id}/review/post", s.handlePostReview)

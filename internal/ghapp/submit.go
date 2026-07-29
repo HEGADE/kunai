@@ -117,4 +117,9 @@ type FileDiff struct {
 	Filename string `json:"filename"`
 	Status   string `json:"status"`
 	Patch    string `json:"patch"`
+	// Additions and Deletions size one file. Unlike the pull request's own
+	// totals these DO come back on this endpoint, and they are what lets the
+	// prompt tell the model which files are worth opening first.
+	Additions int `json:"additions"`
+	Deletions int `json:"deletions"`
 }

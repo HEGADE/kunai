@@ -471,6 +471,13 @@
         </div>
       {/if}
       <div class="log">
+        <!-- A review session's findings, pinned above the work rather than
+             buried under it. The card is the POINT of this session: while the
+             review runs it is the progress display, and when it finishes it is
+             the thing you act on. Putting it at the bottom meant scrolling past
+             minutes of tool calls to reach the only part that matters.
+             Self-hides when this session is not a review. -->
+        <ReviewDraft sessionId={chat.sessionId} machineId={app.activeMachineId ?? ''} />
         {#each turns as turn, ti (firstVisible + ti)}
           {@const live = firstVisible + ti === allTurns.length - 1 && (running || !!chat.streaming || !!chat.thinking)}
           {#if turn.project}
@@ -523,11 +530,6 @@
                whole repository and this card lists only this turn's files. -->
           <TurnChanges {turn} />
         {/each}
-
-        <!-- A review session's findings, once. Not per turn: a review is one
-             answer about one commit, and the card carries the action that sends
-             it. Self-hides when this session is not a review. -->
-        <ReviewDraft sessionId={chat.sessionId} machineId={app.activeMachineId ?? ''} />
 
         {#if chat.thinking || chat.streaming || running}
           <div class="turn">

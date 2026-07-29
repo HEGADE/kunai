@@ -683,3 +683,24 @@ export function postReview(
     body: JSON.stringify({ keep }),
   }).then((r) => json<{ url: string }>(r))
 }
+
+// ReviewConfig is which account and model reviews run on. Its own setting
+// because a review is chunky and unattended: pointed at a second account or a
+// provider, it can never wall the session you are working in. Empty means the
+// machine's default.
+export interface ReviewConfig {
+  cli?: string
+  model?: string
+}
+
+export function reviewConfig(base: string): Promise<ReviewConfig> {
+  return fetch(at(base, '/api/github/review-config')).then((r) => json<ReviewConfig>(r))
+}
+
+export function setReviewConfig(base: string, cfg: ReviewConfig): Promise<ReviewConfig> {
+  return fetch(at(base, '/api/github/review-config'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg),
+  }).then((r) => json<ReviewConfig>(r))
+}

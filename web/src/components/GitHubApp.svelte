@@ -1,7 +1,15 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
-  import { githubApp, setGitHubApp, type GitHubAppState } from '../lib/api'
+  import {
+    githubApp,
+    setGitHubApp,
+    reviewConfig,
+    setReviewConfig,
+    type GitHubAppState,
+    type ReviewConfig,
+  } from '../lib/api'
   import { handle, setHandle } from '../lib/reviewer'
+  import { MODELS, modelLabel } from '../lib/models'
 
   // The GitHub App this machine posts reviews as.
   //
@@ -25,12 +33,33 @@
 
   const base = $derived(app.baseForMachine(machineId))
 
+  // Which account and model reviews run on. Its own setting, because a review is
+  // chunky and arrives on somebody else's schedule: pointed at a second account
+  // or a provider it can never wall the session you are sitting in.
+  let rcfg = $state<ReviewConfig>({})
+  const accounts = $derived(app.machines.find((m) => m.id === machineId)?.stats?.clis ?? [])
+
   $effect(() => {
     void machineId
     githubApp(base)
       .then((s) => (appState = s))
       .catch(() => (appState = { configured: false }))
+    reviewConfig(base)
+      .then((c) => (rcfg = c))
+      .catch(() => (rcfg = {}))
   })
+
+  async function saveReviewCfg(patch: ReviewConfig) {
+    const next = { ...rcfg, ...patch }
+    rcfg = next
+    try {
+      rcfg = await setReviewConfig(base, next)
+      saved = 'Saved'
+      setTimeout(() => (saved = ''), 2500)
+    } catch (e) {
+      err = (e as Error).message
+    }
+  }
 
   async function save() {
     if (busy) return
@@ -112,6 +141,35 @@
   time, so a lost laptop costs one key instead of a redistribution to everybody.
 </p>
 
+{#if appState?.configured}
+  <div class="sec">Reviews run on</div>
+  <p class="lead">
+    A review is long and arrives when a colleague opens a pull request, not when
+    you are ready for it. Point it at a second account or a provider and it can
+    never spend the window you are working in.
+  </p>
+  <div class="picks">
+    <label class="pick">
+      <span class="plbl">Account</span>
+      <select class="min" value={rcfg.cli ?? ''} onchange={(e) => saveReviewCfg({ cli: e.currentTarget.value })}>
+        <option value="">Default{accounts[0] ? ` (${accounts[0]})` : ''}</option>
+        {#each accounts as a (a)}
+          <option value={a}>{a}</option>
+        {/each}
+      </select>
+    </label>
+    <label class="pick">
+      <span class="plbl">Model</span>
+      <select class="min" value={rcfg.model ?? ''} onchange={(e) => saveReviewCfg({ model: e.currentTarget.value })}>
+        <option value="">Default</option>
+        {#each MODELS as m (m.id)}
+          <option value={m.id}>{modelLabel(m.id)}</option>
+        {/each}
+      </select>
+    </label>
+  </div>
+{/if}
+
 <div class="sec">Your GitHub handle</div>
 <p class="lead">
   Named in the reviews you request. With one bot identity shared across the team,
@@ -167,6 +225,26 @@
     flex-direction: column;
     gap: 8px;
     margin-bottom: 10px;
+  }
+  .picks {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .pick {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 160px;
+  }
+  .plbl {
+    font-size: 11px;
+    color: var(--text-4);
+  }
+  select.min {
+    appearance: none;
+    cursor: pointer;
   }
   .min {
     width: 100%;
