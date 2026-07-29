@@ -12,6 +12,8 @@
 // fresh install (or a cleared browser) does not light up every session in the
 // list as if it all just finished.
 
+import { untrack } from 'svelte'
+
 const KEY = 'kunai-visited'
 // Bounded so the record cannot grow for ever: sessions come and go, and one
 // stamp per session you have ever opened would outlive most of them. The
@@ -40,14 +42,29 @@ class VisitedStore {
   }
 
   // touch records "the user is looking at this session right now".
+  //
+  // The read of `stamps` is untracked, and that is a correctness fix rather
+  // than an optimisation. Merging and pruning has to READ the record it then
+  // writes, so called from inside an `$effect` (which is exactly where "the
+  // turn I was watching just ended" lives) the read registered the effect as a
+  // dependency of state the same call was about to change: the write
+  // re-invalidated the effect, forever, until Svelte gave up with
+  // effect_update_depth_exceeded. That kills reactivity for the whole page, so
+  // the symptom was not a wrong timestamp but a chat stuck on "Reconnecting…"
+  // with a socket that was in fact open.
+  //
+  // Untracking the read does not weaken the write: subscribers that genuinely
+  // display these stamps (the sidebar) still update, they simply are not
+  // counted as this call's own dependencies.
   touch(machineId: string, id: string) {
     const key = this.key(machineId, id)
-    let next: Record<string, number> = { ...this.stamps, [key]: Date.now() }
-    const keys = Object.keys(next)
-    if (keys.length > MAX_ENTRIES) {
-      const newest = keys.sort((a, b) => next[b] - next[a]).slice(0, MAX_ENTRIES)
-      next = Object.fromEntries(newest.map((k) => [k, next[k]]))
-    }
+    const next = untrack(() => {
+      const merged: Record<string, number> = { ...this.stamps, [key]: Date.now() }
+      const keys = Object.keys(merged)
+      if (keys.length <= MAX_ENTRIES) return merged
+      const newest = keys.sort((a, b) => merged[b] - merged[a]).slice(0, MAX_ENTRIES)
+      return Object.fromEntries(newest.map((k) => [k, merged[k]]))
+    })
     this.stamps = next
     try {
       localStorage.setItem(KEY, JSON.stringify(next))

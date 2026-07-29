@@ -11,6 +11,16 @@ const fail = (msg) => {
 
 const browser = await chromium.launch()
 const page = await browser.newPage({ viewport: { width: 1280, height: 850 } })
+
+// An uncaught exception is a hard failure, not a warning to read later. Svelte's
+// effect_update_depth_exceeded halts the scheduler for the WHOLE page, so every
+// later state change stops rendering: a chat stuck on "Reconnecting…" over a
+// socket that was in fact open, and a sidebar that looks fine because it was
+// already painted. Nothing else in this script would have caught that, which is
+// how it reached a release, so it is the first assertion now.
+const crashes = []
+page.on('pageerror', (e) => crashes.push(e.message))
+
 await page.goto(url)
 
 // All three fixture sessions render, grouped by folder.
@@ -77,5 +87,27 @@ if (!(await page.locator('.kids .row', { hasText: 'Write the report generator' }
   fail('the woken row is not back in its group')
 await page.screenshot({ path: '/tmp/kunai-nav-woke.png' })
 
-console.log('PASS: snooze -> shelf -> persist -> wake, and an expired snooze wakes in place')
+// A live session, opened: the composer must report the socket as online. This is
+// the end the reactivity halt broke, and a placeholder is the cheapest honest
+// witness that state updates are still reaching the DOM.
+const made = await fetch(`${url}api/sessions`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ cwd: '/tmp/alpha' }),
+}).then((r) => r.json())
+if (!made.id) fail('could not create a live session to test the chat socket')
+await page.reload()
+await page.locator(".row:has(.node:not([data-state='past']))").first().click()
+const composer = page.locator(
+  'textarea[placeholder="Message Claude…"], textarea[placeholder="Reconnecting…"]',
+)
+await composer.first().waitFor({ timeout: 8000 })
+await page
+  .locator('textarea[placeholder="Message Claude…"]')
+  .first()
+  .waitFor({ timeout: 10000 })
+  .catch(() => fail('the chat composer never came online (reactivity halted, or the socket failed)'))
+
+if (crashes.length) fail('uncaught page exception: ' + crashes.join(' | '))
+console.log('PASS: snooze -> shelf -> persist -> wake, expired wakes in place, chat socket online')
 await browser.close()

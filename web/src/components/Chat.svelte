@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, setContext } from 'svelte'
+  import { tick, setContext, untrack } from 'svelte'
   import { app } from '../lib/app.svelte'
   import { FILE_BASE, fileBaseFor } from '../lib/filebase'
   import { uploadFile, getProviderModels, getShare } from '../lib/api'
@@ -114,16 +114,17 @@
   // it ended, claiming you missed something you were looking straight at. Only
   // stamped while this tab is the active one and the page is actually visible,
   // because a backgrounded tab is exactly the "away" the unread mark exists for.
+  // The turn's own state is the ONLY thing this depends on; the rest is read
+  // untracked. An effect whose job is a side effect should name its trigger
+  // rather than accidentally subscribing to everything it touches on the way.
   $effect(() => {
-    if (chat.sessionState !== 'running' && chat.sessionState !== 'starting') {
-      if (
-        document.visibilityState === 'visible' &&
-        app.activeId === chat.sessionId &&
-        app.activeMachineId
-      ) {
-        visited.touch(app.activeMachineId, chat.sessionId)
-      }
-    }
+    const state = chat.sessionState
+    if (state === 'running' || state === 'starting') return
+    untrack(() => {
+      if (document.visibilityState !== 'visible') return
+      if (app.activeId !== chat.sessionId || !app.activeMachineId) return
+      visited.touch(app.activeMachineId, chat.sessionId)
+    })
   })
 
   // The rate-limit banner is a statement about a clock, so it has to obey one:
