@@ -403,6 +403,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.usagePollLoop(ctx)  // feed real window reset times to the scheduler, so reset jobs fire
 	go s.loginSweepLoop(ctx) // kill abandoned account-login flows so they don't linger
 	go s.discover(true)      // warm peer discovery so the first client load sees the fleet
+	s.startReviewSweeper()   // throw away the checkouts of reviews nobody is reading
 	s.startTelegram(ctx)     // opt-in: drive a session from a Telegram chat
 	go func() {
 		<-ctx.Done()

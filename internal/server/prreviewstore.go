@@ -31,6 +31,9 @@ type prReview struct {
 	Repo      string `json:"repo"`
 	Number    int    `json:"number"`
 	Title     string `json:"title"`
+	// Worktree is the throwaway checkout this review reads, kept so it can be
+	// swept later. Cleared once the directory is gone.
+	Worktree string `json:"worktree,omitempty"`
 	// RepoDir is the local checkout this review was started from.
 	//
 	// Recorded because a review runs in a detached worktree that is deliberately
@@ -121,6 +124,20 @@ func (s *prReviewStore) update(sessionID string, fn func(*prReview)) (prReview, 
 	s.data[sessionID] = rec
 	s.saveLocked()
 	return rec, true
+}
+
+// all returns a copy of every record, for the sweep.
+func (s *prReviewStore) all() []prReview {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]prReview, 0, len(s.data))
+	for _, rec := range s.data {
+		out = append(out, rec)
+	}
+	return out
 }
 
 func (s *prReviewStore) delete(sessionID string) {
