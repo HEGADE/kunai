@@ -211,9 +211,9 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request) {
 	// diff and the diff is the thing that changes. The counts the card promises
 	// are then always about the pull request as it is now.
 	if rec.Draft != nil {
-		plan := s.planFor(r.Context(), rec)
+		plan, files := s.planFor(r.Context(), rec)
 		out["summary"] = plan.Summary
-		out["findings"] = placements(plan)
+		out["findings"] = placements(plan, files)
 		total, inline, summary := plan.Counts()
 		out["total"], out["inline"], out["summary_count"] = total, inline, summary
 	}
@@ -241,26 +241,34 @@ func (s *Server) handlePostReview(w http.ResponseWriter, r *http.Request) {
 // planFor decides placement against the pull request's current diff, falling back
 // to placement with no diff (everything demoted to the summary) when GitHub
 // cannot be reached, so the card still renders offline.
-func (s *Server) planFor(ctx context.Context, rec prReview) review.Plan {
+// Returns the changed files alongside the plan, because each finding is served
+// with the diff lines it is about and those come from the same fetch.
+func (s *Server) planFor(ctx context.Context, rec prReview) (review.Plan, []review.FileDiff) {
 	app, err := s.githubApp()
 	if err != nil {
-		return review.Build(*rec.Draft, nil)
+		return review.Build(*rec.Draft, nil), nil
 	}
 	files, err := app.PullRequestFiles(ctx, ghapp.Repo{Owner: rec.Owner, Name: rec.Repo}, rec.Number)
 	if err != nil {
-		return review.Build(*rec.Draft, nil)
+		return review.Build(*rec.Draft, nil), nil
 	}
-	return review.Build(*rec.Draft, review.ParseDiff(toReviewFiles(files)))
+	rf := toReviewFiles(files)
+	return review.Build(*rec.Draft, review.ParseDiff(rf)), rf
 }
 
 // placements is the wire shape of the draft card's rows: the finding, and where
 // it will land. The badge is the point, so it is computed here rather than
 // re-derived by the client from rules it would have to keep in step.
-func placements(plan review.Plan) []map[string]any {
+func placements(plan review.Plan, files []review.FileDiff) []map[string]any {
 	out := make([]map[string]any, 0, len(plan.Placements))
 	for i, pl := range plan.Placements {
 		out = append(out, map[string]any{
-			"index":      i,
+			"index": i,
+			// The diff lines this finding is about, so a card carries its own
+			// evidence. A claim with a file and a number attached is not something
+			// anybody can judge without going to look it up, and sending them
+			// elsewhere to look is how a review becomes a chore.
+			"hunk":       review.HunkFor(files, pl.Finding),
 			"file":       pl.Finding.File,
 			"line":       pl.Finding.Line,
 			"end_line":   pl.Finding.EndLine,

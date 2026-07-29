@@ -60,6 +60,15 @@
 
 
   let draft = $state('')
+  // A finding picked in the review view arrives here as the start of a message,
+  // so "why do you think this?" carries its subject rather than making you
+  // retype the file and line. Consumed once: it is a handoff, not a setting.
+  $effect(() => {
+    if (!app.reviewAsk) return
+    draft = app.reviewAsk
+    app.reviewAsk = ''
+    queueMicrotask(() => textarea?.focus())
+  })
   let scroller = $state<HTMLElement | null>(null)
   let textarea = $state<HTMLTextAreaElement | null>(null)
   let fileInput = $state<HTMLInputElement | null>(null)

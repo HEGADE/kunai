@@ -123,11 +123,17 @@ func comments(plan review.Plan) []ghapp.ReviewComment {
 	return out
 }
 
-// kept filters a draft to the findings the user chose to keep. An empty selection
-// means "all of them", so a client that does not implement pruning still posts a
-// complete review rather than an empty one.
+// kept filters a draft to the findings the user chose to keep.
+//
+// nil and empty mean different things, and conflating them was a real bug: a nil
+// selection is a client that does not prune, which must still post a complete
+// review, while an EMPTY selection is somebody who read every finding and dropped
+// them all. Treating both as "post everything" meant dropping the lot and pressing
+// Post published the lot, which is the worst possible reading of that gesture.
+// JSON gives us the distinction for free: an absent field decodes to nil, `[]`
+// does not.
 func kept(d review.Draft, keep []int) review.Draft {
-	if len(keep) == 0 {
+	if keep == nil {
 		return d
 	}
 	wanted := make(map[int]bool, len(keep))

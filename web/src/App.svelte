@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { app } from './lib/app.svelte'
+  import { reviewDraft } from './lib/api'
   import Sidebar from './components/Sidebar.svelte'
   import Chat from './components/Chat.svelte'
+  import ReviewView from './components/ReviewView.svelte'
   import Home from './components/Home.svelte'
   import NewSession from './components/NewSession.svelte'
   import Settings from './components/Settings.svelte'
@@ -29,13 +31,43 @@
     document.addEventListener('visibilitychange', onVis)
     return () => document.removeEventListener('visibilitychange', onVis)
   })
+
+  // Whether the open session is a pull-request review. Asked of the server once
+  // per session rather than guessed from the title, which a rename would break.
+  let reviewOf = $state<Record<string, boolean>>({})
+  const key = $derived(app.chat ? `${app.activeMachineId}:${app.chat.sessionId}` : '')
+  const isReview = $derived(!!key && reviewOf[key] === true)
+  $effect(() => {
+    const k = key
+    const chat = app.chat
+    if (!k || !chat || k in reviewOf) return
+    reviewDraft(app.baseForMachine(app.activeMachineId ?? ''), chat.sessionId)
+      .then(() => (reviewOf = { ...reviewOf, [k]: true }))
+      .catch(() => (reviewOf = { ...reviewOf, [k]: false }))
+  })
+  // Opening a different session starts on its findings again, not wherever the
+  // last one was left.
+  $effect(() => {
+    void key
+    app.reviewChat = false
+  })
 </script>
 
 <div class="shell" data-has-chat={app.chat ? 'true' : undefined} class:collapsed={!app.sidebarOpen}>
   <aside class="sidebar"><Sidebar /></aside>
   <main class="main">
     {#if app.chat}
-      <div class="pane"><Chat chat={app.chat} /></div>
+      <!-- A review session opens on its findings rather than on the transcript.
+           The conversation is one click away (the view's Conversation button),
+           because arguing with the reviewer is the thing kunai has that a CI
+           reviewer does not; it is just not where you start. -->
+      {#if isReview && !app.reviewChat}
+        <div class="pane">
+          <ReviewView sessionId={app.chat.sessionId} machineId={app.activeMachineId ?? ''} />
+        </div>
+      {:else}
+        <div class="pane"><Chat chat={app.chat} /></div>
+      {/if}
     {:else}
       {#if !app.sidebarOpen}
         <!-- Reopen affordance, shown only while collapsed: when the sidebar is

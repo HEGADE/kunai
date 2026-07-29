@@ -596,6 +596,7 @@ export interface PullRequest {
 // whether this lands on the line itself or in the summary, and `why` explains a
 // demotion in words meant for a person.
 export interface ReviewFinding {
+  hunk?: HunkLine[]
   index: number
   file: string
   line: number
@@ -703,4 +704,14 @@ export function setReviewConfig(base: string, cfg: ReviewConfig): Promise<Review
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(cfg),
   }).then((r) => json<ReviewConfig>(r))
+}
+
+// One line of diff evidence carried with a finding, so a card can show the code
+// it is about without a second round trip.
+export interface HunkLine {
+  kind: string // " " | "+" | "-"
+  old?: number
+  new?: number
+  text: string
+  focus?: boolean
 }

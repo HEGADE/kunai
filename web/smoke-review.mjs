@@ -55,8 +55,8 @@ if (!/PEM|RSA|could not be parsed/i.test(afterSave)) {
   fail('a malformed key was not refused with a readable reason')
 }
 
-// 4. The draft card renders from the API's shape, including the badge that says
-// where each finding lands. Driven by stubbing the endpoint, because a real
+// 4. A review session opens on its FINDINGS, not on the transcript, and each one
+// carries the code it is about. Driven by stubbing the endpoint, because a real
 // draft needs a real pull request and a real review.
 await page.route('**/api/sessions/*/review', (route) =>
   route.fulfill({
@@ -79,6 +79,11 @@ await page.route('**/api/sessions/*/review', (route) =>
           index: 0, file: 'internal/session/loop.go', line: 212, side: 'RIGHT',
           title: 'Interrupt leaves the loop record on disk', body: 'The file outlives the run.',
           inline: true, suggestion: 'stopLoopLocked()',
+          hunk: [
+            { kind: ' ', new: 211, text: 'func stop() {' },
+            { kind: '+', new: 212, text: '\tstopLoopLocked(s)', focus: true },
+            { kind: ' ', new: 213, text: '}' },
+          ],
         },
         {
           index: 1, file: 'internal/server/history.go', line: 88, side: 'RIGHT',
@@ -95,27 +100,50 @@ await page.waitForTimeout(1200)
 await page.locator(".row:has(.node:not([data-state='past']))").first().click()
 await page.waitForTimeout(1500)
 
-const card = page.locator('.draft')
-if (!(await card.count())) fail('the review draft card did not render')
-// Compared case-insensitively: the label is upper-cased by CSS, and innerText
-// reports it as rendered.
-const text = (await card.innerText()).toLowerCase()
-for (const want of ['review draft', 'lyzr/kunai#128', '@shorya', 'inline', 'summary']) {
-  if (!text.includes(want)) fail(`the draft card is missing ${JSON.stringify(want)}:\n${text}`)
-}
-if (!/2 findings . 1 inline . 1 in the summary/.test(text)) {
-  fail(`the counts line does not promise what will land:\n${text}`)
+// The review view replaces the chat for a review session. The chat is still
+// reachable, which is the point of the Conversation button.
+const view = page.locator('.rv')
+if (!(await view.count())) fail('a review session did not open on its findings')
+if (await page.locator('textarea[placeholder="Message Claude…"]').count()) {
+  fail('the review opened on the transcript instead of the findings')
 }
 
-// Dropping a finding updates the promise, which is the whole point of pruning
-// before posting.
-await card.locator('button[aria-label="Drop this finding"]').first().click()
+const head = (await page.locator('.top').innerText()).toLowerCase()
+if (!head.includes('lyzr/kunai#128')) fail(`the header does not name the pull request: ${head}`)
+if (!head.includes('conversation')) fail('there is no way through to the conversation')
+
+// Two findings, each a self-contained card, badged with where it will land.
+const cards = view.locator('.card')
+if ((await cards.count()) !== 2) fail(`rendered ${await cards.count()} cards, want 2`)
+const first = (await cards.first().innerText()).toLowerCase()
+if (!first.includes('inline')) fail('the first finding is not badged inline')
+if (!first.includes('stoplooplocked')) fail('the finding does not carry the code it is about')
+if (!(await cards.nth(1).innerText()).toLowerCase().includes('summary')) {
+  fail('the unanchorable finding is not badged as going to the summary')
+}
+
+// Post names what it will send, and dropping one changes that number: the
+// header is a promise about what lands on the pull request.
+if (!(await page.locator('.post').innerText()).includes('2')) {
+  fail('Post does not say how many findings it will send')
+}
+await cards.first().locator('button:has-text("Drop")').click()
 await page.waitForTimeout(300)
-if (!/1 finding . 0 inline . 1 in the summary/.test(await card.innerText())) {
-  fail('dropping a finding did not update the counts')
+if (!(await page.locator('.post').innerText()).includes('1')) {
+  fail('dropping a finding did not change what Post promises')
+}
+
+// Keyboard, because a review is a rhythm rather than a page you scroll.
+// Dropping the last one is a decision, not a dead end: the summary is still a
+// review, so the button changes what it promises rather than going grey.
+await page.keyboard.press('j')
+await page.keyboard.press('d')
+await page.waitForTimeout(300)
+if (!(await page.locator('.post').innerText()).toLowerCase().includes('summary')) {
+  fail('with every finding dropped, Post does not say it will send the summary alone')
 }
 
 await page.screenshot({ path: '/tmp/review-draft.png' })
 if (crashes.length) fail('uncaught page exception: ' + crashes.join(' | '))
-console.log('PASS: dashboard survives no App, Settings refuses a bad key, draft card renders and prunes')
+console.log('PASS: no App is invisible, a bad key is refused, and a review opens on its findings')
 await browser.close()

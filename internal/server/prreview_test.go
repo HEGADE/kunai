@@ -134,10 +134,20 @@ func TestKeptFiltersTheDraft(t *testing.T) {
 		t.Error("the summary should survive pruning")
 	}
 
-	// An empty selection means "all of them", so a client with no pruning still
-	// posts a complete review rather than an empty one.
+	// A NIL selection is a client that does not prune, and must post everything.
 	if all := kept(draft, nil); len(all.Findings) != 3 {
-		t.Errorf("an empty selection kept %d findings, want all 3", len(all.Findings))
+		t.Errorf("a nil selection kept %d findings, want all 3", len(all.Findings))
+	}
+
+	// An EMPTY selection is somebody who read every finding and dropped them all.
+	// Treating that as "post everything" published the lot, which is the worst
+	// possible reading of that gesture; the summary alone is what they asked for.
+	none := kept(draft, []int{})
+	if len(none.Findings) != 0 {
+		t.Errorf("dropping every finding still posted %d of them", len(none.Findings))
+	}
+	if none.Summary != "s" {
+		t.Error("the summary should survive dropping every finding: it is still a review")
 	}
 }
 
