@@ -9,9 +9,15 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/hegade/kunai/internal/claude"
 )
+
+// closeGrace bounds how long a respawn waits for the old driver to finish closing
+// before going ahead without it. Generous, because the normal case takes
+// milliseconds and this is only a backstop against a pump that cannot exit.
+const closeGrace = 10 * time.Second
 
 // Manager owns all live sessions. It is safe for concurrent use.
 type Manager struct {
@@ -363,7 +369,20 @@ func (m *Manager) restart(ctx context.Context, id string, ov restartOverride, se
 	dir := spec.configDir() // where the resumed process reads its transcript
 
 	old.Close()
-	<-old.Done()
+	// Bounded, because this wait is the last thing standing between a wedged
+	// session and a person who cannot get their work off a walled account. Done()
+	// closes when the driver's event pump exits, so anything that blocks that pump
+	// blocks this forever, and an unbounded wait here turns one stuck session into
+	// an account switch that never answers (the HTTP handler's own timeout cannot
+	// help: a channel receive does not watch ctx). Close() has already cancelled
+	// the process and killed it, so the old CLI is gone either way and respawning
+	// is safe; waiting is only about letting the pump finish tidily first. On
+	// timeout, say so and carry on rather than leaving the session unrecoverable.
+	select {
+	case <-old.Done():
+	case <-time.After(closeGrace):
+		log.Printf("session %s: the driver did not finish closing within %s; respawning anyway", id, closeGrace)
+	}
 	m.removeIf(id, old) // synchronous, so the recreate below won't collide
 
 	// The process must be respawned. Three cases, distinguished by whether the CLI

@@ -376,13 +376,24 @@ func (s *Session) afterTurn(turnFailed bool) {
 	// The turn-end hook fires for every session (failover reacts to a wall here),
 	// so it runs before the loop-only early return. Snapshot under the lock, call
 	// after unlocking: the handler may respawn this session.
+	//
+	// And it is dispatched on its own goroutine, never inline, for the same reason
+	// the driver-ended path does it (see the ordering note by close(s.done) in
+	// session.go). afterTurn runs ON the driver event pump, and that goroutine's
+	// exit is what closes s.done. A handler that respawns this session waits on
+	// Done(), so calling it inline deadlocked the pump against itself: failover
+	// reacting to a spent window killed the CLI, then blocked forever waiting for
+	// the pump it was running on to finish. The session was left wedged (dead
+	// process, still listed idle on the walled account) and every later restart --
+	// including a manual account switch from the app -- blocked on the same
+	// Done(), so the request never answered and nothing appeared to change.
 	hook := s.onTurnEnd
 	rl := s.rateLimited
 	l := s.loop
 	if s.closed || l == nil || l.state != LoopRunning {
 		s.mu.Unlock()
 		if hook != nil {
-			hook(rl, false)
+			go hook(rl, false)
 		}
 		return
 	}
@@ -413,7 +424,7 @@ func (s *Session) afterTurn(turnFailed bool) {
 		// running when this turn began, so a handler that must not act mid-run (as
 		// failover must not) can still tell.
 		if hook != nil {
-			hook(rl, true)
+			go hook(rl, true)
 		}
 		return
 	}

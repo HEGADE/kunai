@@ -427,3 +427,41 @@ func TestTurnEndHookReportsRateLimit(t *testing.T) {
 	check("allowed_warning", false) // approaching the limit is NOT a wall
 	check("", false)                // an ordinary turn
 }
+
+// The turn-end hook must not run on the driver event pump, because the pump's exit
+// is what closes Done() and the hook's whole job is to respawn the session, which
+// waits on Done() (Manager.restart). Called inline, failover reacting to a spent
+// window deadlocked the pump against itself: the CLI was killed, Done() never
+// closed, and the session was left wedged on the walled account -- after which
+// every later restart, including a manual account switch from the app, blocked on
+// the same Done() and never answered. This drives the real path and asserts the
+// respawn's wait can complete.
+func TestTurnEndHookDoesNotDeadlockRespawn(t *testing.T) {
+	f := newFakeDriver()
+	s := newSession("wall", "/tmp/p", "", f)
+	defer s.Close()
+
+	finished := make(chan struct{})
+	s.SetTurnEndHook(func(rl, _ bool) {
+		if !rl {
+			return
+		}
+		// Exactly what switchSessionToAccount -> Manager.restart does.
+		s.Close()
+		<-s.Done()
+		close(finished)
+	})
+
+	if err := s.Prompt("do the thing", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	waitPrompts(t, f, 1)
+	f.events <- claude.Event{Kind: claude.EventRateLimit, Window: "seven_day", ResetsAt: 1, LimitStatus: "rejected"}
+	endTurn(f, 0.01)
+
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the turn-end hook deadlocked waiting on Done(): it is running on the pump goroutine whose exit closes it")
+	}
+}
