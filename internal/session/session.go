@@ -87,6 +87,7 @@ type Session struct {
 	lastCostUSD     float64 // running session total from the CLI, to difference per turn
 	turnFrom        Origin  // who started the turn now running; see origin.go
 	turnStartedAt   int64   // unix ms the running turn began; 0 when nothing runs
+	turnEndedAt     int64   // unix ms the last turn finished; 0 until one has
 	buf             *ring
 	subs            map[*Subscriber]struct{}
 	queue           []*queuedPrompt // prompts waiting for the running turn to end
@@ -112,8 +113,8 @@ type Session struct {
 	// is spent (failover reacts to that); inLoop says a self-prompting run was
 	// still going when the turn began, so a handler that must not act mid-run can
 	// tell even though the loop may have stopped by the time it is called.
-	onTurnEnd func(rateLimited, inLoop bool)
-	loopPersist  func(LoopPersist)      // save/clear a running loop so it survives a restart
+	onTurnEnd   func(rateLimited, inLoop bool)
+	loopPersist func(LoopPersist) // save/clear a running loop so it survives a restart
 	// checkpointHook, if set, snapshots the working tree at the start of a turn --
 	// synchronously, BEFORE the prompt reaches the CLI, so the checkpoint is the true
 	// pre-turn state (a later capture would race the agent's first edit). seq is the
@@ -1013,6 +1014,14 @@ func (s *Session) setState(state string) {
 	// permission answer is the SAME turn paused, so clearing it there would
 	// restart the count from zero on approval and make a long turn look young.
 	if state == StateIdle {
+		// The end is stamped only when a turn was actually running: abandonTurn
+		// zeroes the clock before it sets idle precisely so a prompt the CLI
+		// refused never reads as finished work. This timestamp is what lets a
+		// client say "the agent finished while you were away" (unread Done),
+		// so a false stamp would light rows up for work that never happened.
+		if s.turnStartedAt != 0 {
+			s.turnEndedAt = time.Now().UnixMilli()
+		}
 		s.turnStartedAt = 0
 	}
 	sequenced := s.sequenceLocked(AppEvent{T: EvState, State: state})
@@ -1058,6 +1067,13 @@ type Meta struct {
 	// A resumed session has no running turn and therefore no duration, which is
 	// the honest answer rather than a clock started at the reopen.
 	TurnStartedAt int64 `json:"turn_started_at,omitempty"`
+	// TurnEndedAt is when the last turn finished, unix milliseconds, 0 until one
+	// has. It is the other half of the attention story: TurnStartedAt says how
+	// long a session has been working, this says when it stopped, which is what a
+	// client compares against "when did I last look" to mark a session Done and
+	// unread. Only a turn that actually ran stamps it (see setState), so a
+	// refused prompt or a resumed session never claims finished work.
+	TurnEndedAt int64 `json:"turn_ended_at,omitempty"`
 	// Pinned is a user override the server merges in from its session-metadata
 	// store; the session itself never sets it (a live session doesn't know it is
 	// pinned). Kept here so the live list and the Recent list carry the same flag.
@@ -1066,6 +1082,13 @@ type Meta struct {
 	// directory. Like Pinned it is merged in by the server from the override
 	// store, not set by the session.
 	Workspace string `json:"workspace,omitempty"`
+	// SnoozedUntil and SnoozedAt park this session on the sidebar's snoozed
+	// shelf, unix ms. Merged in by the server like Pinned; the session itself
+	// never sets them. The client wakes the row early when the session needs its
+	// person, so these are a display promise rather than anything the session
+	// acts on.
+	SnoozedUntil int64 `json:"snoozed_until,omitempty"`
+	SnoozedAt    int64 `json:"snoozed_at,omitempty"`
 	// Projects counts the codebases this session has context for. One is an
 	// ordinary session; more than one is what makes it a workspace, and is the
 	// signal the client uses to offer naming it. The session does know this, so
@@ -1091,7 +1114,7 @@ func (s *Session) Meta() Meta {
 	return Meta{
 		ID: s.ID, Cwd: s.Cwd, Model: s.model, Effort: s.effort, CLI: s.cliName,
 		Title: s.title, State: s.state, CreatedAt: s.CreatedAt,
-		Projects: len(s.projects), TurnStartedAt: s.turnStartedAt,
+		Projects: len(s.projects), TurnStartedAt: s.turnStartedAt, TurnEndedAt: s.turnEndedAt,
 	}
 }
 

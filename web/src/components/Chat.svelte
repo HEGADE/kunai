@@ -9,6 +9,7 @@
   import { MODELS, EFFORTS, modelLabel, modelOptionLabel, modelFamily, effortLabel } from '../lib/models'
   import { PERMISSION_MODES, permissionLabel } from '../lib/permissions'
   import { setReloadGuard } from '../lib/updater'
+  import { visited } from '../lib/visited.svelte'
   import PermissionGate from './PermissionGate.svelte'
   import Context from './Context.svelte'
   import Queued from './Queued.svelte'
@@ -107,6 +108,23 @@
       armTimer = setTimeout(() => (armClose = false), 3000)
     }
   }
+
+  // Watching a turn finish is reading it: without this, a session you sat and
+  // watched complete would light up "Done · unread" in the sidebar the moment
+  // it ended, claiming you missed something you were looking straight at. Only
+  // stamped while this tab is the active one and the page is actually visible,
+  // because a backgrounded tab is exactly the "away" the unread mark exists for.
+  $effect(() => {
+    if (chat.sessionState !== 'running' && chat.sessionState !== 'starting') {
+      if (
+        document.visibilityState === 'visible' &&
+        app.activeId === chat.sessionId &&
+        app.activeMachineId
+      ) {
+        visited.touch(app.activeMachineId, chat.sessionId)
+      }
+    }
+  })
 
   // The rate-limit banner is a statement about a clock, so it has to obey one:
   // `now` ticks so the countdown moves, and so the banner leaves on its own the

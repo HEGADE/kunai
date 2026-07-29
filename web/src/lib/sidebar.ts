@@ -55,6 +55,37 @@ export function isAwaiting(s: Stateful): boolean {
   return s.state === 'awaiting_permission'
 }
 
+// isUnreadDone reports "the agent finished while you were away": the session is
+// idle, its last turn ended after this device last looked at it, and this
+// device HAS looked at it (a session never visited here counts as read, so a
+// fresh install does not light the whole list up as just-finished).
+//
+// This is the row the attention model makes loud. The inversion comes from
+// t3code's sidebar and it is the part worth copying exactly: a WORKING session
+// is not your problem yet -- there is nothing to do until it stops -- so it
+// recedes, and the prominence is saved for the one that stopped with results
+// you have not seen. Most agent UIs make the running row the loudest, which
+// optimises for watching agents instead of for acting on them.
+export function isUnreadDone(
+  s: Stateful & { turn_ended_at?: number },
+  visitedAt: number,
+): boolean {
+  if (isWorking(s) || isAwaiting(s)) return false
+  return !!s.turn_ended_at && visitedAt > 0 && s.turn_ended_at > visitedAt
+}
+
+// recedes reports a row with nothing for you in it right now: working (nothing
+// to do until it stops) with nothing unread. The active row and one waiting on
+// you are never receded, and idle rows keep their ordinary weight -- receding
+// is for motion, not for rest.
+export function recedes(
+  s: Stateful & { turn_ended_at?: number },
+  visitedAt: number,
+  isActive: boolean,
+): boolean {
+  return isWorking(s) && !isActive && !isUnreadDone(s, visitedAt)
+}
+
 // summarise is the line beside a folder's name, or '' when there is nothing
 // truthful to say. "Needs you" comes last because it is what the eye should stop
 // on, and it is never merged into the working count: an agent waiting on you is
