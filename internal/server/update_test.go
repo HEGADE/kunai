@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -23,19 +24,27 @@ func fakeRelease(t *testing.T, asset string, content []byte, corrupt bool) {
 	if corrupt {
 		served = append([]byte("tampered"), content...)
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch filepath.Base(r.URL.Path) {
-		case "checksums.txt":
+	// Served the way GitHub does: a release describing its assets, each fetched
+	// by ID rather than by name. Assets are addressed by id precisely so a
+	// re-upload cannot be served from a cache under the old name.
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/release":
+			_, _ = fmt.Fprintf(w, `{"tag_name":"nightly","assets":[
+				{"id":1,"name":"checksums.txt","url":"%s/assets/1"},
+				{"id":2,"name":%q,"url":"%s/assets/2"}]}`, srv.URL, asset, srv.URL)
+		case "/assets/1":
 			_, _ = w.Write([]byte(checksums))
-		case asset:
+		case "/assets/2":
 			_, _ = w.Write(served)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
-	orig := releaseBase
-	releaseBase = srv.URL
-	t.Cleanup(func() { releaseBase = orig; srv.Close() })
+	orig := releaseAPI
+	releaseAPI = srv.URL + "/release"
+	t.Cleanup(func() { releaseAPI = orig; srv.Close() })
 }
 
 // applyUpdate must download, verify, and atomically swap the new bytes over the
@@ -92,33 +101,78 @@ func TestApplyUpdateChecksumMismatchLeavesBinary(t *testing.T) {
 
 // checksumFor must pick the right hash out of an sha256sum-format checksums.txt
 // (two-space separated, one line per asset) and error when the asset is absent.
-func TestChecksumFor(t *testing.T) {
+func TestChecksumFrom(t *testing.T) {
 	const body = "aaa111  kunai-linux-amd64\n" +
 		"bbb222  kunai-darwin-arm64\n" +
 		"ccc333  kunai-linux-arm64\n"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/checksums.txt" {
-			http.NotFound(w, r)
-			return
-		}
 		_, _ = w.Write([]byte(body))
 	}))
 	defer srv.Close()
 
-	orig := releaseBase
-	releaseBase = srv.URL
-	defer func() { releaseBase = orig }()
+	rel := release{Assets: []releaseAsset{{ID: 1, Name: "checksums.txt", URL: srv.URL}}}
 
-	got, err := checksumFor(srv.Client(), "kunai-darwin-arm64")
+	got, err := checksumFrom(srv.Client(), rel, "kunai-darwin-arm64")
 	if err != nil {
-		t.Fatalf("checksumFor: %v", err)
+		t.Fatalf("checksumFrom: %v", err)
 	}
 	if got != "bbb222" {
 		t.Fatalf("got %q, want bbb222", got)
 	}
 
-	if _, err := checksumFor(srv.Client(), "kunai-windows-amd64"); err == nil {
+	if _, err := checksumFrom(srv.Client(), rel, "kunai-windows-amd64"); err == nil {
 		t.Fatal("expected error for a missing asset")
+	}
+}
+
+// The bug this whole change exists for. GitHub redirects a name-based asset URL
+// to a CDN that caches by URL, so a re-uploaded nightly served the PREVIOUS
+// build for a window after publishing. Two updates in a row installed the build
+// already running, and the checksum did not catch it because checksums.txt was
+// fetched by name too: a stale binary and a stale checksum are consistent with
+// each other.
+//
+// Resolving through the release means every asset is addressed by an id that
+// changes on re-upload, and both come from ONE read, so they cannot be from
+// different generations.
+func TestAssetsComeFromOneReadOfTheRelease(t *testing.T) {
+	var reads int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/release" {
+			reads++
+			_, _ = fmt.Fprintf(w, `{"tag_name":"nightly","assets":[
+				{"id":7,"name":"checksums.txt","url":"%s/assets/7"}]}`, "http://example.invalid")
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	orig := releaseAPI
+	releaseAPI = srv.URL + "/release"
+	defer func() { releaseAPI = orig }()
+
+	rel, err := fetchRelease(srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reads != 1 {
+		t.Errorf("read the release %d times, want exactly one", reads)
+	}
+	// Every asset is addressed by its id, which is what a re-upload changes and
+	// therefore what a CDN cannot serve stale under an old name.
+	a, err := rel.find("checksums.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.ID != 7 || !strings.Contains(a.URL, "/assets/7") {
+		t.Errorf("asset = %+v, want it addressed by id", a)
+	}
+	// A release that does not carry what we need says so by name, rather than
+	// failing later with a 404 nobody can act on.
+	if _, err := rel.find("kunai-linux-amd64"); err == nil ||
+		!strings.Contains(err.Error(), "checksums.txt") {
+		t.Errorf("a missing asset should name what the release does have, got %v", err)
 	}
 }
 
@@ -141,11 +195,16 @@ func TestApplyUpdateRetriesThroughPublishWindow(t *testing.T) {
 	checksums := fmt.Sprintf("%s  %s\n", hex.EncodeToString(sum[:]), asset)
 
 	var assetHits int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch filepath.Base(r.URL.Path) {
-		case "checksums.txt":
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/release":
+			_, _ = fmt.Fprintf(w, `{"tag_name":"nightly","assets":[
+				{"id":1,"name":"checksums.txt","url":"%s/assets/1"},
+				{"id":2,"name":%q,"url":"%s/assets/2"}]}`, srv.URL, asset, srv.URL)
+		case "/assets/1":
 			_, _ = w.Write([]byte(checksums))
-		case asset:
+		case "/assets/2":
 			assetHits++
 			if assetHits == 1 {
 				_, _ = w.Write(append([]byte("mid-publish"), content...)) // stale bytes
@@ -156,9 +215,9 @@ func TestApplyUpdateRetriesThroughPublishWindow(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
-	orig := releaseBase
-	releaseBase = srv.URL
-	t.Cleanup(func() { releaseBase = orig; srv.Close() })
+	orig := releaseAPI
+	releaseAPI = srv.URL + "/release"
+	t.Cleanup(func() { releaseAPI = orig; srv.Close() })
 
 	self := filepath.Join(t.TempDir(), "kunai")
 	if err := os.WriteFile(self, []byte("old-kunai"), 0o755); err != nil {
