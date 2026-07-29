@@ -4,6 +4,7 @@
   import { enablePush, disablePush, isSubscribed, pushState } from '../lib/push'
   import { setKeepAwake, setThermal, setLid, setFailover, getCLIs, setCLIs } from '../lib/api'
   import type { Machine, CLIProfile } from '../lib/types'
+  import GitHubApp from './GitHubApp.svelte'
 
   const st = $derived(app.stats)
   const supported = pushState() !== 'unsupported'
@@ -518,6 +519,10 @@
               {/if}
             </div>
           {/if}
+
+          <!-- Reviewing pull requests: the App this machine posts as, and who
+               to credit for asking. Per machine, like every other credential. -->
+          <GitHubApp machineId={selM.id} />
 
           {#if accounts[selM.id]}
             <div class="grp">Claude accounts</div>

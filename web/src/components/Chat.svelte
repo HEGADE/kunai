@@ -24,11 +24,13 @@
   import BlockView from './BlockView.svelte'
   import ScheduleAfter from './ScheduleAfter.svelte'
   import ToolGroup from './ToolGroup.svelte'
+  import LiveActivity from './LiveActivity.svelte'
   import Tabs from './Tabs.svelte'
   import SessionInfo from './SessionInfo.svelte'
   import WorktreeCard from './WorktreeCard.svelte'
   import TurnFooter from './TurnFooter.svelte'
   import TurnChanges from './TurnChanges.svelte'
+  import ReviewDraft from './ReviewDraft.svelte'
   import ShareDialog from './ShareDialog.svelte'
 
   let { chat }: { chat: ChatConnection } = $props()
@@ -58,6 +60,15 @@
 
 
   let draft = $state('')
+  // A finding picked in the review view arrives here as the start of a message,
+  // so "why do you think this?" carries its subject rather than making you
+  // retype the file and line. Consumed once: it is a handoff, not a setting.
+  $effect(() => {
+    if (!app.reviewAsk) return
+    draft = app.reviewAsk
+    app.reviewAsk = ''
+    queueMicrotask(() => textarea?.focus())
+  })
   let scroller = $state<HTMLElement | null>(null)
   let textarea = $state<HTMLTextAreaElement | null>(null)
   let fileInput = $state<HTMLInputElement | null>(null)
@@ -149,6 +160,11 @@
     const m = Math.floor((s % 3600) / 60)
     return h ? `${h}h ${m}m` : `${m}m`
   }
+  // Whether the live activity stream is expanded. Held here rather than inside
+  // the component so it survives the turn's re-renders: a disclosure that closed
+  // itself every time a tool call came back would be unusable exactly while you
+  // were trying to read it.
+  let liveOpen = $state(false)
   let modeOpen = $state(false)
   let modelOpen = $state(false)
   let effortOpen = $state(false)
@@ -470,6 +486,13 @@
         </div>
       {/if}
       <div class="log">
+        <!-- A review session's findings, pinned above the work rather than
+             buried under it. The card is the POINT of this session: while the
+             review runs it is the progress display, and when it finishes it is
+             the thing you act on. Putting it at the bottom meant scrolling past
+             minutes of tool calls to reach the only part that matters.
+             Self-hides when this session is not a review. -->
+        <ReviewDraft sessionId={chat.sessionId} machineId={app.activeMachineId ?? ''} />
         {#each turns as turn, ti (firstVisible + ti)}
           {@const live = firstVisible + ti === allTurns.length - 1 && (running || !!chat.streaming || !!chat.thinking)}
           {#if turn.project}
@@ -501,7 +524,12 @@
             <div class="turn">
               <div class="assistant">
                 {#if live}
-                  {#each turn.blocks as b, j (j)}
+                  <!-- While it runs, one line saying what it is doing now, with
+                       the stream behind a disclosure. Rendering every block
+                       inline is what made watching an agent read forty files
+                       push the work off the screen. -->
+                  <LiveActivity blocks={turn.blocks} {chat} bind:open={liveOpen} />
+                  {#each turn.blocks.filter((b) => b.type !== 'tool_use') as b, j (j)}
                     <BlockView block={b} {chat} />
                   {/each}
                 {:else}

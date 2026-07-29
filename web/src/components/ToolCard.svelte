@@ -26,6 +26,14 @@
   } = $props()
   let open = $state(false)
   const label = $derived(describe(name, input, result))
+  // The file this tool was pointed at, when it was pointed at one. Passed to the
+  // result so a Read of a .go file renders as Go and a Read of a .diff as a
+  // diff, rather than as undifferentiated grey text.
+  const resultPath = $derived.by(() => {
+    const i = (input ?? {}) as Record<string, unknown>
+    const p = i.file_path ?? i.notebook_path ?? i.path
+    return typeof p === 'string' ? p : ''
+  })
   // A tool has no result until it reports back. For most tools that window is a
   // blink; for an Agent it can be the whole time it works in the background, so
   // the card stays "running" until its result arrives (a later frame, correlated
@@ -86,7 +94,9 @@
       <ToolBody {name} {input} />
       <AgentTrace blocks={nested} streaming={nestedStreaming} results={nestedResults} />
       {#if result}
-        <ResultView {result} />
+        <!-- The tool's own path is a hint for how to render what came back: a
+             Read of a .go file is Go, a Read of a .diff is a diff. -->
+        <ResultView {result} path={resultPath} />
       {:else if running}
         <div class="pending">
           <span class="spin"></span>

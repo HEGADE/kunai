@@ -36,18 +36,11 @@ const updateTimeout = 90 * time.Second
 // newest tagged release — the two coexist on one machine without crossing over.
 var buildChannel = "stable"
 
-// releaseBase is the asset directory the self-updater pulls from, chosen by the
-// build's channel; a var so tests can point it at a local server. The nightly
-// channel is a single moving pre-release tagged "nightly" whose assets CI
-// overwrites on every push, so /releases/download/nightly is always the latest.
-var releaseBase = channelReleaseBase()
-
-func channelReleaseBase() string {
-	if buildChannel == "nightly" {
-		return "https://github.com/HEGADE/kunai/releases/download/nightly"
-	}
-	return "https://github.com/HEGADE/kunai/releases/latest/download"
-}
+// Assets are resolved through the release API (see updatesource.go), not through
+// the name-based /releases/download/... URLs this used to use. Those are served
+// via a CDN that caches by URL, so a nightly whose assets CI had just replaced
+// went on handing out the previous build, and because checksums.txt was fetched
+// the same way the stale pair verified against itself.
 
 // nightlyChannel reports "nightly" for a nightly build and "" otherwise, so the
 // client only sees a channel when it is the non-default one.
@@ -201,7 +194,19 @@ func (p *progressWriter) Write(b []byte) (int, error) {
 func downloadAndVerify(asset, dir string, progress func(done, total int64)) (string, error) {
 	client := &http.Client{Timeout: updateTimeout}
 
-	want, err := checksumFor(client, asset)
+	// ONE read of the release, so the binary and its checksum cannot come from
+	// different generations. Fetching them separately by name is what let a stale
+	// download match a stale checksum and install the previous build twice; see
+	// updatesource.go.
+	rel, err := fetchRelease(client)
+	if err != nil {
+		return "", err
+	}
+	want, err := checksumFrom(client, rel, asset)
+	if err != nil {
+		return "", err
+	}
+	binary, err := rel.find(asset)
 	if err != nil {
 		return "", err
 	}
@@ -213,16 +218,12 @@ func downloadAndVerify(asset, dir string, progress func(done, total int64)) (str
 	tmpPath := tmp.Name()
 	cleanup := func() { _ = tmp.Close(); _ = os.Remove(tmpPath) }
 
-	resp, err := client.Get(releaseBase + "/" + asset)
+	resp, err := openAsset(client, binary)
 	if err != nil {
 		cleanup()
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		cleanup()
-		return "", fmt.Errorf("download %s: HTTP %d", asset, resp.StatusCode)
-	}
 
 	h := sha256.New()
 	dst := io.MultiWriter(tmp, h)
@@ -244,17 +245,21 @@ func downloadAndVerify(asset, dir string, progress func(done, total int64)) (str
 	return tmpPath, nil
 }
 
-// checksumFor pulls checksums.txt from the release and returns the expected
-// sha256 for asset. Lines are "<hash>  <filename>" (sha256sum format).
-func checksumFor(client *http.Client, asset string) (string, error) {
-	resp, err := client.Get(releaseBase + "/checksums.txt")
+// checksumFrom reads checksums.txt out of an already-fetched release and returns
+// the expected sha256 for asset. Lines are "<hash>  <filename>" (sha256sum).
+//
+// Takes the release rather than fetching by name so the checksum provably
+// belongs to the same generation as the binary beside it.
+func checksumFrom(client *http.Client, rel release, asset string) (string, error) {
+	sums, err := rel.find("checksums.txt")
+	if err != nil {
+		return "", err
+	}
+	resp, err := openAsset(client, sums)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("checksums.txt: HTTP %d", resp.StatusCode)
-	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if err != nil {
 		return "", err

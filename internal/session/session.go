@@ -72,11 +72,17 @@ type Session struct {
 	// It is spawn-time only, so like effort it has to be carried across a restart
 	// or an effort/account change would silently drop it.
 	appendPrompt string
-	// disallowedTools is the toolset withheld while this session is shared with
-	// somebody who is not its owner. Spawn-time, like appendPrompt, and carried by
-	// spawnSpec for the same reason with a much sharper edge: losing it hands a
-	// guest the tools the share exists to withhold.
+	// disallowedTools is the toolset withheld from this session. Spawn-time, like
+	// appendPrompt, and carried by spawnSpec for the same reason with a much
+	// sharper edge: losing it hands a guest the tools the share exists to withhold.
 	disallowedTools []string
+	// toolsOwner names the feature that withheld them, and exists because more
+	// than one now does. A share reconciles restrictions against its own store and
+	// gives back the toolset of any session whose share has ended; with no owner to
+	// check it read "has withheld tools" as "was shared", so it respawned a pull
+	// request review a minute after it started and killed the running turn. Whoever
+	// imposed a restriction is the only one who may lift it.
+	toolsOwner      string
 	title           string
 	claudeSessionID string // CLI-assigned id, for --resume cold-start
 	state           string
@@ -114,7 +120,11 @@ type Session struct {
 	// is spent (failover reacts to that); inLoop says a self-prompting run was
 	// still going when the turn began, so a handler that must not act mid-run can
 	// tell even though the loop may have stopped by the time it is called.
-	onTurnEnd   func(rateLimited, inLoop bool)
+	onTurnEnd func(rateLimited, inLoop bool)
+	// onAnswer is given the model's spoken text at the end of every turn.
+	// Separate from onTurnEnd because a session has one of those and failover
+	// owns it, and because this one must not be missable: see answer.go.
+	onAnswer    func(text string)
 	loopPersist func(LoopPersist) // save/clear a running loop so it survives a restart
 	// checkpointHook, if set, snapshots the working tree at the start of a turn --
 	// synchronously, BEFORE the prompt reaches the CLI, so the checkpoint is the true
@@ -711,6 +721,18 @@ func (s *Session) AddProject(info project.Info) error {
 	})
 }
 
+// PromptBrief sends the model a body of context it must read but nobody wants to
+// read back: a pull request's diff and the instructions for reviewing it.
+//
+// Silent, because a prompt is shown as something you said and this is not that.
+// Sent as an ordinary user turn it printed the entire brief into the chat, a
+// wall of schema and rules above the work, and the actual conversation started
+// several screens down. The label is what the queue shows if the turn has to
+// wait, and the card the caller renders is the conversation's record of it.
+func (s *Session) PromptBrief(text, label string) error {
+	return s.prompt(&queuedPrompt{Text: text, label: label, silent: true})
+}
+
 // Projects lists the codebases this session has context for.
 // DisallowedTools is the toolset currently withheld from this session, so a
 // caller can tell whether a respawn would actually change anything.
@@ -718,6 +740,14 @@ func (s *Session) DisallowedTools() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.disallowedTools...)
+}
+
+// ToolsOwner names whatever withheld those tools, so a feature that reconciles
+// its own restrictions can tell them apart from somebody else's.
+func (s *Session) ToolsOwner() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.toolsOwner
 }
 
 // HighSeq is the newest event number this session has emitted. A share made

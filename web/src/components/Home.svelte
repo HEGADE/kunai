@@ -5,6 +5,7 @@
   import type { Usage, UsageWindow } from '../lib/types'
   import { noWorktree, worktreeBranches, type BranchList, type WorktreeChoice } from '../lib/worktrees'
   import Schedules from './Schedules.svelte'
+  import PullRequests from './PullRequests.svelte'
   import Spinner from './Spinner.svelte'
   import WorktreeChoicePicker from './WorktreeChoice.svelte'
 
@@ -21,6 +22,28 @@
       null,
   )
   const st = $derived(sel?.stats ?? null)
+  // The repositories this machine has open, which is exactly the set a review
+  // can run against: reviewing needs a real checkout to build a worktree from.
+  // Derived from the sessions and history kunai already has rather than from a
+  // list somebody maintains, so a repo you work in is reviewable with no setup.
+  // A worktree session points at its repository, not at its own directory.
+  const reviewRepos = $derived.by(() => {
+    if (!sel) return []
+    const seen = new Map<string, { machineId: string; cwd: string; label: string }>()
+    const add = (machineId: string, repo?: string, cwd?: string) => {
+      const dir = (repo || cwd || '').replace(/\/+$/, '')
+      if (!dir || machineId !== sel.id || seen.has(dir)) return
+      // A review's own throwaway checkout is not a repository. The server tags
+      // those sessions with the repo they are reviewing, but a record it cannot
+      // resolve would otherwise put the worktree directory here and list the same
+      // pull requests twice, once under a heading named after the PR number.
+      if (/\/worktrees\/[^/]+\/review\/[^/]+$/.test(dir)) return
+      seen.set(dir, { machineId, cwd: dir, label: dir.split('/').pop() || dir })
+    }
+    for (const s of app.sessions) add(s.machineId, s.repo, s.cwd)
+    for (const h of app.history) add(h.machineId, h.repo, h.cwd)
+    return [...seen.values()]
+  })
   const selSessions = $derived(sel ? app.sessions.filter((s) => s.machineId === sel.id).length : 0)
   const selResumable = $derived(sel ? app.history.filter((h) => h.machineId === sel.id).length : 0)
 
@@ -651,6 +674,10 @@
         {#if st.claude_version}<span> · claude {st.claude_version}</span>{/if}
       </p>
     {/if}
+    <!-- The pull requests on the repositories this machine has open, each one a
+         click away from a review. Below the machine's own numbers, because it is
+         work you might pick up rather than the state of the box. -->
+    <PullRequests repos={reviewRepos} />
     <Schedules />
   </div>
 </div>

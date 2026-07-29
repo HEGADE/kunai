@@ -131,6 +131,35 @@ dl_file() {
   elif command -v wget >/dev/null 2>&1; then wget -q --timeout=600 -O "$2" "$1"
   else return 1; fi
 }
+# dl_asset/dl_asset_stdout fetch a release asset BY ITS API URL. The octet-stream
+# Accept header is what makes the API return the bytes rather than the JSON that
+# describes them.
+dl_asset() {
+  if command -v curl >/dev/null 2>&1; then curl -fsSL -m 600 -H 'Accept: application/octet-stream' -o "$2" "$1"
+  elif command -v wget >/dev/null 2>&1; then wget -q --timeout=600 --header='Accept: application/octet-stream' -O "$2" "$1"
+  else return 1; fi
+}
+dl_asset_stdout() {
+  [ -n "$1" ] || return 1
+  if command -v curl >/dev/null 2>&1; then curl -fsSL -m 30 -H 'Accept: application/octet-stream' "$1"
+  elif command -v wget >/dev/null 2>&1; then wget -qO- --timeout=30 --header='Accept: application/octet-stream' "$1"
+  else return 1; fi
+}
+# asset_url picks one asset's API URL out of a release payload, by name.
+#
+# Parsed with awk rather than jq, which this script cannot assume. Within an
+# asset GitHub emits "url" before "name", so the last url seen when a matching
+# name appears is that asset's own. The uploader object nested inside carries a
+# "url" too, but it comes after the name and is overwritten by the next asset's
+# url before that asset's name is reached. "browser_download_url" and "html_url"
+# do not match, because the character before `url` there is an underscore rather
+# than a quote.
+asset_url() {
+  printf '%s\n' "$1" | awk -v want="$2" '
+    /"url":/ { u=$0; sub(/.*"url": *"/,"",u); sub(/".*/,"",u) }
+    /"name":/ { n=$0; sub(/.*"name": *"/,"",n); sub(/".*/,"",n); if (n==want) { print u; exit } }
+  '
+}
 # sha256_of prints the hex sha256 of a file (empty if no hasher is available).
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
@@ -268,16 +297,30 @@ fi
 # wget only — no gh, git, or Go) and verify its sha256. This is what makes
 # `curl -fsSL .../install.sh | bash` work; re-running it later updates in place.
 if [ -z "$BIN" ]; then
+  # Resolved through the release API, not through /releases/download/<tag>/<name>.
+  # Those name-based URLs are served by a CDN that caches BY URL, so for a window
+  # after CI replaces an asset the PREVIOUS build is still handed out. That is not
+  # theoretical: a nightly published at 23:36 was still installing the build
+  # before it at 23:37, twice in a row. Every re-upload gets a new asset id, so
+  # addressing assets by id leaves no shared URL to cache, and reading the release
+  # once means the binary and its checksum cannot come from different generations
+  # (which is why the checksum did not catch it: both halves were equally stale).
   if [ "$CHANNEL" = "nightly" ]; then
-    REL="https://github.com/HEGADE/kunai/releases/download/nightly"
+    REL_API="https://api.github.com/repos/HEGADE/kunai/releases/tags/nightly"
   else
-    REL="https://github.com/HEGADE/kunai/releases/latest/download"
+    REL_API="https://api.github.com/repos/HEGADE/kunai/releases/latest"
   fi
   out="$DATA_DIR/kunai-$PLAT"
   mkdir -p "$DATA_DIR"
   say "${C_DIM}downloading prebuilt kunai ($PLAT, $CHANNEL) ...${C_RST}"
-  if dl_file "$REL/kunai-$PLAT" "$out"; then
-    want="$(dl_stdout "$REL/checksums.txt" 2>/dev/null | awk -v f="kunai-$PLAT" '{n=$2; sub(/^\*/,"",n); if (n==f) print $1}' | head -1)"
+
+  # One read of the release, then each asset by its own id.
+  REL_JSON="$(dl_stdout "$REL_API" 2>/dev/null || true)"
+  BIN_URL="$(asset_url "$REL_JSON" "kunai-$PLAT")"
+  SUM_URL="$(asset_url "$REL_JSON" "checksums.txt")"
+
+  if [ -n "$BIN_URL" ] && dl_asset "$BIN_URL" "$out"; then
+    want="$(dl_asset_stdout "$SUM_URL" 2>/dev/null | awk -v f="kunai-$PLAT" '{n=$2; sub(/^\*/,"",n); if (n==f) print $1}' | head -1)"
     got="$(sha256_of "$out")"
     if [ -n "$want" ] && [ -n "$got" ] && [ "$want" != "$got" ]; then
       rm -f "$out"; fail "checksum mismatch for kunai-$PLAT (expected $want, got $got)"

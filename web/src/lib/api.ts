@@ -572,3 +572,146 @@ export function closeFunnel(base: string, port: number): Promise<FunnelState> {
     json<FunnelState>(r),
   )
 }
+
+// --- pull-request review -----------------------------------------------------
+
+// PullRequest is one open pull request on a repository this machine has checked
+// out. reviewed_at is set when kunai has already reviewed THIS commit, which is
+// what turns the Review button into "reviewed 2h ago" rather than spending
+// somebody's quota on a review that already exists.
+export interface PullRequest {
+  number: number
+  title: string
+  author: string
+  base_ref: string
+  head_sha: string
+  draft: boolean
+  from_fork: boolean
+  additions: number
+  deletions: number
+  reviewed_at?: string
+}
+
+// ReviewFinding is one row of the draft. `inline` is the promise the card makes:
+// whether this lands on the line itself or in the summary, and `why` explains a
+// demotion in words meant for a person.
+export interface ReviewFinding {
+  hunk?: HunkLine[]
+  index: number
+  file: string
+  line: number
+  end_line?: number
+  side: string
+  title: string
+  body: string
+  suggestion?: string
+  inline: boolean
+  why?: string
+}
+
+export interface ReviewDraft {
+  owner: string
+  repo: string
+  number: number
+  title: string
+  head_sha: string
+  from_fork: boolean
+  requester?: string
+  posted_url?: string
+  parse_error?: string
+  summary?: string
+  findings?: ReviewFinding[]
+  total?: number
+  inline?: number
+  summary_count?: number
+}
+
+export interface GitHubAppState {
+  configured: boolean
+  app_id?: string
+}
+
+export function githubApp(base: string): Promise<GitHubAppState> {
+  return fetch(at(base, '/api/github/app')).then((r) => json<GitHubAppState>(r))
+}
+
+export function setGitHubApp(
+  base: string,
+  patch: { app_id?: string; private_key?: string; clear?: boolean },
+): Promise<GitHubAppState> {
+  return fetch(at(base, '/api/github/app'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).then((r) => json<GitHubAppState>(r))
+}
+
+export function listPullRequests(base: string, repo: string): Promise<PullRequest[]> {
+  return fetch(at(base, `/api/github/pulls?repo=${encodeURIComponent(repo)}`)).then((r) =>
+    json<PullRequest[]>(r),
+  )
+}
+
+// startReview creates the review session. The caller opens it: from that moment
+// it is an ordinary session you can watch and interrupt.
+export function startReview(
+  base: string,
+  repo: string,
+  number: number,
+  requester: string,
+): Promise<Meta> {
+  return fetch(at(base, '/api/github/review'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ repo, number, requester }),
+  }).then((r) => json<Meta>(r))
+}
+
+export function reviewDraft(base: string, sessionId: string): Promise<ReviewDraft> {
+  return fetch(at(base, `/api/sessions/${sessionId}/review`)).then((r) => json<ReviewDraft>(r))
+}
+
+// postReview sends the draft. `keep` is the findings the user did not drop; an
+// empty list means all of them.
+export function postReview(
+  base: string,
+  sessionId: string,
+  keep: number[],
+): Promise<{ url: string }> {
+  return fetch(at(base, `/api/sessions/${sessionId}/review/post`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keep }),
+  }).then((r) => json<{ url: string }>(r))
+}
+
+// ReviewConfig is which account and model reviews run on. Its own setting
+// because a review is chunky and unattended: pointed at a second account or a
+// provider, it can never wall the session you are working in. Empty means the
+// machine's default.
+export interface ReviewConfig {
+  cli?: string
+  model?: string
+}
+
+export function reviewConfig(base: string): Promise<ReviewConfig> {
+  return fetch(at(base, '/api/github/review-config')).then((r) => json<ReviewConfig>(r))
+}
+
+export function setReviewConfig(base: string, cfg: ReviewConfig): Promise<ReviewConfig> {
+  return fetch(at(base, '/api/github/review-config'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg),
+  }).then((r) => json<ReviewConfig>(r))
+}
+
+// One line of diff evidence carried with a finding, so a card can show the code
+// it is about without a second round trip.
+export interface HunkLine {
+  kind: string // " " | "+" | "-"
+  old?: number
+  new?: number
+  text: string
+  focus?: boolean
+}

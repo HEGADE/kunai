@@ -25,7 +25,7 @@ func logShare(format string, args ...any) { log.Printf("share: "+format, args...
 // guest's words reach the model, the model's toolset is already whatever it was
 // spawned with, and there is no second chance to take Bash away.
 func (s *Server) applyShareTier(ctx context.Context, sh *share.Share) error {
-	if err := s.restrictSession(ctx, sh.SessionID, sh.Tier.DisallowedTools(), sh.Mode); err != nil {
+	if err := s.restrictSession(ctx, sh.SessionID, sh.Tier.DisallowedTools(), share.ToolsOwner, sh.Mode); err != nil {
 		return err
 	}
 	// The guard goes on AFTER the respawn, because the respawn produced a new
@@ -48,12 +48,12 @@ func (s *Server) clearShareTier(ctx context.Context, sessionID string) error {
 	if sess, ok := s.mgr.Get(sessionID); ok {
 		sess.SetToolGuard(nil)
 	}
-	return s.restrictSession(ctx, sessionID, nil, "")
+	return s.restrictSession(ctx, sessionID, nil, "", "")
 }
 
 // restrictSession is the one place a session's tool restrictions change, so the
 // respawn and the reasons for it stay together.
-func (s *Server) restrictSession(ctx context.Context, sessionID string, denied []string, mode string) error {
+func (s *Server) restrictSession(ctx context.Context, sessionID string, denied []string, owner, mode string) error {
 	sess, ok := s.mgr.Get(sessionID)
 	if !ok {
 		return nil // already gone; nothing to restrict
@@ -63,7 +63,7 @@ func (s *Server) restrictSession(ctx context.Context, sessionID string, denied [
 		// reconnect and the model a re-read of its context.
 		return nil
 	}
-	next, err := s.mgr.RestartWithTools(ctx, sessionID, denied, mode, loadTranscriptTurns)
+	next, err := s.mgr.RestartWithTools(ctx, sessionID, denied, owner, mode, loadTranscriptTurns)
 	if err != nil {
 		return err
 	}
@@ -89,6 +89,14 @@ const shareReconcile = time.Minute
 // catches every way a share can disappear, including ones nobody has thought of
 // yet, and the check is cheap: a session that was never shared has no
 // restrictions to compare.
+//
+// What it must NOT do is infer the share from the restriction. Withheld tools
+// were a share's signature only while sharing was the one thing that withheld
+// them; a pull request review withholds Bash too, so this read every review as a
+// share that had expired and respawned it about a minute in, killing the turn
+// mid-work. From the outside that looked like the review giving up on its own.
+// The session now records who withheld its tools, and only that owner may give
+// them back.
 func (s *Server) reconcileShares(ctx context.Context) {
 	t := time.NewTicker(shareReconcile)
 	defer t.Stop()
@@ -141,10 +149,11 @@ func (s *Server) restoreOrphanedSessions(ctx context.Context) {
 	}
 	for _, meta := range s.mgr.List() {
 		sess, ok := s.mgr.Get(meta.ID)
-		if !ok || len(sess.DisallowedTools()) == 0 {
-			continue // never shared, or already given back
+		if !ok {
+			continue
 		}
-		if _, live := s.shares.BySession(meta.ID); live {
+		_, live := s.shares.BySession(meta.ID)
+		if !shareShouldRestore(sess.DisallowedTools(), sess.ToolsOwner(), live) {
 			continue
 		}
 		logShare("session %s outlived its share; restoring its tools", meta.ID)
@@ -152,6 +161,19 @@ func (s *Server) restoreOrphanedSessions(ctx context.Context) {
 			logShare("could not restore session %s: %v", meta.ID, err)
 		}
 	}
+}
+
+// shareShouldRestore decides whether a session's withheld tools are a share's to
+// give back. A pure function because it is the whole of the reconciler's
+// judgement and the loop around it cannot be tested without spawning a CLI, which
+// is the same reason discoveryCache.merge and the thermal guard's policy are
+// pure.
+//
+// All three conditions are load-bearing, and the middle one is the one that was
+// missing: without it a restriction imposed by anything else read as an expired
+// share.
+func shareShouldRestore(denied []string, owner string, shareLive bool) bool {
+	return len(denied) > 0 && owner == share.ToolsOwner && !shareLive
 }
 
 func sameTools(a, b []string) bool {
