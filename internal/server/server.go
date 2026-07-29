@@ -23,6 +23,7 @@ import (
 	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/hegade/kunai/internal/awake"
 	"github.com/hegade/kunai/internal/fsbrowse"
+	"github.com/hegade/kunai/internal/ghapp"
 	"github.com/hegade/kunai/internal/push"
 	"github.com/hegade/kunai/internal/schedule"
 	"github.com/hegade/kunai/internal/session"
@@ -106,6 +107,12 @@ type Server struct {
 	modelVers     modelVersionCache        // newest model version per family, read from the claude binary
 	worktrees     *worktreeStore           // git worktrees, so several agents share one repo safely
 	fleet         *fleetHub                // pushes the session list to clients instead of them polling for it
+	// Pull-request review. gh is built lazily from the credentials on disk, and
+	// prReviews binds a review session to the pull request and COMMIT it is a
+	// review of, which the transcript cannot say and posting cannot do without.
+	ghMu      sync.Mutex
+	gh        *ghapp.App
+	prReviews *prReviewStore
 	// shares and gate are session sharing: a link worth one conversation, served
 	// on a listener of its own so a guest can never reach the routes above. See
 	// sharegate.go for why that is a separate mux rather than a middleware.
@@ -186,6 +193,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	s.gate = newShareGate(s.shares, mgr, s.pwa, gatePortFile(cfg.DataDir))
 	if cfg.DataDir != "" {
 		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))
+		s.prReviews = newPRReviewStore(filepath.Join(cfg.DataDir, "prreviews.json"))
 		// New accounts log in with the same binary as the default profile, into a
 		// fresh config dir under the data dir. The register callback saves a
 		// completed account, called once from the login's finalize, so it lands
@@ -275,6 +283,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/lid", s.handleLid)
 	mux.HandleFunc("GET /api/thermal", s.handleThermal)
 	mux.HandleFunc("POST /api/thermal", s.handleThermal)
+	// Pull-request review. Owner-only, and deliberately absent from the share
+	// gate: these read the machine's repositories and can write to GitHub as the
+	// bot, which is the last thing a public link should reach.
+	mux.HandleFunc("GET /api/github/app", s.handleGitHubStatus)
+	mux.HandleFunc("POST /api/github/app", s.handleSetGitHubApp)
+	mux.HandleFunc("GET /api/github/pulls", s.handlePullRequests)
+	mux.HandleFunc("POST /api/github/review", s.handleStartReview)
+	mux.HandleFunc("GET /api/sessions/{id}/review", s.handleReviewDraft)
+	mux.HandleFunc("POST /api/sessions/{id}/review/post", s.handlePostReview)
+
 	mux.HandleFunc("GET /api/failover", s.handleFailover)
 	mux.HandleFunc("POST /api/failover", s.handleFailover)
 	mux.HandleFunc("GET /api/clis", s.handleCLIs)

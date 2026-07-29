@@ -1,0 +1,127 @@
+package server
+
+// What a review session is a review OF.
+//
+// The review itself lives in the transcript, which is exactly where it should be:
+// it is a conversation, it survives a restart, and reopening the session shows it
+// again. But the transcript cannot answer the one question posting needs, which is
+// which pull request and WHICH COMMIT these findings belong to. Without that
+// recorded separately, closing the tab makes an unposted review unpostable.
+//
+// The commit is the load-bearing half. A review is of a specific head SHA, and by
+// the time you press Post your colleague may have pushed again. Posting findings
+// about code that has moved would put comments on lines nobody wrote, so the SHA
+// travels with the draft and posting checks it.
+//
+// One JSON file beside sessionmeta.json, same atomic-write idiom.
+
+import (
+	"encoding/json"
+	"os"
+	"sync"
+	"time"
+
+	"github.com/hegade/kunai/internal/review"
+)
+
+// prReview binds a session to the pull request it is reviewing.
+type prReview struct {
+	SessionID string `json:"session_id"`
+	Owner     string `json:"owner"`
+	Repo      string `json:"repo"`
+	Number    int    `json:"number"`
+	Title     string `json:"title"`
+	// HeadSHA is the commit that was read. Findings are only ever posted against
+	// this, never against whatever the head has become.
+	HeadSHA string `json:"head_sha"`
+	// FromFork records the trust decision made at creation, so posting and the UI
+	// do not have to re-derive it (and cannot re-derive it differently).
+	FromFork bool `json:"from_fork"`
+	// Requester is who clicked Review, named in the posted review because one bot
+	// identity is shared across a team.
+	Requester string `json:"requester,omitempty"`
+	// Draft is the parsed findings, saved when the review turn ends. Absent until
+	// then, which is how the UI tells "still working" from "nothing found".
+	Draft *review.Draft `json:"draft,omitempty"`
+	// ParseError explains a reply that carried no usable review block, so the UI
+	// can say what happened instead of showing an empty draft for ever.
+	ParseError string `json:"parse_error,omitempty"`
+	// PostedURL is set once the review is on GitHub, which is also what stops it
+	// being posted twice from the same draft.
+	PostedURL string    `json:"posted_url,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Posted reports that this draft has already been sent.
+func (p prReview) Posted() bool { return p.PostedURL != "" }
+
+type prReviewStore struct {
+	mu   sync.Mutex
+	path string
+	data map[string]prReview // by session id
+}
+
+func newPRReviewStore(path string) *prReviewStore {
+	s := &prReviewStore{path: path, data: map[string]prReview{}}
+	if b, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(b, &s.data)
+		if s.data == nil {
+			s.data = map[string]prReview{}
+		}
+	}
+	return s
+}
+
+func (s *prReviewStore) get(sessionID string) (prReview, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.data[sessionID]
+	return rec, ok
+}
+
+func (s *prReviewStore) put(rec prReview) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data[rec.SessionID] = rec
+	s.saveLocked()
+}
+
+// update applies a change to an existing record, and reports whether there was
+// one. Taking a function keeps read-modify-write under the one lock, so a draft
+// arriving while a post is in flight cannot overwrite the posted URL.
+func (s *prReviewStore) update(sessionID string, fn func(*prReview)) (prReview, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.data[sessionID]
+	if !ok {
+		return prReview{}, false
+	}
+	fn(&rec)
+	s.data[sessionID] = rec
+	s.saveLocked()
+	return rec, true
+}
+
+func (s *prReviewStore) delete(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.data[sessionID]; ok {
+		delete(s.data, sessionID)
+		s.saveLocked()
+	}
+}
+
+func (s *prReviewStore) saveLocked() {
+	if s.path == "" {
+		return
+	}
+	b, err := json.Marshal(s.data)
+	if err != nil {
+		return
+	}
+	tmp := s.path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, s.path)
+}
