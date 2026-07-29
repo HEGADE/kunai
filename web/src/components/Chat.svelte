@@ -29,6 +29,7 @@
   import WorktreeCard from './WorktreeCard.svelte'
   import TurnFooter from './TurnFooter.svelte'
   import TurnChanges from './TurnChanges.svelte'
+  import ReviewDraft from './ReviewDraft.svelte'
   import ShareDialog from './ShareDialog.svelte'
 
   let { chat }: { chat: ChatConnection } = $props()
@@ -522,6 +523,11 @@
                whole repository and this card lists only this turn's files. -->
           <TurnChanges {turn} />
         {/each}
+
+        <!-- A review session's findings, once. Not per turn: a review is one
+             answer about one commit, and the card carries the action that sends
+             it. Self-hides when this session is not a review. -->
+        <ReviewDraft sessionId={chat.sessionId} machineId={app.activeMachineId ?? ''} />
 
         {#if chat.thinking || chat.streaming || running}
           <div class="turn">
