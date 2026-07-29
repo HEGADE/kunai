@@ -52,15 +52,22 @@ type App struct {
 	tokens map[int64]cachedToken
 }
 
-// New returns an App that authenticates with these credentials.
-func New(creds *Credentials) *App {
+// New returns an App that authenticates with these credentials against
+// github.com.
+func New(creds *Credentials) *App { return NewWithBaseURL(creds, defaultBaseURL) }
+
+// NewWithBaseURL is New against a different API host. Two uses, one real and one
+// coming: a test server, and the seam a GitHub Enterprise host would need. It is
+// exported rather than left as a field so a caller outside this package can
+// exercise the API without the package having to expose its internals.
+func NewWithBaseURL(creds *Credentials, baseURL string) *App {
 	return &App{
 		creds: creds,
 		// A bounded client rather than http.DefaultClient: this talks to a third
 		// party over the internet, and a review that hangs for ever on a stalled
 		// connection is worse than one that fails and says so.
 		http:   &http.Client{Timeout: 30 * time.Second},
-		base:   defaultBaseURL,
+		base:   baseURL,
 		now:    time.Now,
 		tokens: map[int64]cachedToken{},
 	}

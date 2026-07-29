@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/hegade/kunai/internal/ghapp"
@@ -102,22 +103,59 @@ func (s *Server) handlePullRequests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]prSummary, 0, len(prs))
-	for _, pr := range prs {
-		item := prSummary{
-			Number: pr.Number, Title: pr.Title, Author: pr.User.Login,
-			BaseRef: pr.Base.Ref, HeadSHA: pr.Head.SHA, Draft: pr.Draft,
-			FromFork: pr.FromFork(repo), Additions: pr.Additions, Deletions: pr.Deletions,
-		}
-		// Asked per pull request rather than in bulk because GitHub offers no bulk
-		// form, and it is what lets the row say "reviewed 2h ago" instead of
-		// spending somebody's quota on a review that already exists.
-		if when, found, err := app.ReviewedAt(ctx, repo, pr.Number, pr.Head.SHA); err == nil && found {
-			item.ReviewedAt = &when
-		}
-		out = append(out, item)
-	}
+	out := enrich(ctx, app, repo, prs)
 	writeJSON(w, http.StatusOK, out)
+}
+
+// prDetailWorkers bounds how many pull requests are looked up at once. Each one
+// costs two GitHub calls, so a repository with thirty open pull requests would
+// otherwise open sixty connections at a stroke and spend its rate limit on a
+// dashboard nobody is reading yet.
+const prDetailWorkers = 6
+
+// enrich fills in what the list endpoint does not carry.
+//
+// Two calls per pull request, and both are needed. GitHub's LIST endpoint omits
+// additions and deletions entirely (they are only on the single-pull-request
+// endpoint), so a row built from the list alone reports every change as +0 -0.
+// And whether kunai has already reviewed this commit lives in the reviews
+// endpoint, which is what turns the button into "reviewed 2h ago" instead of
+// spending somebody's quota on a review that already exists.
+//
+// Run concurrently because they are independent: sequentially, a repository with
+// ten open pull requests made twenty round trips to github.com before the card
+// could paint.
+func enrich(ctx context.Context, app *ghapp.App, repo ghapp.Repo, prs []ghapp.PullRequest) []prSummary {
+	out := make([]prSummary, len(prs))
+	sem := make(chan struct{}, prDetailWorkers)
+	var wg sync.WaitGroup
+
+	for i, pr := range prs {
+		wg.Add(1)
+		go func(i int, pr ghapp.PullRequest) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			item := prSummary{
+				Number: pr.Number, Title: pr.Title, Author: pr.User.Login,
+				BaseRef: pr.Base.Ref, HeadSHA: pr.Head.SHA, Draft: pr.Draft,
+				FromFork: pr.FromFork(repo),
+			}
+			// A detail lookup that fails leaves the size unknown rather than taking
+			// the row down: knowing a pull request exists is worth more than knowing
+			// how big it is.
+			if full, err := app.PullRequest(ctx, repo, pr.Number); err == nil {
+				item.Additions, item.Deletions = full.Additions, full.Deletions
+			}
+			if when, found, err := app.ReviewedAt(ctx, repo, pr.Number, pr.Head.SHA); err == nil && found {
+				item.ReviewedAt = &when
+			}
+			out[i] = item
+		}(i, pr)
+	}
+	wg.Wait()
+	return out
 }
 
 // handleStartReview begins a review. It answers with the new session, which the
