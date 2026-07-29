@@ -112,6 +112,14 @@ export class ChatConnection {
   // field can never blank the label back to the generic "Model"/"Effort".
   effort = $state(DEFAULT_EFFORT)
   cli = $state('') // which Claude account this session runs on
+  // Auto-failover's progress on this session: 'deciding' while it looks for an
+  // account with headroom, else ''. A failover takes seconds (it reads each
+  // candidate account's quota), and without this the composer names the walled
+  // account throughout, which reads as a feature that never fired.
+  failover = $state('')
+  // Why a failover stopped without moving the session. Cleared when a new one
+  // starts, or when the session is reattached.
+  failoverNote = $state('')
   cwd = $state('')
   model = $state(DEFAULT_MODEL)
   title = $state('')
@@ -302,6 +310,11 @@ export class ChatConnection {
         if (ev.mode) this.mode = ev.mode as PermissionMode
         if (ev.effort) this.effort = ev.effort
         if (ev.cli) this.cli = ev.cli
+        // Assigned rather than guarded: an attach mid-decision has to light this
+        // up, and an attach after one has to clear it. A stale "moving you to
+        // another account" is worse than none.
+        this.failover = ev.failover_state === 'deciding' ? 'deciding' : ''
+        if (this.failover) this.failoverNote = ''
         if (ev.context_tokens != null) this.contextTokens = ev.context_tokens
         for (const p of ev.pending ?? []) this.addPending(p)
         for (const q of ev.queued ?? []) this.addQueued(q)
@@ -489,6 +502,18 @@ export class ChatConnection {
         }
         break
       }
+      case 'failover':
+        if (ev.failover_state === 'deciding') {
+          this.failover = 'deciding'
+          this.failoverNote = ''
+        } else {
+          this.failover = ''
+          // Only overwrite the note when this ending had something to say. A
+          // stand-down (the user moved the session themselves) carries no
+          // message, and inventing one would explain a thing they just did.
+          if (ev.message) this.failoverNote = ev.message
+        }
+        break
       case 'error':
         this.errorLine = ev.message ?? 'error'
         // A rate-limit-flavored error also flips the banner on, in case the CLI

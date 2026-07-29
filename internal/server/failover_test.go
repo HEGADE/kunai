@@ -49,6 +49,28 @@ func TestDecide_ChainsAcrossWalledAccounts(t *testing.T) {
 	}
 }
 
+// Deciding takes seconds, and the obvious thing to do in those seconds -- when
+// you believe failover is broken because nothing on screen says otherwise -- is
+// to switch accounts by hand. That switch respawns the session, so the failover
+// must stand down rather than roll a closed session and override a choice its
+// owner made explicitly.
+func TestMovedByHand(t *testing.T) {
+	cases := []struct {
+		walledOn, nowOn string
+		want            bool
+	}{
+		{"claude-work", "claude-work", false},
+		{"claude-work", "CLAUDE-WORK", false}, // a name is a label, not an identifier
+		{"claude-work", "claude-shorya", true},
+		{"claude-work", "Codex", true},
+	}
+	for _, c := range cases {
+		if got := movedByHand(c.walledOn, c.nowOn); got != c.want {
+			t.Errorf("movedByHand(%q, %q) = %v, want %v", c.walledOn, c.nowOn, got, c.want)
+		}
+	}
+}
+
 // win is a small helper: a usage window at pct% used, resetting at reset.
 func win(pct float64, reset int64) *UsageWindow { return &UsageWindow{Percent: pct, ResetsAt: reset} }
 
@@ -97,16 +119,38 @@ func TestPickFailover_SkipsCurrentAndTried(t *testing.T) {
 // A provider is a first-class candidate: with more headroom than any Claude
 // account it is chosen (use non-Claude accounts effectively), but on an exact tie
 // the Claude account is preferred (the genuine agent).
-func TestPickFailover_ProviderRanking(t *testing.T) {
+// A provider is the fallback for when no Claude account has runway, not a peer
+// competing on percentage points.
+//
+// This inverts what the code used to do, and the old behaviour was a real
+// reported surprise: a walled Claude session was rolled onto Codex because Codex
+// read 85% against the other Claude account's 40%, silently changing which model
+// answered the next turn. Moving accounts at a wall should change the bill, not
+// the agent.
+func TestPickFailover_PrefersClaudeOverAProvider(t *testing.T) {
 	claude := availability{Name: "claude-work", Provider: false, Remaining: 40, Known: true}
 	codex := availability{Name: "Codex", Provider: true, Remaining: 85, Known: true}
-	if got, _ := pickFailover("cur", []availability{claude, codex}, nil); got != "Codex" {
-		t.Fatalf("more-headroom provider should win, got %q", got)
+	if got, _ := pickFailover("cur", []availability{codex, claude}, nil); got != "claude-work" {
+		t.Fatalf("a Claude account with runway should beat a roomier provider, got %q", got)
 	}
-	tie1 := availability{Name: "claude-work", Provider: false, Remaining: 60}
-	tie2 := availability{Name: "Grok", Provider: true, Remaining: 60}
-	if got, _ := pickFailover("cur", []availability{tie2, tie1}, nil); got != "claude-work" {
-		t.Fatalf("on a tie the Claude account should win, got %q", got)
+
+	// Below the floor the Claude account is too near its own wall to be worth the
+	// respawn, so the provider is the better bet after all.
+	thin := availability{Name: "claude-work", Provider: false, Remaining: 5, Known: true}
+	if got, _ := pickFailover("cur", []availability{thin, codex}, nil); got != "Codex" {
+		t.Fatalf("a nearly-walled Claude account should yield to a provider, got %q", got)
+	}
+
+	// Among Claude accounts that both clear the floor, headroom still decides.
+	more := availability{Name: "claude-shorya", Provider: false, Remaining: 70, Known: true}
+	if got, _ := pickFailover("cur", []availability{claude, more}, nil); got != "claude-shorya" {
+		t.Fatalf("between two usable Claude accounts the roomier one should win, got %q", got)
+	}
+
+	// And between two providers, headroom decides as before.
+	grok := availability{Name: "Grok", Provider: true, Remaining: 30, Known: true}
+	if got, _ := pickFailover("cur", []availability{grok, codex}, nil); got != "Codex" {
+		t.Fatalf("between two providers the roomier one should win, got %q", got)
 	}
 }
 
@@ -117,12 +161,17 @@ func TestAvailabilityFromUsage_Unknown(t *testing.T) {
 	if a.Known || a.Remaining != unknownHeadroom {
 		t.Fatalf("nil usage: got known=%v remaining=%v, want false,%v", a.Known, a.Remaining, unknownHeadroom)
 	}
+	// Compared within one tier, since a provider and a Claude account are no
+	// longer ranked against each other by headroom at all (see
+	// TestPickFailover_PrefersClaudeOverAProvider). These three are all Claude
+	// accounts, so the headroom ordering is what is under test.
+	unknown := availabilityFromUsage("unread", false, nil)                    // 50, no reading
 	healthy := availabilityFromUsage("c", false, &Usage{Session: win(10, 0)}) // 90 left
 	low := availabilityFromUsage("d", false, &Usage{Session: win(70, 0)})     // 30 left
-	if got, _ := pickFailover("cur", []availability{a, healthy, low}, nil); got != "c" {
+	if got, _ := pickFailover("cur", []availability{unknown, healthy, low}, nil); got != "c" {
 		t.Fatalf("known-healthy should beat unknown, got %q", got)
 	}
-	if got, _ := pickFailover("cur", []availability{a, low}, nil); got != "prov" {
+	if got, _ := pickFailover("cur", []availability{unknown, low}, nil); got != "unread" {
 		t.Fatalf("unknown should beat known-low, got %q", got)
 	}
 }

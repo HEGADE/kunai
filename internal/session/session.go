@@ -95,6 +95,7 @@ type Session struct {
 	loop            *loopRun        // self-prompting run, if one was ever started
 	lastText        string          // the newest assistant text this turn, for the loop's promise
 	lastPromptText  string          // the newest real user prompt, so failover can resend it
+	failingOver     bool            // auto-failover is looking for an account with headroom
 	rateLimited     bool            // the usage window is spent; a loop must not push on
 	wallFromText    bool            // ...and we learned it from a turn's error text (see wall.go)
 	limitWindow     string          // the window that was reported spent ("five_hour"/"seven_day")
@@ -927,6 +928,7 @@ func (s *Session) Attach(afterSeq uint64) (hello AppEvent, backlog []AppEvent, s
 		Effort:        s.effort,
 		CLI:           s.cliName,
 		HighSeq:       s.seq,
+		FailoverState: failoverStateOf(s.failingOver),
 		ContextTokens: s.contextTokens,
 		HistBefore:    s.histBefore,
 		Loop:          s.loopStatusLocked(),

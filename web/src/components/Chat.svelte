@@ -586,10 +586,29 @@
         onClose={() => (schedOpen = false)}
       />
     </div>
+  {:else if chat.failover === 'deciding'}
+    <!-- A failover takes seconds, because deciding where to go means reading each
+         account's quota. This is the line whose absence made a failover that
+         worked look like one that never fired: the composer named the walled
+         account the whole time and nothing said otherwise. It takes the banner's
+         slot rather than adding a second bar, because it is the same news. -->
+    <div class="ratebanner">
+      <span class="rl">
+        <span class="fospin" aria-hidden="true"></span>
+        Out of quota · finding an account with headroom…
+      </span>
+    </div>
   {:else if rateLimitedNow && chat.rateLimit}
     <div class="ratebanner">
       <span class="rl">Rate-limited · {chat.rateLimit.window === 'seven_day' ? 'weekly' : '5-hour'} quota resets in {resetRel(chat.rateLimit.resetsAt)}</span>
       <button onclick={() => (schedOpen = true)}>Schedule after reset</button>
+    </div>
+  {:else if chat.failoverNote}
+    <!-- Tried and could not. Worth its own line, because "rate-limited" alone
+         cannot tell you whether kunai looked for somewhere else to go. -->
+    <div class="ratebanner">
+      <span class="rl">{chat.failoverNote}</span>
+      <button onclick={() => (chat.failoverNote = '')} aria-label="Dismiss">✕</button>
     </div>
   {/if}
 
@@ -1098,6 +1117,29 @@
   .ratebanner .rl {
     flex: 1;
     min-width: 0;
+  }
+  /* The same dashed ring the sidebar uses for a working session, on the same
+     duty-cycled rotation: this is work in progress, and it is the one thing on
+     screen saying so. */
+  .fospin {
+    display: inline-block;
+    vertical-align: -1px;
+    width: 10px;
+    height: 10px;
+    margin-right: 7px;
+    border: 1.5px dashed currentColor;
+    border-radius: 50%;
+    animation: fospin 2.4s steps(12) infinite;
+  }
+  @keyframes fospin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .fospin {
+      animation: none;
+    }
   }
   .ratebanner button {
     flex: none;

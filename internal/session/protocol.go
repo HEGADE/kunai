@@ -137,6 +137,19 @@ type AppEvent struct {
 	Window      string `json:"window,omitempty"`
 	ResetsAt    int64  `json:"resets_at,omitempty"`
 	LimitStatus string `json:"limit_status,omitempty"`
+
+	// "failover" (and "hello"): what auto-failover is doing to this session.
+	// FailoverState is FailoverDeciding while it looks for an account with
+	// headroom, FailoverEnded when it stops without moving the session (Message
+	// says why). A successful move ends the session, so it is never announced
+	// here: the replacement's hello reports the new account instead.
+	//
+	// This exists because a failover takes seconds -- reading each candidate's
+	// quota means shelling `claude /usage` per account -- and during that window
+	// the composer honestly shows the walled account with nothing happening.
+	// Silence is indistinguishable from a broken feature, which is exactly how a
+	// working failover got reported as not firing.
+	FailoverState string `json:"failover_state,omitempty"`
 }
 
 // App event type tags (the T field).
@@ -159,6 +172,19 @@ const (
 	EvState              = "state"
 	EvError              = "error"
 	EvRateLimit          = "rate_limit"
+	EvFailover           = "failover"
+)
+
+// Failover states carried on an EvFailover event's FailoverState.
+//
+// Only the in-progress state is durable (it rides on hello, so a client that
+// attaches mid-decision sees it too). The end of a failover is a transient
+// announcement: either the session is about to be replaced by one running on
+// another account, in which case the new session's hello simply has no failover
+// state, or nothing could be done and the reason is worth one line.
+const (
+	FailoverDeciding = "deciding"
+	FailoverEnded    = "ended"
 )
 
 // DefaultPermissionMode is the mode every session starts in — new, resumed, or

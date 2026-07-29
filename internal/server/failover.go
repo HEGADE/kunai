@@ -10,7 +10,16 @@ package server
 // headroom is its BINDING window -- min(5h-left, 7d-left) -- so "100% of the
 // 5-hour but 5% of the weekly" scores 5, not 100, because the weekly is what walls
 // you; "70% left" scores 70 and wins. Anything at/under a small floor is treated
-// as walled and skipped. Among the usable, most headroom wins.
+// as walled and skipped. Among the usable, most headroom wins, EXCEPT that a
+// Claude account with real runway is taken ahead of any provider (see sameBrain):
+// moving accounts at a wall should change the bill, not the model.
+//
+// A failover is not instant, so the session says it is under way (BeginFailover)
+// before the decision starts and clears it if it stays put. Without that the
+// composer sits on the walled account for several seconds with nothing to report,
+// which is how a failover that worked was reported as never having fired. If the
+// user moves the session themselves during that window, we stand down: their
+// explicit pick outranks ours.
 //
 // Scope: v1 covers ordinary sessions. A running loop keeps its own limit handling
 // (it stops at the wall); loop failover is a follow-up, since it must thread the
@@ -39,6 +48,12 @@ const (
 	// a known-healthy account and above a known-low one. If the guess is wrong the
 	// tried-set stops us from picking it twice.
 	unknownHeadroom = 50.0
+	// sameBrainFloor is the headroom a Claude account needs to be taken in
+	// preference to a provider outright. Above it, staying on Claude matters more
+	// than a provider's larger percentage; below it, the account is too close to
+	// its own wall to be worth the respawn and a provider is the better bet. See
+	// sameBrain.
+	sameBrainFloor = 20.0
 )
 
 // availability is one candidate account's readiness to take a turn right now.
@@ -71,10 +86,42 @@ func pickFailover(current string, cands []availability, tried map[string]bool) (
 	return best.Name, found
 }
 
-// betterCandidate ranks a above b: more headroom first; on a tie prefer a Claude
-// account (the genuine agent) over a provider; then the sooner reset (more runway
-// ahead once it replenishes).
+// sameBrain reports a candidate we would rather move to before headroom is even
+// compared: a real Claude account with enough runway to be worth the switch.
+//
+// This tier exists because ranking on raw headroom alone produced a bad surprise.
+// A Claude session that hit its wall was rolled onto Codex because Codex happened
+// to read 85% against the other Claude account's 40%, which silently changed
+// which model was answering. Nobody switching accounts at a usage wall wants the
+// agent swapped as a side effect; they want the same agent on a different bill.
+// The old "prefer Claude on a tie" rule could never help, because two independent
+// quota percentages are never exactly equal.
+//
+// So a provider is the fallback for when no Claude account has runway, which is
+// what it was always meant to be, rather than a peer competing on percentage
+// points. A Claude account we could not read scores unknownHeadroom and therefore
+// still clears this floor, which is the right bias: if the guess is wrong, the
+// wall on that account rolls the chain onward and the tried-set stops us
+// returning to it.
+func sameBrain(c availability) bool {
+	return !c.Provider && c.Remaining >= sameBrainFloor
+}
+
+// movedByHand reports that the session is no longer on the account it was walled
+// on, which can only mean somebody switched it while the decision was in flight.
+// Compared case-insensitively, like every other account-name comparison here,
+// because a profile name is a label rather than an identifier.
+func movedByHand(walledOn, nowOn string) bool {
+	return !strings.EqualFold(walledOn, nowOn)
+}
+
+// betterCandidate ranks a above b: a Claude account with real runway before any
+// provider; then more headroom; then a Claude account over a provider; then the
+// sooner reset (more runway ahead once it replenishes).
 func betterCandidate(a, b availability) bool {
+	if sameBrain(a) != sameBrain(b) {
+		return sameBrain(a)
+	}
 	if a.Remaining != b.Remaining {
 		return a.Remaining > b.Remaining
 	}
@@ -245,18 +292,44 @@ func (fc *failoverController) onTurnEnd(sess *session.Session, rateLimited, inLo
 	defer cancel()
 
 	current := sess.Meta().CLI
+	// Announced BEFORE the decision, because the decision is the slow part: it
+	// reads each candidate's quota, which for a Claude account is a `/usage`
+	// shell. Without this the composer sits on the walled account saying nothing
+	// for several seconds, which reads as a feature that did not fire.
+	sess.BeginFailover()
 	target, ok := fc.decide(ctx, id, current, sess.Cwd)
 	if !ok {
 		win, reset := sess.LastLimit()
 		log.Printf("failover: session %s hit the wall on %q (%s) and no other account has headroom; leaving it for reset %s",
 			id, current, win, resetLabel(reset))
+		sess.EndFailover("No other account has headroom, so this session stays put.")
 		return
 	}
 
-	prompt := sess.LastPromptText()
-	restarted, err := fc.srv.switchSessionToAccount(ctx, sess, fc.srv.resolveCLI(target))
+	// The session as it stands NOW, not as it was when the turn ended. Deciding
+	// takes seconds, and the obvious thing to do in those seconds is exactly what
+	// a person does when they think failover is broken: switch accounts by hand.
+	// That switch respawns the session, so `sess` is a closed husk by this point
+	// and rolling it would both fail and override a choice the user made
+	// explicitly. Their pick outranks ours.
+	live, ok := fc.srv.mgr.Get(id)
+	if !ok {
+		log.Printf("failover: session %s went away while deciding; nothing to move", id)
+		sess.EndFailover("")
+		return
+	}
+	if now := live.Meta().CLI; movedByHand(current, now) {
+		log.Printf("failover: session %s was moved to %q by hand while deciding; standing down", id, now)
+		sess.EndFailover("")
+		live.EndFailover("")
+		return
+	}
+
+	prompt := live.LastPromptText()
+	restarted, err := fc.srv.switchSessionToAccount(ctx, live, fc.srv.resolveCLI(target))
 	if err != nil {
 		log.Printf("failover: switch %s from %q to %q failed: %v", id, current, target, err)
+		live.EndFailover("Could not move this session: " + err.Error())
 		return
 	}
 	fc.addTried(id, target)

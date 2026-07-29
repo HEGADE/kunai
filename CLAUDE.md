@@ -658,6 +658,28 @@ Behavioral invariants that were bugs before (do not regress):
   that logs and proceeds, because `Close()` has already cancelled and killed the
   process so respawning is safe, and a UI action must answer even when a pump is
   wedged for some other reason. Pinned by `TestTurnEndHookDoesNotDeadlockRespawn`.
+- An auto-failover must say it is happening, and must lose to a human.
+  Choosing where to move a walled session means reading every candidate account's
+  quota, and for a Claude account that is a `claude /usage` shell at a couple of
+  seconds each. So there is a multi-second gap in which the composer correctly
+  names the account that has just been walled and nothing else is on screen. A
+  failover that worked perfectly was therefore reported as never firing: the log
+  said `rolled from "claude-work" to "Codex"`, the user saw the limit message plus
+  the old account, concluded it was broken, and switched by hand. Silence is
+  indistinguishable from a broken feature, so `Session.BeginFailover` announces
+  before the decision starts and `EndFailover` retracts with a reason if the
+  session stays put; the state rides on `hello` too, because a phone that attaches
+  mid-decision needs it. A successful roll announces nothing, since it replaces
+  the session and the new `hello` names the new account.
+  Two consequences follow. That manual switch **wins**: the decision re-reads the
+  live session from the manager and stands down if the account changed under it
+  (`movedByHand`), which also avoids rolling a `Session` the user's own respawn
+  has already closed. And a provider is a **fallback, not a peer**: ranking on raw
+  headroom sent a Claude session to Codex on 85%-vs-40%, silently changing which
+  model answered, and the old "prefer Claude on a tie" rule could never fire
+  because two quota percentages are never exactly equal. `sameBrain` now takes any
+  Claude account above `sameBrainFloor` ahead of any provider, so moving accounts
+  at a wall changes the bill and not the agent.
 - The thermal guardian (`internal/server/guardian.go`) is a whole-machine safety
   net for unattended work, not a loop feature: a loop or a session a phone walked
   away from can pin the CPU for hours, and with the lid shut that cooks a laptop.

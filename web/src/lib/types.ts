@@ -213,6 +213,7 @@ export interface AppEvent {
     | 'state'
     | 'error'
     | 'rate_limit'
+    | 'failover'
   // hello
   id?: string
   // hello: identifies the process behind id, and changes on every respawn (an
@@ -274,6 +275,11 @@ export interface AppEvent {
   post_tokens?: number
   trigger?: string
   // result
+  // failover (and hello): 'deciding' while auto-failover looks for an account
+  // with headroom, 'ended' when it gives up without moving the session (message
+  // says why). A successful move replaces the session, so the new hello reports
+  // the new account rather than announcing it here.
+  failover_state?: string
   is_error?: boolean
   duration_ms?: number
   tokens?: number
