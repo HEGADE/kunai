@@ -88,6 +88,11 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 	if err != nil {
 		return nil, err
 	}
+	// The repository's main checkout, not the directory the request named, which
+	// may itself have been a worktree. This is what the review session reports as
+	// its repo so it groups under the codebase rather than under its own
+	// throwaway directory.
+	repoRoot := wt.Repo
 
 	fromFork := pr.FromFork(repo)
 	prompt := review.Prompt(review.Request{
@@ -120,7 +125,7 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 	if s.prReviews != nil {
 		s.prReviews.put(prReview{
 			SessionID: sess.ID, Owner: repo.Owner, Repo: repo.Name, Number: number,
-			Title: pr.Title, HeadSHA: sha, FromFork: fromFork,
+			Title: pr.Title, HeadSHA: sha, FromFork: fromFork, RepoDir: repoRoot,
 			Requester: requester, CreatedAt: time.Now(),
 		})
 	}
@@ -136,6 +141,29 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 		return nil, fmt.Errorf("the review session was created but would not start: %w", err)
 	}
 	return sess, nil
+}
+
+// tagReviewRepos points a review session at the repository it is reviewing.
+//
+// A review runs in a detached worktree that is deliberately NOT registered as
+// work in progress, so nothing else can say which codebase it belongs to. Left
+// untagged, its directory (.../worktrees/kunai/review/4) was taken for a
+// repository in its own right: the sidebar gave it a heading called "4", and the
+// dashboard listed every pull request twice, once under the real repo and once
+// under the phantom. An in-memory lookup, because this runs for every session on
+// every listing.
+func (s *Server) tagReviewRepos(metas []session.Meta) {
+	if s.prReviews == nil {
+		return
+	}
+	for i := range metas {
+		if metas[i].Repo != "" {
+			continue // already known to be a worktree of something
+		}
+		if dir := s.prReviews.repoOf(metas[i].ID); dir != "" {
+			metas[i].Repo = dir
+		}
+	}
 }
 
 // worktreeRoot is where review checkouts are made, shared with the worktree

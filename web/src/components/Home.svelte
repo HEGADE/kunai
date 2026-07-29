@@ -33,6 +33,11 @@
     const add = (machineId: string, repo?: string, cwd?: string) => {
       const dir = (repo || cwd || '').replace(/\/+$/, '')
       if (!dir || machineId !== sel.id || seen.has(dir)) return
+      // A review's own throwaway checkout is not a repository. The server tags
+      // those sessions with the repo they are reviewing, but a record it cannot
+      // resolve would otherwise put the worktree directory here and list the same
+      // pull requests twice, once under a heading named after the PR number.
+      if (/\/worktrees\/[^/]+\/review\/[^/]+$/.test(dir)) return
       seen.set(dir, { machineId, cwd: dir, label: dir.split('/').pop() || dir })
     }
     for (const s of app.sessions) add(s.machineId, s.repo, s.cwd)

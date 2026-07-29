@@ -31,6 +31,15 @@ type prReview struct {
 	Repo      string `json:"repo"`
 	Number    int    `json:"number"`
 	Title     string `json:"title"`
+	// RepoDir is the local checkout this review was started from.
+	//
+	// Recorded because a review runs in a detached worktree that is deliberately
+	// not registered as work in progress, so nothing else can say which repository
+	// its session belongs to. Without it the session's directory
+	// (.../worktrees/kunai/review/4) was taken for a repository of its own, and
+	// the dashboard listed the same pull requests twice: once under "kunai" and
+	// once under a phantom repo called "4".
+	RepoDir string `json:"repo_dir,omitempty"`
 	// HeadSHA is the commit that was read. Findings are only ever posted against
 	// this, never against whatever the head has become.
 	HeadSHA string `json:"head_sha"`
@@ -70,6 +79,18 @@ func newPRReviewStore(path string) *prReviewStore {
 		}
 	}
 	return s
+}
+
+// repoOf returns the local repository a review session belongs to, or "".
+// Cheap by design: an in-memory lookup, because it is consulted for every
+// session on every listing.
+func (s *prReviewStore) repoOf(sessionID string) string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data[sessionID].RepoDir
 }
 
 func (s *prReviewStore) get(sessionID string) (prReview, bool) {
