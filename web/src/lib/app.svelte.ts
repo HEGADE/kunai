@@ -279,7 +279,18 @@ class AppStore {
       const prev = new Map(this.machines.map((m) => [m.id, m]))
       const next: Machine[] = infos.map((info) => {
         const old = prev.get(info.id)
-        return { ...info, online: old?.online ?? info.self, stats: old?.stats ?? null }
+        // Talk to this machine on the address we actually reached it at.
+        //
+        // A machine reports itself with its -public-url, which is its tailnet
+        // origin. Taken literally, opening the app at http://localhost sent every
+        // request and socket for THIS machine back out to the tailnet name: the
+        // page loaded and then said the machine was offline, because reaching your
+        // own laptop now depended on tailscaled, MagicDNS and a certificate. The
+        // origin we were served from is the one address known to work, since it
+        // just served us, so it wins for self. Nothing changes for a peer, whose
+        // published URL is the only way to it.
+        const url = info.self ? location.origin : info.url
+        return { ...info, url, online: old?.online ?? info.self, stats: old?.stats ?? null }
       })
       // Guarantee a "self" entry even if the hub has no -public-url configured.
       if (!next.some((m) => m.self || sameOrigin(m.url, location.origin))) {

@@ -109,8 +109,13 @@ curl -fsSL https://raw.githubusercontent.com/HEGADE/kunai/main/install.sh | bash
 <sub>From a source checkout instead, which builds it: `git clone https://github.com/HEGADE/kunai && cd kunai && ./install.sh`</sub>
 
 The installer downloads the binary, installs a service (a systemd user unit on
-Linux, a launchd agent on macOS), health-checks it, and prints how to open it on
-this machine and from your phone.
+Linux, a launchd agent on macOS), health-checks it, and prints two links: one for
+this machine and one for your phone.
+
+Those are genuinely two addresses. kunai always serves `http://localhost:<port>`
+alongside whatever else it is bound to, so using it on the machine it runs on
+never goes through Tailscale and keeps working when Tailscale is down or you are
+signed out.
 
 If you have Tailscale it works out your tailnet address and MagicDNS name and
 mints a TLS certificate with `tailscale cert`, so the same link works from every

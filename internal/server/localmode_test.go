@@ -6,6 +6,31 @@ import (
 	"testing"
 )
 
+// The loopback listener that runs BESIDE a tailnet one, which is the whole point:
+// using kunai on the machine it runs on should not go through Tailscale, and must
+// keep working when tailscaled is down or you are signed out.
+//
+// The port is the same one, and that is not a clash: the main listener binds a
+// specific address (the tailnet IP) rather than every interface, so loopback on
+// that port is nobody's socket. Confirmed live, both answering at once.
+func TestLocalAddrRidesAlongsideTheMainListener(t *testing.T) {
+	if got := localAddr("100.90.239.81:8443"); got != "127.0.0.1:8443" {
+		t.Errorf("localAddr(tailnet) = %q, want the same port on loopback", got)
+	}
+	// Already loopback: nothing to add, it IS the local listener. Starting a second
+	// one would only fail on the address the first is holding.
+	for _, addr := range []string{"127.0.0.1:8443", "localhost:8443", "[::1]:8443"} {
+		if got := localAddr(addr); got != "" {
+			t.Errorf("localAddr(%q) = %q, want none: it is already local", addr, got)
+		}
+	}
+	for _, bad := range []string{"", "nonsense-with-no-port"} {
+		if got := localAddr(bad); got != "" {
+			t.Errorf("localAddr(%q) = %q, want none", bad, got)
+		}
+	}
+}
+
 func TestLoopbackBindDecidesLocalMode(t *testing.T) {
 	for _, c := range []struct {
 		addr string

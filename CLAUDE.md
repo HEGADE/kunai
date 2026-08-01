@@ -563,6 +563,24 @@ Behavioral invariants that were bugs before (do not regress):
   perimeter and the API uses no cookies or credentials. Do not add cookie or session
   auth without tightening CORS first. It is **off in local mode**, where that
   premise does not hold: see below.
+- **The loopback listener always runs** (`localAddr`/`serveLocal`). A tailnet
+  install serves `127.0.0.1` on the SAME port as well as its tailnet address, so
+  using kunai on the machine it runs on never goes through Tailscale. The tailnet
+  URL does resolve here (MagicDNS points it at this machine's own interface), but
+  taking it means your own laptop needs tailscaled up, MagicDNS resolving and a
+  valid certificate to reach a program running locally; sign out and the app dies
+  with it. The same port is free to take because the main listener binds a
+  specific address, not every interface. The local listener is plain HTTP, which
+  is not a downgrade (loopback is a secure context) and is in fact required: the
+  tailnet certificate names a ts.net host, so `https://localhost` would be
+  refused. A failed bind is logged and survived, never fatal.
+  The client half is load-bearing and was missed first time round: a machine
+  reports itself with its `-public-url`, its tailnet origin, so taking that
+  literally sent every request and socket for **this** machine back out to the
+  tailnet name. The page loaded over localhost and then said the machine was
+  offline. `app.svelte.ts` now uses `location.origin` for the `self` entry, on the
+  grounds that the origin which just served the app is the one address proven
+  reachable. Peers are untouched; their published URL is the only way to them.
 - **Local mode** (`internal/server/localmode.go`) is a loopback-bound install,
   what you get with no Tailscale. It always worked -- the binary defaults to
   127.0.0.1 and a loopback origin is a secure context, so the PWA and its service

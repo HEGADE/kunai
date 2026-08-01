@@ -579,12 +579,16 @@ if command -v curl >/dev/null 2>&1; then
       # used to be missing entirely, and in local mode it is the one that says
       # what you do next rather than leaving you to work out why there is no
       # link for your phone.
-      say "  ${C_B}On this machine${C_RST}   ${C_B}$URL${C_RST}"
+      # The local link is a REAL second address, not the tailnet one relabelled.
+      # kunai serves loopback alongside the tailnet listener, on the same port, so
+      # using it on this machine never goes through Tailscale and keeps working
+      # when tailscaled is down or you are signed out.
+      say "  ${C_B}On this machine${C_RST}   ${C_B}http://localhost:$PORT${C_RST}"
       if [ "$MODE" = "tailnet" ]; then
         say "  ${C_B}From your phone${C_RST}   ${C_B}$URL${C_RST}"
-        say "                    ${C_DIM}same link, from any device signed into your tailnet${C_RST}"
+        say "                    ${C_DIM}any device signed into your tailnet${C_RST}"
         say ""
-        say "  iPhone: open it in Safari, then Share > Add to Home Screen."
+        say "  iPhone: open the phone link in Safari, then Share > Add to Home Screen."
       else
         say "  ${C_B}From your phone${C_RST}   ${C_DIM}not yet — this install is local to this machine${C_RST}"
         say ""

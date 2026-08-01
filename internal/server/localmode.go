@@ -41,11 +41,82 @@ package server
 // directly and does not need to go through us to do it.
 
 import (
+	"context"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
+
+// localAddr is the loopback address the app is ALSO served on when the main
+// listener is bound to a network address.
+//
+// This is the point of the whole file, and it was the thing originally missed.
+// Using kunai on the machine it runs on should not involve the tailnet at all.
+// The tailnet URL does work here -- MagicDNS resolves it to this machine's own
+// Tailscale interface -- but it makes your own laptop depend on tailscaled being
+// up, MagicDNS resolving, and the certificate being valid, to reach a program
+// running a few millimetres away. Log out of Tailscale and the app on your own
+// machine dies with it.
+//
+// The port is the SAME one, which is free to take: the main listener binds a
+// specific address (the tailnet IP), not every interface, so 127.0.0.1 on that
+// port is a different socket and nobody is on it. So the local link is the port
+// you already know, with no second number to remember.
+//
+// Empty when the main listener is already loopback, since there is nothing to
+// add: it is the local listener.
+func localAddr(mainAddr string) string {
+	if mainAddr == "" || loopbackBind(mainAddr) {
+		return ""
+	}
+	_, port, err := net.SplitHostPort(mainAddr)
+	if err != nil || port == "" {
+		return ""
+	}
+	return net.JoinHostPort("127.0.0.1", port)
+}
+
+// serveLocal starts the loopback listener beside the main one, plain HTTP.
+//
+// Plain HTTP is not a downgrade here: a loopback origin is trusted by browsers
+// without a certificate, so the app, its service worker and Web Push all work.
+// TLS would in fact be worse, since the tailnet certificate names a ts.net host
+// and a browser asked for https://localhost would refuse it.
+//
+// A failure is logged and survived, never fatal. This listener is a convenience
+// on top of a machine that is already reachable; taking the whole server down
+// because a spare port was busy would trade a working install for a tidy one.
+func (s *Server) serveLocal(ctx context.Context, addr string) {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Printf("local listener on %s unavailable (%v); this machine can still use its main address", addr, err)
+		return
+	}
+	srv := &http.Server{Handler: s.localHandler(), ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		<-ctx.Done()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutCtx)
+	}()
+	go func() {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			log.Printf("local listener: %v", err)
+		}
+	}()
+	log.Printf("kunai also on http://localhost:%s (this machine, no tailnet needed)", portOf(addr))
+}
+
+// portOf is the port half of a host:port, or the whole string if it has none.
+func portOf(addr string) string {
+	if _, port, err := net.SplitHostPort(addr); err == nil {
+		return port
+	}
+	return addr
+}
 
 // loopbackBind reports whether addr binds the loopback interface only, which is
 // what puts the server in local mode.
