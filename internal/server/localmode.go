@@ -72,8 +72,18 @@ func localAddr(mainAddr string) string {
 	if mainAddr == "" || loopbackBind(mainAddr) {
 		return ""
 	}
-	_, port, err := net.SplitHostPort(mainAddr)
+	host, port, err := net.SplitHostPort(mainAddr)
 	if err != nil || port == "" {
+		return ""
+	}
+	// A wildcard bind (0.0.0.0, ::, or no host at all) is already listening on
+	// loopback, and taking 127.0.0.1 on that port first makes the MAIN listener
+	// fail with "address already in use" -- the server loses the address it exists
+	// to serve, to gain one it already had. Found by running it, not by reading it.
+	if host == "" {
+		return ""
+	}
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil && ip.IsUnspecified() {
 		return ""
 	}
 	return net.JoinHostPort("127.0.0.1", port)

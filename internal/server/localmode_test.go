@@ -24,6 +24,15 @@ func TestLocalAddrRidesAlongsideTheMainListener(t *testing.T) {
 			t.Errorf("localAddr(%q) = %q, want none: it is already local", addr, got)
 		}
 	}
+	// A wildcard bind ALREADY listens on loopback. Adding a second listener there
+	// makes the main one fail to bind at all, so the server loses the address it
+	// exists to serve in order to gain one it already had. This was a real bug,
+	// caught by starting the thing rather than by reading the code.
+	for _, wildcard := range []string{"0.0.0.0:8443", "[::]:8443", ":8443"} {
+		if got := localAddr(wildcard); got != "" {
+			t.Errorf("localAddr(%q) = %q, want none: loopback is already covered and the main bind would fail", wildcard, got)
+		}
+	}
 	for _, bad := range []string{"", "nonsense-with-no-port"} {
 		if got := localAddr(bad); got != "" {
 			t.Errorf("localAddr(%q) = %q, want none", bad, got)
