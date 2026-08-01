@@ -574,6 +574,24 @@ Behavioral invariants that were bugs before (do not regress):
   is not a downgrade (loopback is a secure context) and is in fact required: the
   tailnet certificate names a ts.net host, so `https://localhost` would be
   refused. A failed bind is logged and survived, never fatal.
+  The app also answers to any `*.localhost` name, so the local link can read
+  `http://kunai.localhost:8443` instead of a bare port. That is free rather than
+  clever: RFC 6761 reserves the whole `.localhost` TLD for loopback, browsers
+  resolve it themselves without touching DNS, and it keeps secure-context status,
+  so there is no certificate, no resolver config and no `/etc/hosts` entry. It
+  does not weaken the rebinding guard, which turns on an attacker owning a name
+  that resolves here, and `.localhost` cannot be registered; the suffix match
+  requires the dot, so `localhost.evil.example` is still refused. The OS resolver
+  is not obliged to know the name (systemd-resolved does, macOS may not), so
+  `install.sh` **proves the name against the running server before printing it**
+  and falls back to plain `localhost` rather than hand out a link that may not
+  open. A local CA (the OrbStack/mkcert route to `https://` on a local name) was
+  considered and rejected: the certificate is the easy part, but trusting it means
+  a root-owned system store, a separate NSS database for each of Firefox and
+  Chrome, an admin GUI prompt on macOS that a headless launchd service cannot
+  answer, and a manual per-device install on phones -- to buy a padlock on an
+  origin browsers already treat as secure. `tailscale cert` remains the answer for
+  a real name with real HTTPS.
   The client half is load-bearing and was missed first time round: a machine
   reports itself with its `-public-url`, its tailnet origin, so taking that
   literally sent every request and socket for **this** machine back out to the

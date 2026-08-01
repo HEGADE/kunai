@@ -567,6 +567,21 @@ fi
 # reports as "the server did not start" when it plainly did.
 HEALTH="$URL"
 [ "$MODE" = "tailnet" ] && HEALTH="https://$FQDN:$PORT"
+
+# The local link, preferring a name over a bare port.
+#
+# The whole .localhost TLD is reserved for loopback (RFC 6761) and browsers
+# resolve it themselves, so "$NAME.localhost" needs no certificate, no resolver
+# config and no entry in /etc/hosts. But the OS resolver is not required to know
+# it -- systemd-resolved does, macOS does not always -- so the name is PROVED
+# against the running server before it is printed, and we fall back to plain
+# localhost rather than hand out a link that might not open.
+LOCAL_URL="http://localhost:$PORT"
+pretty_local() {
+  command -v curl >/dev/null 2>&1 || return 1
+  curl -s -m 3 -o /dev/null "http://$NAME.localhost:$PORT/api/stats" || return 1
+  LOCAL_URL="http://$NAME.localhost:$PORT"
+}
 if command -v curl >/dev/null 2>&1; then
   for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
     if curl -s -m 4 -o /dev/null "$HEALTH/api/stats"; then
@@ -583,7 +598,8 @@ if command -v curl >/dev/null 2>&1; then
       # kunai serves loopback alongside the tailnet listener, on the same port, so
       # using it on this machine never goes through Tailscale and keeps working
       # when tailscaled is down or you are signed out.
-      say "  ${C_B}On this machine${C_RST}   ${C_B}http://localhost:$PORT${C_RST}"
+      pretty_local || true
+      say "  ${C_B}On this machine${C_RST}   ${C_B}$LOCAL_URL${C_RST}"
       if [ "$MODE" = "tailnet" ]; then
         say "  ${C_B}From your phone${C_RST}   ${C_B}$URL${C_RST}"
         say "                    ${C_DIM}any device signed into your tailnet${C_RST}"

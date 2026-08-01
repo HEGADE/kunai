@@ -69,6 +69,17 @@ func TestLocalGuardRefusesAnythingThatIsNotThisMachine(t *testing.T) {
 		want   int
 	}{
 		{"the app itself", "localhost:8443", "http://localhost:8443", http.StatusTeapot},
+		{
+			// A friendlier name than a bare port. The whole .localhost TLD is
+			// reserved for loopback and browsers resolve it without touching DNS,
+			// so no certificate and no resolver configuration is involved.
+			name: "a .localhost name", host: "kunai.localhost:8443",
+			origin: "http://kunai.localhost:8443", want: http.StatusTeapot,
+		},
+		{
+			name: "any .localhost name, since they all mean here", host: "anything.localhost:8443",
+			origin: "", want: http.StatusTeapot,
+		},
 		{"the app on the IP", "127.0.0.1:8443", "http://127.0.0.1:8443", http.StatusTeapot},
 		{"IPv6 loopback", "[::1]:8443", "http://[::1]:8443", http.StatusTeapot},
 		{
