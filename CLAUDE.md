@@ -34,8 +34,12 @@ cd web && npm run check                                # svelte-check + tsc
 ```
 
 Run locally (needs `claude` on PATH): `go run ./cmd/kunai -addr 127.0.0.1:8899 -data /tmp/kunai-data`.
-Without `-tls-cert/-tls-key` it serves plain HTTP (fine for dev; PWA install and
-push need HTTPS).
+Without `-tls-cert/-tls-key` it serves plain HTTP, and on a **loopback** address
+that is not a limitation: `localhost` and `127.0.0.1` are secure contexts by
+specification, so the PWA, its service worker and Web Push all work with no
+certificate. Only a non-loopback address needs TLS before a browser will install
+the app. (This used to say "dev only; PWA install and push need HTTPS", which told
+people local mode was broken while it worked in front of them.)
 
 Deploy the hub (`your-hub`, systemd user service, Tailscale SSH). `make deploy`
 cross-builds linux/amd64 with the version stamp, scps, and restarts:
@@ -51,6 +55,14 @@ launchd on macOS):
 ./install.sh                                          # standalone or hub
 KUNAI_HUB_URL=https://<hub>.<tailnet>.ts.net:8443 ./install.sh   # a peer
 ```
+
+`install.sh` picks its own mode and **never blocks on Tailscale**. With a tailnet
+and MagicDNS it mints a cert and binds the tailnet IP, as before; with anything
+missing (no CLI, not connected, no MagicDNS, or a cert that will not mint) it
+falls back to local mode, binds `127.0.0.1`, and says so. Claude Code is the only
+hard prerequisite left. The finish screen always prints **both** ways in, "On this
+machine" and "From your phone", so the second one is either a link or the steps to
+get one, rather than silently absent.
 
 `install.sh` **always builds fresh in a source checkout**. It must never reuse a
 stale `dist/` or `./kunai` artifact (that was a real bug). `internal/webui/dist`
@@ -549,7 +561,31 @@ Behavioral invariants that were bugs before (do not regress):
   and this serves from kunai's own origin.
 - The CORS wildcard is safe **only** because the tailnet is the entire auth
   perimeter and the API uses no cookies or credentials. Do not add cookie or session
-  auth without tightening CORS first.
+  auth without tightening CORS first. It is **off in local mode**, where that
+  premise does not hold: see below.
+- **Local mode** (`internal/server/localmode.go`) is a loopback-bound install,
+  what you get with no Tailscale. It always worked -- the binary defaults to
+  127.0.0.1 and a loopback origin is a secure context, so the PWA and its service
+  worker install with no certificate -- but `install.sh` treated Tailscale as a
+  prerequisite and refused to proceed, so the people it suited least, the ones who
+  only wanted kunai on the machine in front of them, could not install at all.
+  Tailscale is now optional and buys exactly one thing: the phone. What is
+  load-bearing is that binding loopback **removes a perimeter rather than
+  tightening one**. Nothing decides who reaches a localhost port, so every page in
+  the browser can try, and `POST /api/sessions` takes any cwd and spawns a CLI in
+  it. So local mode brings its own guard, wrapped outermost around everything
+  including the websocket routes (a handshake is an ordinary request until it
+  upgrades, which is why `ws.go` can go on accepting any origin): the `Host` must
+  be a loopback name, and a cross-site `Origin` is refused. Both are needed and
+  neither covers the other. DNS rebinding resolves an attacker's domain to
+  127.0.0.1, so the browser sends no cross-site `Origin` at all and only the
+  `Host` betrays it; and merely withholding the CORS header is no defence when the
+  damage is done by the request arriving, since a POST that starts a session has
+  already started it. A request with no `Origin` is allowed, because anything that
+  can run curl here can run `claude` directly. Mode is derived from the bind
+  address, never a flag, so a tailnet install is bit-for-bit unchanged and there
+  is nothing to set wrongly; an empty host (`:8443`) is every interface and
+  deliberately NOT local.
 - Only the hub sends Web Push (one VAPID subscription per origin); peers forward.
 - Session ids are unique only per machine, so client-side `{#each}` keys must be
   composite (`machineId:id`) and the client always routes REST/WS to a session's

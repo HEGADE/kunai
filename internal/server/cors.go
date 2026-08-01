@@ -12,9 +12,16 @@ import (
 // (Tailscale ACLs decide who can reach the port) and the API uses no cookies or
 // credentials, so there is nothing for a hostile origin to ride. WebSocket
 // upgrades run their own origin check in ws.go and are left untouched.
-func cors(next http.Handler) http.Handler {
+//
+// crossMachine is false in local mode, where that premise does not hold: nothing
+// decides who reaches a loopback port, so every page in the browser can try. The
+// wildcard is not merely unsafe there, it is pointless -- it exists so the hub's
+// PWA can call its PEERS, and a machine on no tailnet has none. See localmode.go
+// for the guard that does the actual refusing; this only stops us handing out
+// permission nobody needs.
+func cors(next http.Handler, crossMachine bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/ws/") {
+		if !crossMachine || strings.HasPrefix(r.URL.Path, "/ws/") {
 			next.ServeHTTP(w, r)
 			return
 		}
