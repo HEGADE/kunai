@@ -227,8 +227,28 @@ func (s *Server) armSession(sess *session.Session) {
 // SetPush enables Web Push wake-ups.
 func (s *Server) SetPush(p *push.Manager) { s.push = p }
 
-// Handler builds the route mux.
+// Handler is the app as served on the machine's main address.
 func (s *Server) Handler() http.Handler {
+	return s.wrap(s.routes(), loopbackBind(s.cfg.Addr))
+}
+
+// localHandler is the same app served to this machine only, over the loopback
+// listener that runs alongside a tailnet one. Always guarded, and never handed
+// the cross-machine CORS wildcard, whatever the main address is.
+func (s *Server) localHandler() http.Handler { return s.wrap(s.routes(), true) }
+
+// wrap puts the perimeter on. local swaps the tailnet's rules for loopback's:
+// no wildcard origin, and the Host/Origin guard outside everything (websockets
+// included) so no route can be added that skips it.
+func (s *Server) wrap(mux http.Handler, local bool) http.Handler {
+	if local {
+		return localGuard(cors(logRequests(mux), false))
+	}
+	return cors(logRequests(mux), true)
+}
+
+// routes builds the route mux.
+func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
@@ -320,14 +340,7 @@ func (s *Server) Handler() http.Handler {
 	// server owns. Replaces the client polling every machine for both.
 	mux.HandleFunc("GET /ws/fleet", s.handleFleetWS)
 	mux.Handle("GET /", s.spaHandler())
-
-	// Local mode swaps one perimeter for another: no tailnet deciding who reaches
-	// the port, so the server decides instead. The guard goes outermost, around
-	// the websocket routes too, so a route cannot be added that skips it.
-	if loopbackBind(s.cfg.Addr) {
-		return localGuard(cors(logRequests(mux), false))
-	}
-	return cors(logRequests(mux), true)
+	return mux
 }
 
 // Run starts the HTTP(S) server and blocks until ctx is cancelled.
@@ -340,6 +353,11 @@ func (s *Server) Run(ctx context.Context) error {
 		Addr:              s.cfg.Addr,
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+	// Serve this machine directly as well as over the network, so using kunai on
+	// the machine it runs on never depends on the tailnet. See localAddr.
+	if addr := localAddr(s.cfg.Addr); addr != "" {
+		s.serveLocal(ctx, addr)
 	}
 	// Bring the share listener back up when links survived the restart. Without
 	// this a share persists in shares.json, looks live in the app, and answers 404
