@@ -115,7 +115,10 @@ this machine and one for your phone.
 Those are genuinely two addresses. kunai always serves `http://localhost:<port>`
 alongside whatever else it is bound to, so using it on the machine it runs on
 never goes through Tailscale and keeps working when Tailscale is down or you are
-signed out.
+signed out. It answers to any `.localhost` name too, so
+`http://kunai.localhost:8443` works with no setup at all: that TLD is reserved
+for loopback, browsers resolve it themselves, and it still counts as a secure
+context, so the app installs and notifies exactly as it does over HTTPS.
 
 If you have Tailscale it works out your tailnet address and MagicDNS name and
 mints a TLS certificate with `tailscale cert`, so the same link works from every

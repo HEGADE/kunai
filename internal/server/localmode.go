@@ -133,12 +133,24 @@ func loopbackBind(addr string) bool {
 }
 
 // loopbackHost reports whether a bare hostname (no port) names this machine.
+//
+// Anything under .localhost counts, which is what lets the app be reached at a
+// name like http://kunai.localhost:8443 rather than a bare port. That costs
+// nothing to support: RFC 6761 reserves the whole .localhost TLD for loopback, so
+// it cannot be registered by anybody, and browsers resolve it themselves without
+// consulting DNS at all.
+//
+// It does not weaken the rebinding check, which turns on an attacker getting a
+// name they control to resolve here. They cannot have a .localhost name, and if
+// they could serve a page from one they would already be running code on this
+// machine. Note the suffix requires the dot, so localhost.evil.example is still
+// refused -- that is the lookalike the check exists for.
 func loopbackHost(host string) bool {
 	host = strings.Trim(strings.TrimSpace(host), "[]")
 	if host == "" {
 		return false
 	}
-	if strings.EqualFold(host, "localhost") {
+	if strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".localhost") {
 		return true
 	}
 	ip := net.ParseIP(host)
