@@ -84,11 +84,16 @@ decision) and opens itself when one of them is waiting on you.
 
 ### What you need
 
-- A machine on your Tailscale tailnet, running Linux or macOS.
+- A machine running Linux or macOS.
 - [Claude Code](https://claude.com/claude-code) installed and signed in, with
   `claude` on your `PATH`.
-- MagicDNS and HTTPS certificates turned on in the Tailscale admin console, under
-  DNS then HTTPS Certificates.
+
+That is the whole list. Tailscale is **optional** and buys one thing: reaching
+kunai from your phone. Without it the installer sets kunai up for the machine
+you are sitting at, on `localhost`, and tells you how to add the phone later; you
+lose nothing by starting there. With it, you also need MagicDNS and HTTPS
+certificates turned on in the Tailscale admin console, under DNS then HTTPS
+Certificates.
 
 You do not need a toolchain. The one-liner pulls a prebuilt binary, and the web
 app ships already built inside it, so Node is never involved. If you install from
@@ -103,10 +108,16 @@ curl -fsSL https://raw.githubusercontent.com/HEGADE/kunai/main/install.sh | bash
 
 <sub>From a source checkout instead, which builds it: `git clone https://github.com/HEGADE/kunai && cd kunai && ./install.sh`</sub>
 
-The installer downloads the binary, works out your tailnet address and MagicDNS
-name, mints a TLS certificate with `tailscale cert`, installs a service (a
-systemd user unit on Linux, a launchd agent on macOS), health-checks it, and
-prints the URL to open.
+The installer downloads the binary, installs a service (a systemd user unit on
+Linux, a launchd agent on macOS), health-checks it, and prints how to open it on
+this machine and from your phone.
+
+If you have Tailscale it works out your tailnet address and MagicDNS name and
+mints a TLS certificate with `tailscale cert`, so the same link works from every
+device you own. If you do not, it installs for this machine only and prints a
+`localhost` link. That is a real install, not a degraded one: everything works
+except reaching it from another device, and re-running the installer after
+setting up Tailscale upgrades it in place, keeping your sessions and settings.
 
 ### 2. Put it on your phone
 
@@ -300,6 +311,16 @@ The tailnet is the entire auth perimeter. The server binds to the Tailscale
 interface and nothing else, and your Tailscale ACLs decide who can reach it.
 There is no login screen because there are no accounts.
 
+Installed without Tailscale, the perimeter is the loopback interface instead, and
+the server enforces it rather than assuming it. Binding to `localhost` sounds like
+the safest possible choice, and by itself it is the opposite: nothing decides who
+reaches a localhost port, so any page open in your browser can try to drive kunai.
+So a local install refuses any request whose `Host` is not a loopback name, which
+is what stops a hostile site pointing its own domain at 127.0.0.1, and refuses any
+request carrying a cross-site `Origin`. Requests with no `Origin` are allowed:
+anything that can run a command on the machine can run `claude` itself and has no
+need of us.
+
 With several machines, the one that served you the app is the hub. It owns the
 machine registry, Web Push, and peer discovery. The client reads the machine list
 from the hub and then connects to each machine's own tailnet origin, so no
@@ -455,8 +476,8 @@ Every option takes a flag or an environment variable.
 
 | Flag          | Env                | Default          | What it does                                       |
 | ------------- | ------------------ | ---------------- | -------------------------------------------------- |
-| `-addr`       | `KUNAI_ADDR`       | `127.0.0.1:8443` | Bind address, which should be the tailnet IP       |
-| `-tls-cert`   | `KUNAI_TLS_CERT`   |                  | TLS certificate (empty means plain HTTP, dev only) |
+| `-addr`       | `KUNAI_ADDR`       | `127.0.0.1:8443` | Bind address: the tailnet IP, or loopback for a local install |
+| `-tls-cert`   | `KUNAI_TLS_CERT`   |                  | TLS certificate (empty means plain HTTP, which a loopback bind does not need) |
 | `-tls-key`    | `KUNAI_TLS_KEY`    |                  | TLS key                                            |
 | `-data`       | `KUNAI_DATA`       | `~/.kunai`       | VAPID keys, subscriptions, uploads, registry       |
 | `-public-url` | `KUNAI_PUBLIC_URL` |                  | This machine's own tailnet origin                  |

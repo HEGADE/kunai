@@ -41,8 +41,37 @@
     opts: { highlight?: boolean; fileBase?: string } = {},
   ): string {
     const parser = opts.highlight === false ? marked : richMarked
-    const html = DOMPurify.sanitize(parser.parse(src ?? '', { async: false }) as string)
+    let html = DOMPurify.sanitize(parser.parse(src ?? '', { async: false }) as string)
+    html = withScrollableTables(html)
     return opts.fileBase ? withLocalImages(html, opts.fileBase) : html
+  }
+
+  // Give every table its own horizontal scroller.
+  //
+  // A table cannot both size itself to its contents and scroll: constraining the
+  // box so it can scroll also constrains the layout inside it, and the columns
+  // get squeezed back to their longest word. Measured on a phone, that made the
+  // prose column 120px wide and every row 120px tall; the same table in a wrapper
+  // is 45px a row, so nearly three times as much of it is readable at once. The
+  // cost is a wider sideways scroll, which is the cheap direction here.
+  //
+  // The wrapper is what scrolls, so the message column never grows with it.
+  //
+  // Done on the sanitized HTML for the same reason withLocalImages is: real
+  // elements, not a regex over markup. Guarded by a substring test because this
+  // runs on every streaming delta, and a DOM round-trip per keystroke is exactly
+  // the cost the live path avoids highlighting to save.
+  function withScrollableTables(html: string): string {
+    if (!html.includes('<table')) return html
+    const tpl = document.createElement('template')
+    tpl.innerHTML = html
+    for (const table of Array.from(tpl.content.querySelectorAll('table'))) {
+      const wrap = document.createElement('div')
+      wrap.className = 'tablewrap'
+      table.replaceWith(wrap)
+      wrap.appendChild(table)
+    }
+    return tpl.innerHTML
   }
 
   // Point an image at a path on the machine to the endpoint that can actually
@@ -280,10 +309,32 @@
   .md :global(.cwcopy[data-copied]) {
     color: var(--live);
   }
-  .md :global(table) {
-    width: 100%;
-    border-collapse: collapse;
+  /* A table scrolls sideways rather than being crushed into the column width.
+
+     `width: 100%` told a seven-column table to fit a phone, and the container's
+     `overflow-wrap: anywhere` (right for prose, so a long URL cannot push the
+     chat wider) let it obey: with a break legal between any two characters, the
+     narrowest a cell can be is ONE character, so the browser stacked "Panel
+     score" down the page a letter at a time and a header row grew taller than
+     the screen. The two rules are only wrong together, which is why this looked
+     fine on a laptop.
+
+     The wrapper is what scrolls, and the table inside it is left free to size to
+     its contents. Making the table itself the scroller reads as simpler and is
+     the well-known fix, but it constrains the layout inside as well as the box:
+     the columns collapse back to their longest word, which cost three times the
+     row height on a phone. */
+  .md :global(.tablewrap) {
+    overflow-x: auto;
+    /* A sideways swipe on a table must not turn into the browser's back gesture
+       or drag the page with it. */
+    overscroll-behavior-x: contain;
     margin: 0 0 12px;
+  }
+  .md :global(table) {
+    width: max-content;
+    border-collapse: collapse;
+    margin: 0;
     font-size: 13px;
   }
   .md :global(th),
@@ -291,10 +342,25 @@
     border: 1px solid var(--border);
     padding: 7px 10px;
     text-align: left;
+    /* Undo the container's `anywhere` for cells: a word may not be split, so the
+       narrowest a column can be is its longest word rather than one glyph. */
+    overflow-wrap: normal;
+    word-break: normal;
   }
+  /* A header is a short label naming the column, so it reads as one line. Long
+     enough to matter and it widens the column, which now costs a scroll rather
+     than a wrecked layout. */
   .md :global(th) {
     background: var(--panel);
     font-weight: 550;
+    white-space: nowrap;
+  }
+  /* A prose cell wraps at a readable measure instead of running to one long line
+     and making the table several screens wide. Only binds now that the wrapper
+     does the scrolling: while the table was the scroller this had no effect at
+     all, because the columns were already squeezed below it. */
+  .md :global(td) {
+    max-width: 46ch;
   }
   .md :global(img) {
     max-width: 100%;
