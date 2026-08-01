@@ -37,7 +37,9 @@ banner() {
   printf '   %s█▀▄   █ █  █ █  █▀█  █%s\n' "$C_B" "$C_RST"
   printf '   %s█ ▀▄  ▀▀▀  █ █  █ █  █%s\n' "$C_B" "$C_RST"
   printf '\n'
-  printf '   %s╾━━━━━━━━━━━━━━━━━━━▸%s  %sClaude Code, over your tailnet%s\n' "$C_DIM" "$C_RST" "$C_DIM" "$C_RST"
+  # The tagline names what THIS install will be. Promising a tailnet to somebody
+  # who has none is the first line they read and the first thing that is wrong.
+  printf '   %s╾━━━━━━━━━━━━━━━━━━━▸%s  %s%s%s\n' "$C_DIM" "$C_RST" "$C_DIM" "$1" "$C_RST"
   printf '\n'
 }
 
@@ -62,7 +64,7 @@ phase() {
 
 # Preflight report rows. chk_bad records a hint and flags MISSING so we can show
 # the whole picture at once, then fail with everything the user needs to fix.
-MISSING=0; HINTS=""; NEED_CLAUDE=0; NEED_TS=0
+MISSING=0; HINTS=""; NEED_CLAUDE=0
 chk_ok()  { printf '  %s✓%s %s%-12s%s %s%s%s\n' "$C_G" "$C_RST" "$C_B" "$1" "$C_RST" "$C_DIM" "$2" "$C_RST"; }
 chk_opt() { printf '  %s•%s %s%-12s%s %s%s%s\n' "$C_Y" "$C_RST" "$C_B" "$1" "$C_RST" "$C_DIM" "$2" "$C_RST"; }
 chk_bad() {
@@ -198,26 +200,42 @@ ensure_go() {
 CLAUDE_BIN="$(find_bin claude "$HOME/.local/bin/claude" /usr/local/bin/claude /opt/homebrew/bin/claude || true)"
 TS_BIN="$(find_bin tailscale /Applications/Tailscale.app/Contents/MacOS/Tailscale /usr/local/bin/tailscale /opt/homebrew/bin/tailscale /usr/bin/tailscale || true)"
 
-banner
+if [ -n "$TS_BIN" ]; then banner "Claude Code, over your tailnet"
+else banner "Claude Code, on this machine"; fi
 say "${C_DIM}installing · $CHANNEL · $PLAT${C_RST}"
 say ""
 
 if [ -n "$CLAUDE_BIN" ]; then chk_ok "Claude Code" "$CLAUDE_BIN"
 else chk_bad "Claude Code" "not found" "install Claude Code and sign in: https://claude.com/claude-code"; NEED_CLAUDE=1; fi
 
-if [ -n "$TS_BIN" ]; then chk_ok "Tailscale" "$TS_BIN"
-else chk_bad "Tailscale" "CLI not found" "install Tailscale; on macOS the CLI is inside the app (/Applications/Tailscale.app/Contents/MacOS/Tailscale)"; NEED_TS=1; fi
-
+# Tailscale is OPTIONAL, and every check below it is too.
+#
+# It buys exactly one thing: reaching this machine from your phone. That is the
+# headline feature, so it was once treated as a prerequisite and a missing
+# Tailscale ended the install -- which left the people it was least useful to,
+# the ones who only wanted to use kunai on the machine they were sitting at,
+# with no way in at all. Loopback has always worked (a localhost origin is a
+# secure context, so the app installs without a certificate); nothing let you
+# choose it.
+#
+# So anything missing here degrades to local mode and says what that costs,
+# rather than stopping. MODE is what the rest of the script reads.
+MODE="local"
 TS_IP=""; FQDN=""
 if [ -n "$TS_BIN" ]; then
+  chk_ok "Tailscale" "$TS_BIN"
   TS_IP="$("$TS_BIN" ip -4 2>/dev/null | head -1 || true)"
   if [ -n "$TS_IP" ]; then chk_ok "Tailnet" "$TS_IP"
-  else chk_bad "Tailnet" "not connected" "run: tailscale up"; fi
+  else chk_opt "Tailnet" "not connected — run: tailscale up"; fi
 
   FQDN="$("$TS_BIN" status --json 2>/dev/null \
     | /usr/bin/env sed -n 's/.*"DNSName": *"\([^"]*\)".*/\1/p' | head -1 | sed 's/\.$//')"
   if [ -n "$FQDN" ]; then chk_ok "MagicDNS" "$FQDN"
-  else chk_bad "MagicDNS" "no name" "enable MagicDNS in the Tailscale admin console (DNS tab)"; fi
+  else chk_opt "MagicDNS" "no name — enable MagicDNS in the Tailscale admin console (DNS tab)"; fi
+
+  [ -n "$TS_IP" ] && [ -n "$FQDN" ] && MODE="tailnet"
+else
+  chk_opt "Tailscale" "not found — installing for this machine only"
 fi
 
 # Build toolchain is informational — the installer handles it automatically.
@@ -236,28 +254,36 @@ if [ "$MISSING" -ne 0 ]; then
   printf '%s✗ some prerequisites are missing:%s\n' "$C_R$C_B" "$C_RST"
   printf '%s\n\n' "$HINTS"
 
-  # On Linux we can offer to install the missing CLIs (official installers,
-  # behind an explicit y/N). macOS Tailscale is a GUI app and Claude sign-in is a
-  # browser flow, so there — and in any non-interactive run — we just guide and
-  # ask the user to re-run.
-  if [ "$OS" = "linux" ] && { [ "$NEED_TS" = 1 ] || [ "$NEED_CLAUDE" = 1 ]; }; then
-    did=0
-    if [ "$NEED_TS" = 1 ] && ask "Install Tailscale now?  (curl -fsSL https://tailscale.com/install.sh | sh)"; then
-      say "${C_DIM}installing Tailscale...${C_RST}"
-      dl_stdout https://tailscale.com/install.sh | sh && did=1 || say "${C_Y}Tailscale install did not complete${C_RST}"
-    fi
-    if [ "$NEED_CLAUDE" = 1 ] && ask "Install Claude Code now?  (curl -fsSL https://claude.ai/install.sh | bash)"; then
-      say "${C_DIM}installing Claude Code...${C_RST}"
-      dl_stdout https://claude.ai/install.sh | bash && did=1 || say "${C_Y}Claude Code install did not complete${C_RST}"
-    fi
-    say ""
-    if [ "$did" = 1 ]; then
-      say "${C_G}Installed.${C_RST} Now sign in — run ${C_B}tailscale up${C_RST} and ${C_B}claude${C_RST} once — then re-run ${C_B}./install.sh${C_RST}"
+  # Only Claude Code can land here now, and only on Linux can we offer to fetch
+  # it: on macOS it is a browser sign-in flow, and in a non-interactive run there
+  # is nobody to answer.
+  if [ "$OS" = "linux" ] && [ "$NEED_CLAUDE" = 1 ] \
+     && ask "Install Claude Code now?  (curl -fsSL https://claude.ai/install.sh | bash)"; then
+    say "${C_DIM}installing Claude Code...${C_RST}"
+    if dl_stdout https://claude.ai/install.sh | bash; then
+      say ""
+      say "${C_G}Installed.${C_RST} Now run ${C_B}claude${C_RST} once to sign in, then re-run ${C_B}./install.sh${C_RST}"
       exit 0
     fi
+    say "${C_Y}Claude Code install did not complete${C_RST}"
   fi
 
   fail "install the above, then re-run ./install.sh"
+fi
+
+# Say which of the two installs this is BEFORE doing it, so nothing about the
+# outcome is a surprise. Local mode is a real choice, not a failure to configure
+# something, and the wording has to carry that or it reads as a warning.
+if [ "$MODE" = "local" ]; then
+  # One fewer phase to run: there is no certificate to mint. Left at 5 the blade
+  # would stop at 80% on a finished install, which reads as "something did not
+  # happen" on the one path where nothing went wrong.
+  PHASE_TOTAL=4
+  say "  ${C_B}Installing for this machine only.${C_RST}"
+  say "  ${C_DIM}kunai will run at localhost. To reach it from your phone as well,${C_RST}"
+  say "  ${C_DIM}set up Tailscale and re-run this installer — nothing is lost by${C_RST}"
+  say "  ${C_DIM}starting here.${C_RST}"
+  say ""
 fi
 phase "prerequisites"
 
@@ -339,19 +365,35 @@ phase "binary"
 
 # --- TLS certificate over Tailscale -----------------------------------------
 
-TLS_DIR="$DATA_DIR/tls"
-mkdir -p "$TLS_DIR"
-CRT="$TLS_DIR/$FQDN.crt"
-KEY="$TLS_DIR/$FQDN.key"
-if [ ! -s "$CRT" ] || [ ! -s "$KEY" ]; then
-  say "${C_DIM}minting TLS certificate for ${FQDN}...${C_RST}"
-  if ! "$TS_BIN" cert --cert-file "$CRT" --key-file "$KEY" "$FQDN" 2>/dev/null; then
-    sudo "$TS_BIN" cert --cert-file "$CRT" --key-file "$KEY" "$FQDN" \
-      && sudo chown "$USER" "$CRT" "$KEY" \
-      || fail "could not mint a TLS certificate. Enable HTTPS Certificates in the Tailscale admin console (DNS tab > HTTPS Certificates), then re-run."
+# Only a tailnet install needs one. A loopback origin is trusted by the browser
+# without a certificate, which is what makes local mode possible at all.
+#
+# A cert that cannot be minted drops to local mode rather than ending the
+# install, because the machine is perfectly usable without one and the person
+# running this has already waited through a build to find out.
+CRT=""; KEY=""
+if [ "$MODE" = "tailnet" ]; then
+  TLS_DIR="$DATA_DIR/tls"
+  mkdir -p "$TLS_DIR"
+  CRT="$TLS_DIR/$FQDN.crt"
+  KEY="$TLS_DIR/$FQDN.key"
+  if [ ! -s "$CRT" ] || [ ! -s "$KEY" ]; then
+    say "${C_DIM}minting TLS certificate for ${FQDN}...${C_RST}"
+    if ! "$TS_BIN" cert --cert-file "$CRT" --key-file "$KEY" "$FQDN" 2>/dev/null; then
+      sudo "$TS_BIN" cert --cert-file "$CRT" --key-file "$KEY" "$FQDN" 2>/dev/null \
+        && sudo chown "$USER" "$CRT" "$KEY" || {
+        say "  ${C_Y}could not mint a TLS certificate${C_RST}"
+        say "  ${C_DIM}enable HTTPS Certificates in the Tailscale admin console (DNS tab),${C_RST}"
+        say "  ${C_DIM}then re-run this installer to add phone access.${C_RST}"
+        say "  ${C_DIM}continuing for this machine only.${C_RST}"
+        MODE="local"; CRT=""; KEY=""
+        # Two phases are already spent, so drop the one now being skipped.
+        PHASE_TOTAL=4
+      }
+    fi
   fi
+  [ "$MODE" = "tailnet" ] && phase "certificate"
 fi
-phase "certificate"
 
 # --- install binary ----------------------------------------------------------
 
@@ -369,10 +411,27 @@ fi
 PUSH_ARG=""
 [ -n "${KUNAI_PUSH_EMAIL:-}" ] && PUSH_ARG="-push-email ${KUNAI_PUSH_EMAIL}"
 
-# This machine's own tailnet origin, so it can identify itself in the machine
-# registry the multi-machine client reads.
-PUBLIC_URL="https://$FQDN:$PORT"
-IDENT_ARGS="-public-url $PUBLIC_URL"
+# The two modes differ in exactly three things: what the server binds, whether it
+# terminates TLS, and the origin it calls itself. Everything downstream reads
+# these, so the difference lives here and nowhere else.
+#
+# Local mode binds LOOPBACK rather than every interface, and that is the whole
+# security model: the server refuses anything whose Host is not loopback, so
+# nothing on the network can reach it and no page in the browser can drive it by
+# resolving its own name here. See internal/server/localmode.go.
+if [ "$MODE" = "tailnet" ]; then
+  BIND="$TS_IP:$PORT"
+  URL="https://$FQDN:$PORT"
+  TLS_ARGS="-tls-cert $CRT -tls-key $KEY"
+else
+  BIND="127.0.0.1:$PORT"
+  URL="http://localhost:$PORT"
+  TLS_ARGS=""
+fi
+
+# This machine's own origin, so it can identify itself in the machine registry
+# the multi-machine client reads.
+IDENT_ARGS="-public-url $URL"
 # On a peer machine, point -hub-url at the machine you installed the PWA from so
 # its Web Push wake-ups reach your phone via that hub.
 [ -n "${KUNAI_HUB_URL:-}" ] && IDENT_ARGS="$IDENT_ARGS -hub-url ${KUNAI_HUB_URL}"
@@ -383,14 +442,18 @@ if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
   UNIT_DIR="$HOME/.config/systemd/user"
   mkdir -p "$UNIT_DIR"
   CLAUDE_DIR="$(dirname "$CLAUDE_BIN")"
+  # Only wait for tailscaled when we bind its address; a local install has no
+  # such unit and should not name one in its ordering.
+  AFTER="network-online.target"
+  [ "$MODE" = "tailnet" ] && AFTER="$AFTER tailscaled.service"
   cat > "$UNIT_DIR/$NAME.service" <<EOF
 [Unit]
 Description=Kunai ($CHANNEL) - self-hosted client for Claude Code
-After=network-online.target tailscaled.service
+After=$AFTER
 
 [Service]
 Environment=PATH=$CLAUDE_DIR:/usr/local/bin:/usr/bin:/bin
-ExecStart=$BIN_DIR/$NAME -addr $TS_IP:$PORT -tls-cert $CRT -tls-key $KEY -data $DATA_DIR $IDENT_ARGS $PUSH_ARG
+ExecStart=$BIN_DIR/$NAME -addr $BIND $TLS_ARGS -data $DATA_DIR $IDENT_ARGS $PUSH_ARG
 Restart=always
 RestartSec=2
 
@@ -413,7 +476,8 @@ elif [ "$OS" = "darwin" ]; then
   PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
   mkdir -p "$HOME/Library/LaunchAgents"
   CLAUDE_DIR="$(dirname "$CLAUDE_BIN")"
-  ARGS=(-addr "$TS_IP:$PORT" -tls-cert "$CRT" -tls-key "$KEY" -data "$DATA_DIR" -public-url "$PUBLIC_URL")
+  ARGS=(-addr "$BIND" -data "$DATA_DIR" -public-url "$URL")
+  [ -n "$CRT" ] && ARGS+=(-tls-cert "$CRT" -tls-key "$KEY")
   [ -n "${KUNAI_HUB_URL:-}" ]    && ARGS+=(-hub-url "$KUNAI_HUB_URL")
   [ -n "${KUNAI_PUSH_EMAIL:-}" ] && ARGS+=(-push-email "$KUNAI_PUSH_EMAIL")
   {
@@ -438,7 +502,7 @@ elif [ "$OS" = "darwin" ]; then
   # Readiness is confirmed by the shared health check below.
 else
   say "no service manager for this platform. Run manually:"
-  say "  $BIN_DIR/$NAME -addr $TS_IP:$PORT -tls-cert $CRT -tls-key $KEY -data $DATA_DIR $IDENT_ARGS $PUSH_ARG"
+  say "  $BIN_DIR/$NAME -addr $BIND $TLS_ARGS -data $DATA_DIR $IDENT_ARGS $PUSH_ARG"
 fi
 phase "service"
 
@@ -495,17 +559,46 @@ fi
 
 # --- health check -------------------------------------------------------------
 
-URL="https://$FQDN:$PORT"
+# URL and BIND were fixed with MODE, above.
+#
+# The health check asks the LOCAL address in both modes. In tailnet mode the FQDN
+# resolves here through MagicDNS and works, but asking loopback proves the server
+# is up without also depending on DNS, so a name that has not propagated yet
+# reports as "the server did not start" when it plainly did.
+HEALTH="$URL"
+[ "$MODE" = "tailnet" ] && HEALTH="https://$FQDN:$PORT"
 if command -v curl >/dev/null 2>&1; then
   for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
-    if curl -s -m 4 -o /dev/null "$URL/api/stats"; then
+    if curl -s -m 4 -o /dev/null "$HEALTH/api/stats"; then
       phase "live"
       say ""
       say "  ${C_B}kunai is live.${C_RST}  ${C_DIM}forged and thrown.${C_RST}"
       say ""
-      say "  Open on any device in your tailnet:  ${C_B}$URL${C_RST}"
+      # Both ways in, always, in the order you will want them: the machine you
+      # are sitting at first, then the phone. The second line is the one that
+      # used to be missing entirely, and in local mode it is the one that says
+      # what you do next rather than leaving you to work out why there is no
+      # link for your phone.
+      say "  ${C_B}On this machine${C_RST}   ${C_B}$URL${C_RST}"
+      if [ "$MODE" = "tailnet" ]; then
+        say "  ${C_B}From your phone${C_RST}   ${C_B}$URL${C_RST}"
+        say "                    ${C_DIM}same link, from any device signed into your tailnet${C_RST}"
+        say ""
+        say "  iPhone: open it in Safari, then Share > Add to Home Screen."
+      else
+        say "  ${C_B}From your phone${C_RST}   ${C_DIM}not yet — this install is local to this machine${C_RST}"
+        say ""
+        say "  ${C_DIM}To add it, set up Tailscale here and on the phone, then re-run${C_RST}"
+        say "  ${C_DIM}this installer. Your sessions and settings are kept.${C_RST}"
+        if [ "$OS" = "linux" ]; then
+          say "    ${C_B}curl -fsSL https://tailscale.com/install.sh | sh${C_RST}"
+          say "    ${C_B}sudo tailscale up${C_RST}"
+        else
+          say "    ${C_B}https://tailscale.com/download${C_RST}  ${C_DIM}then sign in${C_RST}"
+        fi
+        say "    ${C_B}./install.sh${C_RST}"
+      fi
       say ""
-      say "  iPhone: open it in Safari, then Share > Add to Home Screen."
       say "  ${C_DIM}Update later: re-run this installer (it swaps the binary and restarts the service).${C_RST}"
       if [ "$OS" = "darwin" ]; then
         say "  ${C_DIM}Manage: launchctl list | grep $NAME; logs: $DATA_DIR/kunai.log${C_RST}"
@@ -518,8 +611,8 @@ if command -v curl >/dev/null 2>&1; then
     sleep 1
   done
   if [ "$OS" = "darwin" ]; then
-    fail "server did not answer at $URL/api/stats. Check: tail $DATA_DIR/kunai.log"
+    fail "server did not answer at $HEALTH/api/stats. Check: tail $DATA_DIR/kunai.log"
   fi
-  fail "server did not answer at $URL/api/stats. Check: journalctl --user -u $NAME -n 20"
+  fail "server did not answer at $HEALTH/api/stats. Check: journalctl --user -u $NAME -n 20"
 fi
 say "installed. Open $URL"

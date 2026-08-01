@@ -320,7 +320,14 @@ func (s *Server) Handler() http.Handler {
 	// server owns. Replaces the client polling every machine for both.
 	mux.HandleFunc("GET /ws/fleet", s.handleFleetWS)
 	mux.Handle("GET /", s.spaHandler())
-	return cors(logRequests(mux))
+
+	// Local mode swaps one perimeter for another: no tailnet deciding who reaches
+	// the port, so the server decides instead. The guard goes outermost, around
+	// the websocket routes too, so a route cannot be added that skips it.
+	if loopbackBind(s.cfg.Addr) {
+		return localGuard(cors(logRequests(mux), false))
+	}
+	return cors(logRequests(mux), true)
 }
 
 // Run starts the HTTP(S) server and blocks until ctx is cancelled.
@@ -400,7 +407,15 @@ func (s *Server) Run(ctx context.Context) error {
 		// Certs are served from TLSConfig.GetCertificate, so the file args are empty.
 		return srv.ListenAndServeTLS("", "")
 	}
-	log.Printf("kunai listening on http://%s (no TLS — dev only; PWA/push need HTTPS)", s.cfg.Addr)
+	// A loopback origin is a secure context by specification, so the PWA, its
+	// service worker and Web Push all work over plain HTTP here. Saying otherwise
+	// (this line used to read "dev only; PWA/push need HTTPS") told people the
+	// mode was broken while they were looking at it working.
+	if loopbackBind(s.cfg.Addr) {
+		log.Printf("kunai listening on http://%s (local mode: this machine only)", s.cfg.Addr)
+	} else {
+		log.Printf("kunai listening on http://%s (no TLS: a browser will refuse to install the app from a non-loopback address)", s.cfg.Addr)
+	}
 	return srv.ListenAndServe()
 }
 
