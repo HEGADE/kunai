@@ -45,7 +45,23 @@ func (s *Server) handleLANPINState(w http.ResponseWriter, r *http.Request) {
 		"urls":    s.lanURLs(),
 		"min_len": lanauth.MinPINLength,
 		"max_len": lanauth.MaxPINLength,
+		// A caution, not a diagnosis: listing firewall rules needs root, so kunai
+		// can only say that one is running and defaults to dropping. Shown next to
+		// the address because that is where somebody stuck will be looking.
+		"firewall": s.firewallHint(),
 	})
+}
+
+// firewallHint is the "if you cannot reach it, run this" advice, or nil.
+func (s *Server) firewallHint() map[string]string {
+	if s.lanNet == nil {
+		return nil
+	}
+	fw := s.lanNet.Firewall()
+	if fw == nil {
+		return nil
+	}
+	return map[string]string{"tool": fw.Tool, "command": fw.Command}
 }
 
 // syncLANListeners brings the listeners into line with the PIN. Safe when there

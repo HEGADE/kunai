@@ -290,6 +290,10 @@ export interface LanPinState {
   urls: string[]
   min_len: number
   max_len: number
+  // Present when a firewall on that machine defaults to dropping incoming
+  // connections, which makes a bound listener unreachable while looking fine
+  // from the machine itself.
+  firewall?: { tool: string; command: string } | null
 }
 export interface LanDevice {
   label?: string

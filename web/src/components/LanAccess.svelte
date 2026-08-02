@@ -176,6 +176,21 @@
           </span>
         </span>
       </div>
+      <!-- Bound is not reachable. A firewall that drops incoming traffic leaves
+           the address above looking perfect from here and timing out over there,
+           with nothing to say why, so the way out is printed next to it. -->
+      {#if pinState.firewall}
+        <div class="row">
+          <span class="k">
+            <span class="name warn">{pinState.firewall.tool} may be blocking it</span>
+            <span class="sub">
+              This machine's firewall drops incoming connections by default. If the
+              other device cannot reach the address, run this once:
+            </span>
+            <code class="cmd mono">{pinState.firewall.command}</code>
+          </span>
+        </div>
+      {/if}
     {/if}
 
     {#if pinState.set && devices.length}
@@ -338,6 +353,27 @@
     font-size: 11.5px;
     color: var(--text-2);
     word-break: break-all;
+  }
+  /* Amber, this app's colour for "blocked on something you have to do". */
+  .warn {
+    color: var(--busy);
+  }
+  .cmd {
+    display: block;
+    margin-top: 5px;
+    padding: 7px 9px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-2);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    /* Wrap at spaces, never inside a word: break-all split "proto" across two
+       lines, which is unreadable and worse to retype. */
+    white-space: pre-wrap;
+    word-break: normal;
+    overflow-wrap: break-word;
+    user-select: all;
   }
   code {
     font-size: 0.92em;
