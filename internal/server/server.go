@@ -23,6 +23,7 @@ import (
 	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/hegade/kunai/internal/awake"
 	"github.com/hegade/kunai/internal/fsbrowse"
+	"github.com/hegade/kunai/internal/lanauth"
 	"github.com/hegade/kunai/internal/push"
 	"github.com/hegade/kunai/internal/schedule"
 	"github.com/hegade/kunai/internal/session"
@@ -114,7 +115,9 @@ type Server struct {
 	// shares and gate are session sharing: a link worth one conversation, served
 	// on a listener of its own so a guest can never reach the routes above. See
 	// sharegate.go for why that is a separate mux rather than a middleware.
-	shares     *share.Store
+	shares *share.Store
+	// lanAuth is the PIN and sessions guarding the network listener. See lanauth.go.
+	lanAuth    *lanauth.Store
 	gate       *shareGate
 	funnelMu   sync.Mutex
 	funnelAt   time.Time // when the funnel port was last read (it shells out)
@@ -189,6 +192,9 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	// never started when there is nothing to serve.
 	s.shares = share.NewStore(shareStorePath(cfg.DataDir))
 	s.gate = newShareGate(s.shares, mgr, s.pwa, gatePortFile(cfg.DataDir))
+	// The lock on the network listener. Constructed always so the owner can set a
+	// PIN before turning -lan on; the listener refuses to start without one.
+	s.lanAuth = lanauth.Open(filepath.Join(cfg.DataDir, "lanauth.json"))
 	if cfg.DataDir != "" {
 		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))
 		// New accounts log in with the same binary as the default profile, into a
@@ -344,6 +350,10 @@ func (s *Server) routes() *http.ServeMux {
 	// Machine-level pushes: the session list when it changes, stats on a timer the
 	// server owns. Replaces the client polling every machine for both.
 	mux.HandleFunc("GET /ws/fleet", s.handleFleetWS)
+	// The network listener's lock: signing in, and (owner side) managing it.
+	s.lanAuthRoutes(mux)
+	s.lanAdminRoutes(mux)
+
 	mux.Handle("GET /", s.spaHandler())
 	return mux
 }

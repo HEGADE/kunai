@@ -332,13 +332,32 @@ a "secure context", so service workers and Web Push are withheld. If you want
 those on your phone, Tailscale is the way, because it comes with a real
 certificate.
 
-Two things to know before turning it on. Each private address gets its own
-listener, and requests are accepted only when the `Host` is a private address
-literal and no cross-site `Origin` is present — that is what stops a hostile web
-page you have open from reaching in and driving your agent. But **kunai has no
-login**, so any device that can reach the port can use it. The guard stops
-hostile pages, not a machine on your network asking directly. Turning this on
-means trusting everything on that network.
+**It is locked with a PIN**, which is required — the listener refuses to start
+without one. Set it in Settings on the machine itself, then a device reaching
+kunai over the network gets a PIN screen, and stays signed in afterwards.
+
+Some detail, since this is the part worth being able to check yourself:
+
+- 6 to 12 digits. The obvious ones (`123456`, repeats, runs) are refused when you
+  set them, because those are what an attacker tries first and a throttle cannot
+  help against a lucky first guess.
+- Stored as argon2id with a random salt. The PIN is never written down anywhere,
+  and the file is `0600`.
+- Six digits is only a million possibilities, so what actually protects you is the
+  rate limit. It counts **globally** as well as per device, because on a local
+  network an attacker can change their address for free; it **survives restarts**,
+  so waiting for an update doesn't refill their budget; and every failure looks
+  identical, so nothing can be learned by probing. Guessing settles to about one
+  attempt per lockout window, which finishes no attack.
+- Traffic is encrypted with a self-signed certificate. Your browser will warn you
+  once per device and you accept it — that warning means "I can't vouch for who
+  this is", which for your own machine you already know. Without it the PIN would
+  cross a shared network in plain text, which is the whole thing we're avoiding.
+- Loopback is never locked. A forgotten PIN is always fixable from the machine.
+
+Each private address gets its own listener, and requests are accepted only when
+the `Host` is a private address literal with no cross-site `Origin` — that is what
+stops a hostile page you have open from reaching in, separately from the PIN.
 
 Installed without Tailscale, the perimeter is the loopback interface instead, and
 the server enforces it rather than assuming it. Binding to `localhost` sounds like

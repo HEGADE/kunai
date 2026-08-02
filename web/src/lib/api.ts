@@ -5,8 +5,22 @@ import type { AccountInfo, ChannelInfo, Attachment, CLIProfile, FunnelState, His
 // own requests stay root-relative. Push (push.ts) is intentionally NOT here — it
 // always targets the hub origin.
 
+// Somebody to tell when the server says we are not signed in.
+//
+// Registered by the PIN store rather than imported from it, so this file stays
+// free of Svelte and there is no cycle between the transport and the UI state.
+let onUnauthorized: () => void = () => {}
+export function setUnauthorizedHandler(fn: () => void) {
+  onUnauthorized = fn
+}
+
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
+    // A 401 only ever comes from the network listener's gate: nothing else in
+    // kunai authenticates. Reacting to the status rather than asking up front is
+    // what keeps the PIN screen away from loopback and the tailnet, where no gate
+    // exists and asking would have shown a lock that is not there.
+    if (res.status === 401) onUnauthorized()
     let msg = `HTTP ${res.status}`
     try {
       const body = await res.json()
