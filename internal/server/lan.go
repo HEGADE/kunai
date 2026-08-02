@@ -48,6 +48,9 @@ func lanAddrs(port string) []string {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
 		}
+		if virtualIface(iface.Name) {
+			continue
+		}
 		addrs, err := iface.Addrs()
 		if err != nil {
 			continue
@@ -65,6 +68,26 @@ func lanAddrs(port string) []string {
 		}
 	}
 	return out
+}
+
+// virtualIface reports whether an interface is one of the machine's own private
+// plumbing rather than a way onto a network somebody else is on.
+//
+// Without this a laptop with Docker and a couple of VPN taps offered five
+// addresses, four of which nothing outside the machine can reach. Serving them
+// was harmless; PRINTING them was not, because a list of five links where only
+// one works is worse than no list at all -- you have to try them to find out.
+//
+// Prefix matching is deliberately narrow. "br-" catches Docker's user-defined
+// bridges while leaving a hand-made "br0" alone, since that one is often the real
+// network on a machine set up for virtualisation.
+func virtualIface(name string) bool {
+	for _, p := range []string{"docker", "br-", "virbr", "vmnet", "veth", "tap", "tun", "tailscale", "utun", "zt", "wg"} {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // privateHost reports whether an authority names a private address literal.

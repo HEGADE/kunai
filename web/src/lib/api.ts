@@ -281,6 +281,46 @@ export function setKeepAwake(
 
 // setFailover toggles a machine's opt-in account auto-failover (roll a walled
 // session onto the account with the most headroom). Returns the resolved state.
+// The lock on a machine's network listener. Owner-side: these are reachable from
+// loopback and the tailnet, and on the network listener itself only once signed
+// in, so a stranger can never read the state or change the PIN.
+export interface LanPinState {
+  set: boolean
+  enabled: boolean
+  urls: string[]
+  min_len: number
+  max_len: number
+}
+export interface LanDevice {
+  label?: string
+  created: number
+  seen: number
+}
+
+export function getLanPin(base: string): Promise<LanPinState> {
+  return fetch(at(base, '/api/lan/pin')).then((r) => json<LanPinState>(r))
+}
+
+export function setLanPin(base: string, pin: string): Promise<{ set: boolean }> {
+  return fetch(at(base, '/api/lan/pin'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin }),
+  }).then((r) => json<{ set: boolean }>(r))
+}
+
+export function clearLanPin(base: string): Promise<{ set: boolean }> {
+  return fetch(at(base, '/api/lan/pin'), { method: 'DELETE' }).then((r) => json<{ set: boolean }>(r))
+}
+
+export function getLanDevices(base: string): Promise<LanDevice[]> {
+  return fetch(at(base, '/api/lan/devices')).then((r) => json<LanDevice[]>(r))
+}
+
+export function forgetLanDevices(base: string): Promise<unknown> {
+  return fetch(at(base, '/api/lan/devices'), { method: 'DELETE' }).then((r) => json<unknown>(r))
+}
+
 export function setFailover(base: string, enabled: boolean): Promise<{ enabled: boolean }> {
   return fetch(at(base, '/api/failover'), {
     method: 'POST',

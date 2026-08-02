@@ -33,8 +33,19 @@ func (s *Server) lanAdminRoutes(mux *http.ServeMux) {
 // thing without ever reading the PIN back (there is nothing to read: only a hash
 // is stored).
 func (s *Server) handleLANPINState(w http.ResponseWriter, r *http.Request) {
+	// The addresses are included so the settings panel can show where to point the
+	// other device. Knowing a PIN is set is useless without knowing the link, and
+	// making somebody find their own LAN address is the step where they give up.
+	urls := []string{}
+	if s.cfg.LAN {
+		for _, addr := range lanAddrs(portOf(s.cfg.Addr)) {
+			urls = append(urls, "https://"+addr)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"set":     s.lanAuth != nil && s.lanAuth.HasPIN(),
+		"enabled": s.cfg.LAN,
+		"urls":    urls,
 		"min_len": lanauth.MinPINLength,
 		"max_len": lanauth.MaxPINLength,
 	})
