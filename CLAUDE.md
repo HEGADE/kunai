@@ -599,6 +599,28 @@ Behavioral invariants that were bugs before (do not regress):
   offline. `app.svelte.ts` now uses `location.origin` for the `self` entry, on the
   grounds that the origin which just served the app is the one address proven
   reachable. Peers are untouched; their published URL is the only way to them.
+- **LAN access** (`internal/server/lan.go`, `-lan`/`KUNAI_LAN=1`, **off by
+  default**) serves every private address on the host so another device on the
+  same wifi can open the app with no Tailscale. It is the web app and nothing
+  else: a LAN address is not a secure context, so the browser withholds service
+  workers (no PWA install, no offline shell, no auto-update) and Web Push.
+  Measured, not assumed -- the app renders and the websocket streams. Each
+  private IPv4 gets its own listener (`lanAddrs`), skipping loopback and the
+  100.64/10 tailnet range because those are already served; a wildcard bind would
+  simply fail against the main listener. `lanGuard` is its perimeter, and it is
+  stricter than the loopback one in one way: the `Host` must be a private
+  **address literal**, never a name, which makes DNS rebinding inexpressible
+  rather than merely detected. The honest limit, which the flag's help text says:
+  kunai has no login, so any device that can reach the port can drive the agent.
+  The guard stops hostile web pages, not a machine on your wifi making the request
+  itself. Turning it on means trusting the network.
+- `web/src/lib/clipboard.ts` (`copyText`) exists because `navigator.clipboard` is
+  not merely unreliable off a secure context, it is **undefined**. Every Copy
+  button therefore did nothing on a LAN address, and `Markdown.svelte`'s
+  `navigator.clipboard?.writeText(x).then(...)` read as guarded while calling
+  `.then` on `undefined`, an uncaught TypeError inside a click handler. `copyText`
+  falls back to a throwaway textarea plus `document.execCommand('copy')`, verified
+  working in a real insecure-context browser.
 - **Local mode** (`internal/server/localmode.go`) is a loopback-bound install,
   what you get with no Tailscale. It always worked -- the binary defaults to
   127.0.0.1 and a loopback origin is a secure context, so the PWA and its service

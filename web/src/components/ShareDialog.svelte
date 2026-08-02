@@ -13,6 +13,7 @@
   // the wall-clock instant it lands on is shown underneath. That is what people
   // actually reason about ("it dies before my flight"), and it is the thing a
   // number of seconds cannot tell you.
+  import { copyText } from '../lib/clipboard'
   import Spinner from './Spinner.svelte'
   import {
     createShare,
@@ -219,7 +220,7 @@
   async function copyLink() {
     if (!share) return
     try {
-      await navigator.clipboard.writeText(share.url)
+      if (!(await copyText(share.url))) throw new Error('no clipboard')
       copied = true
       setTimeout(() => (copied = false), 1400)
     } catch {

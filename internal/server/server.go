@@ -51,6 +51,11 @@ type Config struct {
 	DataDir       string // dir for uploads (and, via push, VAPID keys/subs)
 	PublicURL     string // this machine's own tailnet origin, e.g. https://host.tailnet.ts.net:8443
 	HubURL        string // if set, this is a peer that forwards push wake-ups to the hub at this URL
+	// LAN also serves this machine's private network addresses, so another device
+	// on the same wifi can open the app with no Tailscale. Opt-in and off by
+	// default, because it exposes an app with no login to the whole network. See
+	// lan.go for what it does and does not protect.
+	LAN bool
 	// Thermal guard defaults, seeded from flags/env. A persisted thermal.json
 	// overrides these on boot; the Settings toggle overrides at runtime.
 	ThermalGuard    bool    // enable the guardian by default
@@ -382,6 +387,10 @@ func (s *Server) Run(ctx context.Context) error {
 	// the machine it runs on never depends on the tailnet. See localAddr.
 	if addr := localAddr(s.cfg.Addr); addr != "" {
 		s.serveLocal(ctx, addr)
+	}
+	// And the rest of the network, when asked for it explicitly.
+	if s.cfg.LAN {
+		s.serveLAN(ctx, portOf(s.cfg.Addr))
 	}
 	// Bring the share listener back up when links survived the restart. Without
 	// this a share persists in shares.json, looks live in the app, and answers 404
