@@ -104,7 +104,7 @@
       <span class="k">
         <span class="name">
           {#if !pinState.set}
-            No PIN — the network listener will not start
+            Off — no PIN set
           {:else if pinState.enabled}
             Locked with a PIN
           {:else}
@@ -113,12 +113,12 @@
         </span>
         <span class="sub">
           {#if !pinState.set}
-            Another device on your wifi can reach {label} without Tailscale, but only
-            behind a PIN. Set one, then start kunai with <code class="mono">-lan</code>.
+            Another device on your wifi can reach {label} without Tailscale, once you
+            set a PIN. Setting one turns it on straight away.
           {:else if pinState.enabled}
             Devices on your wifi need this PIN. They stay signed in afterwards.
           {:else}
-            Start kunai with <code class="mono">-lan</code> to serve your wifi.
+            A PIN is set, but no network address was found to serve.
           {/if}
         </span>
       </span>
@@ -196,7 +196,7 @@
       <div class="row">
         <span class="k">
           <span class="name">Remove the PIN</span>
-          <span class="sub">The network listener will not start again until a PIN is set.</span>
+          <span class="sub">Removes the PIN and stops serving this network straight away.</span>
         </span>
         {#if armRemove}
           <span class="confirm">

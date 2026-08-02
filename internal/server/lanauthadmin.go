@@ -14,6 +14,7 @@ package server
 // unauthenticated one cannot reach them at all.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -36,19 +37,38 @@ func (s *Server) handleLANPINState(w http.ResponseWriter, r *http.Request) {
 	// The addresses are included so the settings panel can show where to point the
 	// other device. Knowing a PIN is set is useless without knowing the link, and
 	// making somebody find their own LAN address is the step where they give up.
-	urls := []string{}
-	if s.cfg.LAN {
-		for _, addr := range lanAddrs(portOf(s.cfg.Addr)) {
-			urls = append(urls, "https://"+addr)
-		}
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"set":     s.lanAuth != nil && s.lanAuth.HasPIN(),
-		"enabled": s.cfg.LAN,
-		"urls":    urls,
+		"set": s.lanAuth != nil && s.lanAuth.HasPIN(),
+		// Reported from the listeners themselves rather than from config, so the
+		// panel can never claim the network is served when nothing is bound.
+		"enabled": s.lanNet != nil && s.lanNet.Running(),
+		"urls":    s.lanURLs(),
 		"min_len": lanauth.MinPINLength,
 		"max_len": lanauth.MaxPINLength,
 	})
+}
+
+// syncLANListeners brings the listeners into line with the PIN. Safe when there
+// is nothing to do, and a no-op before Run has built them.
+func (s *Server) syncLANListeners() {
+	if s.lanNet == nil {
+		return
+	}
+	ctx := s.baseCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.lanNet.Sync(ctx)
+}
+
+func (s *Server) lanURLs() []string {
+	if s.lanNet == nil {
+		return []string{}
+	}
+	if u := s.lanNet.Addrs(); len(u) > 0 {
+		return u
+	}
+	return []string{}
 }
 
 func (s *Server) handleSetLANPIN(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +90,13 @@ func (s *Server) handleSetLANPIN(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"set": true})
+	// The PIN IS the switch, so this is the moment the network starts being
+	// served. Waiting for a restart is what made the first version look broken.
+	s.syncLANListeners()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"set":  true,
+		"urls": s.lanURLs(),
+	})
 }
 
 func (s *Server) handleClearLANPIN(w http.ResponseWriter, r *http.Request) {
@@ -82,12 +108,11 @@ func (s *Server) handleClearLANPIN(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Worth saying out loud: without a PIN the network listener will not come back
-	// after a restart. That is the intended behaviour, not a surprise to discover.
-	writeJSON(w, http.StatusOK, map[string]any{
-		"set":  false,
-		"note": "the network listener will not start again until a PIN is set",
-	})
+	// Removing the PIN takes the machine off the network at once, rather than at
+	// the next restart. Anything else would leave it served and unlocked in the
+	// meantime, which is the one state this must never be in.
+	s.syncLANListeners()
+	writeJSON(w, http.StatusOK, map[string]any{"set": false})
 }
 
 // deviceView is what the owner sees about a signed-in device. It carries no token
