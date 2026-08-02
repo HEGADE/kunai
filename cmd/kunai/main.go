@@ -28,6 +28,7 @@ func main() {
 	flag.StringVar(&cfg.DefaultEffort, "effort", os.Getenv("KUNAI_EFFORT"), "default reasoning effort for new sessions: low|medium|high|xhigh|max (optional)")
 	flag.StringVar(&cfg.PublicURL, "public-url", os.Getenv("KUNAI_PUBLIC_URL"), "this machine's own tailnet origin (e.g. https://host.tailnet.ts.net:8443)")
 	flag.StringVar(&cfg.HubURL, "hub-url", os.Getenv("KUNAI_HUB_URL"), "hub origin to forward Web Push wake-ups to (set on peer machines)")
+	flag.BoolVar(&cfg.LAN, "lan", envBool("KUNAI_LAN", false), "also serve every device on this network over plain HTTP (no app install or notifications there, and kunai has no login: anything on the network can drive it)")
 	dataDir := flag.String("data", envOr("KUNAI_DATA", defaultDataDir()), "directory for VAPID keys, subscriptions, uploads")
 	pushEmail := flag.String("push-email", os.Getenv("KUNAI_PUSH_EMAIL"), "VAPID contact (mailto) for Web Push")
 	flag.BoolVar(&cfg.ThermalGuard, "thermal-guard", envBool("KUNAI_THERMAL_GUARD", false), "enable the thermal safety guard by default (stops all sessions when the host overheats)")

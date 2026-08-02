@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { copyText } from '../lib/clipboard'
   import type { Turn } from '../lib/turns'
   import type { Block } from '../lib/types'
   import type { RevertPreview } from '../lib/api'
@@ -98,7 +99,7 @@
   async function copyReply() {
     if (!reply) return
     try {
-      await navigator.clipboard.writeText(reply)
+      if (!(await copyText(reply))) return
       copied = true
       clearTimeout(copyTimer)
       copyTimer = setTimeout(() => (copied = false), 1200)

@@ -319,6 +319,27 @@ The tailnet is the entire auth perimeter. The server binds to the Tailscale
 interface and nothing else, and your Tailscale ACLs decide who can reach it.
 There is no login screen because there are no accounts.
 
+### On your wifi, without Tailscale
+
+`-lan` (or `KUNAI_LAN=1`) also serves the machine's own network addresses, so
+another device on the same wifi can open `http://192.168.x.y:8443` with nothing
+installed. It is off by default.
+
+What you get is the web app: sessions, streaming, tool output, everything you
+read and type. What you do not get is the app install or notifications, and that
+is the browser's rule rather than a choice — a plain-HTTP address on a LAN is not
+a "secure context", so service workers and Web Push are withheld. If you want
+those on your phone, Tailscale is the way, because it comes with a real
+certificate.
+
+Two things to know before turning it on. Each private address gets its own
+listener, and requests are accepted only when the `Host` is a private address
+literal and no cross-site `Origin` is present — that is what stops a hostile web
+page you have open from reaching in and driving your agent. But **kunai has no
+login**, so any device that can reach the port can use it. The guard stops
+hostile pages, not a machine on your network asking directly. Turning this on
+means trusting everything on that network.
+
 Installed without Tailscale, the perimeter is the loopback interface instead, and
 the server enforces it rather than assuming it. Binding to `localhost` sounds like
 the safest possible choice, and by itself it is the opposite: nothing decides who
@@ -485,6 +506,7 @@ Every option takes a flag or an environment variable.
 | Flag          | Env                | Default          | What it does                                       |
 | ------------- | ------------------ | ---------------- | -------------------------------------------------- |
 | `-addr`       | `KUNAI_ADDR`       | `127.0.0.1:8443` | Bind address: the tailnet IP, or loopback for a local install |
+| `-lan`        | `KUNAI_LAN`        | `false`          | Also serve this machine's network addresses (see below)      |
 | `-tls-cert`   | `KUNAI_TLS_CERT`   |                  | TLS certificate (empty means plain HTTP, which a loopback bind does not need) |
 | `-tls-key`    | `KUNAI_TLS_KEY`    |                  | TLS key                                            |
 | `-data`       | `KUNAI_DATA`       | `~/.kunai`       | VAPID keys, subscriptions, uploads, registry       |

@@ -103,6 +103,7 @@
 
 <script lang="ts">
   import { getContext } from 'svelte'
+  import { copyText } from '../lib/clipboard'
   import { FILE_BASE, type FileBase } from '../lib/filebase'
 
   let { text, live = false }: { text: string; live?: boolean } = $props()
@@ -120,7 +121,11 @@
     const btn = (e.target as HTMLElement).closest('[data-copy]') as HTMLElement | null
     if (!btn) return
     const code = btn.closest('.codewrap')?.querySelector('code')?.textContent ?? ''
-    navigator.clipboard?.writeText(code).then(() => {
+    // Was `navigator.clipboard?.writeText(code).then(...)`, which reads as guarded
+    // and is not: off a secure context the optional chain yields undefined and
+    // .then() on it throws, uncaught, inside a click handler.
+    void copyText(code).then((ok) => {
+      if (!ok) return
       btn.setAttribute('data-copied', '')
       setTimeout(() => btn.removeAttribute('data-copied'), 1200)
     })
