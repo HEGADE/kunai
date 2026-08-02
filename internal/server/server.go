@@ -23,6 +23,7 @@ import (
 	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/hegade/kunai/internal/awake"
 	"github.com/hegade/kunai/internal/fsbrowse"
+	"github.com/hegade/kunai/internal/lanauth"
 	"github.com/hegade/kunai/internal/push"
 	"github.com/hegade/kunai/internal/schedule"
 	"github.com/hegade/kunai/internal/session"
@@ -50,6 +51,10 @@ type Config struct {
 	DataDir       string // dir for uploads (and, via push, VAPID keys/subs)
 	PublicURL     string // this machine's own tailnet origin, e.g. https://host.tailnet.ts.net:8443
 	HubURL        string // if set, this is a peer that forwards push wake-ups to the hub at this URL
+	// LAN is accepted and ignored. Serving the network is decided by whether a PIN
+	// is set; the flag existed first and is kept only so a service file written
+	// when it mattered still starts. See lanserver.go.
+	LAN bool
 	// Thermal guard defaults, seeded from flags/env. A persisted thermal.json
 	// overrides these on boot; the Settings toggle overrides at runtime.
 	ThermalGuard    bool    // enable the guardian by default
@@ -109,7 +114,11 @@ type Server struct {
 	// shares and gate are session sharing: a link worth one conversation, served
 	// on a listener of its own so a guest can never reach the routes above. See
 	// sharegate.go for why that is a separate mux rather than a middleware.
-	shares     *share.Store
+	shares *share.Store
+	// lanAuth is the PIN and sessions guarding the network listener (lanauth.go);
+	// lanNet owns the listeners themselves, which the PIN switches on and off.
+	lanAuth    *lanauth.Store
+	lanNet     *lanServer
 	gate       *shareGate
 	funnelMu   sync.Mutex
 	funnelAt   time.Time // when the funnel port was last read (it shells out)
@@ -184,6 +193,9 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	// never started when there is nothing to serve.
 	s.shares = share.NewStore(shareStorePath(cfg.DataDir))
 	s.gate = newShareGate(s.shares, mgr, s.pwa, gatePortFile(cfg.DataDir))
+	// The lock on the network listener. Constructed always so the owner can set a
+	// PIN before turning -lan on; the listener refuses to start without one.
+	s.lanAuth = lanauth.Open(filepath.Join(cfg.DataDir, "lanauth.json"))
 	if cfg.DataDir != "" {
 		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))
 		// New accounts log in with the same binary as the default profile, into a
@@ -227,8 +239,28 @@ func (s *Server) armSession(sess *session.Session) {
 // SetPush enables Web Push wake-ups.
 func (s *Server) SetPush(p *push.Manager) { s.push = p }
 
-// Handler builds the route mux.
+// Handler is the app as served on the machine's main address.
 func (s *Server) Handler() http.Handler {
+	return s.wrap(s.routes(), loopbackBind(s.cfg.Addr))
+}
+
+// localHandler is the same app served to this machine only, over the loopback
+// listener that runs alongside a tailnet one. Always guarded, and never handed
+// the cross-machine CORS wildcard, whatever the main address is.
+func (s *Server) localHandler() http.Handler { return s.wrap(s.routes(), true) }
+
+// wrap puts the perimeter on. local swaps the tailnet's rules for loopback's:
+// no wildcard origin, and the Host/Origin guard outside everything (websockets
+// included) so no route can be added that skips it.
+func (s *Server) wrap(mux http.Handler, local bool) http.Handler {
+	if local {
+		return localGuard(cors(logRequests(mux), false))
+	}
+	return cors(logRequests(mux), true)
+}
+
+// routes builds the route mux.
+func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
@@ -319,8 +351,12 @@ func (s *Server) Handler() http.Handler {
 	// Machine-level pushes: the session list when it changes, stats on a timer the
 	// server owns. Replaces the client polling every machine for both.
 	mux.HandleFunc("GET /ws/fleet", s.handleFleetWS)
+	// The network listener's lock: signing in, and (owner side) managing it.
+	s.lanAuthRoutes(mux)
+	s.lanAdminRoutes(mux)
+
 	mux.Handle("GET /", s.spaHandler())
-	return cors(logRequests(mux))
+	return mux
 }
 
 // Run starts the HTTP(S) server and blocks until ctx is cancelled.
@@ -334,6 +370,15 @@ func (s *Server) Run(ctx context.Context) error {
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	// Serve this machine directly as well as over the network, so using kunai on
+	// the machine it runs on never depends on the tailnet. See localAddr.
+	if addr := localAddr(s.cfg.Addr); addr != "" {
+		s.serveLocal(ctx, addr)
+	}
+	// And the rest of the network, when a PIN says to. Sync rather than a flag
+	// check, so setting or clearing the PIN later moves the listeners too.
+	s.lanNet = newLANServer(s, portOf(s.cfg.Addr))
+	s.lanNet.Sync(ctx)
 	// Bring the share listener back up when links survived the restart. Without
 	// this a share persists in shares.json, looks live in the app, and answers 404
 	// to the person holding it, because nothing is listening on the port Funnel
@@ -400,7 +445,15 @@ func (s *Server) Run(ctx context.Context) error {
 		// Certs are served from TLSConfig.GetCertificate, so the file args are empty.
 		return srv.ListenAndServeTLS("", "")
 	}
-	log.Printf("kunai listening on http://%s (no TLS — dev only; PWA/push need HTTPS)", s.cfg.Addr)
+	// A loopback origin is a secure context by specification, so the PWA, its
+	// service worker and Web Push all work over plain HTTP here. Saying otherwise
+	// (this line used to read "dev only; PWA/push need HTTPS") told people the
+	// mode was broken while they were looking at it working.
+	if loopbackBind(s.cfg.Addr) {
+		log.Printf("kunai listening on http://%s (local mode: this machine only)", s.cfg.Addr)
+	} else {
+		log.Printf("kunai listening on http://%s (no TLS: a browser will refuse to install the app from a non-loopback address)", s.cfg.Addr)
+	}
 	return srv.ListenAndServe()
 }
 

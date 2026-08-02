@@ -28,6 +28,11 @@ func main() {
 	flag.StringVar(&cfg.DefaultEffort, "effort", os.Getenv("KUNAI_EFFORT"), "default reasoning effort for new sessions: low|medium|high|xhigh|max (optional)")
 	flag.StringVar(&cfg.PublicURL, "public-url", os.Getenv("KUNAI_PUBLIC_URL"), "this machine's own tailnet origin (e.g. https://host.tailnet.ts.net:8443)")
 	flag.StringVar(&cfg.HubURL, "hub-url", os.Getenv("KUNAI_HUB_URL"), "hub origin to forward Web Push wake-ups to (set on peer machines)")
+	// Accepted and ignored. Serving the network is decided by whether a PIN is
+	// set, in Settings; see internal/server/lanserver.go for why one switch and
+	// not two. Still parsed so a service file written when it mattered keeps
+	// starting, which is the only reason it is here.
+	flag.BoolVar(&cfg.LAN, "lan", envBool("KUNAI_LAN", false), "deprecated and ignored: set a PIN under Network access in Settings instead")
 	dataDir := flag.String("data", envOr("KUNAI_DATA", defaultDataDir()), "directory for VAPID keys, subscriptions, uploads")
 	pushEmail := flag.String("push-email", os.Getenv("KUNAI_PUSH_EMAIL"), "VAPID contact (mailto) for Web Push")
 	flag.BoolVar(&cfg.ThermalGuard, "thermal-guard", envBool("KUNAI_THERMAL_GUARD", false), "enable the thermal safety guard by default (stops all sessions when the host overheats)")

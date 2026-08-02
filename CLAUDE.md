@@ -34,8 +34,12 @@ cd web && npm run check                                # svelte-check + tsc
 ```
 
 Run locally (needs `claude` on PATH): `go run ./cmd/kunai -addr 127.0.0.1:8899 -data /tmp/kunai-data`.
-Without `-tls-cert/-tls-key` it serves plain HTTP (fine for dev; PWA install and
-push need HTTPS).
+Without `-tls-cert/-tls-key` it serves plain HTTP, and on a **loopback** address
+that is not a limitation: `localhost` and `127.0.0.1` are secure contexts by
+specification, so the PWA, its service worker and Web Push all work with no
+certificate. Only a non-loopback address needs TLS before a browser will install
+the app. (This used to say "dev only; PWA install and push need HTTPS", which told
+people local mode was broken while it worked in front of them.)
 
 Deploy the hub (`your-hub`, systemd user service, Tailscale SSH). `make deploy`
 cross-builds linux/amd64 with the version stamp, scps, and restarts:
@@ -51,6 +55,14 @@ launchd on macOS):
 ./install.sh                                          # standalone or hub
 KUNAI_HUB_URL=https://<hub>.<tailnet>.ts.net:8443 ./install.sh   # a peer
 ```
+
+`install.sh` picks its own mode and **never blocks on Tailscale**. With a tailnet
+and MagicDNS it mints a cert and binds the tailnet IP, as before; with anything
+missing (no CLI, not connected, no MagicDNS, or a cert that will not mint) it
+falls back to local mode, binds `127.0.0.1`, and says so. Claude Code is the only
+hard prerequisite left. The finish screen always prints **both** ways in, "On this
+machine" and "From your phone", so the second one is either a link or the steps to
+get one, rather than silently absent.
 
 `install.sh` **always builds fresh in a source checkout**. It must never reuse a
 stale `dist/` or `./kunai` artifact (that was a real bug). `internal/webui/dist`
@@ -549,7 +561,117 @@ Behavioral invariants that were bugs before (do not regress):
   and this serves from kunai's own origin.
 - The CORS wildcard is safe **only** because the tailnet is the entire auth
   perimeter and the API uses no cookies or credentials. Do not add cookie or session
-  auth without tightening CORS first.
+  auth without tightening CORS first. It is **off in local mode**, where that
+  premise does not hold: see below.
+- **The loopback listener always runs** (`localAddr`/`serveLocal`). A tailnet
+  install serves `127.0.0.1` on the SAME port as well as its tailnet address, so
+  using kunai on the machine it runs on never goes through Tailscale. The tailnet
+  URL does resolve here (MagicDNS points it at this machine's own interface), but
+  taking it means your own laptop needs tailscaled up, MagicDNS resolving and a
+  valid certificate to reach a program running locally; sign out and the app dies
+  with it. The same port is free to take because the main listener binds a
+  specific address, not every interface. The local listener is plain HTTP, which
+  is not a downgrade (loopback is a secure context) and is in fact required: the
+  tailnet certificate names a ts.net host, so `https://localhost` would be
+  refused. A failed bind is logged and survived, never fatal.
+  The app also answers to any `*.localhost` name, so the local link can read
+  `http://kunai.localhost:8443` instead of a bare port. That is free rather than
+  clever: RFC 6761 reserves the whole `.localhost` TLD for loopback, browsers
+  resolve it themselves without touching DNS, and it keeps secure-context status,
+  so there is no certificate, no resolver config and no `/etc/hosts` entry. It
+  does not weaken the rebinding guard, which turns on an attacker owning a name
+  that resolves here, and `.localhost` cannot be registered; the suffix match
+  requires the dot, so `localhost.evil.example` is still refused. The OS resolver
+  is not obliged to know the name (systemd-resolved does, macOS may not), so
+  `install.sh` **proves the name against the running server before printing it**
+  and falls back to plain `localhost` rather than hand out a link that may not
+  open. A local CA (the OrbStack/mkcert route to `https://` on a local name) was
+  considered and rejected: the certificate is the easy part, but trusting it means
+  a root-owned system store, a separate NSS database for each of Firefox and
+  Chrome, an admin GUI prompt on macOS that a headless launchd service cannot
+  answer, and a manual per-device install on phones -- to buy a padlock on an
+  origin browsers already treat as secure. `tailscale cert` remains the answer for
+  a real name with real HTTPS.
+  The client half is load-bearing and was missed first time round: a machine
+  reports itself with its `-public-url`, its tailnet origin, so taking that
+  literally sent every request and socket for **this** machine back out to the
+  tailnet name. The page loaded over localhost and then said the machine was
+  offline. `app.svelte.ts` now uses `location.origin` for the `self` entry, on the
+  grounds that the origin which just served the app is the one address proven
+  reachable. Peers are untouched; their published URL is the only way to them.
+- **The network listener is locked** (`internal/lanauth` for the rules,
+  `internal/server/lanauth.go` for the wire, `lanauthadmin.go` for managing it).
+  kunai is open source, so the whole scheme is public to an attacker; nothing here
+  is protected by being hard to find, and each layer states which other one covers
+  its weakness. A PIN is 6-12 digits, refused at *set* time if it is one of the
+  handful everyone picks (repeats, runs, keypad shapes), stored as argon2id with a
+  random salt and never in the clear. The PIN buys a **session**: 32 random bytes,
+  stored only as a SHA-256, in an `HttpOnly`/`SameSite=Strict` cookie -- a cookie
+  specifically because a browser cannot set headers on a **websocket** handshake,
+  and a token in the query string is the one place credentials reliably reach
+  logs. What makes six digits defensible is the **throttle**, and its design turns
+  on one fact: on a local network an attacker picks their own source address, so
+  per-source limits are an inconvenience, not a bound. There is therefore a
+  **global** counter that actually holds the line, the state is **persisted** so a
+  restart does not hand back a fresh budget, and the table is capped so a map
+  keyed by an attacker-chosen address cannot be grown instead of guessed. The
+  throttle is consulted *before* the PIN is checked, every failure looks
+  identical from outside (a wrong PIN and an unset one are the same reply, and an
+  unset one still burns the same argon2 time), and the throttle key comes from the
+  connection, never from `X-Forwarded-For`. The accepted cost is that an attacker
+  can lock the owner out; it is bounded, and **loopback never authenticates**, so
+  the machine itself is always the way back in. TLS is not optional on this
+  listener: a self-signed cert is minted and *kept* (a cert that changed each boot
+  would train you to click through warnings), because without encryption the PIN
+  and every request after it cross a shared network in the clear. The gate's
+  allowlist is written as "everything under `/api/` and `/ws/` is private unless
+  named", so a route added later is closed by default -- pinned by a test, since
+  getting it the other way round fails silently.
+- **LAN access** (`internal/server/lan.go`, `-lan`/`KUNAI_LAN=1`, **off by
+  default**, and it refuses to start without a PIN) serves every private address on the host so another device on the
+  same wifi can open the app with no Tailscale. It is the web app and nothing
+  else: a LAN address is not a secure context, so the browser withholds service
+  workers (no PWA install, no offline shell, no auto-update) and Web Push.
+  Measured, not assumed -- the app renders and the websocket streams. Each
+  private IPv4 gets its own listener (`lanAddrs`), skipping loopback and the
+  100.64/10 tailnet range because those are already served; a wildcard bind would
+  simply fail against the main listener. `lanGuard` is its perimeter, and it is
+  stricter than the loopback one in one way: the `Host` must be a private
+  **address literal**, never a name, which makes DNS rebinding inexpressible
+  rather than merely detected. The honest limit, which the flag's help text says:
+  kunai has no login, so any device that can reach the port can drive the agent.
+  The guard stops hostile web pages, not a machine on your wifi making the request
+  itself. Turning it on means trusting the network.
+- `web/src/lib/clipboard.ts` (`copyText`) exists because `navigator.clipboard` is
+  not merely unreliable off a secure context, it is **undefined**. Every Copy
+  button therefore did nothing on a LAN address, and `Markdown.svelte`'s
+  `navigator.clipboard?.writeText(x).then(...)` read as guarded while calling
+  `.then` on `undefined`, an uncaught TypeError inside a click handler. `copyText`
+  falls back to a throwaway textarea plus `document.execCommand('copy')`, verified
+  working in a real insecure-context browser.
+- **Local mode** (`internal/server/localmode.go`) is a loopback-bound install,
+  what you get with no Tailscale. It always worked -- the binary defaults to
+  127.0.0.1 and a loopback origin is a secure context, so the PWA and its service
+  worker install with no certificate -- but `install.sh` treated Tailscale as a
+  prerequisite and refused to proceed, so the people it suited least, the ones who
+  only wanted kunai on the machine in front of them, could not install at all.
+  Tailscale is now optional and buys exactly one thing: the phone. What is
+  load-bearing is that binding loopback **removes a perimeter rather than
+  tightening one**. Nothing decides who reaches a localhost port, so every page in
+  the browser can try, and `POST /api/sessions` takes any cwd and spawns a CLI in
+  it. So local mode brings its own guard, wrapped outermost around everything
+  including the websocket routes (a handshake is an ordinary request until it
+  upgrades, which is why `ws.go` can go on accepting any origin): the `Host` must
+  be a loopback name, and a cross-site `Origin` is refused. Both are needed and
+  neither covers the other. DNS rebinding resolves an attacker's domain to
+  127.0.0.1, so the browser sends no cross-site `Origin` at all and only the
+  `Host` betrays it; and merely withholding the CORS header is no defence when the
+  damage is done by the request arriving, since a POST that starts a session has
+  already started it. A request with no `Origin` is allowed, because anything that
+  can run curl here can run `claude` directly. Mode is derived from the bind
+  address, never a flag, so a tailnet install is bit-for-bit unchanged and there
+  is nothing to set wrongly; an empty host (`:8443`) is every interface and
+  deliberately NOT local.
 - Only the hub sends Web Push (one VAPID subscription per origin); peers forward.
 - Session ids are unique only per machine, so client-side `{#each}` keys must be
   composite (`machineId:id`) and the client always routes REST/WS to a session's

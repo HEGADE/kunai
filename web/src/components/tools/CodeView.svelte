@@ -1,5 +1,6 @@
 <script lang="ts">
   import { highlightToHtml, langLabel } from '../../lib/highlight'
+  import { copyText } from '../../lib/clipboard'
 
   let {
     code,
@@ -19,7 +20,7 @@
 
   async function copy() {
     try {
-      await navigator.clipboard.writeText(code)
+      if (!(await copyText(code))) return
       copied = true
       setTimeout(() => (copied = false), 1200)
     } catch {

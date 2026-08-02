@@ -11,6 +11,8 @@
   import Channels from './components/Channels.svelte'
   import AllSessions from './components/AllSessions.svelte'
   import { applyThemeColor, themeColorFor } from './lib/themeColor'
+  import PinGate from './components/PinGate.svelte'
+  import { lanPin } from './lib/lanpin.svelte'
 
   // Keep the browser's own chrome (the status bar behind the notch, the address
   // bar below) matching whatever is actually at the top of the screen. On the
@@ -30,6 +32,12 @@
     return () => document.removeEventListener('visibilitychange', onVis)
   })
 </script>
+
+<!-- Over everything, and only once the server has actually refused something. On
+     loopback and over the tailnet nothing 401s, so this never appears there. -->
+{#if lanPin.required}
+  <PinGate />
+{/if}
 
 <div class="shell" data-has-chat={app.chat ? 'true' : undefined} class:collapsed={!app.sidebarOpen}>
   <aside class="sidebar"><Sidebar /></aside>

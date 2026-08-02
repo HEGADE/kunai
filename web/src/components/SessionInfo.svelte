@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { copyText } from '../lib/clipboard'
   import type { ChatConnection } from '../lib/chat.svelte'
 
   // The session's context, gathered into one place off the header: where it runs,
@@ -24,7 +25,7 @@
   let copyTimer: ReturnType<typeof setTimeout> | undefined
   async function copy(key: string, text: string) {
     try {
-      await navigator.clipboard.writeText(text)
+      if (!(await copyText(text))) return
       copied = key
       clearTimeout(copyTimer)
       copyTimer = setTimeout(() => (copied = ''), 1200)

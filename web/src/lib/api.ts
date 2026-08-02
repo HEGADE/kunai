@@ -5,8 +5,22 @@ import type { AccountInfo, ChannelInfo, Attachment, CLIProfile, FunnelState, His
 // own requests stay root-relative. Push (push.ts) is intentionally NOT here — it
 // always targets the hub origin.
 
+// Somebody to tell when the server says we are not signed in.
+//
+// Registered by the PIN store rather than imported from it, so this file stays
+// free of Svelte and there is no cycle between the transport and the UI state.
+let onUnauthorized: () => void = () => {}
+export function setUnauthorizedHandler(fn: () => void) {
+  onUnauthorized = fn
+}
+
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
+    // A 401 only ever comes from the network listener's gate: nothing else in
+    // kunai authenticates. Reacting to the status rather than asking up front is
+    // what keeps the PIN screen away from loopback and the tailnet, where no gate
+    // exists and asking would have shown a lock that is not there.
+    if (res.status === 401) onUnauthorized()
     let msg = `HTTP ${res.status}`
     try {
       const body = await res.json()
@@ -267,6 +281,50 @@ export function setKeepAwake(
 
 // setFailover toggles a machine's opt-in account auto-failover (roll a walled
 // session onto the account with the most headroom). Returns the resolved state.
+// The lock on a machine's network listener. Owner-side: these are reachable from
+// loopback and the tailnet, and on the network listener itself only once signed
+// in, so a stranger can never read the state or change the PIN.
+export interface LanPinState {
+  set: boolean
+  enabled: boolean
+  urls: string[]
+  min_len: number
+  max_len: number
+  // Present when a firewall on that machine defaults to dropping incoming
+  // connections, which makes a bound listener unreachable while looking fine
+  // from the machine itself.
+  firewall?: { tool: string; command: string } | null
+}
+export interface LanDevice {
+  label?: string
+  created: number
+  seen: number
+}
+
+export function getLanPin(base: string): Promise<LanPinState> {
+  return fetch(at(base, '/api/lan/pin')).then((r) => json<LanPinState>(r))
+}
+
+export function setLanPin(base: string, pin: string): Promise<{ set: boolean }> {
+  return fetch(at(base, '/api/lan/pin'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin }),
+  }).then((r) => json<{ set: boolean }>(r))
+}
+
+export function clearLanPin(base: string): Promise<{ set: boolean }> {
+  return fetch(at(base, '/api/lan/pin'), { method: 'DELETE' }).then((r) => json<{ set: boolean }>(r))
+}
+
+export function getLanDevices(base: string): Promise<LanDevice[]> {
+  return fetch(at(base, '/api/lan/devices')).then((r) => json<LanDevice[]>(r))
+}
+
+export function forgetLanDevices(base: string): Promise<unknown> {
+  return fetch(at(base, '/api/lan/devices'), { method: 'DELETE' }).then((r) => json<unknown>(r))
+}
+
 export function setFailover(base: string, enabled: boolean): Promise<{ enabled: boolean }> {
   return fetch(at(base, '/api/failover'), {
     method: 'POST',
