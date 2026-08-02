@@ -599,8 +599,36 @@ Behavioral invariants that were bugs before (do not regress):
   offline. `app.svelte.ts` now uses `location.origin` for the `self` entry, on the
   grounds that the origin which just served the app is the one address proven
   reachable. Peers are untouched; their published URL is the only way to them.
+- **The network listener is locked** (`internal/lanauth` for the rules,
+  `internal/server/lanauth.go` for the wire, `lanauthadmin.go` for managing it).
+  kunai is open source, so the whole scheme is public to an attacker; nothing here
+  is protected by being hard to find, and each layer states which other one covers
+  its weakness. A PIN is 6-12 digits, refused at *set* time if it is one of the
+  handful everyone picks (repeats, runs, keypad shapes), stored as argon2id with a
+  random salt and never in the clear. The PIN buys a **session**: 32 random bytes,
+  stored only as a SHA-256, in an `HttpOnly`/`SameSite=Strict` cookie -- a cookie
+  specifically because a browser cannot set headers on a **websocket** handshake,
+  and a token in the query string is the one place credentials reliably reach
+  logs. What makes six digits defensible is the **throttle**, and its design turns
+  on one fact: on a local network an attacker picks their own source address, so
+  per-source limits are an inconvenience, not a bound. There is therefore a
+  **global** counter that actually holds the line, the state is **persisted** so a
+  restart does not hand back a fresh budget, and the table is capped so a map
+  keyed by an attacker-chosen address cannot be grown instead of guessed. The
+  throttle is consulted *before* the PIN is checked, every failure looks
+  identical from outside (a wrong PIN and an unset one are the same reply, and an
+  unset one still burns the same argon2 time), and the throttle key comes from the
+  connection, never from `X-Forwarded-For`. The accepted cost is that an attacker
+  can lock the owner out; it is bounded, and **loopback never authenticates**, so
+  the machine itself is always the way back in. TLS is not optional on this
+  listener: a self-signed cert is minted and *kept* (a cert that changed each boot
+  would train you to click through warnings), because without encryption the PIN
+  and every request after it cross a shared network in the clear. The gate's
+  allowlist is written as "everything under `/api/` and `/ws/` is private unless
+  named", so a route added later is closed by default -- pinned by a test, since
+  getting it the other way round fails silently.
 - **LAN access** (`internal/server/lan.go`, `-lan`/`KUNAI_LAN=1`, **off by
-  default**) serves every private address on the host so another device on the
+  default**, and it refuses to start without a PIN) serves every private address on the host so another device on the
   same wifi can open the app with no Tailscale. It is the web app and nothing
   else: a LAN address is not a secure context, so the browser withholds service
   workers (no PWA install, no offline shell, no auto-update) and Web Push.
