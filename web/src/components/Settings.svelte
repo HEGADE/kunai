@@ -4,6 +4,7 @@
   import { enablePush, disablePush, isSubscribed, pushState } from '../lib/push'
   import { setKeepAwake, setThermal, setLid, setFailover, getCLIs, setCLIs } from '../lib/api'
   import type { Machine, CLIProfile } from '../lib/types'
+  import LanAccess from './LanAccess.svelte'
 
   const st = $derived(app.stats)
   const supported = pushState() !== 'unsupported'
@@ -350,6 +351,10 @@
               {/if}
             </div>
           </div>
+
+          <!-- The lock on this machine's network listener. Its own component:
+               it carries real state and Settings is long enough already. -->
+          <LanAccess base={selM.url} label={selM.label} />
 
           {#if selM.stats?.clis && selM.stats.clis.length > 1}
             <div class="grp">Accounts</div>
