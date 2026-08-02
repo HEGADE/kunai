@@ -35,10 +35,11 @@ type lanServer struct {
 	srv  *Server
 	port string
 
-	mu      sync.Mutex
-	running bool
-	cancel  context.CancelFunc
-	addrs   []string
+	mu       sync.Mutex
+	running  bool
+	cancel   context.CancelFunc
+	addrs    []string
+	firewall *firewallAdvice
 }
 
 func newLANServer(s *Server, port string) *lanServer {
@@ -123,15 +124,32 @@ func (l *lanServer) start(ctx context.Context) {
 		return
 	}
 
+	// Bound is not the same as reachable, and the difference is invisible from
+	// here: a request from this machine to its own address never crosses the
+	// network, so everything looks perfect while the host firewall drops every
+	// packet that actually arrives. Say so at the moment the address is printed,
+	// where somebody about to type it into another device will read it.
+	fw := detectFirewall(l.port)
 	l.mu.Lock()
-	l.running, l.cancel, l.addrs = true, cancel, live
+	l.running, l.cancel, l.addrs, l.firewall = true, cancel, live, fw
 	l.mu.Unlock()
+	if fw != nil {
+		log.Printf("lan: %s is enabled on this machine and drops incoming connections by default.", fw.Tool)
+		log.Printf("lan: if another device cannot reach the address above, allow the port:  %s", fw.Command)
+	}
+}
+
+// Firewall is the caution to show alongside the address, or nil.
+func (l *lanServer) Firewall() *firewallAdvice {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.firewall
 }
 
 func (l *lanServer) stop() {
 	l.mu.Lock()
 	cancel := l.cancel
-	l.running, l.cancel, l.addrs = false, nil, nil
+	l.running, l.cancel, l.addrs, l.firewall = false, nil, nil, nil
 	l.mu.Unlock()
 	if cancel != nil {
 		cancel()
