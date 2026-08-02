@@ -2,8 +2,10 @@ package server
 
 // Reaching kunai from another device on the same wifi, with no Tailscale.
 //
-// Opt-in, and it has to be: it puts the app in front of every device on the
-// network, and kunai has no login. See the warning in lanGuard.
+// Turned on by setting a PIN and by nothing else (see lanserver.go for why one
+// switch rather than two), and locked by that PIN, because it puts the app in
+// front of every device on the network. See the warning in lanGuard for what the
+// lock does and does not cover.
 //
 // What you get is the web app and nothing else. A LAN address is not a secure
 // context, so the browser withholds service workers (hence no PWA install, no
@@ -16,13 +18,10 @@ package server
 // keep two perimeters straight is two handlers, not a conditional inside one.
 
 import (
-	"context"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
 
 // tailscaleCGNAT is the 100.64.0.0/10 range Tailscale assigns. Addresses in it
@@ -152,61 +151,6 @@ func privateOrigin(origin string) bool {
 		return false
 	}
 	return privateHost(u.Host)
-}
-
-// serveLAN starts a listener on every private address, plain HTTP.
-//
-// Failures are logged and survived: a machine with several interfaces should not
-// lose the ones that work because one did not, and none of this is the address
-// kunai is primarily reachable at.
-func (s *Server) serveLAN(ctx context.Context, port string) {
-	addrs := lanAddrs(port)
-	if len(addrs) == 0 {
-		log.Printf("lan: no private network address found; nothing extra to serve")
-		return
-	}
-	// No PIN, no listener. Refusing is the only safe reading of "-lan with nothing
-	// guarding it": the alternative is a machine the owner believes is locked
-	// because they asked for a lock, which is worse than one they know is open.
-	if s.lanAuth == nil || !s.lanAuth.HasPIN() {
-		log.Printf("lan: refusing to serve the network without a PIN. Set one in Settings from %s, then restart.", "http://localhost:"+port)
-		return
-	}
-	// Encryption is not optional here, whatever the browser says about the
-	// certificate. Without it the PIN and every request after it cross the network
-	// in clear text, which on a shared wifi hands both to anyone listening.
-	hosts := make([]string, 0, len(addrs))
-	for _, a := range addrs {
-		hosts = append(hosts, hostOf(a))
-	}
-	tlsCfg, err := lanTLS(s.cfg.DataDir, hosts)
-	if err != nil {
-		log.Printf("lan: could not prepare a certificate (%v); not serving the network unencrypted", err)
-		return
-	}
-
-	handler := lanGuard(s.lanAuthGate(cors(logRequests(s.routes()), false)))
-	for _, addr := range addrs {
-		ln, err := net.Listen("tcp", addr)
-		if err != nil {
-			log.Printf("lan: cannot serve %s: %v", addr, err)
-			continue
-		}
-		srv := &http.Server{Handler: handler, TLSConfig: tlsCfg, ReadHeaderTimeout: 10 * time.Second}
-		go func() {
-			<-ctx.Done()
-			shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = srv.Shutdown(shutCtx)
-		}()
-		go func(l net.Listener) {
-			// Certificates come from TLSConfig, so the file arguments are empty.
-			if err := srv.ServeTLS(l, "", ""); err != nil && err != http.ErrServerClosed {
-				log.Printf("lan listener: %v", err)
-			}
-		}(ln)
-		log.Printf("kunai also on https://%s (this network, PIN required; the certificate is self-signed, so accept it once per device)", addr)
-	}
 }
 
 // hostOf is the host half of a host:port.

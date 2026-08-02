@@ -51,10 +51,9 @@ type Config struct {
 	DataDir       string // dir for uploads (and, via push, VAPID keys/subs)
 	PublicURL     string // this machine's own tailnet origin, e.g. https://host.tailnet.ts.net:8443
 	HubURL        string // if set, this is a peer that forwards push wake-ups to the hub at this URL
-	// LAN also serves this machine's private network addresses, so another device
-	// on the same wifi can open the app with no Tailscale. Opt-in and off by
-	// default, because it exposes an app with no login to the whole network. See
-	// lan.go for what it does and does not protect.
+	// LAN is accepted and ignored. Serving the network is decided by whether a PIN
+	// is set; the flag existed first and is kept only so a service file written
+	// when it mattered still starts. See lanserver.go.
 	LAN bool
 	// Thermal guard defaults, seeded from flags/env. A persisted thermal.json
 	// overrides these on boot; the Settings toggle overrides at runtime.
@@ -116,8 +115,10 @@ type Server struct {
 	// on a listener of its own so a guest can never reach the routes above. See
 	// sharegate.go for why that is a separate mux rather than a middleware.
 	shares *share.Store
-	// lanAuth is the PIN and sessions guarding the network listener. See lanauth.go.
+	// lanAuth is the PIN and sessions guarding the network listener (lanauth.go);
+	// lanNet owns the listeners themselves, which the PIN switches on and off.
 	lanAuth    *lanauth.Store
+	lanNet     *lanServer
 	gate       *shareGate
 	funnelMu   sync.Mutex
 	funnelAt   time.Time // when the funnel port was last read (it shells out)
@@ -374,10 +375,10 @@ func (s *Server) Run(ctx context.Context) error {
 	if addr := localAddr(s.cfg.Addr); addr != "" {
 		s.serveLocal(ctx, addr)
 	}
-	// And the rest of the network, when asked for it explicitly.
-	if s.cfg.LAN {
-		s.serveLAN(ctx, portOf(s.cfg.Addr))
-	}
+	// And the rest of the network, when a PIN says to. Sync rather than a flag
+	// check, so setting or clearing the PIN later moves the listeners too.
+	s.lanNet = newLANServer(s, portOf(s.cfg.Addr))
+	s.lanNet.Sync(ctx)
 	// Bring the share listener back up when links survived the restart. Without
 	// this a share persists in shares.json, looks live in the app, and answers 404
 	// to the person holding it, because nothing is listening on the port Funnel
