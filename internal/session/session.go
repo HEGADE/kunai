@@ -34,6 +34,10 @@ type driver interface {
 	Interrupt() error
 	SetModel(model string) error
 	SetPermissionMode(mode string) error
+	// PID is the CLI process, or 0 before it starts. Needed because a server the
+	// agent runs is a descendant of it, which is how a listening port is
+	// attributed to a session. See internal/preview.
+	PID() int
 	Close() error
 }
 
@@ -1273,3 +1277,9 @@ func shortDuration(ms int64) string {
 		return fmt.Sprintf("%dh %dm", sec/3600, (sec%3600)/60)
 	}
 }
+
+// PID is the CLI process behind this session, or 0 when it is not running.
+//
+// Exposed so a listening port can be attributed to the session responsible for
+// it: whatever the agent started is a descendant of this process.
+func (s *Session) PID() int { return s.drv.PID() }

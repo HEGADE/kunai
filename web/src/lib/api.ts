@@ -773,3 +773,28 @@ export interface HunkLine {
   text: string
   focus?: boolean
 }
+
+// Servers the agent started in a session, and forwarding one so another device
+// can reach it. See internal/preview.
+export interface PreviewServer {
+  port: number
+  command: string
+  pid: number
+  local: boolean
+  url?: string
+  forwarding: boolean
+}
+
+export function listPreviews(base: string, id: string): Promise<PreviewServer[]> {
+  return fetch(at(base, `/api/sessions/${id}/previews`)).then((r) => json<PreviewServer[]>(r))
+}
+
+export function openPreview(base: string, id: string, port: number): Promise<PreviewServer> {
+  return fetch(at(base, `/api/sessions/${id}/previews/${port}`), { method: 'POST' })
+    .then((r) => json<PreviewServer>(r))
+}
+
+export function closePreview(base: string, id: string, port: number): Promise<unknown> {
+  return fetch(at(base, `/api/sessions/${id}/previews/${port}`), { method: 'DELETE' })
+    .then((r) => json<unknown>(r))
+}

@@ -1,0 +1,122 @@
+package server
+
+import (
+	"context"
+	"net"
+	"net/http"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+// The forward is a plain TCP splice, so whatever the dev server speaks passes
+// through untouched: absolute paths, redirects, streaming, websocket upgrades.
+// This proves the byte path end to end against a real server.
+//
+// The forward binds the SAME port on another address, which is the whole design
+// (no path prefix, so nothing has to be rewritten). Testing it therefore needs a
+// second local address: 127.0.0.2 is in loopback's own /8 and is not the
+// dev server's 127.0.0.1, so the two coexist on one port number.
+func TestForwardingCarriesBytesUntouched(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.2:0")
+	if err != nil {
+		t.Skip("this host has no second loopback address (127.0.0.2); the splice is unexercised here")
+	}
+	_ = probe.Close()
+
+	// Stand in for `npm run dev`, bound to loopback only.
+	dev := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Echo the path and Host, so a rewriting bug shows up as a wrong answer
+		// rather than merely as a failure to connect.
+		_, _ = w.Write([]byte("path=" + r.URL.Path + " host=" + r.Host))
+	})}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dev.Close()
+	go func() { _ = dev.Serve(ln) }()
+	_, devPort, _ := net.SplitHostPort(ln.Addr().String())
+	port, _ := strconv.Atoi(devPort)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fwd := newPreviewForwarder(ctx, "127.0.0.2")
+	if err := fwd.open("sess-a", port); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	// Ask the forwarded address for a deep, absolute path.
+	res, err := http.Get("http://127.0.0.2:" + devPort + "/assets/app.js?v=1")
+	if err != nil {
+		t.Fatalf("the forwarded address did not answer: %v", err)
+	}
+	defer res.Body.Close()
+	body := make([]byte, 128)
+	n, _ := res.Body.Read(body)
+	got := string(body[:n])
+
+	if want := "path=/assets/app.js"; !strings.Contains(got, want) {
+		t.Errorf("got %q, want the path delivered unchanged (%q)", got, want)
+	}
+	// The Host arrives as the client sent it. That is what lets a dev server's
+	// own absolute redirects come back pointing at the forwarded address.
+	if want := "host=127.0.0.2:" + devPort; !strings.Contains(got, want) {
+		t.Errorf("got %q, want the original Host preserved (%q)", got, want)
+	}
+}
+
+func TestForwarderLifecycle(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fwd := newPreviewForwarder(ctx, "127.0.0.1")
+
+	// A free port to forward (nothing behind it; open only binds the listener).
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, p, _ := net.SplitHostPort(ln.Addr().String())
+	port, _ := strconv.Atoi(p)
+	_ = ln.Close()
+
+	if err := fwd.open("sess-a", port); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if !fwd.forwarding("sess-a", port) {
+		t.Error("the port is not reported as forwarding")
+	}
+	// kunai must not offer its own forward back as a discovered server.
+	if !fwd.holds(port) {
+		t.Error("holds() does not report a port kunai is listening on")
+	}
+	// Another session cannot take a port that is already forwarded.
+	if err := fwd.open("sess-b", port); err == nil {
+		t.Error("a second session was allowed to take a port already forwarded")
+	}
+	// Asking twice for one you already hold is not an error.
+	if err := fwd.open("sess-a", port); err != nil {
+		t.Errorf("re-opening an owned forward failed: %v", err)
+	}
+	// Another session cannot close it either.
+	fwd.close("sess-b", port)
+	if !fwd.forwarding("sess-a", port) {
+		t.Error("a different session was able to close this session's forward")
+	}
+	// Ending the session drops everything it held, so a dead agent leaves no port
+	// answering on the tailnet.
+	fwd.closeSession("sess-a")
+	if fwd.forwarding("sess-a", port) || fwd.holds(port) {
+		t.Error("a forward outlived its session")
+	}
+}
+
+// With no network address there is nothing to forward onto, and saying so beats
+// binding loopback and handing back a URL that only works on the machine you are
+// not using.
+func TestNoNetworkAddressMeansNoForwarding(t *testing.T) {
+	fwd := newPreviewForwarder(context.Background(), "")
+	if err := fwd.open("sess-a", 3000); err == nil {
+		t.Error("forwarding was allowed with no address to forward onto")
+	}
+}

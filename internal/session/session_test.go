@@ -69,6 +69,10 @@ func (f *fakeDriver) SetPermissionMode(mode string) error { return nil }
 
 // Close is idempotent, as the real driver's is (closeOnce): a session closed
 // twice is ordinary, not a panic.
+// PID is 0: the fake has no process, and a session with no process owns no
+// listening ports, which is the honest answer for a test double.
+func (f *fakeDriver) PID() int { return 0 }
+
 func (f *fakeDriver) Close() error {
 	f.closeOnce.Do(func() { close(f.done); close(f.events) })
 	return nil

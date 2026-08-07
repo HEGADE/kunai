@@ -13,6 +13,7 @@
   import PermissionGate from './PermissionGate.svelte'
   import Context from './Context.svelte'
   import Queued from './Queued.svelte'
+  import Previews from './Previews.svelte'
   import FileChips from './FileChips.svelte'
   import ProjectCard from './ProjectCard.svelte'
   import CompactDivider from './CompactDivider.svelte'
@@ -652,6 +653,9 @@
     {/if}
 
     <LoopBar {chat} />
+    <!-- What the agent is running, if anything: a dev server it started, and a
+         way to reach it from whatever device you are holding. -->
+    <Previews base={chat.apiBase} sessionId={chat.sessionId} />
     <Queued {chat} />
     <!-- A session that no longer exists says so INSIDE the composer, because the
          composer is the thing that has stopped working. It was a bordered strip

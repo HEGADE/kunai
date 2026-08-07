@@ -348,6 +348,21 @@ func (s *Session) Resolve(requestID string, result PermissionResult) error {
 	})
 }
 
+// PID is the CLI process's id, or 0 before it has started (or after it exits).
+//
+// Exposed for one reason: a server the agent starts -- a dev server, a test
+// runner -- is a DESCENDANT of this process, and that parentage is the only
+// honest way to say which session a listening port belongs to. See
+// internal/preview.
+func (s *Session) PID() int {
+	s.procMu.Lock()
+	defer s.procMu.Unlock()
+	if s.cmd == nil || s.cmd.Process == nil {
+		return 0
+	}
+	return s.cmd.Process.Pid
+}
+
 // Interrupt aborts the current turn.
 func (s *Session) Interrupt() error {
 	return s.send(ControlRequest{Type: TypeControlRequest, RequestID: randHex(8), Request: InterruptRequest{Subtype: SubInterrupt}})

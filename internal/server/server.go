@@ -127,8 +127,11 @@ type Server struct {
 	shares *share.Store
 	// lanAuth is the PIN and sessions guarding the network listener (lanauth.go);
 	// lanNet owns the listeners themselves, which the PIN switches on and off.
-	lanAuth    *lanauth.Store
-	lanNet     *lanServer
+	lanAuth *lanauth.Store
+	lanNet  *lanServer
+	// previews forwards a dev server the agent started onto this machine's
+	// network address, so you can look at it from the phone. See preview.go.
+	previews   *previewForwarder
 	gate       *shareGate
 	funnelMu   sync.Mutex
 	funnelAt   time.Time // when the funnel port was last read (it shells out)
@@ -375,6 +378,8 @@ func (s *Server) routes() *http.ServeMux {
 	// Machine-level pushes: the session list when it changes, stats on a timer the
 	// server owns. Replaces the client polling every machine for both.
 	mux.HandleFunc("GET /ws/fleet", s.handleFleetWS)
+	// Servers the agent started, and forwarding one so a phone can see it.
+	s.previewRoutes(mux)
 	// The network listener's lock: signing in, and (owner side) managing it.
 	s.lanAuthRoutes(mux)
 	s.lanAdminRoutes(mux)
@@ -403,6 +408,10 @@ func (s *Server) Run(ctx context.Context) error {
 	// check, so setting or clearing the PIN later moves the listeners too.
 	s.lanNet = newLANServer(s, portOf(s.cfg.Addr))
 	s.lanNet.Sync(ctx)
+	// Previews forward onto the address this machine publishes, which is its
+	// tailnet one. Empty on a loopback-only install, where nothing needs
+	// forwarding because localhost already reaches the dev server.
+	s.previews = newPreviewForwarder(ctx, hostOf(s.cfg.Addr))
 	// Bring the share listener back up when links survived the restart. Without
 	// this a share persists in shares.json, looks live in the app, and answers 404
 	// to the person holding it, because nothing is listening on the port Funnel
@@ -633,6 +642,10 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
 	if s.checkpoints != nil {
 		s.checkpoints.forget(id) // the shadow refs remain for git GC; drop the tracking
 	}
+	// A forwarded port must not outlive the session either. The dev server behind
+	// it dies with the agent, so what is left is an open port on the tailnet
+	// answering nothing, which is untidy at best and misleading at worst.
+	s.previews.closeSession(id)
 	// A share must not outlive the session it points at. Left behind, it is a
 	// public link to a conversation that no longer exists, and worse, to an id
 	// that could later be reused by another one.
