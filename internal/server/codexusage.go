@@ -210,11 +210,17 @@ func (c *codexUsageCache) get(ctx context.Context, dataDir string) *Usage {
 	}
 	token, account, err := codexCreds(ctx, dataDir)
 	if err != nil {
+		if abandoned(ctx) {
+			return nil // the caller went away; not a fault, and not worth remembering
+		}
 		c.fail.report(now, providerUsageFailTTL, "codex quota", codexReason(err))
 		return nil
 	}
 	u, err := fetchCodexUsage(ctx, token, account)
 	if err != nil {
+		if abandoned(ctx) {
+			return nil // the caller went away; not a fault, and not worth remembering
+		}
 		c.fail.report(now, providerUsageFailTTL, "codex quota", codexReason(err)+" (account "+account+")")
 		return nil
 	}

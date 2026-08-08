@@ -494,8 +494,8 @@ The web client renders the conversation richly from data already on the client
 (tool inputs) plus tool results streamed from the driver:
 
 - `web/src/components/Markdown.svelte` highlights fenced code with `highlight.js`
-  (a curated language set; a deliberately desaturated near-monochrome theme in
-  `web/src/hljs-theme.css`) and adds a copy button. The in-flight streaming block
+  (a curated language set; the theme lives in `web/src/hljs-theme.css`) and adds
+  a copy button. The in-flight streaming block
   renders unhighlighted for speed (`live` prop); committed blocks highlight once via
   a pure `$derived`.
 - `web/src/components/tools/ToolBody.svelte` dispatches per tool: `Edit` and
@@ -1206,8 +1206,23 @@ jumping to the end.
   middle of the start form under the sentence that says what they do, not settings
   at the bottom. Iterations are hairline seams like a compaction boundary, never a
   card each: at fifty of them they would drown the work they exist to mark.
-- Code syntax highlighting is deliberately desaturated (a neutral brightness ramp);
-  diffs use the muted green and red at low opacity.
+- Code syntax highlighting is the **one place hue is used to carry meaning**, and
+  it is assigned by what a reader is actually looking for. Code here arrives
+  inside a reply, in a log of what an agent already did, usually skimmed: the
+  information is in the VALUES (the string it wrote, the path it touched, the
+  number it chose) and the NAMES it called, while `const` and `function` are
+  scaffolding you already know is there. So saturation goes on values and names
+  and the structure recedes — the inverse of an editor theme. Four hues, in
+  kunai's own muted register rather than an IDE's (`--code-string` sand,
+  `--code-number` orchid, `--code-name` cyan, `--code-keyword` slate), none of
+  them colliding with the green and red that mean status elsewhere. Every one
+  clears 4.5:1 against the code block's `--bg`, comments included: kunai's source
+  is comment-dense and those comments are the reasoning, so they recede without
+  being the faintest thing on screen (they sat at `--text-4` and 3.1:1 before).
+  A ```diff block keeps `--live`/`--alert`, since those already mean added and
+  removed everywhere else. This deliberately **replaced** an all-grey theme whose
+  rule was "differentiation comes from brightness, not hue"; that read as
+  uniform at a glance, which is the one thing code cannot afford.
 
 ## Commit conventions
 
