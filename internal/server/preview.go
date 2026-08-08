@@ -66,19 +66,29 @@ func (s *Server) sessionServers(id string) ([]preview.Server, error) {
 		return nil, nil // not started yet, or already gone: it owns nothing
 	}
 
-	lsof, err := previewScan("lsof", "-iTCP", "-sTCP:LISTEN", "-P", "-n", "-F", "pcn")
-	if err != nil && lsof == "" {
-		// lsof exits non-zero when it finds nothing, so only an EMPTY result is a
-		// real failure. Treating a normal "nothing listening" as an error would put
-		// a permanent red state on a machine that is simply idle.
-		return nil, errNoLSOF
+	// The kernel first, lsof only if it cannot be asked.
+	//
+	// lsof was the original source and it silently went blind here: a real
+	// next-server holding *:3000, owned by kunai's own user, visible to `ss` and
+	// present in /proc/net/tcp6, produced zero lines from `lsof -p <pid>` while
+	// lsof listed kunai's own sockets in the same run. The preview card was empty
+	// for precisely the case the feature exists for. See listen_linux.go.
+	all, ok := preview.Listeners()
+	if !ok {
+		lsof, err := previewScan("lsof", "-iTCP", "-sTCP:LISTEN", "-P", "-n", "-F", "pcn")
+		if err != nil && lsof == "" {
+			// lsof exits non-zero when it finds nothing, so only an EMPTY result is a
+			// real failure. Treating a normal "nothing listening" as an error would put
+			// a permanent red state on a machine that is simply idle.
+			return nil, errNoLSOF
+		}
+		all = preview.ParseLSOF(lsof)
 	}
 	ps, err := previewScan("ps", "-Ao", "pid=,ppid=")
 	if err != nil && ps == "" {
 		return nil, err
 	}
 
-	all := preview.ParseLSOF(lsof)
 	pids := make([]int, 0, len(all))
 	for _, srv := range all {
 		pids = append(pids, srv.PID)

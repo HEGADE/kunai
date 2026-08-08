@@ -407,6 +407,34 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   (`Scan` -> `Info`, `Info.Brief()`): layout, language mix, git head from `.git`,
   the files that name it. It never opens the code, and the walk skips `.git`,
   `node_modules` and friends and is capped, because it runs while someone waits.
+- `internal/preview` (+ `internal/server/preview.go`, `previewforward.go`,
+  `previewcwd.go`): **seeing what the agent built**. kunai could always say what
+  an agent WROTE and never what it MADE -- the agent ends a task by running the
+  thing (`npm run dev`, a docs server) and that is a port on a machine you are not
+  sitting at. The package answers which ports are listening and whose they are;
+  `previewforward.go` binds the SAME port on the tailnet address and splices TCP,
+  so a phone can open it.
+  Two attribution facts are load-bearing. Ancestry ALONE is wrong for the main
+  case: the agent backgrounds the dev server, the shell exits, and the kernel
+  reparents it to init, severing its chain to `claude` -- so `OwnedBy` matches by
+  ancestry **or** by working directory (`withinDir`, compared segment-wise so
+  `/home/me/app2` is not inside `/home/me/app`).
+  And **do not go back to lsof for the socket list on Linux.** That was the
+  original source and it silently went blind: a real `next-server` holding
+  `*:3000`, owned by kunai's own user, with a readable `/proc/<pid>/fd/22 ->
+  socket:[N]` and an entry in `/proc/net/tcp6`, produced **zero** rows from
+  `lsof -i -P -n` and from `lsof -p <pid>` while lsof listed kunai's own sockets
+  in the same run -- so the card was empty for exactly the case the feature
+  exists for, with nothing wrong in the attribution logic. Reproduced twice on a
+  real Next.js dev server. `listen_linux.go` therefore reads `/proc/net/tcp`
+  and `/proc/net/tcp6` directly (state `0A` = LISTEN), decodes the hex address
+  into a real `net.IP` so `::1` and IPv4-mapped loopback need no special case,
+  and maps socket inode -> pid by walking `/proc/<pid>/fd`, which is what `ss`
+  does. Proven side by side against lsof on the failing machine: 8 servers vs 7,
+  the difference being the one that mattered. lsof stays as the fallback and is
+  still the only path on macOS (no `/proc`), which is why `Listeners()` returns
+  an `ok` bool -- "I cannot look" and "nothing is listening" must never collapse
+  into the same answer, the same rule `scanPeers` learned in `discover.go`.
 - `internal/server`: REST, WS, and the embedded PWA. `history.go` scans
   `~/.claude/projects/*/<sessionId>.jsonl` transcripts for the Recent list and
   parses them into seed turns on resume (that is why resumed sessions show their old
