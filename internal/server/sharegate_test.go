@@ -59,6 +59,9 @@ func TestShareGateServesNothingButShareRoutes(t *testing.T) {
 		{"POST", "/api/upload"},
 		{"GET", "/api/stats"},
 		{"GET", "/api/usage"},
+		// Spend across every account on the machine, priced from every transcript.
+		// A guest was handed one conversation; this is the shape of all of them.
+		{"GET", "/api/usage/stats"},
 		{"GET", "/api/machines"},
 		{"GET", "/api/history"},
 		{"GET", "/api/clis"},

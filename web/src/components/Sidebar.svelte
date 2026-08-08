@@ -859,6 +859,22 @@
         </button>
       </Hint>
       <Hint
+        title="Usage"
+        body="What the work cost. Every transcript on this machine, priced at API rates and split by model and by day, so you can see which brain ate the month rather than only how full the window is."
+      >
+        <button class="navitem" onclick={() => app.openUsage()} aria-label="Usage">
+          <!-- Bars over time. The dashboard's quota meters already say how full
+               the window is; this says where it went, and a chart is the one
+               glyph that reads as "over time" without a label. Deliberately not
+               a currency mark: the money here is a counterfactual, not a bill,
+               and a dollar sign would assert otherwise before the page loads. -->
+          <span class="nic">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16" /><path d="M6.5 20v-5.5" /><path d="M11 20V8.5" /><path d="M15.5 20v-8.5" /><path d="M20 20V5" /></svg>
+          </span>
+          <span class="nlbl">Usage</span>
+        </button>
+      </Hint>
+      <Hint
         title="Settings"
         body="Machines on your tailnet, the thermal guard that stops unattended work before a closed laptop cooks, notifications, and updates."
       >

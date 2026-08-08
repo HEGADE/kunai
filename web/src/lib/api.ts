@@ -1,3 +1,4 @@
+import type { UsageReport } from './usage'
 import type { AccountInfo, ChannelInfo, Attachment, CLIProfile, FunnelState, HistoryEntry, Job, Listing, MachineInfo, Meta, OlderTurns, PermissionMode, Provider, Share, ShareTier, Stats, ThermalConfig, Usage } from './types'
 
 // Every call takes a `base` origin so the client can reach any machine directly
@@ -797,4 +798,12 @@ export function openPreview(base: string, id: string, port: number): Promise<Pre
 export function closePreview(base: string, id: string, port: number): Promise<unknown> {
   return fetch(at(base, `/api/sessions/${id}/previews/${port}`), { method: 'DELETE' })
     .then((r) => json<unknown>(r))
+}
+
+// Spend, priced from the transcripts. The whole history arrives in one payload
+// and the client windows it (see lib/usage.ts), so this is fetched once per
+// machine rather than per period change. `scanning` true means the first pass
+// over the transcripts is still running and the numbers will grow.
+export function fetchUsageStats(base: string): Promise<UsageReport> {
+  return fetch(at(base, '/api/usage/stats')).then((r) => json<UsageReport>(r))
 }

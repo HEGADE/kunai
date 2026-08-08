@@ -10,6 +10,7 @@
   import Settings from './components/Settings.svelte'
   import Accounts from './components/Accounts.svelte'
   import Providers from './components/Providers.svelte'
+  import Usage from './components/Usage.svelte'
   import Channels from './components/Channels.svelte'
   import AllSessions from './components/AllSessions.svelte'
   import { applyThemeColor, themeColorFor } from './lib/themeColor'
@@ -104,6 +105,9 @@
 {/if}
 {#if app.showProviders}
   <Providers />
+{/if}
+{#if app.showUsage}
+  <Usage />
 {/if}
 {#if app.showAllSessions}
   <AllSessions />
