@@ -166,7 +166,7 @@ func TestScanSkipsSyntheticAndUsagelessRecords(t *testing.T) {
 func TestCostPricesCacheTiersApart(t *testing.T) {
 	// 1M plain input, 1M 5m-write, 1M 1h-write, 1M read, 1M output on Opus 5
 	// ($5 in / $25 out): 5 + 6.25 + 10 + 0.5 + 25.
-	got, priced := Cost("claude-opus-5", Tokens{
+	got, priced := (&Table{}).Cost("claude-opus-5", Tokens{
 		Input: 1e6, CacheWrite5m: 1e6, CacheWrite1h: 1e6, CacheRead: 1e6, Output: 1e6,
 	})
 	if !priced {
@@ -188,7 +188,7 @@ func TestRateForMatchesLongestPrefix(t *testing.T) {
 		{"claude-opus-4-8", 5},
 		{"claude-opus-4-1", 15},
 	} {
-		r, ok := RateFor(tc.model)
+		r, ok := (&Table{}).Rate(tc.model)
 		if !ok || r.In != tc.in {
 			t.Errorf("%s: rate = %+v ok=%v, want input %v", tc.model, r, ok, tc.in)
 		}
@@ -198,11 +198,11 @@ func TestRateForMatchesLongestPrefix(t *testing.T) {
 // An unknown model must be reported as unpriced, never silently folded in at a
 // neighbour's rate and never presented as free.
 func TestUnknownModelIsUnpricedNotFree(t *testing.T) {
-	cost, priced := Cost("gpt-5.5", Tokens{Input: 1e9, Output: 1e9})
+	cost, priced := (&Table{}).Cost("unknown-model-9", Tokens{Input: 1e9, Output: 1e9})
 	if priced || cost != 0 {
-		t.Errorf("gpt-5.5 = $%v priced=%v, want unpriced and zero", cost, priced)
+		t.Errorf("an unknown model = $%v priced=%v, want unpriced and zero", cost, priced)
 	}
-	if s := statsOf(map[string]Tokens{"gpt-5.5": {Input: 10}}); len(s) != 1 || s[0].Priced {
+	if s := statsOf(map[string]Tokens{"unknown-model-9": {Input: 10}}, &Table{}); len(s) != 1 || s[0].Priced {
 		t.Errorf("stats = %+v, want a single unpriced entry", s)
 	}
 }
@@ -325,5 +325,77 @@ func TestOneSessionIsCountedOncePerAccountItHasLivedOn(t *testing.T) {
 	}
 	if got := rep.Models[0].Responses; got != 2 {
 		t.Errorf("responses = %d, want 2", got)
+	}
+}
+
+// The provider models a Codex or Grok session actually runs on are priced, from
+// each provider's own published list price rather than a neighbour's rate.
+func TestProviderModelsArePriced(t *testing.T) {
+	tbl := &Table{}
+	for _, tc := range []struct {
+		model   string
+		in, out float64
+		cacheRd float64
+	}{
+		{"gpt-5.5", 5, 30, 0.1},
+		{"gpt-5.4", 2.50, 15, 0.1},
+		{"gpt-5.4-mini", 0.75, 4.50, 0.1},
+		// xAI discounts a cached read to 0.15, not the 0.1 everyone else uses; a
+		// single hardcoded multiplier under-priced every Grok read.
+		{"grok-4.5-build-free", 2, 6, 0.15},
+	} {
+		r, ok := tbl.Rate(tc.model)
+		if !ok {
+			t.Errorf("%s is unpriced", tc.model)
+			continue
+		}
+		if r.In != tc.in || r.Out != tc.out {
+			t.Errorf("%s = %v/%v, want %v/%v", tc.model, r.In, r.Out, tc.in, tc.out)
+		}
+		if r.cacheRead() != tc.cacheRd {
+			t.Errorf("%s cache read = %v, want %v", tc.model, r.cacheRead(), tc.cacheRd)
+		}
+	}
+}
+
+// A machine can price a model kunai has never heard of, without a release.
+func TestPricingFileAddsAndOverridesRates(t *testing.T) {
+	dir := t.TempDir()
+	body := `{"gpt-6": {"in": 7, "out": 21}, "claude-opus-5": {"in": 4, "out": 20}}`
+	if err := os.WriteFile(filepath.Join(dir, "pricing.json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tbl := LoadTable(dir)
+
+	// A model with no built-in row is now priced.
+	if r, ok := tbl.Rate("gpt-6-turbo"); !ok || r.In != 7 || r.Out != 21 {
+		t.Errorf("gpt-6-turbo = %+v ok=%v, want the override's 7/21", r, ok)
+	}
+	// And an override beats the built-in of the same key.
+	if r, _ := tbl.Rate("claude-opus-5"); r.In != 4 {
+		t.Errorf("claude-opus-5 in = %v, want the override's 4, not the built-in 5", r.In)
+	}
+	// Everything not mentioned keeps its built-in rate.
+	if r, _ := tbl.Rate("claude-sonnet-5"); r.In != 3 {
+		t.Errorf("claude-sonnet-5 in = %v, want the built-in 3", r.In)
+	}
+	// And a model nobody priced is still unpriced rather than guessed.
+	if _, ok := tbl.Rate("something-new-1"); ok {
+		t.Error("an unlisted model was priced")
+	}
+}
+
+// A missing file is the normal case, and a malformed one must not take the page
+// down: an optional override with a typo in it is not worth losing the report.
+func TestPricingFileIsOptionalAndTolerant(t *testing.T) {
+	if r, ok := LoadTable(t.TempDir()).Rate("claude-opus-5"); !ok || r.In != 5 {
+		t.Errorf("no pricing.json = %+v, want the built-ins", r)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pricing.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r, ok := LoadTable(dir).Rate("claude-opus-5"); !ok || r.In != 5 {
+		t.Errorf("a malformed pricing.json = %+v, want the built-ins kept", r)
 	}
 }
