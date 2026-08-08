@@ -154,11 +154,17 @@ func (c *grokUsageCache) get(ctx context.Context) *Usage {
 	}
 	token, err := grokToken(ctx)
 	if err != nil {
+		if abandoned(ctx) {
+			return nil // the caller went away; not a fault, and not worth remembering
+		}
 		c.fail.report(now, providerUsageFailTTL, "grok quota", grokReason(err))
 		return nil
 	}
 	u, err := fetchGrokBilling(ctx, token)
 	if err != nil {
+		if abandoned(ctx) {
+			return nil // the caller went away; not a fault, and not worth remembering
+		}
 		c.fail.report(now, providerUsageFailTTL, "grok quota", grokReason(err))
 		return nil
 	}

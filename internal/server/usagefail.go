@@ -14,6 +14,7 @@ package server
 // fact per minute. Only a CHANGE in what the failure says is news.
 
 import (
+	"context"
 	"log"
 	"time"
 )
@@ -80,3 +81,19 @@ const providerUsageFailTTL = usageTTL
 // quota". That is indistinguishable from "this provider has no quota to show",
 // which is the wrong conclusion and the one a reader will reach.
 func (f *usageFailure) reason() string { return f.last }
+
+// abandoned reports whether a poll failed because WE hung up rather than because
+// the provider said no.
+//
+// The quota fetch runs on the HTTP request's context, so a client that navigates
+// away, unmounts, or supersedes its own poll cancels it mid-flight. That is not
+// a fault and there is nothing to act on, but it arrived at the failure path all
+// the same: it was recorded, which parked the quota for a whole minute over a
+// request nobody was waiting for any more, and once failures became visible it
+// printed `context canceled` on the dashboard as though the account were broken.
+//
+// ctx.Err() is what tells the two apart, and it has to be the CONTEXT rather
+// than the error: the fetch's own 8-second client timeout also surfaces as a
+// deadline error, and that one is a real failure worth remembering. Same
+// distinction the stream translator makes for a cancelled turn.
+func abandoned(ctx context.Context) bool { return ctx.Err() != nil }
