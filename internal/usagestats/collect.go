@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -155,6 +156,52 @@ func (c *Collector) Refresh() {
 func scanRoots(roots []Root, index map[string]*fileState) map[string]*fileState {
 	out := make(map[string]*fileState, len(index))
 
+	for _, path := range transcripts(roots) {
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		st := index[path]
+		if st == nil || info.Size() < st.Size {
+			// New, or rewritten shorter than we had read: start over.
+			st = &fileState{}
+		}
+		if info.Size() == st.Size {
+			out[path] = st
+			continue // nothing appended since the last pass
+		}
+		buckets, off, err := ScanFile(path, st.Off)
+		if err != nil {
+			out[path] = st
+			continue
+		}
+		out[path] = &fileState{Size: info.Size(), Off: off, Rows: mergeRows(st.Rows, buckets)}
+	}
+	return out
+}
+
+// transcripts lists the files to scan: one per SESSION, not one per file on disk.
+//
+// This is the difference between a number and a wrong number. Switching a
+// session's account copies its whole transcript into the target account's
+// projects folder (see the account-switch note in CLAUDE.md), so a conversation
+// that has moved around lives under every account it has ever run on. Counting
+// the files would then count that conversation once per account: on the machine
+// this was found, ONE session existed in seven folders at 211M/121M/202M/175M/
+// 121M/199M/77M -- about 1.1GB of the 1.5GB corpus, all of it the same
+// conversation, and the reported spend was inflated to match.
+//
+// history.go's scanHistory already had this problem and already solved it the
+// same way, with the same tie-break and for a related reason: the copies are
+// successive prefixes of one another, so the most recently written one is both
+// the account the session last ran on and the most complete record of it. The
+// older copies are strictly contained in it and must be dropped, not added.
+func transcripts(roots []Root) []string {
+	type pick struct {
+		path string
+		mod  time.Time
+	}
+	best := map[string]pick{}
 	for _, r := range roots {
 		dirs, err := os.ReadDir(r.Dir)
 		if err != nil {
@@ -164,7 +211,8 @@ func scanRoots(roots []Root, index map[string]*fileState) map[string]*fileState 
 			if !d.IsDir() {
 				continue
 			}
-			entries, err := os.ReadDir(filepath.Join(r.Dir, d.Name()))
+			dir := filepath.Join(r.Dir, d.Name())
+			entries, err := os.ReadDir(dir)
 			if err != nil {
 				continue
 			}
@@ -172,29 +220,25 @@ func scanRoots(roots []Root, index map[string]*fileState) map[string]*fileState 
 				if e.IsDir() || filepath.Ext(e.Name()) != ".jsonl" {
 					continue
 				}
-				path := filepath.Join(r.Dir, d.Name(), e.Name())
 				info, err := e.Info()
 				if err != nil {
 					continue
 				}
-				st := index[path]
-				if st == nil || info.Size() < st.Size {
-					// New, or rewritten shorter than we had read: start over.
-					st = &fileState{}
-				}
-				if info.Size() == st.Size {
-					out[path] = st
-					continue // nothing appended since the last pass
-				}
-				buckets, off, err := ScanFile(path, st.Off)
-				if err != nil {
-					out[path] = st
+				// The file name IS the session id, which is what makes the
+				// de-duplication exact rather than a guess about content.
+				id := strings.TrimSuffix(e.Name(), ".jsonl")
+				if cur, ok := best[id]; ok && !info.ModTime().After(cur.mod) {
 					continue
 				}
-				out[path] = &fileState{Size: info.Size(), Off: off, Rows: mergeRows(st.Rows, buckets)}
+				best[id] = pick{path: filepath.Join(dir, e.Name()), mod: info.ModTime()}
 			}
 		}
 	}
+	out := make([]string, 0, len(best))
+	for _, p := range best {
+		out = append(out, p.path)
+	}
+	sort.Strings(out) // stable order, so a rescan is deterministic
 	return out
 }
 

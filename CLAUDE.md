@@ -306,7 +306,16 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   across seven accounts here), so a scan is **incremental by byte offset**: a
   transcript is append-only, the index in `<dataDir>/usage-index.json` remembers
   how far into each file the last pass read, and what it keeps per file is
-  (day, model) buckets rather than anything proportional to size. Measured on the
+  (day, model) buckets rather than anything proportional to size. It scans one
+  file per **session**, not per file on disk, and that is a correctness rule
+  rather than an optimisation: an account switch copies the whole transcript into
+  the target account's folder, so a conversation that has moved around exists
+  under every account it ever ran on, and counting files counts it once per copy.
+  One session here sat in SEVEN folders and made up ~1.1GB of a 1.5GB corpus, so
+  the page reported $44k where the truth was $11k. `scanHistory` already had this
+  problem and already solved it the same way (newest mtime wins: the copies are
+  successive prefixes of one another, so the newest is both the account it last
+  ran on and the most complete record). Measured on the
   real corpus: 3.2s cold, **1.2ms warm**, a 20KB index. A file that SHRANK was
   replaced rather than appended to (the account-switch copy, and the `/usage`
   poll deleting its own transcript every minute) so its offset is meaningless and
