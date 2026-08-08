@@ -285,3 +285,45 @@ func TestCollectorForgetsDeletedTranscripts(t *testing.T) {
 		t.Errorf("report = %+v files=%d, want empty after the transcript was deleted", rep.Models, rep.Files)
 	}
 }
+
+// One session, counted once, however many accounts it has lived on.
+//
+// Switching a session's account copies its whole transcript into the target
+// account's folder, so a conversation that has moved around exists under every
+// account it ever ran on. Counting files instead of sessions counted it once per
+// copy: on the machine this was found, one session sat in seven folders and made
+// up ~1.1GB of a 1.5GB corpus, and the reported spend was inflated to match.
+func TestOneSessionIsCountedOncePerAccountItHasLivedOn(t *testing.T) {
+	now := time.Now()
+	dir := t.TempDir()
+	a := filepath.Join(dir, "acctA", "projects")
+	b := filepath.Join(dir, "acctB", "projects")
+
+	// The same session id under two accounts. B is the newer copy and, as a real
+	// account switch produces, a superset: it carries A's turn plus its own.
+	one := line(stamp(now), "claude-opus-5", 10, 0, 0, 0, 1)
+	write(t, filepath.Join(a, "-proj", "same-id.jsonl"), one)
+	write(t, filepath.Join(b, "-proj", "same-id.jsonl"), one+line(stamp(now), "claude-opus-5", 5, 0, 0, 0, 1))
+	older := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(filepath.Join(a, "-proj", "same-id.jsonl"), older, older); err != nil {
+		t.Fatal(err)
+	}
+
+	c := New(dir, func() []Root { return []Root{{Name: "A", Dir: a}, {Name: "B", Dir: b}} })
+	c.Refresh()
+	rep, _ := c.Report()
+
+	if rep.Files != 1 {
+		t.Errorf("scanned %d files, want 1: the older copy is contained in the newer", rep.Files)
+	}
+	if len(rep.Models) != 1 {
+		t.Fatalf("models = %+v", rep.Models)
+	}
+	// 15, not 25: the newest copy alone, never it plus the copy it superseded.
+	if got := rep.Models[0].Input; got != 15 {
+		t.Errorf("input = %d, want 15 (the newest copy only, not both)", got)
+	}
+	if got := rep.Models[0].Responses; got != 2 {
+		t.Errorf("responses = %d, want 2", got)
+	}
+}
