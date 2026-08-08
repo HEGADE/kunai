@@ -78,7 +78,15 @@ func (s *Server) sessionServers(id string) ([]preview.Server, error) {
 		return nil, err
 	}
 
-	owned := preview.Owned(preview.ParseLSOF(lsof), preview.ParseProcessTree(ps), root)
+	all := preview.ParseLSOF(lsof)
+	pids := make([]int, 0, len(all))
+	for _, srv := range all {
+		pids = append(pids, srv.PID)
+	}
+	// Ancestry AND working directory, because a backgrounded dev server is
+	// orphaned to init the moment the shell that started it exits, which severs
+	// its chain to the session. See preview.OwnedBy.
+	owned := preview.OwnedBy(all, preview.ParseProcessTree(ps), root, cwdsFor(pids), sess.Cwd)
 	// kunai's own listeners are never a preview. They cannot be, since they are
 	// not descendants of a session, but a session that somehow spawned one would
 	// otherwise be offered a link back to kunai itself.

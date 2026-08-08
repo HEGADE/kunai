@@ -180,3 +180,72 @@ func Owned(servers []Server, parents map[int]int, root int) []Server {
 	}
 	return out
 }
+
+// OwnedBy returns the servers belonging to a session, by ancestry OR by working
+// directory.
+//
+// Ancestry alone was the original design and it is wrong for the main case, which
+// is worth writing down because it looks right until you watch it fail. The agent
+// starts a dev server as a BACKGROUND command; the shell that launched it then
+// exits, the server is orphaned, and the kernel reparents it to init. Its chain
+// to the `claude` process is severed at that moment, so the one thing this
+// feature exists to find -- a server the agent left running -- is the one thing
+// ancestry cannot see. Observed on a real session: next-server -> sh ->
+// (gone) -> systemd.
+//
+// A working directory survives that, because reparenting does not change it. It
+// is a weaker signal: two sessions in the same checkout would both claim the same
+// server, since it genuinely is in both their directories. That is a tolerable
+// answer (a worktree, which is how kunai runs parallel work, gives each session
+// its own path) and a much better one than showing nothing.
+//
+// Both are used, not one: ancestry is exact when the process is still attached,
+// and the directory catches it once it is not.
+func OwnedBy(servers []Server, parents map[int]int, root int, cwds map[int]string, sessionCwd string) []Server {
+	var out []Server
+	for _, s := range servers {
+		if DescendsFrom(parents, s.PID, root) || withinDir(cwds[s.PID], sessionCwd) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// withinDir reports whether a process's directory is the session's, or inside it.
+//
+// Compared as path segments rather than as a string prefix: "/home/me/app2"
+// starts with "/home/me/app" and is a different project.
+func withinDir(dir, root string) bool {
+	if dir == "" || root == "" {
+		return false
+	}
+	dir, root = strings.TrimRight(dir, "/"), strings.TrimRight(root, "/")
+	if dir == root {
+		return true
+	}
+	return strings.HasPrefix(dir, root+"/")
+}
+
+// ParseCwds reads `lsof -a -d cwd -F pn` output into pid -> working directory.
+//
+// The same field format as the listener scan: a `p` line opens a process and the
+// `n` line that follows is its cwd.
+func ParseCwds(out string) map[int]string {
+	cwds := make(map[int]string)
+	var pid int
+	for _, line := range strings.Split(out, "\n") {
+		if len(line) < 2 {
+			continue
+		}
+		switch line[0] {
+		case 'p':
+			pid, _ = strconv.Atoi(strings.TrimSpace(line[1:]))
+		case 'n':
+			if pid != 0 {
+				cwds[pid] = strings.TrimSpace(line[1:])
+				pid = 0 // one cwd per process; ignore anything further
+			}
+		}
+	}
+	return cwds
+}

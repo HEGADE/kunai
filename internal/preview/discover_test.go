@@ -146,3 +146,55 @@ func TestDescendsFromSurvivesCycles(t *testing.T) {
 		t.Error("a process is not its own descendant")
 	}
 }
+
+// The case that made ancestry insufficient, and the reason OwnedBy exists.
+//
+// The agent starts a dev server as a background command; the shell that launched
+// it exits, the kernel reparents the server to init, and its chain to `claude` is
+// gone. Observed on a real session: next-server -> sh -> (exited) -> systemd.
+// Ancestry sees nothing. The working directory still does.
+func TestAnOrphanedDevServerIsStillAttributed(t *testing.T) {
+	// The chain is severed: 4170030's ancestors reach systemd, never claude(999).
+	parents := ParseProcessTree(`
+  4170030 4170001
+  4170001 4170000
+  4170000 5329
+     5329 1
+      999 1
+`)
+	servers := []Server{{Port: 3000, PID: 4170030, Command: "next-server", Local: true}}
+	cwds := map[int]string{4170030: "/home/me/landing-page"}
+
+	if got := Owned(servers, parents, 999); len(got) != 0 {
+		t.Fatal("ancestry alone should not find an orphaned server; the fixture is wrong")
+	}
+	got := OwnedBy(servers, parents, 999, cwds, "/home/me/landing-page")
+	if len(got) != 1 || got[0].Port != 3000 {
+		t.Errorf("the orphaned server was not attributed by working directory: %+v", got)
+	}
+	// A server inside a subdirectory of the session still counts.
+	cwds[4170030] = "/home/me/landing-page/apps/web"
+	if got := OwnedBy(servers, parents, 999, cwds, "/home/me/landing-page"); len(got) != 1 {
+		t.Error("a server running in a subdirectory of the session was not attributed")
+	}
+	// A neighbouring directory does NOT, even though its path shares a prefix.
+	// This is why the check is by segment rather than by string prefix.
+	cwds[4170030] = "/home/me/landing-page2"
+	if got := OwnedBy(servers, parents, 999, cwds, "/home/me/landing-page"); len(got) != 0 {
+		t.Error("a sibling directory sharing a name prefix was attributed to this session")
+	}
+	// And an unknown directory attributes nothing rather than everything.
+	if got := OwnedBy(servers, parents, 999, map[int]string{}, "/home/me/landing-page"); len(got) != 0 {
+		t.Error("a server with no readable cwd was attributed anyway")
+	}
+}
+
+func TestParseCwdsReadsTheFieldFormat(t *testing.T) {
+	got := ParseCwds("p4170030\nn/home/me/landing-page\np999\nn/home/me/other\n")
+	if got[4170030] != "/home/me/landing-page" || got[999] != "/home/me/other" {
+		t.Errorf("ParseCwds = %+v", got)
+	}
+	if len(ParseCwds("")) != 0 {
+		t.Error("empty output produced entries")
+	}
+}
