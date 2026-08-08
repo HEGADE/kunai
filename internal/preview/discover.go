@@ -20,9 +20,29 @@
 package preview
 
 import (
+	"os"
 	"strconv"
 	"strings"
 )
+
+// selfPID is this process, whose own listening sockets are never a session's
+// server: kunai's service port, its loopback and LAN listeners, the share gate,
+// the native provider proxies -- and, the case that made this necessary, the
+// ports it is FORWARDING on a session's behalf.
+//
+// A forwarded preview appears as a second listening socket on the same port
+// (the dev server on 127.0.0.1:4999, kunai on 100.x:4999). Since entries
+// collapse by port, that socket could win the collapse and stamp the row with
+// kunai's pid, which belongs to no session -- so the row was dropped and the
+// preview VANISHED from the card the instant you shared it, taking the Stop
+// button with it and leaving the port forwarded with no way back.
+//
+// Excluding by pid rather than by port is what makes this exact: the port stays
+// listed and attributed to the session that owns the dev server, while kunai's
+// own half of it is ignored. It also closes a quieter hole, since kunai started
+// from inside a project directory would otherwise have its own ports attributed
+// to that project's session by the working-directory rule.
+var selfPID = os.Getpid()
 
 // Server is one listening socket kunai found.
 type Server struct {
@@ -69,6 +89,9 @@ func ParseLSOF(out string) []Server {
 		case 'c':
 			command = val
 		case 'n':
+			if pid == selfPID {
+				continue // kunai's own socket, including a forward it is holding
+			}
 			addr, ok := parseListenAddr(val)
 			if !ok {
 				continue

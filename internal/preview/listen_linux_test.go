@@ -155,3 +155,43 @@ func TestListenersOnThisMachine(t *testing.T) {
 	}
 	t.Logf("found %d listening servers", len(got))
 }
+
+// Sharing a preview must not make it disappear.
+//
+// When kunai forwards a port it becomes a SECOND listener on that same port, so
+// the port now has two sockets: the dev server's and kunai's. Entries collapse
+// by port, so kunai's socket could win the collapse and stamp the row with a pid
+// no session owns -- and the row was dropped, taking the Stop button with it and
+// leaving the port forwarded with no way to turn it off. The port must stay,
+// attributed to the process that actually serves it.
+func TestAttributeIgnoresKunaisOwnHalfOfAForwardedPort(t *testing.T) {
+	const devServer, port = 4242, 4999
+	socks := map[uint64]listenAddr{
+		1: {port: port, loopback: true},  // the dev server, on loopback
+		2: {port: port, loopback: false}, // kunai's forward, on the tailnet address
+	}
+	got := attribute(socks, map[uint64]int{1: devServer, 2: selfPID})
+
+	if len(got) != 1 {
+		t.Fatalf("got %d entries, want the port still listed once: %+v", len(got), got)
+	}
+	if got[0].PID != devServer {
+		t.Errorf("pid = %d, want the dev server %d, not kunai", got[0].PID, devServer)
+	}
+	// And kunai's routable socket must not flip the dev server's own reading: it
+	// is still a loopback-only server that kunai happens to be forwarding.
+	if !got[0].Local {
+		t.Error("kunai's own forward made the dev server look already-reachable")
+	}
+}
+
+// Nothing kunai listens on is ever a session's server, however it was found.
+func TestAttributeDropsKunaisOwnListeners(t *testing.T) {
+	got := attribute(
+		map[uint64]listenAddr{1: {port: 8443}, 2: {port: 8444}},
+		map[uint64]int{1: selfPID, 2: selfPID},
+	)
+	if len(got) != 0 {
+		t.Errorf("got %+v, want none of kunai's own ports", got)
+	}
+}

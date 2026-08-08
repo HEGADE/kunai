@@ -25,6 +25,7 @@ import (
 	"encoding/hex"
 	"net"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 )
@@ -191,12 +192,15 @@ func attribute(socks map[uint64]listenAddr, owners map[uint64]int) []Server {
 		if !ok {
 			continue // a socket we cannot pin to a process is not attributable
 		}
+		if pid == selfPID {
+			continue // kunai's own socket, including a forward it is holding
+		}
 		if s := byPort[addr.port]; s != nil {
 			s.Local = s.Local && addr.loopback
 			continue
 		}
 		byPort[addr.port] = &Server{
-			Port: addr.port, Command: commOf(pid), PID: pid, Local: addr.loopback,
+			Port: addr.port, Command: nameOf(pid), PID: pid, Local: addr.loopback,
 		}
 		order = append(order, addr.port)
 	}
@@ -208,13 +212,45 @@ func attribute(socks map[uint64]listenAddr, owners map[uint64]int) []Server {
 	return out
 }
 
-// commOf is the short process name, for a human to recognise ("node", "vite").
-func commOf(pid int) string {
-	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/comm")
+// nameOf is the process name, for a human to recognise ("vite", "next-server").
+//
+// cmdline first, because /proc/<pid>/comm is truncated by the kernel at 15 bytes
+// (TASK_COMM_LEN) and that is short enough to cut a real name mid-word: Next.js
+// sets its process title to "next-server (v15.5.22)" and comm renders it as the
+// baffling "next-server (v1". cmdline carries the untruncated title.
+//
+// Only the first NUL-separated argument is used, so `node /long/path/server.js`
+// says "node" rather than a path nobody reads, and a title with spaces but no
+// NULs (which is what a renamed process looks like) survives whole.
+func nameOf(pid int) string {
+	dir := "/proc/" + strconv.Itoa(pid)
+	if b, err := os.ReadFile(dir + "/cmdline"); err == nil {
+		arg, _, _ := strings.Cut(string(b), "\x00")
+		// Node pads its title with trailing spaces to the length of the original
+		// argv block, so this is not cosmetic trimming.
+		if arg = strings.TrimSpace(arg); arg != "" {
+			if !strings.Contains(arg, " ") {
+				arg = path.Base(arg) // an absolute binary path is noise, not a name
+			}
+			return truncate(arg, maxName)
+		}
+	}
+	b, err := os.ReadFile(dir + "/comm")
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
+}
+
+// maxName keeps a self-declared process title from taking the whole row. Some
+// servers write a full command line into theirs.
+const maxName = 42
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-1] + "…"
 }
 
 // sortInts keeps the port order stable, since a map walk is not. Without it the

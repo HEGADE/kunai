@@ -120,3 +120,35 @@ func TestNoNetworkAddressMeansNoForwarding(t *testing.T) {
 		t.Error("forwarding was allowed with no address to forward onto")
 	}
 }
+
+// The link must be http even though kunai's own origin is https.
+//
+// This was a real broken link, not a nicety: -public-url is https because kunai
+// terminates TLS on ITS port with a tailscale cert, and one port over there is a
+// plain dev server. Inheriting the scheme produced https://host:3000, and the
+// browser met a plain HTTP server behind a TLS handshake -- ERR_SSL_PROTOCOL_ERROR
+// on the phone, "wrong version number" from OpenSSL. The forwarder cannot save it
+// either: it is a raw TCP splice and adds no TLS of its own.
+func TestPreviewURLIsAlwaysPlainHTTP(t *testing.T) {
+	s := &Server{cfg: Config{PublicURL: "https://linux-1.tail75ba2a.ts.net:8443"}}
+	got := s.previewURL(3000)
+	want := "http://linux-1.tail75ba2a.ts.net:3000"
+	if got != want {
+		t.Errorf("previewURL = %q, want %q", got, want)
+	}
+}
+
+// The hostname still comes from the origin, because it is the one name the other
+// device can resolve. Only the scheme and port change.
+func TestPreviewURLKeepsTheResolvableHostname(t *testing.T) {
+	for _, tc := range []struct{ origin, want string }{
+		{"https://box.tail1234.ts.net:8443", "http://box.tail1234.ts.net:5173"},
+		{"http://box.tail1234.ts.net:8443", "http://box.tail1234.ts.net:5173"},
+		{"", "http://localhost:5173"},
+	} {
+		s := &Server{cfg: Config{PublicURL: tc.origin}}
+		if got := s.previewURL(5173); got != tc.want {
+			t.Errorf("origin %q -> %q, want %q", tc.origin, got, tc.want)
+		}
+	}
+}

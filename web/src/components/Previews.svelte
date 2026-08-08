@@ -57,16 +57,28 @@
       <div class="row">
         <span class="k">
           <span class="name mono">:{s.port}</span>
-          <span class="sub">{s.command}{s.local ? '' : ' · already on the network'}</span>
+          <span class="sub">{s.command}</span>
         </span>
-        {#if s.url}
-          <a class="open" href={s.url} target="_blank" rel="noreferrer">Open →</a>
-          {#if s.forwarding}
-            <button class="plain" onclick={() => toggle(s)} disabled={busy === s.port}>Stop</button>
-          {/if}
+        <!-- What reaching it costs in privacy, said in the three states it can
+             be in. The old line said "already on the network" for anything not
+             loopback-only, which named a fact about socket binding rather than
+             the thing anyone wants to know: can other people see this. -->
+        {#if s.forwarding}
+          <span class="tag shared">shared on your tailnet</span>
+          <a class="open" href={s.url} target="_blank" rel="noreferrer">Open</a>
+          <button class="plain" onclick={() => toggle(s)} disabled={busy === s.port}>Stop</button>
+        {:else if s.url}
+          <span class="tag">on your tailnet</span>
+          <a class="open" href={s.url} target="_blank" rel="noreferrer">Open</a>
         {:else}
-          <button class="btn" onclick={() => toggle(s)} disabled={busy === s.port}>
-            {busy === s.port ? 'Opening…' : 'Open'}
+          <span class="tag">this machine only</span>
+          <button
+            class="btn"
+            onclick={() => toggle(s)}
+            disabled={busy === s.port}
+            title="Puts this port on your tailnet so another device can open it"
+          >
+            {busy === s.port ? 'Sharing…' : 'Share'}
           </button>
         {/if}
       </div>
@@ -76,10 +88,15 @@
 {/if}
 
 <style>
+  /* Matched to the composer's 720px and centred with it. Full-bleed, it hung off
+     both sides of the field it sits above -- the same mistake .actionbar in
+     Chat.svelte already had and already fixed, which is the tell that this is a
+     property of the dock rather than of any one strip in it. */
   .card {
+    max-width: 720px;
+    margin: 0 auto 8px;
     display: flex;
     flex-direction: column;
-    margin: 0 0 12px;
     background: var(--panel-2);
     border: 1px solid var(--border);
     border-radius: var(--r-lg);
@@ -125,11 +142,27 @@
   .btn:disabled {
     opacity: 0.4;
   }
+  /* State before action, and quiet: which of the three it is matters less than
+     the fact that a link exists, and it must not compete with Open. */
+  .tag {
+    flex: none;
+    font-size: 10.5px;
+    color: var(--text-4);
+    white-space: nowrap;
+  }
+  .tag.shared {
+    color: var(--live);
+  }
   .open {
     flex: none;
+    padding: 4px 10px;
+    border-radius: 8px;
     font-size: 12.5px;
     color: var(--live);
     text-decoration: none;
+  }
+  .open:hover {
+    background: var(--panel-3);
   }
   .plain {
     flex: none;

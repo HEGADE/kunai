@@ -109,14 +109,22 @@ func (s *Server) sessionServers(id string) ([]preview.Server, error) {
 	return out, nil
 }
 
-// ownPort reports whether a port is one kunai itself serves.
+// servesPort reports whether a port is kunai's own service port.
+//
+// It deliberately does NOT count a port kunai is forwarding. It used to, and
+// that made Stop unreachable: sharing a preview put kunai on the same port, the
+// row was then filtered out as "kunai's own", and it disappeared from the card
+// the moment you shared it -- still forwarded, with nothing left to turn it off.
+// A forwarded preview is the most a preview has ever been, not the least.
+// kunai's real listeners are excluded by pid instead (preview.selfPID), which
+// covers this port too and is exact where a port number is a guess.
 func (s *Server) servesPort(port int) bool {
-	if p := portOf(s.cfg.Addr); p != "" {
-		if n, err := strconv.Atoi(p); err == nil && n == port {
-			return true
-		}
+	p := portOf(s.cfg.Addr)
+	if p == "" {
+		return false
 	}
-	return s.previews != nil && s.previews.holds(port)
+	n, err := strconv.Atoi(p)
+	return err == nil && n == port
 }
 
 func (s *Server) handleListPreviews(w http.ResponseWriter, r *http.Request) {
@@ -199,20 +207,32 @@ func (s *Server) handleClosePreview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"forwarding": false})
 }
 
-// previewURL is where a forwarded port answers: this machine's own origin with
-// the port swapped. Built from -public-url so it carries the scheme and hostname
-// a browser can actually use, rather than a bare IP with no certificate.
+// previewURL is where a preview answers: this machine's hostname with the port
+// swapped in.
+//
+// The scheme is ALWAYS http, and taking it from -public-url instead was a real
+// bug: that origin is https because kunai terminates TLS on its OWN port with a
+// tailscale cert, and none of that is true one port over. A dev server speaks
+// plain HTTP, and when kunai forwards one it is a raw TCP splice
+// (previewforward.go) that adds no TLS of its own -- so the link came out as
+// https://host:3000 and the browser met a plain HTTP server behind a TLS
+// handshake: ERR_SSL_PROTOCOL_ERROR, reproduced here as OpenSSL's "wrong version
+// number". The hostname is still worth taking from the origin, since it is a
+// name the other device can actually resolve.
+//
+// The residue: a dev server that serves TLS itself (vite --https) gets an http
+// link that will not load. That is rarer than the case this fixes, and guessing
+// by probing the port would trade a wrong link for a slow one.
 func (s *Server) previewURL(port int) string {
-	origin := normalizeOrigin(s.cfg.PublicURL)
-	if origin == "" {
-		return "http://localhost:" + strconv.Itoa(port)
+	host := "localhost"
+	if origin := normalizeOrigin(s.cfg.PublicURL); origin != "" {
+		u, err := url.Parse(origin)
+		if err != nil {
+			return ""
+		}
+		host = u.Hostname()
 	}
-	u, err := url.Parse(origin)
-	if err != nil {
-		return ""
-	}
-	u.Host = net.JoinHostPort(u.Hostname(), strconv.Itoa(port))
-	return u.String()
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 var (

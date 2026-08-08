@@ -435,6 +435,21 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   still the only path on macOS (no `/proc`), which is why `Listeners()` returns
   an `ok` bool -- "I cannot look" and "nothing is listening" must never collapse
   into the same answer, the same rule `scanPeers` learned in `discover.go`.
+  Three more that were shipped wrong once each. The link is **always `http://`**:
+  taking the scheme from `-public-url` produced `https://host:3000`, because that
+  origin is https only since kunai terminates TLS on its OWN port with a
+  tailscale cert -- one port over sits a plain dev server, and the forwarder is a
+  raw TCP splice that adds no TLS, so the phone got `ERR_SSL_PROTOCOL_ERROR`
+  (OpenSSL: "wrong version number"). Only the hostname is worth taking from the
+  origin. kunai's own listeners are excluded **by pid** (`preview.selfPID`),
+  never by port: forwarding a preview makes kunai a second listener on that same
+  port, and since entries collapse by port, a port-based exclusion deleted the
+  row the instant you shared it -- still forwarded, with the Stop button gone
+  with it. And the process name comes from `/proc/<pid>/cmdline`, because `comm`
+  is truncated at 15 bytes (`TASK_COMM_LEN`) and rendered Next.js as the
+  baffling `next-server (v1`. The card is width-matched to the composer
+  (`max-width: 720px`), which `.actionbar` in `Chat.svelte` had already learned:
+  full-bleed, it hangs off both sides of the field it sits above.
 - `internal/server`: REST, WS, and the embedded PWA. `history.go` scans
   `~/.claude/projects/*/<sessionId>.jsonl` transcripts for the Recent list and
   parses them into seed turns on resume (that is why resumed sessions show their old
