@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hegade/kunai/internal/cliproxy/codex"
 )
 
 // Codex (ChatGPT) subscription quota, so a Codex provider's dashboard shows the
@@ -54,32 +57,59 @@ func firstNonEmpty(xs ...string) string {
 	return ""
 }
 
-// codexCreds finds a Codex OAuth token: the managed sidecar's auth dir first (the
-// account added to kunai, kept fresh by the sidecar), then ~/.codex/auth.json (the
-// codex CLI login) as a fallback.
-func codexCreds(dataDir string) (token, account string, ok bool) {
-	var files []string
+// codexTokenFile finds the Codex login to read: the managed sidecar's auth dir
+// first (the account added to kunai, which kunai wrote and may rewrite), then
+// ~/.codex/auth.json (the codex CLI's own login, which it may not).
+func codexTokenFile(dataDir string) (path string, owns, ok bool) {
 	if dataDir != "" {
-		m, _ := filepath.Glob(filepath.Join(dataDir, "cliproxy", "auth", "codex-*.json"))
-		files = append(files, m...)
+		if m, _ := filepath.Glob(filepath.Join(dataDir, "cliproxy", "auth", "codex-*.json")); len(m) > 0 {
+			return m[0], true, true
+		}
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		files = append(files, filepath.Join(home, ".codex", "auth.json"))
-	}
-	for _, f := range files {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			continue
-		}
-		var a codexAuthFile
-		if json.Unmarshal(b, &a) != nil {
-			continue
-		}
-		if t, acct := a.creds(); t != "" {
-			return t, acct, true
+		p := filepath.Join(home, ".codex", "auth.json")
+		if _, err := os.Stat(p); err == nil {
+			return p, false, true
 		}
 	}
-	return "", "", false
+	return "", false, false
+}
+
+// codexCreds returns a token that works NOW, refreshing an expired one first.
+//
+// It used to read the file and hand back whatever was in it, which is fine right
+// up until the access token lapses -- and then this posts a dead token every
+// minute forever while the refresh token needed to fix it sits in the same file
+// it just read. That is exactly what happened here: the access token expired on
+// a Saturday, the file had not been rewritten in two weeks, and the dashboard
+// said "Codex: no quota" from then on. The proxy already knew how to refresh;
+// only this path did not, so it now shares that code
+// (internal/cliproxy/codex.Credentials) rather than keeping a second, dumber
+// reader of the same file.
+func codexCreds(ctx context.Context, dataDir string) (token, account string, err error) {
+	path, owns, ok := codexTokenFile(dataDir)
+	if !ok {
+		return "", "", errNoCodexLogin
+	}
+	return codex.Credentials(ctx, path, owns)
+}
+
+var errNoCodexLogin = errors.New("no Codex login found (checked kunai's accounts and ~/.codex/auth.json)")
+
+// codexReason turns a failure into the sentence a person can act on.
+//
+// A 401 here means one thing and has one fix, and saying "HTTP 401" instead
+// leaves the reader to work that out from a status code. The dashboard shows
+// whatever this returns, so it has to name the thing to do rather than the thing
+// that happened.
+func codexReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	if strings.Contains(err.Error(), "HTTP 401") || strings.Contains(err.Error(), "HTTP 403") {
+		return "the Codex login has expired; sign in to Codex again"
+	}
+	return err.Error()
 }
 
 // codexUsageResp mirrors the wham/usage response: up to two rolling windows, each
@@ -178,18 +208,25 @@ func (c *codexUsageCache) get(ctx context.Context, dataDir string) *Usage {
 	if c.fail.holding(now) {
 		return nil // already asked recently and could not get an answer
 	}
-	token, account, ok := codexCreds(dataDir)
-	if !ok {
-		c.fail.report(now, providerUsageFailTTL, "codex quota",
-			"no token found (checked the managed sidecar auth dir and ~/.codex)")
+	token, account, err := codexCreds(ctx, dataDir)
+	if err != nil {
+		c.fail.report(now, providerUsageFailTTL, "codex quota", codexReason(err))
 		return nil
 	}
 	u, err := fetchCodexUsage(ctx, token, account)
 	if err != nil {
-		c.fail.report(now, providerUsageFailTTL, "codex quota", err.Error()+" (account "+account+")")
+		c.fail.report(now, providerUsageFailTTL, "codex quota", codexReason(err)+" (account "+account+")")
 		return nil
 	}
 	c.fail.clear()
 	c.u, c.exp = u, now.Add(usageTTL)
 	return u
+}
+
+// reason is why the last poll could not answer, for the client to show. Empty
+// when nothing has failed.
+func (c *codexUsageCache) reason() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.fail.reason()
 }

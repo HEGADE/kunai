@@ -316,6 +316,11 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	// Codex provider, though, the ChatGPT account has real quota windows we can
 	// read from OpenAI's usage endpoint; other providers stay unavailable.
 	if isProxyProfile(p) {
+		// why carries the poll's own reason when it has one. A dead login is not
+		// "this provider has no quota", and answering with the generic sentence made
+		// the two look identical on the dashboard while the actionable one went to
+		// the log instead of to the person who could act on it.
+		why := ""
 		if prov := s.providerNamed(p.Name); prov != nil && isCodexModel(providerDisplayModel(*prov)) {
 			if u := s.codexUC.get(r.Context(), s.cfg.DataDir); u != nil {
 				out := *u
@@ -323,6 +328,7 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusOK, out)
 				return
 			}
+			why = s.codexUC.reason()
 		}
 		// A Grok provider: paid accounts have credit billing; a free tier has only the
 		// token quota the proxy captured from a 429.
@@ -337,8 +343,12 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusOK, out)
 				return
 			}
+			why = s.grokUC.reason()
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"unavailable": "usage not available for this provider", "cli": p.Name})
+		if why == "" {
+			why = "usage not available for this provider"
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"unavailable": why, "cli": p.Name})
 		return
 	}
 	usage, err := s.usage.get(r.Context(), p, s.cfg.DataDir)
