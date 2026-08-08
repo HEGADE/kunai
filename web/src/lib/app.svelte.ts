@@ -178,6 +178,7 @@ class AppStore {
   showChannels = $state(false)
   showProviders = $state(false)
   showAllSessions = $state(false)
+  showUsage = $state(false)
   listError = $state('')
   // actionError is why the last thing you asked for did not happen: switching
   // account, changing effort, closing.
@@ -797,6 +798,17 @@ class AppStore {
   }
   closeProviders() {
     this.showProviders = false
+  }
+  openUsage() {
+    this.showNew = false
+    this.showSettings = false
+    this.showAccounts = false
+    this.showChannels = false
+    this.showProviders = false
+    this.showUsage = true
+  }
+  closeUsage() {
+    this.showUsage = false
   }
   openAllSessions() {
     this.showNew = false

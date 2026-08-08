@@ -296,6 +296,37 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   window spanning New Year come out right. `usageRun` is injectable for the same
   reason `guardian.go` has `execRun`: a test asserts the command instead of
   spawning a real claude.
+- `internal/usagestats` (+ `internal/server/usagepage.go`, the Usage view): what
+  the work **cost**, which is the other half of the question `usage.go` answers.
+  The quota meters say whether you can keep going; this says what you have been
+  spending it on. It needed nothing to have been recorded in advance, because
+  every assistant message in every transcript already carries its own `usage`
+  block and model, so the whole page is computed **retroactively** over history
+  that predates the feature. The corpus is the constraint (~1.5GB over ~145 files
+  across seven accounts here), so a scan is **incremental by byte offset**: a
+  transcript is append-only, the index in `<dataDir>/usage-index.json` remembers
+  how far into each file the last pass read, and what it keeps per file is
+  (day, model) buckets rather than anything proportional to size. Measured on the
+  real corpus: 3.2s cold, **1.2ms warm**, a 20KB index. A file that SHRANK was
+  replaced rather than appended to (the account-switch copy, and the `/usage`
+  poll deleting its own transcript every minute) so its offset is meaningless and
+  it is rescanned from zero; a file that has gone drops out entirely. The first
+  scan never happens inside a request: it is warmed on boot beside
+  `go s.discover(true)`, the endpoint answers immediately with the last report,
+  and the client polls while `scanning` is true. Two honesty rules are
+  load-bearing and must not regress. The headline is **not a bill** -- everything
+  runs on subscriptions, so it is the counterfactual API cost, and the caption
+  saying so is part of the number rather than a footnote. And a model with no
+  published rate is reported **unpriced**, never folded in at a neighbour's rate
+  and never shown as free: its tokens still count, the page states what share of
+  the corpus it could not price, and `percent` clamps BOTH ends (`>99.9%` as well
+  as `<0.1%`) because 99.93% printed as "100%" beside its own complement as
+  "<0.1%" claims exactly the completeness being audited. The agent bar is
+  **token** share, not cost share, for the same reason: an unpriced agent
+  contributes zero cost, so a cost bar would show Claude at 100% on a machine
+  that also ran millions of Codex tokens. Cache tiers are priced apart (5m write
+  1.25x, 1h write 2x, read 0.1x), so the transcript's own summed
+  `cache_creation_input_tokens` is deliberately not what is used.
 - `internal/server/providers.go`, `cliproxy.go`, `cliproxy_login.go`:
   **proxy-backed providers**, so one machine can run non-Claude models (Codex,
   Grok, Kimi) without leaving the `claude` agent. The whole idea rests on one

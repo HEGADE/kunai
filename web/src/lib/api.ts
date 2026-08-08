@@ -1,3 +1,4 @@
+import type { UsageReport } from './usage'
 import type { AccountInfo, ChannelInfo, Attachment, CLIProfile, FunnelState, HistoryEntry, Job, Listing, MachineInfo, Meta, OlderTurns, PermissionMode, Provider, Share, ShareTier, Stats, ThermalConfig, Usage } from './types'
 
 // Every call takes a `base` origin so the client can reach any machine directly
@@ -629,4 +630,12 @@ export function closeFunnel(base: string, port: number): Promise<FunnelState> {
   return fetch(at(base, `/api/funnel?port=${port}`), { method: 'DELETE' }).then((r) =>
     json<FunnelState>(r),
   )
+}
+
+// Spend, priced from the transcripts. The whole history arrives in one payload
+// and the client windows it (see lib/usage.ts), so this is fetched once per
+// machine rather than per period change. `scanning` true means the first pass
+// over the transcripts is still running and the numbers will grow.
+export function fetchUsageStats(base: string): Promise<UsageReport> {
+  return fetch(at(base, '/api/usage/stats')).then((r) => json<UsageReport>(r))
 }

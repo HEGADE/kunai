@@ -16,6 +16,10 @@ import {
   chosenCli, isProvider, providerModelChoices, providerModelToSend, showEffort,
 } from '../src/lib/spawnoptions.ts'
 import { clampTTL, splitDuration, expiryWords, MIN_TTL, MAX_TTL } from '../src/lib/duration.ts'
+import {
+  byAgent, byModel, compact, dailyCost, money, percent, pricedShare, totals,
+  totalTokens, window_,
+} from '../src/lib/usage.ts'
 
 let pass = 0
 const fails = []
@@ -151,6 +155,72 @@ starts("overnight is tomorrow", [NOON + 20 * 3600e3, "expires tomorrow at"])
 eq("within the week it names the weekday", /^expires \w+day at /.test(expiryWords(NOON + 3 * 86400e3, NOON)), true)
 eq("and not today or tomorrow", /today|tomorrow/.test(expiryWords(NOON + 3 * 86400e3, NOON)), false)
 eq("a link already gone says so", expiryWords(NOON - 1000, NOON), "expired")
+
+// --- usage ------------------------------------------------------------------
+// The arithmetic behind a page that claims to say what things cost. Every number
+// here is one somebody could act on, and the failure mode is a plausible wrong
+// total rather than a crash, so it is exactly the shape that needs pinning.
+const tok = (o) => ({ priced: true, cost: 0, savings: 0, in: 0, w5: 0, w1: 0, r: 0, out: 0, n: 0, ...o })
+const REPORT = {
+  files: 2, scanned_at: 0, scanning: false, models: [],
+  days: [
+    { day: "2026-07-24", models: [
+      tok({ model: "claude-opus-5", agent: "Claude", cost: 10, savings: 4, r: 1000, out: 10, n: 2 }),
+      tok({ model: "gpt-5.5", agent: "Codex", priced: false, in: 500, n: 1 }),
+    ] },
+    { day: "2026-07-26", models: [
+      tok({ model: "claude-opus-5", agent: "Claude", cost: 5, savings: 1, r: 500, out: 5, n: 1 }),
+    ] },
+  ],
+}
+const TODAY = new Date(2026, 6, 26)
+
+// A window covers every day in it, including the ones nothing happened on: a
+// chart that silently drops empty days compresses time and makes an idle week
+// look as busy as a hard one.
+eq("a window has one row per day", window_(REPORT, 7, TODAY).length, 7)
+eq("and it ends on today", window_(REPORT, 7, TODAY)[6].day, "2026-07-26")
+eq("an empty day is present but empty", window_(REPORT, 7, TODAY)[5].models.length, 0)
+eq("a day outside the window is dropped", window_(REPORT, 1, TODAY).length, 1)
+eq("...and it is today's", totals(window_(REPORT, 1, TODAY)).cost, 5)
+
+const W = window_(REPORT, 7, TODAY)
+eq("totals add across days", totals(W).cost, 15)
+eq("responses add too", totals(W).n, 4)
+eq("models roll up across days", byModel(W).map((m) => m.model), ["claude-opus-5", "gpt-5.5"])
+eq("the biggest spender leads", byModel(W)[0].cost, 15)
+eq("agents roll up by family", byAgent(W).map((a) => a.model), ["Claude", "Codex"])
+
+// Unpriced is contagious: a bucket holding one unpriced model has a cost that is
+// a floor, not a total, and rolling it up as priced would launder that.
+eq("an unpriced model stays unpriced", byModel(W)[1].priced, false)
+eq("and it makes its total a floor", totals(W).priced, false)
+eq("a priced-only rollup stays priced", byAgent(W)[0].priced, true)
+
+// The page states its own coverage rather than letting the headline imply it.
+eq("priced share is by tokens", percent(pricedShare(W)), "75%")
+eq("nothing measured is fully priced", pricedShare([]), 1)
+
+eq("daily cost is per day, in order", dailyCost(W), [0, 0, 0, 0, 10, 0, 5])
+
+// Money and counts both span several orders of magnitude on one page, so neither
+// can use a fixed precision.
+eq("thousands lose the cents", money(12500.95), "$12,501")
+eq("dollars keep them", money(4.5), "$4.50")
+eq("a fraction of a cent still shows", money(0.0031), "$0.0031")
+eq("zero is plain", money(0), "$0")
+eq("billions are readable", compact(10_600_000_000), "10.6B")
+eq("so are millions", compact(130_000_000), "130M")
+eq("and small counts are exact", compact(65_193), "65K")
+eq("a tiny share does not round to nothing", percent(0.0004), "<0.1%")
+// ...and neither end may round to a certainty it does not have. 99.93% shown as
+// "100%" beside its own complement as "<0.1%" reads as a contradiction, and on
+// the cost-quality panel it claims exactly the completeness being audited.
+eq("an almost-whole share does not round to all", percent(0.9993), ">99.9%")
+eq("a genuinely whole share is whole", percent(1), "100%")
+eq("and nothing is nothing", percent(0), "0.0%")
+
+eq("total tokens count every tier", totalTokens(tok({ in: 1, w5: 2, w1: 3, r: 4, out: 5 })), 15)
 
 console.log(`${pass}/${pass + fails.length} passed`)
 for (const f of fails) console.log(`FAIL ${f}`)

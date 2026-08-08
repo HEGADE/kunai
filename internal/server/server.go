@@ -29,6 +29,7 @@ import (
 	"github.com/hegade/kunai/internal/session"
 	"github.com/hegade/kunai/internal/share"
 	"github.com/hegade/kunai/internal/telegram"
+	"github.com/hegade/kunai/internal/usagestats"
 	"github.com/hegade/kunai/internal/webui"
 )
 
@@ -111,6 +112,7 @@ type Server struct {
 	modelVers     modelVersionCache        // newest model version per family, read from the claude binary
 	worktrees     *worktreeStore           // git worktrees, so several agents share one repo safely
 	fleet         *fleetHub                // pushes the session list to clients instead of them polling for it
+	usageStats    *usagestats.Collector    // what every session cost, read back out of the transcripts
 	// shares and gate are session sharing: a link worth one conversation, served
 	// on a listener of its own so a guest can never reach the routes above. See
 	// sharegate.go for why that is a separate mux rather than a middleware.
@@ -153,6 +155,9 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	// ends and the only thing it is used for is refusing to delete a worktree
 	// somebody is working in.
 	s.worktrees = newWorktreeStore(cfg.DataDir, mgr.List)
+	// Spend, read back out of the transcripts. The index persists in the data dir,
+	// so the expensive first pass happens once per machine rather than per boot.
+	s.usageStats = usagestats.New(cfg.DataDir, s.usageRoots)
 	// Anything that changes the session list wakes every connected client. Wired
 	// before the first session can exist.
 	s.fleet = newFleetHub()
@@ -351,6 +356,8 @@ func (s *Server) routes() *http.ServeMux {
 	// Machine-level pushes: the session list when it changes, stats on a timer the
 	// server owns. Replaces the client polling every machine for both.
 	mux.HandleFunc("GET /ws/fleet", s.handleFleetWS)
+	// What every session cost, priced from the transcripts.
+	s.usageRoutes(mux)
 	// The network listener's lock: signing in, and (owner side) managing it.
 	s.lanAuthRoutes(mux)
 	s.lanAdminRoutes(mux)
@@ -424,7 +431,11 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.usagePollLoop(ctx)  // feed real window reset times to the scheduler, so reset jobs fire
 	go s.loginSweepLoop(ctx) // kill abandoned account-login flows so they don't linger
 	go s.discover(true)      // warm peer discovery so the first client load sees the fleet
-	s.startTelegram(ctx)     // opt-in: drive a session from a Telegram chat
+	// Warm the spend index too. The first pass over a large corpus takes seconds,
+	// and doing it here means the Usage page has an answer before anyone opens it
+	// rather than showing a spinner on its first visit after every upgrade.
+	go s.usageStats.Refresh()
+	s.startTelegram(ctx) // opt-in: drive a session from a Telegram chat
 	go func() {
 		<-ctx.Done()
 		_ = s.awake.Set(false) // release the keep-awake hold on graceful shutdown
