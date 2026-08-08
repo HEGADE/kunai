@@ -1,55 +1,103 @@
-/* highlight.js theme for Kunai — deliberately near-monochrome. Differentiation
-   comes from the app's neutral brightness ramp (and weight), not hue, so code
-   stays quiet and on-theme. hljs spans render inside {@html}, so these rules
-   must be global (this file is imported once from main.ts). */
+/* highlight.js theme for Kunai.
+ *
+ * Colour, assigned by what you actually read.
+ *
+ * Code here is not code in an editor. It arrives inside a reply, in a log of
+ * what an agent already did, usually skimmed on a phone. What carries the
+ * information in that setting is the VALUES -- the string it wrote, the path it
+ * touched, the number it chose -- and the NAMES it called. The keywords are
+ * scaffolding you already know is there. So the saturation goes on the values
+ * and the names, and the structure recedes: the inverse of an editor theme,
+ * which shouts `const` and `function` at you all day.
+ *
+ * The palette sits in kunai's own register rather than an IDE's. The app's
+ * existing accents (--live #4f9e7f, --alert #cf6f66) are muted and mid-bright,
+ * so these are too -- dyed, not painted. Nothing here glows, and no hue collides
+ * with the greens and reds that mean status elsewhere in the app.
+ *
+ * Every colour clears 4.5:1 against the code block's --bg (#0b0b0c), comments
+ * included: kunai's own source is comment-dense and those comments are the
+ * reasoning, so they recede without being the faintest thing on screen. That is
+ * a step UP from the old theme, where they sat at --text-4 and 3.1:1.
+ *
+ * hljs spans render inside {@html}, so these rules must be global; this file is
+ * imported once from main.ts.
+ */
+
+:root {
+  --code-string: #d3a05f; /* strings, regexes: the values, and the warmest note */
+  --code-number: #b08ac9; /* numbers, booleans, constants */
+  --code-name: #6cc5d6; /* functions, classes, types: the nouns you scan for */
+  --code-keyword: #7f8aad; /* control flow and operators: present, receding */
+  --code-comment: #787c8a; /* annotation, not disabled text */
+}
 
 .hljs {
   color: var(--text);
   background: none;
 }
 
+/* Intent. Italic because it is prose inside code, not because it is lesser. */
 .hljs-comment,
 .hljs-quote {
-  color: var(--text-4);
+  color: var(--code-comment);
   font-style: italic;
 }
 
+/* Scaffolding. Kept quiet on purpose -- see the note above. */
 .hljs-keyword,
 .hljs-selector-tag,
 .hljs-built_in,
-.hljs-literal,
-.hljs-doctag {
-  color: var(--text-2);
-  font-weight: 550;
+.hljs-doctag,
+.hljs-operator,
+.hljs-punctuation,
+.hljs-tag {
+  color: var(--code-keyword);
 }
 
+/* Values: the half of a diff you are actually looking for. */
 .hljs-string,
-.hljs-number,
 .hljs-regexp,
 .hljs-symbol,
-.hljs-meta,
-.hljs-template-variable {
-  color: var(--text-2);
+.hljs-char.escape_,
+.hljs-template-variable,
+.hljs-meta .hljs-string {
+  color: var(--code-string);
 }
 
+.hljs-number,
+.hljs-literal,
+.hljs-variable.constant_ {
+  color: var(--code-number);
+}
+
+/* Names. What the code calls things, which is how you find your way around it. */
 .hljs-title,
 .hljs-title.function_,
 .hljs-title.class_,
 .hljs-section,
 .hljs-name,
-.hljs-attr,
-.hljs-attribute,
 .hljs-type,
+.hljs-selector-class,
+.hljs-selector-id,
+.hljs-attr,
+.hljs-attribute {
+  color: var(--code-name);
+}
+
+/* Ordinary identifiers stay the default voice, so the coloured tokens read as
+   marked rather than everything competing at once. */
 .hljs-variable,
-.hljs-property {
+.hljs-property,
+.hljs-params,
+.hljs-subst {
   color: var(--text);
 }
 
-.hljs-punctuation,
-.hljs-operator,
-.hljs-params,
-.hljs-tag {
-  color: var(--text-3);
+/* Directives (#include, use strict, shebangs) are neither value nor name. */
+.hljs-meta,
+.hljs-meta .hljs-keyword {
+  color: var(--code-keyword);
 }
 
 .hljs-emphasis {
@@ -58,8 +106,17 @@
 .hljs-strong {
   font-weight: 650;
 }
+.hljs-link {
+  text-decoration: underline;
+}
+.hljs-deletion,
+.hljs-addition {
+  font-weight: 500;
+}
 
-/* diff language (used when a fenced block is ```diff) picks up the accent tints */
+/* A ```diff block keeps the app's own accents: these two already mean added and
+   removed everywhere else in kunai, and a second vocabulary for the same idea
+   would be one to learn for no reason. */
 .hljs-addition {
   color: var(--live);
 }
