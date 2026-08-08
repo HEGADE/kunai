@@ -84,7 +84,13 @@ func (m *tokenManager) token(ctx context.Context) (string, error) {
 		}
 		m.load = true
 	}
-	if m.tok.Key != "" && time.Now().Before(m.exp.Add(-refreshLeadway)) {
+	// A key with no recorded expiry is UNKNOWN, not expired, and must be tried.
+	// Treating the zero time as "already past" refused a login that had never said
+	// when it ends -- the older grok CLI shape and the flat in-app one both omit it
+	// -- so kunai declined to use a credential that would have worked. Codex's
+	// manager already takes this view: when there is nothing to refresh with, hand
+	// back what there is and let the upstream 401 be the signal.
+	if m.tok.Key != "" && (m.exp.IsZero() || time.Now().Before(m.exp.Add(-refreshLeadway))) {
 		return m.tok.Key, nil
 	}
 	if m.tok.RefreshToken == "" || m.tok.OIDCIssuer == "" {

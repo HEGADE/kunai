@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -79,5 +80,47 @@ func TestGrokQuotaStopsAskingAfterARefusal(t *testing.T) {
 	}
 	if hits != 1 {
 		t.Errorf("asked xAI %d times for a credential it refused on the first try; want 1", hits)
+	}
+}
+
+// The reason a quota poll failed must reach the client, not just the log.
+//
+// Both provider caches held a precise sentence, reported it to the journal, and
+// returned a bare nil -- so the handler answered with a generic "usage not
+// available for this provider" and the dashboard could only print "no quota".
+// That reads as "this provider has no quota to show", which is the wrong
+// conclusion and the one nobody can act on.
+func TestAFailedQuotaPollKeepsItsReasonForTheClient(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".grok"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A key whose expiry has passed and which cannot be refreshed: a dead login.
+	body := `{"iss::1":{"key":"tok","expires_at":"2020-01-01T00:00:00Z"}}`
+	if err := os.WriteFile(filepath.Join(home, ".grok", "auth.json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var c grokUsageCache
+	if u := c.get(context.Background()); u != nil {
+		t.Fatal("a dead login reported a quota")
+	}
+	why := c.reason()
+	if why == "" {
+		t.Fatal("the failure reason was discarded; the client has nothing to show")
+	}
+	// It has to name the thing to do, not the thing that happened.
+	if !strings.Contains(strings.ToLower(why), "sign in") {
+		t.Errorf("reason = %q, want it to say how to fix the login", why)
+	}
+}
+
+// And a poll that never failed has nothing to say, so a healthy provider does not
+// grow a permanent error line.
+func TestASuccessfulQuotaPollHasNoReason(t *testing.T) {
+	var c grokUsageCache
+	if got := c.reason(); got != "" {
+		t.Errorf("reason = %q on a fresh cache, want empty", got)
 	}
 }

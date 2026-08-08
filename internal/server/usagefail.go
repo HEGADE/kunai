@@ -69,3 +69,14 @@ func (f *usageFailure) report(now time.Time, ttl time.Duration, what, msg string
 // third party, and retrying a credential that has already been refused six times
 // a minute is worse than the once-a-minute drip this is fixing.
 const providerUsageFailTTL = usageTTL
+
+// reason is the last failure message, or "" when there is none.
+//
+// It exists because the message was being thrown away one layer before anyone
+// could read it. Both provider caches held a precise, actionable sentence -- "the
+// Codex login has expired; sign in to Codex again" -- reported it to the log, and
+// then returned a bare nil, so the handler could only answer with a generic
+// "usage not available for this provider" and the dashboard could only print "no
+// quota". That is indistinguishable from "this provider has no quota to show",
+// which is the wrong conclusion and the one a reader will reach.
+func (f *usageFailure) reason() string { return f.last }

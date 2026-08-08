@@ -376,10 +376,32 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   the Claude-tier picker is meaningless there. `codexusage.go` puts a Codex
   provider's ChatGPT quota on the dashboard, the same two numbers Claude shows:
   the proxy exposes no rate-limit info and there is no `codex /usage` to shell, so
-  kunai reads the account's OAuth token (the managed sidecar's own, kept fresh by
-  the sidecar, else `~/.codex/auth.json`) and calls ChatGPT's `wham/usage` backend
-  endpoint, the one CodexBar reads. This is the single place kunai reads a login it
-  otherwise only shells, and it is read-only, only to show a number. The windows
+  kunai reads the account's OAuth token (the managed sidecar's own, else
+  `~/.codex/auth.json`) and calls ChatGPT's `wham/usage` backend endpoint, the one
+  CodexBar reads. This is the single place kunai reads a login it otherwise only
+  shells, and it is read-only, only to show a number.
+  Both quota readers **refresh an expired token** rather than sending it, and
+  that is not an optimisation: they used to read the file and post whatever was
+  in it, so once the access token lapsed they posted a dead one every minute
+  forever while the refresh token needed to fix it sat in the same file they had
+  just read. On this machine Codex's token expired on Aug 1 and the dashboard
+  said "no quota" for a week with everything required to recover sitting on disk.
+  The proxies already knew how to refresh, so the readers now share that code
+  (`codex.Credentials`, `grok.Token`) rather than keeping a second, dumber view
+  of the same file; the manager is shared per path, which for Grok is a
+  correctness rule rather than tidiness, since xAI revokes the old refresh token
+  on each rotation and two independent managers would invalidate each other.
+  The residue: `~/.codex/auth.json` is the codex CLI's file, so `owns` is false
+  and kunai's refresh is held in memory only — a restart starts again from
+  whatever the CLI last wrote, which is correct but means the refresh repeats.
+  A quota that cannot be read **says why, to the person rather than the log**.
+  Both caches kept a precise sentence, reported it to the journal, and returned a
+  bare nil, so the handler answered "usage not available for this provider" and
+  the dashboard printed "no quota" — indistinguishable from "this provider has no
+  quota to show", which is the wrong conclusion and the one a reader reaches. The
+  reason now rides `unavailable` and the dashboard prints it under the pills.
+  The Grok free tier is one of those reasons and is NOT a failure: xAI publishes
+  no proactive endpoint for it, so it only appears once a request is refused. The windows
   are placed by length, not a fixed 5h/7d, because a plan varies (a ChatGPT Go plan
   has one ~30-day window); a short one is the session row, a long one the weekly
   row, so the reset time is always honest. Confirmed end to end on Codex (login,

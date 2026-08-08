@@ -626,6 +626,19 @@
           </button>
         {/each}
       </div>
+      <!-- Why, for the accounts that could not answer.
+           "no quota" alone is indistinguishable from "this provider has no quota
+           to show", and the server knows better than that: a stale login comes
+           back as "the Codex login has expired; sign in to Codex again". The
+           sentence is printed rather than classified into a shorter word, because
+           a title attribute is nothing on a phone and guessing the category from
+           the prose is a rule that rots. Only shown when a reason exists, so a
+           healthy machine gains no line. -->
+      {#each Object.entries(usageErrs).filter(([, m]) => m) as [cli, msg] (cli)}
+        <p class="capwhy">
+          <span class="cwho">{cli || 'Claude'}</span>{msg}
+        </p>
+      {/each}
       {#if openAcct !== null && windowsOf(uses[openAcct] ?? null).length > 0}
         <!-- Every window this account has, named, with what is left and when it
              comes back. One account at a time: this is a glance, not a table. -->
@@ -1582,6 +1595,21 @@
 
   /* Both windows, only for the account you asked about. A table for three
      accounts at once is the wall the collapsed line exists to avoid. */
+  /* One quiet line per account that could not report, under the pills rather
+     than inside them: the pill is a glance and this is a sentence. */
+  .capwhy {
+    margin: 7px 2px 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--text-4);
+  }
+  .cwho {
+    color: var(--text-3);
+  }
+  .cwho::after {
+    content: ' — ';
+  }
+
   .capdetail {
     display: flex;
     flex-direction: column;

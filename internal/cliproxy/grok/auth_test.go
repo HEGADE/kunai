@@ -1,6 +1,7 @@
 package grok
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -106,5 +107,37 @@ func TestReadToken_FlatSidecarXAIShape(t *testing.T) {
 	}
 	if tok != "xai-access-tok" {
 		t.Errorf("token = %q, want the flat access_token", tok)
+	}
+}
+
+// A key with no recorded expiry is unknown, not expired.
+//
+// The zero time compares as already past, so a login that never said when it
+// ends was refused outright -- kunai declining to use a credential that would
+// have worked. Both the older grok CLI shape and the flat in-app one omit it.
+func TestTokenUsesAKeyWithNoRecordedExpiry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(path, []byte(`{"iss::1":{"key":"tok"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := newTokenManager(path).token(context.Background())
+	if err != nil {
+		t.Fatalf("token() = %v, want the key used and the upstream left to judge it", err)
+	}
+	if got != "tok" {
+		t.Errorf("token() = %q, want %q", got, "tok")
+	}
+}
+
+// An expiry that HAS passed, with nothing to refresh with, is still a dead login
+// and must say so rather than spend a request proving it.
+func TestTokenRefusesAnExpiredKeyItCannotRefresh(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	body := `{"iss::1":{"key":"tok","expires_at":"2020-01-01T00:00:00Z"}}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newTokenManager(path).token(context.Background()); err == nil {
+		t.Fatal("token() succeeded on an expired key with no refresh token")
 	}
 }

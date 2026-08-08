@@ -12,12 +12,16 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/hegade/kunai/internal/cliproxy/grok"
 )
 
 // grokBillingURL is xAI's CLI chat-proxy billing endpoint. A var so a test can point
@@ -37,29 +41,41 @@ type grokCent struct {
 	Val int64 `json:"val"`
 }
 
-// grokTokenFromFile reads the grok CLI session token from ~/.grok/auth.json (the
-// session key under the single "<issuer>::<id>" entry). Read-only.
-func grokTokenFromFile() (string, bool) {
+// grokToken returns a grok session token that works NOW, refreshing an expired
+// one first.
+//
+// It used to read ~/.grok/auth.json and send whatever key was in it, which meant
+// that once the token lapsed this posted a dead one every minute forever. That
+// is worse here than for Codex: xAI rotates refresh tokens and revokes the old
+// one on each refresh, so the token in that file goes stale on its own and only
+// a refresh that PERSISTS the rotated one keeps it alive. The proxy already does
+// exactly that (internal/cliproxy/grok), so this now shares it rather than
+// keeping a second, read-only view of the same file.
+func grokToken(ctx context.Context) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", false
+		return "", err
 	}
-	b, err := os.ReadFile(filepath.Join(home, ".grok", "auth.json"))
-	if err != nil {
-		return "", false
+	path := filepath.Join(home, ".grok", "auth.json")
+	if _, err := os.Stat(path); err != nil {
+		return "", errNoGrokLogin
 	}
-	var raw map[string]struct {
-		Key string `json:"key"`
+	return grok.Token(ctx, path)
+}
+
+var errNoGrokLogin = errors.New("no Grok login found (~/.grok/auth.json); run `grok` to sign in")
+
+// grokReason turns a failure into the sentence a person can act on. The token
+// manager already produces an actionable message for a login that cannot be
+// refreshed; this only has to cover a bare status code from the billing call.
+func grokReason(err error) string {
+	if err == nil {
+		return ""
 	}
-	if json.Unmarshal(b, &raw) != nil {
-		return "", false
+	if msg := err.Error(); strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "HTTP 403") {
+		return "the Grok login has expired; run `grok` to sign in again"
 	}
-	for _, e := range raw {
-		if e.Key != "" {
-			return e.Key, true
-		}
-	}
-	return "", false
+	return err.Error()
 }
 
 // fetchGrokBilling reads the credit billing and maps it to a Usage window, or nil
@@ -119,6 +135,11 @@ type grokUsageCache struct {
 	u    *Usage
 	exp  time.Time
 	fail usageFailure
+	// free records that the last poll SUCCEEDED and found no credit limit, which
+	// is the free tier rather than a fault. The two produce the same empty result
+	// and must not produce the same sentence: one is "sign in again", the other is
+	// "there is nothing to show until a request is refused".
+	free bool
 }
 
 func (c *grokUsageCache) get(ctx context.Context) *Usage {
@@ -131,20 +152,41 @@ func (c *grokUsageCache) get(ctx context.Context) *Usage {
 	if c.fail.holding(now) {
 		return nil // already asked recently and was refused
 	}
-	token, ok := grokTokenFromFile()
-	if !ok {
-		c.fail.report(now, providerUsageFailTTL, "grok quota", "no grok login found (~/.grok/auth.json)")
+	token, err := grokToken(ctx)
+	if err != nil {
+		c.fail.report(now, providerUsageFailTTL, "grok quota", grokReason(err))
 		return nil
 	}
 	u, err := fetchGrokBilling(ctx, token)
 	if err != nil {
-		c.fail.report(now, providerUsageFailTTL, "grok quota", err.Error())
+		c.fail.report(now, providerUsageFailTTL, "grok quota", grokReason(err))
 		return nil
 	}
 	c.fail.clear()
 	if u == nil {
+		c.free = true
 		return nil // free tier; caller falls back to the captured token quota
 	}
+	c.free = false
 	c.u, c.exp = u, now.Add(usageTTL)
 	return u
+}
+
+// reason is why there are no numbers, for the client to show. Empty when there
+// is nothing to explain.
+//
+// A failure comes first, then the free tier -- which is not a failure and must
+// not be dressed as one. xAI publishes no proactive endpoint for the free
+// allowance; it appears only in the body of a 429, which the proxy captures when
+// one arrives.
+func (c *grokUsageCache) reason() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if r := c.fail.reason(); r != "" {
+		return r
+	}
+	if c.free {
+		return "the Grok free tier publishes no quota; it appears only once a request is refused"
+	}
+	return ""
 }
