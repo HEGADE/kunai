@@ -334,8 +334,21 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   **token** share, not cost share, for the same reason: an unpriced agent
   contributes zero cost, so a cost bar would show Claude at 100% on a machine
   that also ran millions of Codex tokens. Cache tiers are priced apart (5m write
-  1.25x, 1h write 2x, read 0.1x), so the transcript's own summed
-  `cache_creation_input_tokens` is deliberately not what is used.
+  1.25x, 1h write 2x), so the transcript's own summed
+  `cache_creation_input_tokens` is deliberately not what is used, and the cache
+  READ discount is per-rate rather than a constant: Anthropic and OpenAI both bill
+  a cached token at 0.1x input, xAI at 0.15x, and one hardcoded multiplier
+  under-priced every Grok read. Every rate is a published list price read from the
+  provider's own page (Anthropic, OpenAI, xAI), not recalled, and the non-Claude
+  rows are the sub-200k/272k tier a coding session almost always sits in, so a very
+  long context is under-priced rather than over-. A built-in table is still wrong
+  twice over -- it goes stale on the next price change and cannot know a model
+  released after the binary -- so `<dataDir>/pricing.json` overrides it
+  (`{"gpt-6": {"in": 7, "out": 21}}`, prefix-matched the same way, an override
+  beating a built-in of the same key). A missing file is normal and a malformed
+  one is ignored rather than fatal: a typo in an optional override must not take
+  the page down. Anything still unlisted stays unpriced rather than guessed, so
+  the honesty rule is unchanged and only the source of truth is extensible.
 - `internal/server/providers.go`, `cliproxy.go`, `cliproxy_login.go`:
   **proxy-backed providers**, so one machine can run non-Claude models (Codex,
   Grok, Kimi) without leaving the `claude` agent. The whole idea rests on one

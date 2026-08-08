@@ -39,7 +39,7 @@ type ModelStat struct {
 }
 
 // build turns the per-file index into the report.
-func build(files map[string]*fileState) *Report {
+func build(files map[string]*fileState, tbl *Table) *Report {
 	byDay := map[string]map[string]Tokens{}
 	for _, st := range files {
 		for _, row := range st.Rows {
@@ -57,7 +57,7 @@ func build(files map[string]*fileState) *Report {
 	total := map[string]Tokens{}
 	days := make([]DayStat, 0, len(byDay))
 	for day, models := range byDay {
-		d := DayStat{Day: day, Models: statsOf(models)}
+		d := DayStat{Day: day, Models: statsOf(models, tbl)}
 		days = append(days, d)
 		for model, t := range models {
 			cur := total[model]
@@ -69,7 +69,7 @@ func build(files map[string]*fileState) *Report {
 
 	return &Report{
 		Days:      days,
-		Models:    statsOf(total),
+		Models:    statsOf(total, tbl),
 		Files:     len(files),
 		ScannedAt: time.Now().UnixMilli(),
 	}
@@ -77,16 +77,16 @@ func build(files map[string]*fileState) *Report {
 
 // statsOf prices a set of models, biggest spender first so the client can render
 // a breakdown without sorting it again.
-func statsOf(models map[string]Tokens) []ModelStat {
+func statsOf(models map[string]Tokens, tbl *Table) []ModelStat {
 	out := make([]ModelStat, 0, len(models))
 	for model, t := range models {
-		cost, priced := Cost(model, t)
+		cost, priced := tbl.Cost(model, t)
 		out = append(out, ModelStat{
 			Model:   model,
 			Agent:   Agent(model),
 			Priced:  priced,
 			Cost:    cost,
-			Savings: CacheSaving(model, t),
+			Savings: tbl.CacheSaving(model, t),
 			Tokens:  t,
 		})
 	}

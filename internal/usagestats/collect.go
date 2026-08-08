@@ -36,6 +36,7 @@ type fileState struct {
 type Collector struct {
 	path  string // where the index persists
 	roots func() []Root
+	tbl   *Table // built-in rates plus this machine's own overrides
 
 	mu       sync.Mutex
 	files    map[string]*fileState
@@ -56,7 +57,7 @@ type Root struct {
 // and a usage page that never sees the new account's spend would be wrong in a
 // way nobody would think to check.
 func New(dataDir string, roots func() []Root) *Collector {
-	c := &Collector{roots: roots, files: map[string]*fileState{}}
+	c := &Collector{roots: roots, files: map[string]*fileState{}, tbl: LoadTable(dataDir)}
 	if dataDir != "" {
 		c.path = filepath.Join(dataDir, "usage-index.json")
 		c.load()
@@ -136,7 +137,7 @@ func (c *Collector) Refresh() {
 	c.mu.Unlock()
 
 	fresh := scanRoots(roots, snapshot)
-	report := build(fresh)
+	report := build(fresh, c.tbl)
 
 	c.mu.Lock()
 	c.files = fresh
