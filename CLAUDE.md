@@ -1070,8 +1070,8 @@ Behavioral invariants that were bugs before (do not regress):
   at spawn so it holds from the first tool call. Sending it afterwards is too late.
   Scheduled jobs deliberately keep `acceptEdits`: auto can still stop for a risky
   action, which for an unattended run means stalling forever.
-- **YOLO** (`session.BypassPermissionMode`, `bypassPermissions`, shown as "Never
-  ask") is not the end of the mode scale, it is a different kind of thing, and
+- **Yolo mode** (`session.BypassPermissionMode`, `bypassPermissions`) is not the
+  end of the mode scale, it is a different kind of thing, and
   every rule below follows from one measured fact rather than from caution: a CLI
   spawned in it sends **no `can_use_tool` at all** (verified against 2.1.222 --
   a Bash call ran with zero control requests). So kunai's own tool boundary, which
@@ -1096,6 +1096,18 @@ Behavioral invariants that were bugs before (do not regress):
   about reads as a broken button. Turning it on is confirmed and turning it off is
   not, deliberately: every other mode announces a mis-tap at the next tool call,
   and this one announces it by the command having already run.
+  It is **named rather than described**, which is the opposite of the rule the
+  other four modes follow, and that is the point: "Never ask" (the first label)
+  read as one more setting on the same dial, and this is not on the dial. A name
+  you have to learn is a name you cannot pick by accident. The state is then
+  carried by the **composer itself** rather than by the pill: `.field.yolo`
+  colours the border, the caret and the text you are typing with `--yolo-ink`
+  (`#e0b978`, --busy's hue at a brighter step, 10.7:1 on `--panel` where 4.5 is
+  the floor for prose). Both channels are needed -- a border is chrome the eye
+  stops seeing, and text colour alone shows nothing on an empty composer. This is
+  the one place amber is worn by prose instead of by a dot, and it earns the
+  exception the same way the brand marks earn theirs: it is the only channel
+  reporting a state whose mistakes cannot be taken back after the fact.
 
 ## Channels
 

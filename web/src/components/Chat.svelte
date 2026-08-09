@@ -379,8 +379,18 @@
   const modes = PERMISSION_MODES
   // The pill has room for a word, not a label: "Accept edits" is the mode, but
   // "Edits" is what fits beside the model and the effort.
-  const modeLabels: Record<string, string> = { acceptEdits: 'Edits', bypassPermissions: 'No asks' }
+  const modeLabels: Record<string, string> = { acceptEdits: 'Edits', bypassPermissions: 'Yolo' }
   const modePill = (id: string) => modeLabels[id] ?? permissionLabel(id)
+
+  // Yolo mode is worn by the composer, not just recorded in a pill.
+  //
+  // A permission mode is a property of the next thing you send, and the composer
+  // is where you send it from, so that is where it belongs. The pill was already
+  // the honest answer to "what mode is this session in" and it was still the
+  // wrong one to rely on: it is one word among four, in the corner, and the state
+  // it reports is the one where a mistake cannot be taken back. Colouring what
+  // you are typing into means you cannot compose a message without seeing it.
+  const yolo = $derived(chat.mode === BYPASS)
 
   // Turning the asking off is confirmed; turning it back on is not.
   //
@@ -686,7 +696,7 @@
          720px centred and the strip was not), and left the model, effort and
          account controls on show underneath doing nothing. Replacing the field's
          contents states it once and removes every control that would lie. -->
-    <div class="field" class:dead={chat.status === 'gone'}>
+    <div class="field" class:dead={chat.status === 'gone'} class:yolo>
       {#if chat.status === 'gone'}
         <div class="deadrow">
           <div class="deadtext">
@@ -703,14 +713,16 @@
       {#if armBypass}
         <div class="armbypass">
           <div class="abtext">
-            <strong>Stop asking permission?</strong>
+            <!-- The name is what it is called; the sentence is what it does. Both,
+                 because a name alone is a thing you agree to without reading. -->
+            <strong>Turn on Yolo mode?</strong>
             The agent will run any command and change any file it can reach from
             <span class="mono">{chat.cwd || 'this folder'}</span>, with nothing stopping to check.
-            You can switch back at any time.
+            The composer turns yellow while it is on, and you can switch back at any time.
           </div>
           <div class="abact">
             <button class="abno" onclick={() => (armBypass = false)}>Cancel</button>
-            <button class="abyes" onclick={confirmBypass}>Stop asking</button>
+            <button class="abyes" onclick={confirmBypass}>Turn it on</button>
           </div>
         </div>
       {/if}
@@ -1323,6 +1335,30 @@
   }
   .field:focus-within {
     border-color: var(--text-4);
+  }
+  /* Yolo mode, worn by the field you type into.
+     The border and the typed text both carry it, because either alone is
+     missable: a border is chrome your eye stops seeing after a minute, and text
+     colour alone would not show on an empty composer. --yolo-ink is a brighter
+     step than --busy (10.7:1 on the panel, against 4.5 needed) because this is
+     prose being read, not a status dot being glanced at. */
+  .field.yolo {
+    border-color: var(--busy);
+  }
+  .field.yolo:focus-within {
+    border-color: var(--yolo-ink);
+  }
+  .field.yolo textarea,
+  .field.yolo textarea::placeholder {
+    color: var(--yolo-ink);
+  }
+  .field.yolo textarea {
+    caret-color: var(--yolo-ink);
+  }
+  /* The pill says the name; the field says the state. Both, because the name is
+     what you learn it by and the colour is what you notice it by. */
+  .field.yolo .seg.on {
+    color: var(--yolo-ink);
   }
   /* The ended composer. Quieter than a live one, not louder: the border drops
      back to the faintest one available and the fill goes flat, so the thing you

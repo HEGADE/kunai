@@ -33,12 +33,17 @@ export const PERMISSION_MODES: PermissionOption[] = [
   // Last, and set apart, because it is not the end of a scale. The others differ
   // in WHICH calls stop for a person; this one removes the stopping, so there is
   // no category of action left that gets a second look -- any command, any file
-  // the process can reach. Named for what it does rather than "YOLO", which is
-  // what you call it and not what it should say on the button you might hit by
-  // accident.
+  // the process can reach.
+  //
+  // It is named rather than described, which is the opposite of the rule the
+  // other four follow, and that is the point: "Never ask" reads as one more
+  // setting on the same dial, and this is not on the dial. A name you have to
+  // learn is a name you cannot pick by accident, and the composer turns yellow
+  // while it is on, so the state is legible from across the room rather than
+  // from a word in a menu you closed a minute ago.
   {
     id: 'bypassPermissions',
-    label: 'Never ask',
+    label: 'Yolo mode',
     hint: 'Runs anything, including commands, with no prompts',
     grave: true,
   },

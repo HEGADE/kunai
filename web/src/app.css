@@ -41,6 +41,15 @@
   --openai: #a8b3c4;
   --grok: #d6d7da;
 
+  /* Yolo mode's yellow. It is --busy's hue, because "this needs your attention"
+     is exactly what it means, but a brighter step: --busy is tuned for a status
+     dot and this has to work as TEXT you are reading and typing (10.7:1 on
+     --panel, where 4.5 is the floor). The one place amber is worn by prose
+     rather than by a dot, and it earns it the same way the brand marks earn
+     theirs -- it is the only channel reporting a state that cannot be undone
+     after the fact. */
+  --yolo-ink: #e0b978;
+
   --sans: 'Geist Variable', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
   --serif: 'Source Serif 4 Variable', Charter, 'Iowan Old Style', Georgia, serif;
