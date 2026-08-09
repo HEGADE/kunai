@@ -79,6 +79,9 @@ type Config struct {
 
 // Server wires the manager, config, and embedded PWA into an http.Handler.
 type Server struct {
+	// funnelStatusFn reads the current Funnel config. A field so the bind-conflict
+	// diagnosis can be tested without a tailnet; nil means ask tailscale for real.
+	funnelStatusFn func(gatePort int) funnelState
 	// telegram is the Telegram channel state (token, who may use it, pending
 	// pairings). Nil until startTelegram runs.
 	telegram      *telegram.Store
@@ -454,7 +457,7 @@ func (s *Server) Run(ctx context.Context) error {
 		go keeper.renewLoop(ctx) // auto-renew via `tailscale cert` before expiry
 		log.Printf("kunai listening on https://%s", s.cfg.Addr)
 		// Certs are served from TLSConfig.GetCertificate, so the file args are empty.
-		return srv.ListenAndServeTLS("", "")
+		return s.explainBind(srv.ListenAndServeTLS("", ""))
 	}
 	// A loopback origin is a secure context by specification, so the PWA, its
 	// service worker and Web Push all work over plain HTTP here. Saying otherwise
@@ -465,7 +468,19 @@ func (s *Server) Run(ctx context.Context) error {
 	} else {
 		log.Printf("kunai listening on http://%s (no TLS: a browser will refuse to install the app from a non-loopback address)", s.cfg.Addr)
 	}
-	return srv.ListenAndServe()
+	return s.explainBind(srv.ListenAndServe())
+}
+
+// explainBind turns "address already in use" into the sentence that says who has
+// the port and how to get it back, when kunai can tell. See
+// diagnoseBindConflict: the case worth naming is a Funnel mapping that outlived
+// the share that made it, which holds the port for good and which kunai cannot
+// clear itself because it never stays up long enough to be asked.
+func (s *Server) explainBind(err error) error {
+	if why := s.diagnoseBindConflict(err); why != "" {
+		return fmt.Errorf("%w\n  %s", err, why)
+	}
+	return err
 }
 
 // --- REST handlers ---
