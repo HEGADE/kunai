@@ -78,12 +78,30 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A session already running without permission prompts cannot be shared.
+	//
+	// Refused rather than quietly moved out of bypass, because the owner turned
+	// that on deliberately and silently undoing it is its own surprise. The hole
+	// this closes is invisible from either end: the guard confining a guest to the
+	// session's folders is a can_use_tool handler, and a bypassed CLI never sends
+	// one, so the share would look entirely normal -- link, tier, pairing, roots
+	// frozen -- while every boundary it advertises sat inert.
+	// Session.SetPermissionMode refuses the opposite order.
+	if sess.Mode() == session.BypassPermissionMode {
+		writeErr(w, http.StatusConflict,
+			"this session is running without permission prompts, so it cannot be shared: switch it out of that mode first")
+		return
+	}
+
 	meta := sess.Meta()
 	sh := share.Share{
 		SessionID: sess.ID,
 		Title:     meta.Title,
 		Tier:      tier,
-		Mode:      session.ValidPermissionMode(body.Mode),
+		// ValidGuestMode, not ValidPermissionMode: a share's standing mode is
+		// applied to the session by applyShareTier, so bypass here would respawn the
+		// shared process into exactly the state the check above refuses.
+		Mode:      session.ValidGuestMode(body.Mode),
 		Detail:    share.StrictPolicy(),
 		Roots:     s.shareRoots(sess),
 		MaxTurns:  body.MaxTurns,

@@ -7,7 +7,8 @@
   import type { Attachment, Share } from '../lib/types'
   import { groupTurns } from '../lib/turns'
   import { MODELS, EFFORTS, modelLabel, modelOptionLabel, modelFamily, effortLabel } from '../lib/models'
-  import { PERMISSION_MODES, permissionLabel } from '../lib/permissions'
+  import { BYPASS, PERMISSION_MODES, permissionLabel } from '../lib/permissions'
+  import type { PermissionMode } from '../lib/types'
   import { setReloadGuard } from '../lib/updater'
   import { visited } from '../lib/visited.svelte'
   import PermissionGate from './PermissionGate.svelte'
@@ -361,8 +362,40 @@
   const modes = PERMISSION_MODES
   // The pill has room for a word, not a label: "Accept edits" is the mode, but
   // "Edits" is what fits beside the model and the effort.
-  const modeLabels: Record<string, string> = { acceptEdits: 'Edits' }
+  const modeLabels: Record<string, string> = { acceptEdits: 'Edits', bypassPermissions: 'Yolo' }
   const modePill = (id: string) => modeLabels[id] ?? permissionLabel(id)
+
+  // Yolo mode is worn by the composer, not just recorded in a pill.
+  //
+  // A permission mode is a property of the next thing you send, and the composer
+  // is where you send it from, so that is where it belongs. The pill was already
+  // the honest answer to "what mode is this session in" and it was still the
+  // wrong one to rely on: it is one word among four, in the corner, and the state
+  // it reports is the one where a mistake cannot be taken back. Colouring what
+  // you are typing into means you cannot compose a message without seeing it.
+  const yolo = $derived(chat.mode === BYPASS)
+
+  // Turning the asking off is confirmed; turning it back on is not.
+  //
+  // Asymmetric on purpose. This is the one mode change that cannot be noticed
+  // after the fact -- every other mode still stops somewhere, so a mis-tap
+  // announces itself at the next tool call, while this one announces itself by
+  // the command having already run. The menu is a small popover on a phone, and
+  // the row sits directly under "Accept edits".
+  let armBypass = $state(false)
+  function pickMode(id: PermissionMode) {
+    if (id === BYPASS && chat.mode !== BYPASS) {
+      modeOpen = false
+      armBypass = true
+      return
+    }
+    chat.setMode(id)
+    modeOpen = false
+  }
+  function confirmBypass() {
+    armBypass = false
+    chat.setMode(BYPASS)
+  }
 
   const running = $derived(chat.sessionState === 'running')
 
@@ -631,7 +664,7 @@
          720px centred and the strip was not), and left the model, effort and
          account controls on show underneath doing nothing. Replacing the field's
          contents states it once and removes every control that would lie. -->
-    <div class="field" class:dead={chat.status === 'gone'}>
+    <div class="field" class:dead={chat.status === 'gone'} class:yolo>
       {#if chat.status === 'gone'}
         <div class="deadrow">
           <div class="deadtext">
@@ -641,6 +674,26 @@
           <button class="dbtn" onclick={() => app.reopenActive()}>Reopen it</button>
         </div>
       {:else}
+      <!-- Sits where the queued prompts do, above the field, because it is about
+           what the next turn will be allowed to do. It states the consequence in
+           the terms that matter (any command, this folder, no prompts) rather
+           than asking "are you sure", which nobody reads. -->
+      {#if armBypass}
+        <div class="armbypass">
+          <div class="abtext">
+            <!-- The name is what it is called; the sentence is what it does. Both,
+                 because a name alone is a thing you agree to without reading. -->
+            <strong>Turn on Yolo mode?</strong>
+            The agent will run any command and change any file it can reach from
+            <span class="mono">{chat.cwd || 'this folder'}</span>, with nothing stopping to check.
+            The composer turns yellow while it is on, and you can switch back at any time.
+          </div>
+          <div class="abact">
+            <button class="abno" onclick={() => (armBypass = false)}>Cancel</button>
+            <button class="abyes" onclick={confirmBypass}>Turn it on</button>
+          </div>
+        </div>
+      {/if}
       {#if attachments.length}
         <div class="chips">
           {#each attachments as a (a.id)}
@@ -678,7 +731,8 @@
                 {#each modes as m (m.id)}
                   <button
                     class:active={chat.mode === m.id}
-                    onclick={() => { chat.setMode(m.id); modeOpen = false }}
+                    class:grave={m.grave}
+                    onclick={() => pickMode(m.id)}
                   >
                     <span class="ml">{m.label}</span>
                     <span class="mh">{m.hint}</span>
@@ -1250,6 +1304,30 @@
   .field:focus-within {
     border-color: var(--text-4);
   }
+  /* Yolo mode, worn by the field you type into.
+     The border and the typed text both carry it, because either alone is
+     missable: a border is chrome your eye stops seeing after a minute, and text
+     colour alone would not show on an empty composer. --yolo-ink is a brighter
+     step than --busy (10.7:1 on the panel, against 4.5 needed) because this is
+     prose being read, not a status dot being glanced at. */
+  .field.yolo {
+    border-color: var(--busy);
+  }
+  .field.yolo:focus-within {
+    border-color: var(--yolo-ink);
+  }
+  .field.yolo textarea,
+  .field.yolo textarea::placeholder {
+    color: var(--yolo-ink);
+  }
+  .field.yolo textarea {
+    caret-color: var(--yolo-ink);
+  }
+  /* The pill says the name; the field says the state. Both, because the name is
+     what you learn it by and the colour is what you notice it by. */
+  .field.yolo .seg.on {
+    color: var(--yolo-ink);
+  }
   /* The ended composer. Quieter than a live one, not louder: the border drops
      back to the faintest one available and the fill goes flat, so the thing you
      cannot type into recedes instead of announcing itself. Nothing here can take
@@ -1507,6 +1585,81 @@
   .mh {
     font-size: 11.5px;
     color: var(--text-4);
+  }
+  /* Set apart by a rule rather than by colour: it is the last row and a different
+     kind of choice, and painting it red would make the menu look like an error
+     state every time it opens. */
+  .mode-pop button.grave {
+    margin-top: 4px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    border-radius: 0 0 var(--r-sm) var(--r-sm);
+  }
+  .mode-pop button.grave.active .ml,
+  .mode-pop button.grave:hover .ml {
+    color: var(--busy);
+  }
+
+  /* The confirmation, above the field where the queued prompts sit, because it is
+     about what the next turn may do. */
+  .armbypass {
+    max-width: 720px;
+    margin: 0 auto 8px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 11px 14px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-left: 2px solid var(--busy);
+    border-radius: var(--r-lg);
+  }
+  .abtext {
+    flex: 1;
+    min-width: 220px;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--text-3);
+  }
+  .abtext strong {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .abtext .mono {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text-2);
+  }
+  .abact {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .abno {
+    height: 30px;
+    padding: 0 12px;
+    border-radius: 9px;
+    font-size: 12.5px;
+    color: var(--text-3);
+  }
+  .abno:hover {
+    background: var(--panel-3);
+    color: var(--text);
+  }
+  /* Amber, not white: the primary-action white is for the safe default, and this
+     is not it. Amber is already the app's "needs a decision" colour. */
+  .abyes {
+    height: 30px;
+    padding: 0 14px;
+    border-radius: 9px;
+    background: var(--busy);
+    color: #16130c;
+    font-size: 12.5px;
+    font-weight: 600;
   }
   .stop {
     margin-right: 6px;

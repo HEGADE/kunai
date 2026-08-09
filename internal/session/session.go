@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -874,9 +875,21 @@ func (s *Session) SetModel(model string) error {
 }
 
 // SetPermissionMode switches the permission mode ("default", "acceptEdits",
-// "auto", "plan", …).
+// "auto", "plan", "bypassPermissions").
+//
+// Bypass is refused while a tool guard is installed, and that is a mechanical
+// rule rather than a policy one. A guard is a can_use_tool handler; bypass stops
+// the CLI sending can_use_tool at all, so switching a shared session into it
+// would not loosen the folder boundary, it would remove it, and nothing
+// downstream would notice because the guard simply never runs again. Refusing
+// here covers the live path; the share create handler covers the other order
+// (turning YOLO on first, then sharing).
 func (s *Session) SetPermissionMode(mode string) error {
 	s.mu.Lock()
+	if mode == BypassPermissionMode && s.guard != nil {
+		s.mu.Unlock()
+		return errors.New("this session is shared, so it cannot run without permission prompts: stop sharing it first")
+	}
 	s.mode = mode
 	// A mode change does not always come from a click: a loop borrows acceptEdits
 	// for its duration and hands it back at the end. Say so, or the composer goes
@@ -884,6 +897,20 @@ func (s *Session) SetPermissionMode(mode string) error {
 	s.emitLocked(s.sequenceLocked(AppEvent{T: EvMode, Mode: mode}))
 	s.mu.Unlock()
 	return s.drv.SetPermissionMode(mode)
+}
+
+// ReportError tells everyone attached that a command they sent was refused.
+//
+// A command that fails on the wire used to be logged and nothing else, which is
+// fine while every refusal is a bug nobody triggers. It stopped being fine when
+// a refusal became a rule somebody would actually hit -- a shared session
+// declining to stop asking permission. Silently, that reads as a broken button:
+// you pick the mode, confirm it, and the composer goes on showing the old one
+// with no reason given. Broadcast rather than sent to one socket because the
+// session's mode is session-wide, so every attached client had the same wrong
+// idea about what was going to happen.
+func (s *Session) ReportError(msg string) {
+	s.broadcast(AppEvent{T: EvError, Message: msg})
 }
 
 // Close terminates the session.

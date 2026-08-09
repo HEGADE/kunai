@@ -1027,6 +1027,44 @@ Behavioral invariants that were bugs before (do not regress):
   at spawn so it holds from the first tool call. Sending it afterwards is too late.
   Scheduled jobs deliberately keep `acceptEdits`: auto can still stop for a risky
   action, which for an unattended run means stalling forever.
+- **Yolo mode** (`session.BypassPermissionMode`, `bypassPermissions`) is not the
+  end of the mode scale, it is a different kind of thing, and
+  every rule below follows from one measured fact rather than from caution: a CLI
+  spawned in it sends **no `can_use_tool` at all** (verified against 2.1.222 --
+  a Bash call ran with zero control requests). So kunai's own tool boundary, which
+  is implemented AS a `can_use_tool` handler, is not loosened by this mode, it is
+  never consulted. That boundary is the **share guard**, so a shared session and
+  bypass can never coexist, and the two orders are refused in two places because
+  neither covers the other: `Session.SetPermissionMode` refuses bypass while a
+  `ToolGuard` is installed (shared first, then YOLO), and the share create handler
+  refuses a session already in bypass with a 409 (YOLO first, then shared). A
+  share's own standing mode goes through `session.ValidGuestMode`, not
+  `ValidPermissionMode`, since `applyShareTier` respawns the session into it.
+  Refused rather than silently downgraded: the owner turned it on deliberately.
+  A **loop keeps bypass** rather than borrowing `acceptEdits` (`loopModeFor`) --
+  the borrow exists to make an unattended run more autonomous, and applied here it
+  would do the opposite, hanging overnight on the Bash calls the owner had
+  arranged not to be asked about, which is the exact failure `LoopPermissionMode`
+  exists to prevent. Two client rules. `chat.setMode` is **not optimistic**,
+  unlike `setModel`, because this one can be refused: setting it locally first
+  left the composer reporting a permission state the session was not in, which is
+  worse than either outcome it was hiding. And `dispatch` now calls
+  `Session.ReportError` instead of only logging, because a refusal nobody is told
+  about reads as a broken button. Turning it on is confirmed and turning it off is
+  not, deliberately: every other mode announces a mis-tap at the next tool call,
+  and this one announces it by the command having already run.
+  It is **named rather than described**, which is the opposite of the rule the
+  other four modes follow, and that is the point: "Never ask" (the first label)
+  read as one more setting on the same dial, and this is not on the dial. A name
+  you have to learn is a name you cannot pick by accident. The state is then
+  carried by the **composer itself** rather than by the pill: `.field.yolo`
+  colours the border, the caret and the text you are typing with `--yolo-ink`
+  (`#e0b978`, --busy's hue at a brighter step, 10.7:1 on `--panel` where 4.5 is
+  the floor for prose). Both channels are needed -- a border is chrome the eye
+  stops seeing, and text colour alone shows nothing on an empty composer. This is
+  the one place amber is worn by prose instead of by a dot, and it earns the
+  exception the same way the brand marks earn theirs: it is the only channel
+  reporting a state whose mistakes cannot be taken back after the fact.
 
 ## Channels
 

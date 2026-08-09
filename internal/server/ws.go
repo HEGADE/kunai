@@ -114,5 +114,9 @@ func (s *Server) dispatch(sess *session.Session, cmd session.Command) {
 	}
 	if err != nil {
 		log.Printf("ws dispatch %s: %v", cmd.T, err)
+		// And say so on screen, not only in the journal. A refused command that
+		// looks identical to a delivered one is how a rule becomes a bug report:
+		// the composer keeps showing the old mode and nothing explains why.
+		sess.ReportError(err.Error())
 	}
 }
