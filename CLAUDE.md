@@ -1050,20 +1050,23 @@ Behavioral invariants that were bugs before (do not regress):
   left the composer reporting a permission state the session was not in, which is
   worse than either outcome it was hiding. And `dispatch` now calls
   `Session.ReportError` instead of only logging, because a refusal nobody is told
-  about reads as a broken button. Turning it on is confirmed and turning it off is
-  not, deliberately: every other mode announces a mis-tap at the next tool call,
-  and this one announces it by the command having already run. That confirmation
-  **fills the composer** rather than floating above it, borrowing the shape the
-  ended-session state already uses. A bordered strip above the field was tried
-  first and was the same mistake that note records: it competes with the field,
-  cannot match its 720px lane, nests a card inside a card, and leaves the model
-  and account controls on show underneath as if the decision were optional.
-  Filling the field is also the honest shape, since you cannot type while it is
-  open and what you would type is exactly what the answer governs. Its confirm
-  button is the app's own primary white, matching the permission gate's Allow --
-  the nearest thing kunai already had to this decision -- because a filled amber
-  one read as an alert box rather than as a choice, and the warning is carried by
-  the words and by the yellow the composer takes a moment later.
+  about reads as a broken button.
+  There is **no confirmation step**, and the one that was there is worth
+  recording as a mistake: it hijacked the composer, which is a thing you do to
+  somebody rather than for them, and it bought nothing that the row and the
+  colour do not already buy. What replaced it is what the other four modes have
+  always had -- a one-line description in the menu -- plus an info affordance for
+  the part that does not fit on a line. The description had to be written
+  carefully, because the obvious phrasing is wrong: "runs commands without
+  asking" describes **Auto** too, which already runs safe ones on its own. The
+  difference is not whether it runs commands, it is that nothing is left that
+  makes it stop, so the hint is "Never asks, not even about risky commands" and
+  the info bubble names what that covers (deletes, `git push`, installs, network
+  calls) and that it is not confined to the session's folder. One layout note
+  that cost a round trip: `.mode-pop button` sets `width: 100%`, which outranks a
+  bare `.minfo`, so the info button took the whole row and squeezed the label
+  into one word per line -- the icon's rules are scoped through `.mrow` for that
+  reason.
   It is **named rather than described**, which is the opposite of the rule the
   other four modes follow, and that is the point: "Never ask" (the first label)
   read as one more setting on the same dial, and this is not on the dial. A name
