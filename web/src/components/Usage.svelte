@@ -36,6 +36,7 @@
     dayLabel,
     deltaPct,
     firstDay,
+    mergeReports,
     money,
     niceMax,
     percent,
@@ -52,37 +53,92 @@
     type UsageReport,
   } from '../lib/usage'
 
-  let machineId = $state(app.activeMachineId ?? app.machines[0]?.id ?? '')
+  // ALL is the fleet, and it is the default once there is a fleet, because the
+  // question is about the work rather than about a laptop: three machines on one
+  // Claude account are one bill being spent three ways, and reading them one at a
+  // time is the reader doing the addition kunai should have done.
+  const ALL = '*'
+  // Empty means "follow the fleet", not "no machine". A hard reload of /usage
+  // mounts this before the machine registry has loaded, so a scope decided once
+  // at init would settle on the single self entry and stay there after the peers
+  // arrived.
+  let picked = $state('')
+  const scope = $derived(picked || (app.machines.length > 1 ? ALL : (app.machines[0]?.id ?? '')))
   let period = $state<Period>(30)
   let metric = $state<Metric>('cost')
-  let split = $state<'model' | 'day'>('model')
+  let split = $state<'model' | 'machine' | 'day'>('model')
 
-  let report = $state<UsageReport | null>(null)
-  let error = $state('')
+  // One entry per machine asked. A machine that could not answer keeps its entry
+  // and carries its reason: dropping it would make the fleet total quietly
+  // smaller with nothing on screen to say why, which is the one way this number
+  // can mislead without any of it being wrong.
+  interface Source {
+    id: string
+    label: string
+    report: UsageReport | null
+    error: string
+  }
+  let sources = $state<Source[]>([])
   let loading = $state(true)
 
-  const machine = $derived(app.machines.find((m) => m.id === machineId))
-  const base = $derived(app.baseForMachine(machineId))
+  const asked = $derived(
+    scope === ALL ? app.machines : app.machines.filter((m) => m.id === scope),
+  )
+  const answered = $derived(sources.filter((s) => s.report))
+  const missing = $derived(sources.filter((s) => !s.report))
+  const report = $derived(
+    answered.length ? mergeReports(answered.map((s) => s.report as UsageReport)) : null,
+  )
+  // A hard error only when NOTHING answered; otherwise the page renders what it
+  // has and names what it is missing.
+  const error = $derived(
+    !loading && sources.length > 0 && answered.length === 0 ? (sources[0]?.error ?? 'could not read usage') : '',
+  )
+
   // A loopback install labels itself from its own origin, which reads as "127."
   // once the sidebar has truncated it. In prose that is worse than useless, so
   // the machine you are standing at is called what it is.
-  const where = $derived(!machine || machine.self ? 'this machine' : machine.label)
+  function nameOf(m: { self: boolean; label: string }): string {
+    return m.self ? 'this machine' : m.label
+  }
+  const where = $derived(
+    scope === ALL
+      ? answered.length === 1
+        ? nameOf(app.machines.find((m) => m.id === answered[0].id) ?? { self: true, label: '' })
+        : `${answered.length} machines`
+      : nameOf(asked[0] ?? { self: true, label: '' }),
+  )
 
   async function load() {
-    error = ''
-    try {
-      report = await fetchUsageStats(base)
-    } catch (e) {
-      error = e instanceof Error ? e.message : 'could not read usage'
-    } finally {
-      loading = false
-    }
+    const targets = asked
+    // No registry yet. Stay on the spinner rather than declaring the fleet empty,
+    // which would flash "nothing recorded" on every reload of this URL.
+    if (!targets.length) return
+    const got = await Promise.allSettled(
+      targets.map((m) => fetchUsageStats(app.baseForMachine(m.id))),
+    )
+    sources = targets.map((m, i) => {
+      const r = got[i]
+      return {
+        id: m.id,
+        label: nameOf(m),
+        report: r.status === 'fulfilled' ? r.value : null,
+        error:
+          r.status === 'rejected'
+            ? r.reason instanceof Error
+              ? r.reason.message
+              : 'unreachable'
+            : '',
+      }
+    })
+    loading = false
   }
 
   $effect(() => {
-    void machineId
+    void scope
+    void app.machines.length
     loading = true
-    report = null
+    sources = []
     load()
   })
 
@@ -178,7 +234,8 @@
     <div class="filters">
       {#if app.machines.length > 1}
         <label class="mpick">
-          <select bind:value={machineId} aria-label="Machine">
+          <select value={scope} onchange={(e) => (picked = e.currentTarget.value)} aria-label="Machine">
+            <option value={ALL}>All machines</option>
             {#each app.machines as m (m.id)}
               <option value={m.id}>{m.label}{m.self ? ' · this machine' : ''}</option>
             {/each}
@@ -216,6 +273,16 @@
           <p class="scanning">
             <Spinner />
             <span>Still reading transcripts — these numbers are still growing.</span>
+          </p>
+        {/if}
+
+        <!-- A fleet total missing a machine is a floor, not a total, so the
+             machine is named rather than dropped. Silently smaller is the only
+             way these numbers can mislead while every one of them is correct. -->
+        {#if missing.length}
+          <p class="warn">
+            {missing.map((m) => m.label).join(', ')} did not answer, so nothing
+            {missing.length === 1 ? 'it' : 'they'} ran is counted below. These totals are a floor.
           </p>
         {/if}
 
@@ -444,13 +511,20 @@
             <h2>Breakdown</h2>
             <div class="toggle">
               <button class:on={split === 'model'} onclick={() => (split = 'model')}>Model</button>
+              <!-- Only when there is a fleet to split. On one machine this axis
+                   is a single row restating the hero. -->
+              {#if answered.length > 1}
+                <button class:on={split === 'machine'} onclick={() => (split = 'machine')}>
+                  Machine
+                </button>
+              {/if}
               <button class:on={split === 'day'} onclick={() => (split = 'day')}>Day</button>
             </div>
           </div>
           <table class="tbl">
             <thead>
               <tr>
-                <th>{split === 'model' ? 'Model' : 'Day'}</th>
+                <th>{split === 'model' ? 'Model' : split === 'machine' ? 'Machine' : 'Day'}</th>
                 <th class="num">Cost</th>
                 <th class="share">Share</th>
                 <th class="num">Tokens</th>
@@ -478,6 +552,30 @@
                       </div>
                     </td>
                     <td class="num dim">{compact(totalTokens(m))}</td>
+                  </tr>
+                {/each}
+              {:else if split === 'machine'}
+                <!-- The fleet's own audit. Each row is that machine's own report
+                     put through the same window, so the rows sum to the hero and
+                     a machine claiming a suspiciously identical figure to another
+                     is visible rather than buried in the total. -->
+                {#each answered
+                  .map((s) => ({ s, t: totals(window_(s.report, period)) }))
+                  .sort((a, b) => b.t.cost - a.t.cost || totalTokens(b.t) - totalTokens(a.t)) as row (row.s.id)}
+                  {@const f = total.cost > 0 ? row.t.cost / total.cost : 0}
+                  <tr>
+                    <td class="mono name">{row.s.label}</td>
+                    <td class="num">{row.t.priced ? money(row.t.cost) : '—'}</td>
+                    <td class="share">
+                      <div class="shbox">
+                        <span class="track"
+                          ><span class="fill neutral" style="width: {(f * 100).toFixed(2)}%"></span
+                          ></span
+                        >
+                        <span class="pct">{total.cost > 0 ? percent(f) : '—'}</span>
+                      </div>
+                    </td>
+                    <td class="num dim">{compact(totalTokens(row.t))}</td>
                   </tr>
                 {/each}
               {:else}
@@ -533,6 +631,11 @@
         <p class="foot">
           Read from {report?.files ?? 0} transcript{(report?.files ?? 0) === 1 ? '' : 's'} across
           every account on {where}.
+          {#if answered.length > 1}
+            Each machine scans only its own transcripts, so these add up — unless you
+            sync <code>~/.claude</code> between them, in which case the shared sessions
+            are counted once per machine. The Machine breakdown is where that would
+            show.{/if}
         </p>
       {/if}
     </div>
@@ -653,6 +756,16 @@
   }
   .scanning {
     margin: 0 2px 18px;
+  }
+  .warn {
+    margin: 0 2px 16px;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-left: 2px solid var(--busy);
+    border-radius: var(--r-sm);
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--text-3);
   }
   .blank {
     margin: 60px auto;
@@ -1194,8 +1307,14 @@
 
   .foot {
     margin: 4px 2px 0;
+    max-width: 78ch;
     font-size: 11.5px;
+    line-height: 1.6;
     color: var(--text-4);
+  }
+  .foot code {
+    font-family: var(--mono);
+    font-size: 11px;
   }
 
   @media (max-width: 720px) {

@@ -128,6 +128,56 @@ export function byAgent(days: DayStat[]): ModelStat[] {
   return [...acc.values()].sort((a, b) => b.cost - a.cost || totalTokens(b) - totalTokens(a))
 }
 
+/** Fold several machines' reports into one.
+ *
+ *  A fleet is the unit the question is actually asked in: "what did my work
+ *  cost" does not mean "on this laptop". Each machine scans only its own
+ *  transcripts, so the buckets are disjoint by construction and summing them is
+ *  correct -- with one stated exception, which is why the page keeps a per-machine
+ *  breakdown rather than only the total. If you sync `~/.claude` between machines
+ *  (Syncthing, Dropbox, a shared home directory), the same session exists on
+ *  both, each machine counts it, and the fleet total double counts it. Nothing in
+ *  a report identifies a session, so this cannot be detected here; what the
+ *  breakdown CAN do is make it visible, because two machines claiming the same
+ *  suspiciously identical figure is the tell. This is the same failure that once
+ *  made the whole page read $44k instead of $11k, one level up.
+ *
+ *  A report that could not be fetched is simply absent from `reports`. The caller
+ *  must say so: a fleet total missing a machine is a floor, not a total, and
+ *  silently smaller is the one way this number can lie without being wrong. */
+export function mergeReports(reports: UsageReport[]): UsageReport {
+  const byDay = new Map<string, Map<string, ModelStat>>()
+  for (const r of reports) {
+    for (const d of r.days ?? []) {
+      let bucket = byDay.get(d.day)
+      if (!bucket) {
+        bucket = new Map()
+        byDay.set(d.day, bucket)
+      }
+      for (const m of d.models) {
+        let cur = bucket.get(m.model)
+        if (!cur) {
+          cur = { ...EMPTY, model: m.model, agent: m.agent }
+          bucket.set(m.model, cur)
+        }
+        add(cur, m)
+      }
+    }
+  }
+  const days = [...byDay.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([day, models]) => ({ day, models: [...models.values()] }))
+  return {
+    days,
+    models: byModel(days),
+    files: reports.reduce((s, r) => s + (r.files ?? 0), 0),
+    scanned_at: reports.reduce((s, r) => Math.max(s, r.scanned_at ?? 0), 0),
+    // Any machine still scanning means the fleet total is still growing, so the
+    // page keeps polling and keeps saying so.
+    scanning: reports.some((r) => r.scanning),
+  }
+}
+
 /** One total for the window. */
 export function totals(days: DayStat[]): ModelStat {
   const t: ModelStat = { ...EMPTY, model: '', agent: '' }

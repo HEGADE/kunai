@@ -384,6 +384,25 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   was WRITTEN then, which reported a 155-fold rise in spend on a machine whose
   habits had not changed at all. And a rise past ten-fold prints as a multiplier,
   because "+15418%" is not a number anyone converts; it reads as a bug.
+  The page reads the **whole fleet**, not one machine, and that is the default
+  once there is one: three machines on a single Claude account are one bill being
+  spent three ways, and reading them one at a time is the reader doing the
+  addition kunai should have done. It fans out over `app.machines` with
+  `Promise.allSettled` (the same shape as `AppStore.refresh`) and `mergeReports`
+  folds the `(day, model)` buckets. Two rules make that honest. A machine that
+  did not answer keeps its row and is **named on screen**: a fleet total missing
+  a machine is a floor, not a total, and silently smaller is the only way these
+  numbers can mislead while every one of them is correct. And a **Machine**
+  breakdown sits beside Model and Day, because summing is only correct while each
+  machine scans its own transcripts: sync `~/.claude` between them (Syncthing,
+  Dropbox, a shared home) and the same session is counted once per machine.
+  Nothing in a report identifies a session, so that cannot be detected in the
+  client -- but two machines claiming a suspiciously identical figure is the
+  tell, which is exactly what the breakdown shows. It is the same failure that
+  once made the page read $44k instead of $11k, one level up. Note the fan-out
+  needs the CORS wildcard, so it works on a tailnet install and NOT in local
+  mode, where CORS is deliberately off -- which costs nothing, since local mode
+  is by definition one machine.
 - `internal/server/providers.go`, `cliproxy.go`, `cliproxy_login.go`:
   **proxy-backed providers**, so one machine can run non-Claude models (Codex,
   Grok, Kimi) without leaving the `claude` agent. The whole idea rests on one
