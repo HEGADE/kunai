@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -440,4 +441,54 @@ func staleLoopback(proxy string) bool {
 	}
 	_ = c.Close()
 	return false
+}
+
+// diagnoseBindConflict explains a listener that could not take its own port,
+// when the reason is kunai's own Funnel mapping.
+//
+// This is recovery rather than prevention, and it exists because prevention is
+// not enough on its own. funnelStatus already refuses to offer a port anything
+// on this machine is listening on, with a socket probe written specifically for
+// the macOS case. But a mapping that got made before that guard existed, or by
+// another install, or by hand, outlives every process: `tailscale funnel` writes
+// it into tailscaled, not into kunai. So the machine reaches a state kunai
+// cannot get out of -- the mapping holds the port, kunai cannot bind it, kunai
+// exits, launchd restarts it, and it cannot clean up the mapping because it is
+// never up long enough to be asked. Observed on a real Mac: 8443 funnelled to
+// 127.0.0.1:59100, a gate port from a run that ended days earlier, restarting
+// every ten seconds for as long as anybody left it.
+//
+// It reports rather than repairs. Turning somebody's Funnel off is a change to
+// their tailnet, made by a program that has just failed to start, on the
+// strength of a guess about what a loopback target used to be; the mapping might
+// equally be something they set up on purpose. What was actually missing was the
+// sentence, not the action: "address already in use" is true and tells you
+// nothing, and the fix is one command that nobody can be expected to derive.
+func (s *Server) diagnoseBindConflict(err error) string {
+	if err == nil || !strings.Contains(err.Error(), "address already in use") {
+		return ""
+	}
+	port, err2 := strconv.Atoi(portOf(s.cfg.Addr))
+	if err2 != nil {
+		return ""
+	}
+	if port == 0 {
+		return ""
+	}
+	// gatePort 0: nothing of ours is running, so no mapping can match it, which
+	// is exactly the state this is called in.
+	ask := s.funnelStatusFn
+	if ask == nil {
+		ask = s.funnelStatus
+	}
+	st := ask(0)
+	held, ok := st.InUse[port]
+	if !ok {
+		return "" // something else has the port; the bind error is all we know
+	}
+	return fmt.Sprintf(
+		"port %d is held by Tailscale, which is forwarding it to %s. "+
+			"That is almost certainly a share's public port that outlived the share. "+
+			"Free it with:  tailscale funnel --https=%d off",
+		port, held, port)
 }

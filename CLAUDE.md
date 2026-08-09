@@ -750,6 +750,22 @@ Behavioral invariants that were bugs before (do not regress):
   `pathguard` (symlinks resolved before the containment check), and the served
   set is raster images only — SVG is refused because it is a scriptable document
   and this serves from kunai's own origin.
+- A **Funnel mapping outlives the process that made it**, and on kunai's own port
+  that is fatal rather than untidy. `tailscale funnel --https=<port>` is written
+  into tailscaled, so it survives every restart and every reinstall; if it lands
+  on the port kunai serves, kunai can never bind again, exits, is restarted by
+  launchd/systemd, and is never up long enough to clear the mapping it made.
+  Observed on a real Mac: `8443` funnelled to `127.0.0.1:59100`, a share gate
+  port from days earlier, looping every ten seconds with nothing in the log but
+  `bind: address already in use`. `funnelStatus` already refuses to OFFER a port
+  anything on this machine is listening on (that is what the `SO_REUSEADDR`-off
+  probe in `listenerOn` is for -- macOS otherwise permits the bind and reports
+  the port free), but prevention cannot help a mapping that already exists.
+  `diagnoseBindConflict` closes the other half: a bind failure asks tailscale who
+  holds the port and turns the error into the command that frees it. It reports
+  rather than repairs, deliberately -- turning off somebody's Funnel is a change
+  to their tailnet, made by a program that has just failed to start, on a guess
+  about what a loopback target used to be.
 - The CORS wildcard is safe **only** because the tailnet is the entire auth
   perimeter and the API uses no cookies or credentials. Do not add cookie or session
   auth without tightening CORS first. It is **off in local mode**, where that
