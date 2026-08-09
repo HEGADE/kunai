@@ -20,7 +20,9 @@
   // nightly channel the sidebar header is a night-sky purple, and a black status
   // bar above it read as a rendering fault rather than a design.
   $effect(() => {
-    applyThemeColor(themeColorFor({ nightly: app.isNightly, chatOpen: !!app.chat }))
+    applyThemeColor(
+      themeColorFor({ nightly: app.isNightly, fullView: !!app.chat || app.showUsage }),
+    )
   })
 
   onMount(() => {
@@ -40,10 +42,20 @@
   <PinGate />
 {/if}
 
-<div class="shell" data-has-chat={app.chat ? 'true' : undefined} class:collapsed={!app.sidebarOpen}>
+<!-- data-full marks "the main pane is showing a whole view, not the dashboard",
+     which on a phone is what decides whether the sidebar or the pane is on
+     screen. A session used to be the only thing that could claim it; Usage is a
+     route now, so it claims it too. -->
+<div
+  class="shell"
+  data-full={app.chat || app.showUsage ? 'true' : undefined}
+  class:collapsed={!app.sidebarOpen}
+>
   <aside class="sidebar"><Sidebar /></aside>
   <main class="main">
-    {#if app.chat}
+    {#if app.showUsage}
+      <div class="pane"><Usage /></div>
+    {:else if app.chat}
       <div class="pane"><Chat chat={app.chat} /></div>
     {:else}
       {#if !app.sidebarOpen}
@@ -73,9 +85,6 @@
 {/if}
 {#if app.showProviders}
   <Providers />
-{/if}
-{#if app.showUsage}
-  <Usage />
 {/if}
 {#if app.showAllSessions}
   <AllSessions />
@@ -154,10 +163,10 @@
     .sidebar {
       border-right: none;
     }
-    .shell[data-has-chat] .sidebar {
+    .shell[data-full] .sidebar {
       display: none;
     }
-    .shell:not([data-has-chat]) .main {
+    .shell:not([data-full]) .main {
       display: none;
     }
   }

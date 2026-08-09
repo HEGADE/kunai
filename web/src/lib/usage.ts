@@ -128,6 +128,56 @@ export function byAgent(days: DayStat[]): ModelStat[] {
   return [...acc.values()].sort((a, b) => b.cost - a.cost || totalTokens(b) - totalTokens(a))
 }
 
+/** Fold several machines' reports into one.
+ *
+ *  A fleet is the unit the question is actually asked in: "what did my work
+ *  cost" does not mean "on this laptop". Each machine scans only its own
+ *  transcripts, so the buckets are disjoint by construction and summing them is
+ *  correct -- with one stated exception, which is why the page keeps a per-machine
+ *  breakdown rather than only the total. If you sync `~/.claude` between machines
+ *  (Syncthing, Dropbox, a shared home directory), the same session exists on
+ *  both, each machine counts it, and the fleet total double counts it. Nothing in
+ *  a report identifies a session, so this cannot be detected here; what the
+ *  breakdown CAN do is make it visible, because two machines claiming the same
+ *  suspiciously identical figure is the tell. This is the same failure that once
+ *  made the whole page read $44k instead of $11k, one level up.
+ *
+ *  A report that could not be fetched is simply absent from `reports`. The caller
+ *  must say so: a fleet total missing a machine is a floor, not a total, and
+ *  silently smaller is the one way this number can lie without being wrong. */
+export function mergeReports(reports: UsageReport[]): UsageReport {
+  const byDay = new Map<string, Map<string, ModelStat>>()
+  for (const r of reports) {
+    for (const d of r.days ?? []) {
+      let bucket = byDay.get(d.day)
+      if (!bucket) {
+        bucket = new Map()
+        byDay.set(d.day, bucket)
+      }
+      for (const m of d.models) {
+        let cur = bucket.get(m.model)
+        if (!cur) {
+          cur = { ...EMPTY, model: m.model, agent: m.agent }
+          bucket.set(m.model, cur)
+        }
+        add(cur, m)
+      }
+    }
+  }
+  const days = [...byDay.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([day, models]) => ({ day, models: [...models.values()] }))
+  return {
+    days,
+    models: byModel(days),
+    files: reports.reduce((s, r) => s + (r.files ?? 0), 0),
+    scanned_at: reports.reduce((s, r) => Math.max(s, r.scanned_at ?? 0), 0),
+    // Any machine still scanning means the fleet total is still growing, so the
+    // page keeps polling and keeps saying so.
+    scanning: reports.some((r) => r.scanning),
+  }
+}
+
 /** One total for the window. */
 export function totals(days: DayStat[]): ModelStat {
   const t: ModelStat = { ...EMPTY, model: '', agent: '' }
@@ -161,6 +211,130 @@ export function dailyTokens(days: DayStat[]): number[] {
   return days.map((d) => d.models.reduce((s, m) => s + totalTokens(m), 0))
 }
 
+export type Metric = 'cost' | 'tokens'
+
+/** The one number a metric asks of a bucket, so the chart, the tooltip and the
+ *  table all read the same field and cannot drift apart. */
+export function valueOf(m: ModelStat, metric: Metric): number {
+  return metric === 'cost' ? m.cost : totalTokens(m)
+}
+
+export interface StackPart {
+  agent: string
+  value: number
+}
+
+export interface DayStack {
+  day: string
+  total: number
+  /** Only the agents that did work that day, in the fixed agent order (the
+   *  caller's `order`), so a segment never moves between columns. */
+  parts: StackPart[]
+}
+
+/** The daily chart's data: one column per day, split by agent.
+ *
+ *  Splitting the column rather than totalling it is the whole point of the
+ *  chart. A plain daily total says a Tuesday was busy; a split one says the
+ *  Tuesday was busy because Codex ran all afternoon, which is the thing you
+ *  came to find out and cannot get from any other view on the page. */
+export function stack(days: DayStat[], metric: Metric, order: string[]): DayStack[] {
+  const rank = (a: string) => {
+    const i = order.indexOf(a)
+    return i < 0 ? order.length : i
+  }
+  return days.map((d) => {
+    const by = new Map<string, number>()
+    for (const m of d.models) by.set(m.agent, (by.get(m.agent) ?? 0) + valueOf(m, metric))
+    const parts = [...by.entries()]
+      .filter(([, v]) => v > 0)
+      .map(([agent, value]) => ({ agent, value }))
+      .sort((a, b) => rank(a.agent) - rank(b.agent))
+    return { day: d.day, total: parts.reduce((s, p) => s + p.value, 0), parts }
+  })
+}
+
+/** The window immediately before the one on screen, same length, so a headline
+ *  can say whether this is a heavy period or an ordinary one. A number with
+ *  nothing to compare it against is the reason nobody knows what $400 means. */
+export function priorWindow(
+  report: UsageReport | null,
+  days: number,
+  today = new Date(),
+): DayStat[] {
+  const end = new Date(today.getFullYear(), today.getMonth(), today.getDate() - days)
+  return window_(report, days, end)
+}
+
+/** The top of the chart's scale: the peak rounded up to a number a person would
+ *  have chosen. An axis labelled "$47.13" is the peak wearing a hat; the reader
+ *  wants a ruler, and a ruler has round marks on it. */
+export function niceMax(peak: number): number {
+  if (!(peak > 0)) return 1
+  const mag = Math.pow(10, Math.floor(Math.log10(peak)))
+  const n = peak / mag
+  // Fine-grained on purpose. A coarse 1/2/5 ladder rounds a 1.13B peak up to 2B
+  // and spends nearly half the chart's height on air above the tallest bar,
+  // which flattens everything below it.
+  const steps = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]
+  return (steps.find((s) => n <= s) ?? 10) * mag
+}
+
+/** Relative change, or null when there is nothing to compare against.
+ *
+ *  Null rather than +100% or Infinity on a zero baseline, and that distinction
+ *  is the honest one: "first activity in this window" is a different statement
+ *  from "up 100%", and printing the second for the first is how a chart lies
+ *  without any of its numbers being wrong. */
+export function deltaPct(now: number, before: number): number | null {
+  if (before <= 0) return null
+  return (now - before) / before
+}
+
+/** "+24%" / "-8%" / "155x" / "no change". Signed, because the sign is the
+ *  message.
+ *
+ *  Past a ten-fold rise a percentage stops being read: "+15418%" is a number
+ *  nobody converts in their head, and it reads as a bug rather than as a fact
+ *  about a machine that was idle last month. A multiplier is the same figure in
+ *  a form a person can hold. */
+export function signedPct(f: number): string {
+  const p = f * 100
+  if (Math.abs(p) < 0.5) return 'no change'
+  if (f >= 10) {
+    const x = 1 + f
+    return (x >= 100 ? x.toFixed(0) : x.toFixed(1)) + 'x'
+  }
+  const s = Math.abs(p) >= 10 ? p.toFixed(0) : p.toFixed(1)
+  return (p > 0 ? '+' : '') + s + '%'
+}
+
+/** The earliest day the report has anything for, or '' when it has nothing. */
+export function firstDay(report: UsageReport | null): string {
+  let min = ''
+  for (const d of report?.days ?? []) if (!min || d.day < min) min = d.day
+  return min
+}
+
+/** Whether a comparison against the preceding period is honest.
+ *
+ *  It is not, when the records do not reach back that far. kunai started
+ *  recording on some day, and a window straddling that day is compared against
+ *  a period that is empty because nothing was WRITTEN then, not because nothing
+ *  happened -- so the page reported a 155-fold rise in spend on a machine whose
+ *  habits had not changed at all. The delta is withheld rather than qualified:
+ *  a wrong number with a footnote is still the number people quote. */
+export function comparable(
+  report: UsageReport | null,
+  days: number,
+  today = new Date(),
+): boolean {
+  const first = firstDay(report)
+  if (!first) return false
+  const prior = priorWindow(report, days, today)
+  return prior.length > 0 && first <= prior[0].day
+}
+
 // Formatting. Money and counts both need to stay legible at wildly different
 // magnitudes -- $0.04 and $12,500 on the same page, 130M and 10.6B in the same
 // row -- so neither uses a fixed precision.
@@ -188,6 +362,7 @@ export function compact(n: number): string {
 // which on the "cost quality" panel is exactly the claim being audited.
 export function percent(f: number): string {
   const p = f * 100
+  if (p === 0) return '0%' // exact, not a clamp: "0.0%" implies a rounding that did not happen
   if (p > 0 && p < 0.1) return '<0.1%'
   if (p < 100 && p > 99.9) return '>99.9%'
   return p.toFixed(p >= 10 ? 0 : 1) + '%'

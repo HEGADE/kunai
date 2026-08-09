@@ -102,6 +102,11 @@ const WARM_TABS = 5
 const RESTART_POLL_MS = 2_000
 const RESTART_WAIT_MS = 45_000
 
+// The one non-session route. Named once so the writer (syncUrl) and the reader
+// (applyPath) cannot drift into disagreeing about a string, which is the classic
+// way a route half-works: it navigates but the back button lands nowhere.
+const USAGE_PATH = '/usage'
+
 class AppStore {
   machines = $state<Machine[]>([this.selfSeed()])
   sessions = $state<TaggedMeta[]>([])
@@ -687,6 +692,9 @@ class AppStore {
     }
     this.activeKey = key
     this.showNew = false
+    // Opening a session leaves Usage, or syncUrl would keep the address bar on
+    // /usage while a conversation is on screen.
+    this.showUsage = false
     this.syncUrl()
     // Looking at a session is what retires its attention: the unread-Done
     // brightness (per-device) and any snooze or Woke pill (server-side, so the
@@ -799,6 +807,9 @@ class AppStore {
   closeProviders() {
     this.showProviders = false
   }
+  // Usage is a route, not a dialog: it survives a reload, the back button works
+  // on it, and it can be linked to. Everything else in this block is an overlay
+  // over whatever you were doing; this one replaces it, so it pushes a URL.
   openUsage() {
     this.showNew = false
     this.showSettings = false
@@ -806,9 +817,11 @@ class AppStore {
     this.showChannels = false
     this.showProviders = false
     this.showUsage = true
+    this.syncUrl()
   }
   closeUsage() {
     this.showUsage = false
+    this.syncUrl()
   }
   openAllSessions() {
     this.showNew = false
@@ -1094,15 +1107,23 @@ class AppStore {
     }
   }
 
-  // --- URL routing: /m/<machineSlug>/<sessionId>, legacy /<sessionId> = self ---
+  // --- URL routing: /usage, /m/<machineSlug>/<sessionId>, legacy /<sessionId> = self ---
 
   private navigating = false
   private pendingDeepLink: { machineId: string; id: string } | null = null
 
   private syncUrl() {
     if (this.navigating) return
-    const want =
-      this.activeId && this.activeMachineId ? `/m/${this.activeMachineId}/${this.activeId}` : '/'
+    // Usage wins while it is open, because it is what is on screen; the session
+    // it was opened over keeps its tab and comes back with the URL when it
+    // closes. Order matters here rather than being a style choice: the other way
+    // round, opening Usage from inside a session would leave the address bar
+    // pointing at the session and the back button would do nothing.
+    const want = this.showUsage
+      ? USAGE_PATH
+      : this.activeId && this.activeMachineId
+        ? `/m/${this.activeMachineId}/${this.activeId}`
+        : '/'
     if (location.pathname !== want) history.pushState({}, '', want)
   }
 
@@ -1133,6 +1154,13 @@ class AppStore {
       void this.resumeById(decodeURIComponent(handoff[1]), cwd)
       return
     }
+    // Checked before currentPath, which would otherwise read "usage" as a bare
+    // legacy session id and try to open a session by that name.
+    if (location.pathname.replace(/\/+$/, '') === USAGE_PATH) {
+      this.showUsage = true
+      return
+    }
+    this.showUsage = false
     const { machineId, id } = this.currentPath()
     this.navigating = true
     try {

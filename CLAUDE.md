@@ -349,6 +349,79 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   one is ignored rather than fatal: a typo in an optional override must not take
   the page down. Anything still unlisted stays unpriced rather than guessed, so
   the honesty rule is unchanged and only the source of truth is extensible.
+  The view is a **route** (`/usage`), not a dialog, and that is a fix rather than
+  a preference: a modal is for a decision you are making on top of what you were
+  doing, and it takes the screen hostage to say so. Usage is a place you read,
+  compare and come back to, so being a route buys the back button, a reload that
+  lands where you were, a link you can send, and the full width the charts want
+  instead of a 720px sheet with the app greyed out behind it. `syncUrl` puts
+  Usage AHEAD of the active session (else opening it from inside a conversation
+  leaves the address bar on the session and back does nothing), `applyPath`
+  checks `/usage` BEFORE `currentPath` (which would otherwise read `usage` as a
+  bare legacy session id), and `open()` clears it. It renders in the main pane,
+  so `App.svelte`'s phone rule is now `data-full` ("something covers the
+  sidebar") rather than `data-has-chat`; `themeColorFor` took the same rename for
+  the same reason, since a session was simply the only thing that used to qualify.
+  The page's charts are the second sanctioned break in the near-monochrome rule,
+  and it is the same break as the first: colour is spent only where it stands for
+  somebody else's product, because there it IS the information. Here that is
+  load-bearing rather than decorative, since a stacked column split three ways is
+  unreadable in three steps of the same gray. `web/src/lib/agentColors.ts` holds
+  one hue per agent family in a **fixed order** (colour follows the agent, never
+  its rank, so a quiet week cannot reshuffle the stack and repaint what a reader
+  already learned), and the values are validated rather than chosen: every
+  adjacent AND all-pairs gate passes for the three agents that occur -- CVD dE 9.4
+  worst pair, normal-vision 20.9, all >= 3:1 on `--bg`. Two near misses are the
+  reason to keep validating: Anthropic's own `--claude` clay (`#d97757`) FAILS
+  against Codex's green at dE 4.6 under protanopia, so the chart uses a deeper
+  step of that hue, and the obvious blue/violet pairing collapses to dE 1.9.
+  Colour is never the only channel regardless -- every segment carries a 2px gap
+  in the surface colour, every legend row names itself, and the breakdown table
+  repeats every number as text. Two honesty rules joined the existing ones. A
+  period-over-period delta is **withheld unless the records reach back through the
+  whole prior window** (`comparable`): kunai started recording on some day, and a
+  window straddling it is compared against a period that is empty because nothing
+  was WRITTEN then, which reported a 155-fold rise in spend on a machine whose
+  habits had not changed at all. And a rise past ten-fold prints as a multiplier,
+  because "+15418%" is not a number anyone converts; it reads as a bug.
+  The page reads the **whole fleet**, not one machine, and that is the default
+  once there is one: three machines on a single Claude account are one bill being
+  spent three ways, and reading them one at a time is the reader doing the
+  addition kunai should have done. It fans out over `app.machines` with
+  `Promise.allSettled` (the same shape as `AppStore.refresh`) and `mergeReports`
+  folds the `(day, model)` buckets. Two rules make that honest. A machine that
+  did not answer keeps its row and is **named on screen**: a fleet total missing
+  a machine is a floor, not a total, and silently smaller is the only way these
+  numbers can mislead while every one of them is correct. And a **Machine**
+  breakdown sits beside Model and Day, because summing is only correct while each
+  machine scans its own transcripts: sync `~/.claude` between them (Syncthing,
+  Dropbox, a shared home) and the same session is counted once per machine.
+  Nothing in a report identifies a session, so that cannot be detected in the
+  client -- but two machines claiming a suspiciously identical figure is the
+  tell, which is exactly what the breakdown shows. It is the same failure that
+  once made the page read $44k instead of $11k, one level up. Note the fan-out
+  needs the CORS wildcard, so it works on a tailnet install and NOT in local
+  mode, where CORS is deliberately off -- which costs nothing, since local mode
+  is by definition one machine.
+  The page is a reading surface and **does not follow anything live**, which took
+  fixing twice over. `load()` reads `app.machines`, and calling it straight from
+  an `$effect` made the machine list a DEPENDENCY of that effect: the app store
+  replaces the array on its own poll beat, so every few seconds the effect
+  re-ran, blanked `sources` and refetched the whole fleet, tearing the DOM down
+  under the reader. The effect now keys on `scope` plus a `fleetKey` STRING of
+  machine ids (an array derived changes identity on every repoll even when the
+  fleet has not moved) and calls `load()` inside `untrack`. On top of that the
+  reports are cached at MODULE scope for `CACHE_MS` (60s, matching
+  `usagepage.go`'s own `usageMaxAge`, since the server cannot produce anything
+  newer inside that window anyway), so leaving the page and coming back repaints
+  from what is in hand instead of blanking to a spinner. The only thing still
+  followed is `scanning`, and only while it is true, because a cold first scan
+  genuinely does grow. Re-reading is otherwise a button, and its label is an
+  absolute time rather than "3 minutes ago": a relative one has to tick to stay
+  true, which is the live thing being removed. Measured after the fix: 3 requests
+  at first paint and **zero** over the next 40 idle seconds, a hover held for six
+  seconds without the chart being rebuilt under it, and no refetch at all on
+  leave-and-return inside the window.
 - `internal/server/providers.go`, `cliproxy.go`, `cliproxy_login.go`:
   **proxy-backed providers**, so one machine can run non-Claude models (Codex,
   Grok, Kimi) without leaving the `claude` agent. The whole idea rests on one
@@ -1109,7 +1182,14 @@ a slow 42s cycle. It is deliberately near-invisible and sits under the content a
 and nothing competes with the data; `prefers-reduced-motion` drops the motion and
 keeps the wash. Do not spend this exception anywhere else.
 White is the only accent (primary buttons); amber and green are
-reserved for status dots and the permission gate. Fonts: Geist (UI), Geist Mono
+reserved for status dots and the permission gate. Hue carries meaning in exactly
+three places, each of which had to earn it: code syntax highlighting (below), the
+brand marks that say which account a session runs on, and the Usage page's agent
+palette (`web/src/lib/agentColors.ts`, validated for colour-vision separation
+against `--bg`). The last two are the same rule, which is the rule to apply to any
+fourth candidate: a colour is spent only where it stands for somebody else's
+product, because there the colour is the identity and carries real information.
+kunai's own furniture stays on the gray ramp. Fonts: Geist (UI), Geist Mono
 (paths and code), Source Serif 4 (Claude's rendered markdown only). Paths use the
 rtl-ellipsis trick and need `unicode-bidi: plaintext` to keep the leading slash from
 jumping to the end.

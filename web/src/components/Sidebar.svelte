@@ -862,7 +862,16 @@
         title="Usage"
         body="What the work cost. Every transcript on this machine, priced at API rates and split by model and by day, so you can see which brain ate the month rather than only how full the window is."
       >
-        <button class="navitem" onclick={() => app.openUsage()} aria-label="Usage">
+        <!-- The one nav item that can be "where you are" rather than something
+             you open over the app, now that Usage is a route. Marked as such, or
+             the sidebar claims nothing is open while the page fills the screen. -->
+        <button
+          class="navitem"
+          class:on={app.showUsage}
+          aria-current={app.showUsage ? 'page' : undefined}
+          onclick={() => app.openUsage()}
+          aria-label="Usage"
+        >
           <!-- Bars over time. The dashboard's quota meters already say how full
                the window is; this says where it went, and a chart is the one
                glyph that reads as "over time" without a label. Deliberately not
@@ -1742,6 +1751,10 @@
   .navitem:hover {
     color: var(--text);
     background: var(--panel);
+  }
+  .navitem.on {
+    color: var(--text);
+    background: var(--panel-2);
   }
   .nic {
     display: flex;

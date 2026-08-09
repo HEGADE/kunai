@@ -21,12 +21,15 @@ export const nightlyTop = '#2a234e'
 
 // themeColorFor is the rule, kept pure so it can be reasoned about without a DOM.
 //
-// On a phone an open session covers the screen, and its header is the ordinary
-// canvas: the sidebar's purple is nowhere in sight. Tinting the status bar for it
-// then would be worse than not tinting at all, because the colour would belong to
-// something the user cannot see.
-export function themeColorFor(opts: { nightly: boolean; chatOpen: boolean }): string {
-  return opts.nightly && !opts.chatOpen ? nightlyTop : appTop
+// On a phone a full-screen view -- an open session, or the Usage page -- covers
+// the screen, and its header is the ordinary canvas: the sidebar's purple is
+// nowhere in sight. Tinting the status bar for it then would be worse than not
+// tinting at all, because the colour would belong to something the user cannot
+// see. The test is "does something cover the sidebar", not "is a chat open",
+// which is why the flag is not called chatOpen: a session was simply the only
+// thing that could do it before Usage became a route.
+export function themeColorFor(opts: { nightly: boolean; fullView: boolean }): string {
+  return opts.nightly && !opts.fullView ? nightlyTop : appTop
 }
 
 // applyThemeColor writes the value into the document, creating the tag if a
