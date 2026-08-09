@@ -1065,6 +1065,30 @@ Behavioral invariants that were bugs before (do not regress):
   the one place amber is worn by prose instead of by a dot, and it earns the
   exception the same way the brand marks earn theirs: it is the only channel
   reporting a state whose mistakes cannot be taken back after the fact.
+  **Entering it is a respawn, and that is not optional.** The CLI takes a runtime
+  `set_permission_mode` for every other mode and refuses this one: `Cannot set
+  permission mode to bypassPermissions because the session was not launched with
+  --dangerously-skip-permissions`, captured off the control channel of a real
+  2.1.222. kunai never read that reply -- the driver writes control requests and
+  does not wait -- so the refusal was invisible and the first shipped version
+  lied: the session recorded the mode, the composer turned yellow, and the CLI
+  went on raising a permission gate for every Bash call. `Server.setMode` now
+  routes entering bypass through `Manager.RestartWithMode`, the same
+  `spawnSpec` path effort and the shared-tools list already take, so the flag is
+  set where the CLI reads it. Leaving bypass stays the live control request,
+  measured the same way (a running bypassed session answers `success` to
+  `set_permission_mode auto`), and that asymmetry is deliberate: getting OUT
+  should be instant and must never depend on a respawn succeeding. Two
+  consequences. `withOverrides` had to let an explicit mode beat the
+  provider default, or asking a Codex or Grok session for Yolo would respawn it
+  straight back into auto and report success. And the share refusal moved to
+  BEFORE the respawn (`Session.Guarded`), since the new Session has no guard by
+  construction and a check afterwards would always pass. The respawn carries the
+  model's context through `--resume` (verified: the model still answered a
+  question about the pre-switch turn), but the on-screen scrollback only comes
+  back if the transcript is on disk to re-seed from -- which is a pre-existing
+  property of every kunai respawn, identical on the effort path, not something
+  this mode introduced.
 
 ## Channels
 

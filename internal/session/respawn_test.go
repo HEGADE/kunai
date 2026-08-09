@@ -181,3 +181,29 @@ func specComparable(sp spawnSpec) scalars {
 		contextTokens: sp.contextTokens, overhead: sp.overhead,
 	}
 }
+
+// Yolo is a spawn flag, so entering it is a respawn, so the respawn has to be
+// able to carry a mode that beats the provider default.
+//
+// The provider rule above exists so a Codex or Grok session keeps its own
+// default across every respawn nobody asked a question about. Applied to an
+// explicit request it does the opposite of its job: the user picks Yolo on a
+// provider session, the respawn quietly puts it back in auto, and the composer
+// reports a mode the process is not in -- which is the exact failure the
+// respawn was introduced to fix, reappearing one layer down.
+func TestExplicitModeBeatsTheProviderDefault(t *testing.T) {
+	provider := fullSpec()
+	provider.cliEnv = map[string]string{"ANTHROPIC_BASE_URL": "http://127.0.0.1:9"}
+
+	got := provider.withOverrides(restartOverride{mode: BypassPermissionMode})
+	if got.mode != BypassPermissionMode {
+		t.Errorf("mode = %q on a provider session that asked for %q", got.mode, BypassPermissionMode)
+	}
+
+	// With nothing asked for, the provider default still wins, or a provider
+	// session would drift to whatever it was last set to.
+	untouched := provider.withOverrides(restartOverride{})
+	if untouched.mode != ProviderPermissionMode {
+		t.Errorf("mode = %q with no override, want the provider default %q", untouched.mode, ProviderPermissionMode)
+	}
+}
