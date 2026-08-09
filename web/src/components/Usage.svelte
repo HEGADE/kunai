@@ -1,3 +1,24 @@
+<script module lang="ts">
+  import type { UsageReport as Rep } from '../lib/usage'
+
+  // The page is a reading surface, not a monitor, so it caches and does not
+  // follow anything live.
+  //
+  // Two things made it churn. The server rebuilds a report at most once a minute
+  // (usageMaxAge in usagepage.go), so asking more often than that cannot return
+  // anything new -- it only costs a fan-out across every machine. And the cache
+  // lives at MODULE scope rather than in the component, so leaving the page and
+  // coming back inside the window paints instantly from what is already in hand
+  // instead of blanking to a spinner and asking again.
+  const CACHE_MS = 60_000
+  const cache = new Map<string, { report: Rep; at: number }>()
+
+  function cached(id: string, now: number): Rep | null {
+    const hit = cache.get(id)
+    return hit && now - hit.at < CACHE_MS ? hit.report : null
+  }
+</script>
+
 <script lang="ts">
   // What all of this cost.
   //
@@ -21,6 +42,7 @@
   // to. Being a route means it survives a reload, the back button works on it,
   // it can be linked to, and it gets the full width its charts want instead of
   // a 720px sheet with the app greyed out behind it.
+  import { untrack } from 'svelte'
   import { app } from '../lib/app.svelte'
   import { fetchUsageStats } from '../lib/api'
   import SegMenu from './SegMenu.svelte'
@@ -109,19 +131,34 @@
       : nameOf(asked[0] ?? { self: true, label: '' }),
   )
 
-  async function load() {
-    const targets = asked
+  let fetchedAt = $state(0)
+
+  // Everything reactive is read here, inside the caller's untrack, and nothing
+  // after the await touches app state -- which is the whole fix. This used to be
+  // called straight from an $effect, so reading app.machines made the machine
+  // list a DEPENDENCY of the effect: the app store replaces that array on its own
+  // poll beat, so every few seconds the effect re-ran, blanked `sources`, and
+  // refetched the entire fleet. The page flickered on a timer nobody asked for.
+  async function load(force = false) {
+    const targets = asked.map((m) => ({ id: m.id, label: nameOf(m), base: app.baseForMachine(m.id) }))
     // No registry yet. Stay on the spinner rather than declaring the fleet empty,
     // which would flash "nothing recorded" on every reload of this URL.
     if (!targets.length) return
+    const now = Date.now()
     const got = await Promise.allSettled(
-      targets.map((m) => fetchUsageStats(app.baseForMachine(m.id))),
+      targets.map(async (t) => {
+        const hit = force ? null : cached(t.id, now)
+        if (hit) return hit
+        const r = await fetchUsageStats(t.base)
+        cache.set(t.id, { report: r, at: Date.now() })
+        return r
+      }),
     )
-    sources = targets.map((m, i) => {
+    sources = targets.map((t, i) => {
       const r = got[i]
       return {
-        id: m.id,
-        label: nameOf(m),
+        id: t.id,
+        label: t.label,
         report: r.status === 'fulfilled' ? r.value : null,
         error:
           r.status === 'rejected'
@@ -131,26 +168,48 @@
             : '',
       }
     })
+    // The oldest thing on screen, since that is what "as of" honestly means for a
+    // mixed set of cache hits and fresh fetches.
+    fetchedAt = targets.reduce((oldest, t) => {
+      const at = cache.get(t.id)?.at ?? 0
+      return at && (!oldest || at < oldest) ? at : oldest
+    }, 0)
     loading = false
   }
 
+  // The machine SET, as a string. A derived over the array itself changes
+  // identity every time the store repolls even when the fleet has not moved.
+  const fleetKey = $derived(asked.map((m) => m.id).join(','))
+
   $effect(() => {
     void scope
-    void app.machines.length
-    loading = true
-    sources = []
-    load()
+    void fleetKey
+    untrack(() => {
+      loading = true
+      sources = []
+      void load()
+    })
   })
 
-  // A first scan over a large corpus takes seconds, and the server answers
-  // immediately with whatever it has rather than blocking. So while it is
-  // scanning, keep asking: the numbers grow into place instead of the page
-  // sitting on a spinner with no idea whether anything is happening.
+  // The one thing still worth following, and only while it is true: a first scan
+  // over a large corpus takes seconds, the server answers immediately with
+  // whatever it has rather than blocking, and the numbers should grow into place
+  // instead of the page sitting on a spinner. It stops the moment the scan does,
+  // and it bypasses the cache because a stale answer is exactly what it is
+  // waiting to replace.
   $effect(() => {
     if (!report?.scanning) return
-    const t = setTimeout(load, 1500)
+    const t = setTimeout(() => untrack(() => load(true)), 2000)
     return () => clearTimeout(t)
   })
+
+  // Absolute, not "3 minutes ago": a relative label has to tick to stay true,
+  // which is a live thing on a page whose whole point is that it is not one.
+  const asOf = $derived(
+    fetchedAt
+      ? new Date(fetchedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+      : '',
+  )
 
   const days = $derived(window_(report, period))
   const total = $derived(totals(days))
@@ -250,6 +309,18 @@
         up={false}
         onpick={(id) => (period = Number(id) as Period)}
       />
+      <!-- The page does not follow anything, so re-reading is an act rather than
+           a timer. The tooltip carries when the numbers are from; the button does
+           not print a relative age, because keeping one true means ticking. -->
+      <button
+        class="reload"
+        onclick={() => load(true)}
+        disabled={loading}
+        aria-label="Re-read transcripts"
+        title={asOf ? `Read at ${asOf}. Click to read again.` : 'Read again'}
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 10-2.3 5.7" /><path d="M20 5v6h-6" /></svg>
+      </button>
     </div>
   </header>
 
@@ -722,6 +793,23 @@
     right: 9px;
     color: var(--text-4);
     pointer-events: none;
+  }
+  .reload {
+    flex: none;
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9px;
+    color: var(--text-4);
+  }
+  .reload:hover:not(:disabled) {
+    background: var(--panel);
+    color: var(--text-2);
+  }
+  .reload:disabled {
+    opacity: 0.4;
   }
 
   .scroll {

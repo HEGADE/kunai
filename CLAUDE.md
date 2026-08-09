@@ -403,6 +403,25 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   needs the CORS wildcard, so it works on a tailnet install and NOT in local
   mode, where CORS is deliberately off -- which costs nothing, since local mode
   is by definition one machine.
+  The page is a reading surface and **does not follow anything live**, which took
+  fixing twice over. `load()` reads `app.machines`, and calling it straight from
+  an `$effect` made the machine list a DEPENDENCY of that effect: the app store
+  replaces the array on its own poll beat, so every few seconds the effect
+  re-ran, blanked `sources` and refetched the whole fleet, tearing the DOM down
+  under the reader. The effect now keys on `scope` plus a `fleetKey` STRING of
+  machine ids (an array derived changes identity on every repoll even when the
+  fleet has not moved) and calls `load()` inside `untrack`. On top of that the
+  reports are cached at MODULE scope for `CACHE_MS` (60s, matching
+  `usagepage.go`'s own `usageMaxAge`, since the server cannot produce anything
+  newer inside that window anyway), so leaving the page and coming back repaints
+  from what is in hand instead of blanking to a spinner. The only thing still
+  followed is `scanning`, and only while it is true, because a cold first scan
+  genuinely does grow. Re-reading is otherwise a button, and its label is an
+  absolute time rather than "3 minutes ago": a relative one has to tick to stay
+  true, which is the live thing being removed. Measured after the fix: 3 requests
+  at first paint and **zero** over the next 40 idle seconds, a hover held for six
+  seconds without the chart being rebuilt under it, and no refetch at all on
+  leave-and-return inside the window.
 - `internal/server/providers.go`, `cliproxy.go`, `cliproxy_login.go`:
   **proxy-backed providers**, so one machine can run non-Claude models (Codex,
   Grok, Kimi) without leaving the `claude` agent. The whole idea rests on one
