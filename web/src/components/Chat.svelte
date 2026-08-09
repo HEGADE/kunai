@@ -34,6 +34,7 @@
   import TurnChanges from './TurnChanges.svelte'
   import ReviewDraft from './ReviewDraft.svelte'
   import ShareDialog from './ShareDialog.svelte'
+  import Hint from './Hint.svelte'
 
   let { chat }: { chat: ChatConnection } = $props()
 
@@ -392,28 +393,6 @@
   // you are typing into means you cannot compose a message without seeing it.
   const yolo = $derived(chat.mode === BYPASS)
 
-  // Turning the asking off is confirmed; turning it back on is not.
-  //
-  // Asymmetric on purpose. This is the one mode change that cannot be noticed
-  // after the fact -- every other mode still stops somewhere, so a mis-tap
-  // announces itself at the next tool call, while this one announces itself by
-  // the command having already run. The menu is a small popover on a phone, and
-  // the row sits directly under "Accept edits".
-  let armBypass = $state(false)
-  function pickMode(id: PermissionMode) {
-    if (id === BYPASS && chat.mode !== BYPASS) {
-      modeOpen = false
-      armBypass = true
-      return
-    }
-    chat.setMode(id)
-    modeOpen = false
-  }
-  function confirmBypass() {
-    armBypass = false
-    chat.setMode(BYPASS)
-  }
-
   const running = $derived(chat.sessionState === 'running')
 
   function hasBody(blocks: { type: string; text?: string }[]): boolean {
@@ -700,7 +679,6 @@
       class="field"
       class:dead={chat.status === 'gone'}
       class:yolo
-      class:asking={armBypass && chat.status !== 'gone'}
     >
       {#if chat.status === 'gone'}
         <div class="deadrow">
@@ -709,31 +687,6 @@
             <p class="dsub">kunai restarted, which closes running sessions. The conversation is saved.</p>
           </div>
           <button class="dbtn" onclick={() => app.reopenActive()}>Reopen it</button>
-        </div>
-      {:else if armBypass}
-        <!-- The question fills the field rather than sitting in a card above it.
-             A strip above the composer was tried and removed once already (see
-             the dead-session note): it competes with the field, cannot match its
-             720px lane, and leaves the controls underneath on show as if the
-             decision were optional. Filling the field is also the honest shape,
-             because you cannot type while this is open and what you would type is
-             exactly what the answer governs.
-             One line of consequence, in the terms that matter -- any command,
-             this folder, no asking. What it looks like while it is on and how to
-             turn it off are both things the UI shows you a second later, so they
-             are not worth a sentence here. -->
-        <div class="deadrow">
-          <div class="deadtext">
-            <p class="dhead">Turn on Yolo mode?</p>
-            <p class="dsub">
-              Claude will run any command in <span class="mono">{chat.cwd || 'this folder'}</span>
-              without asking.
-            </p>
-          </div>
-          <div class="askact">
-            <button class="dbtn" onclick={() => (armBypass = false)}>Cancel</button>
-            <button class="dbtn go" onclick={confirmBypass}>Turn on</button>
-          </div>
         </div>
       {:else}
       {#if attachments.length}
@@ -771,14 +724,26 @@
               <button class="mode-scrim" onclick={() => (modeOpen = false)} aria-label="Close"></button>
               <div class="mode-pop">
                 {#each modes as m (m.id)}
-                  <button
-                    class:active={chat.mode === m.id}
-                    class:grave={m.grave}
-                    onclick={() => pickMode(m.id)}
-                  >
-                    <span class="ml">{m.label}</span>
-                    <span class="mh">{m.hint}</span>
-                  </button>
+                  <!-- The row is a wrapper, not the button, so a mode that needs
+                       a longer explanation can carry an info affordance beside
+                       its label without nesting one control inside another. -->
+                  <div class="mrow" class:grave={m.grave}>
+                    <button
+                      class="mopt"
+                      class:active={chat.mode === m.id}
+                      onclick={() => { chat.setMode(m.id); modeOpen = false }}
+                    >
+                      <span class="ml">{m.label}</span>
+                      <span class="mh">{m.hint}</span>
+                    </button>
+                    {#if m.more}
+                      <Hint title={m.label} body={m.more}>
+                        <button class="minfo" aria-label="About {m.label}">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 16v-4.5M12 8.2v.2" /></svg>
+                        </button>
+                      </Hint>
+                    {/if}
+                  </div>
                 {/each}
               </div>
             {/if}
@@ -1575,7 +1540,7 @@
     z-index: 31;
     bottom: calc(100% + 8px);
     left: 0;
-    min-width: 230px;
+    min-width: 248px;
     /* Never exceed the viewport: the account name can be long, and on a phone a
        left-anchored menu ran off the right edge. */
     max-width: calc(100vw - 24px);
@@ -1628,58 +1593,61 @@
     font-size: 11.5px;
     color: var(--text-4);
   }
+  /* A row is a wrapper so a mode can carry an info button beside its label.
+     Everything above still targets .mode-pop button, which the option inside the
+     row still is, so the other menus in this component are untouched. */
+  .mrow {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+  /* width:auto is load-bearing: .mode-pop button sets width:100%, which inside a
+     flex row means 100% of the row and then the info button on top, so the label
+     got squeezed into a two-line column. */
+  .mrow .mopt {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+  }
+  .mrow .ml {
+    white-space: nowrap;
+  }
   /* Set apart by a rule rather than by colour: it is the last row and a different
      kind of choice, and painting it red would make the menu look like an error
      state every time it opens. */
-  .mode-pop button.grave {
+  .mrow.grave {
     margin-top: 4px;
-    padding-top: 10px;
+    padding-top: 4px;
     border-top: 1px solid var(--border);
-    border-radius: 0 0 var(--r-sm) var(--r-sm);
   }
-  .mode-pop button.grave.active .ml,
-  .mode-pop button.grave:hover .ml {
+  .mrow.grave .mopt.active .ml,
+  .mrow.grave:hover .ml {
     color: var(--busy);
   }
-
-  /* Asking borrows the ended-session shape, because it is the same shape: the
-     field stops being a field and states one thing with the actions beside it.
-     Same padding, so the composer does not jump when the question opens. */
-  .field.asking {
-    padding: 14px 16px;
-  }
-  .askact {
+  /* The explanation, for the one mode whose one-line hint cannot carry it.
+     Quiet at rest: it is there for the first time you meet this mode, not
+     something to read past on every open.
+     Scoped through .mrow deliberately: the generic `.mode-pop button` rule above
+     sets width:100% and a column layout for the menu options, and it outranks a
+     bare .minfo, so the icon took the whole row and squeezed the label into a
+     one-word-per-line column. */
+  .mrow .minfo {
     flex: none;
-    display: flex;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    display: inline-flex;
+    flex-direction: row;
     align-items: center;
-    gap: 8px;
+    justify-content: center;
+    border-radius: 7px;
+    color: var(--text-4);
   }
-  /* The confirming action is the app's own primary white, matching the
-     permission gate's Allow, which is the closest thing kunai already had to
-     this decision. The warning is carried by the words and by the yellow the
-     composer takes a moment later, not by a coloured button -- a filled amber
-     one read as an alert box rather than as a choice. */
-  .dbtn.go {
-    border-color: var(--white);
-    background: var(--white);
-    color: #0b0b0c;
-    font-weight: 550;
+  .mrow .minfo:hover {
+    background: var(--panel-3);
+    color: var(--text-2);
   }
-  .dbtn.go:hover {
-    opacity: 0.9;
-  }
-  @media (max-width: 560px) {
-    /* Stacked, or the two buttons squeeze the sentence into a column of single
-       words on a phone. */
-    .field.asking .deadrow {
-      flex-direction: column;
-      align-items: stretch;
-      gap: 12px;
-    }
-    .askact {
-      justify-content: flex-end;
-    }
-  }
+
   .stop {
     margin-right: 6px;
   }

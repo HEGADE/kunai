@@ -23,6 +23,11 @@ export interface PermissionOption {
   // so every surface offering the list can set it apart without knowing which id
   // is the dangerous one.
   grave?: boolean
+  // more is the longer explanation behind an info affordance, for a mode whose
+  // one-line hint cannot carry the whole answer. Only one mode needs it, and it
+  // needs it because the short version is easy to misread as a mode that already
+  // exists.
+  more?: string
 }
 
 export const PERMISSION_MODES: PermissionOption[] = [
@@ -41,11 +46,20 @@ export const PERMISSION_MODES: PermissionOption[] = [
   // learn is a name you cannot pick by accident, and the composer turns yellow
   // while it is on, so the state is legible from across the room rather than
   // from a word in a menu you closed a minute ago.
+  //
+  // The hint has to distinguish it from Auto, and the obvious phrasing does not:
+  // "runs commands without asking" describes Auto too, which already runs safe
+  // ones on its own. The difference is not WHETHER it runs commands, it is that
+  // nothing is left that makes it stop.
   {
     id: 'bypassPermissions',
     label: 'Yolo mode',
-    hint: 'Runs anything, including commands, with no prompts',
+    hint: 'Never asks, not even about risky commands',
     grave: true,
+    more:
+      'Every other mode stops somewhere. This one does not: deleting files, ' +
+      'git push, installing packages and network calls all run with no prompt, ' +
+      'and it is not limited to this folder. The composer turns yellow while it is on.',
   },
 ]
 
