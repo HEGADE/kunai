@@ -101,10 +101,10 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		// ValidGuestMode, not ValidPermissionMode: a share's standing mode is
 		// applied to the session by applyShareTier, so bypass here would respawn the
 		// shared process into exactly the state the check above refuses.
-		Mode:      session.ValidGuestMode(body.Mode),
-		Detail:    share.StrictPolicy(),
-		Roots:     s.shareRoots(sess),
-		MaxTurns:  body.MaxTurns,
+		Mode:     session.ValidGuestMode(body.Mode),
+		Detail:   share.StrictPolicy(),
+		Roots:    s.shareRoots(sess),
+		MaxTurns: body.MaxTurns,
 	}
 	if body.Detail {
 		sh.Detail = share.FullPolicy()

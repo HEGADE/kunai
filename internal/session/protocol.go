@@ -213,6 +213,26 @@ const ProviderPermissionMode = "auto"
 // does not weaken that boundary, it deletes it.
 const BypassPermissionMode = "bypassPermissions"
 
+// CLIModeFor is the mode the CLI process is actually run in for a given kunai
+// mode, which is the same string for every mode except Yolo.
+//
+// Yolo is enforced by kunai (see Session.onPermission), not by the CLI, so the
+// process runs in acceptEdits: permissive enough that nothing upstream blocks
+// the work, and a mode the CLI will accept on a RUNNING session, which is the
+// whole point. The CLI's own bypassPermissions can only be set at spawn -- it
+// refuses a runtime switch with "the session was not launched with
+// --dangerously-skip-permissions" -- so using it meant replacing the process
+// every time somebody turned Yolo on, blanking the conversation while it
+// reloaded. Passing --dangerously-skip-permissions on every spawn to avoid that
+// is not an option either: measured against a real CLI, that flag overrides
+// --permission-mode entirely, so a session in Ask stopped asking.
+func CLIModeFor(mode string) string {
+	if mode == BypassPermissionMode {
+		return "acceptEdits"
+	}
+	return mode
+}
+
 // PermissionModes are the modes a session may be spawned in or switched to. The
 // CLI rejects anything else, and a rejected mode is a session that starts in a
 // mode nobody asked for, so a caller taking one off the wire has to check.

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -122,39 +121,15 @@ func (s *Server) dispatch(sess *session.Session, cmd session.Command) {
 	}
 }
 
-// setMode changes a session's permission mode, by the only route that works for
-// the mode being asked for.
+// setMode changes a session's permission mode.
 //
-// Every mode except one is a live control request the running CLI accepts.
-// bypassPermissions is not: the CLI refuses it on a running process ("Cannot set
-// permission mode to bypassPermissions because the session was not launched with
-// --dangerously-skip-permissions"), so it has to be a spawn flag, so entering it
-// replaces the process. The conversation survives on --resume, exactly as it does
-// for an effort change or a share's tool restrictions.
-//
-// Leaving it stays the live path, verified against the same CLI: a running
-// bypassed session accepts set_permission_mode auto and answers success. That
-// asymmetry is worth keeping rather than respawning both ways, because getting
-// OUT of Yolo should be instant and should never depend on a respawn working.
+// Every mode is a live control request now, Yolo included, which it was not at
+// first. Entering Yolo used to replace the process, because the CLI's own
+// bypassPermissions can only be set at spawn. That worked and was miserable to
+// use: the conversation blanked and reloaded every time somebody turned it on.
+// Yolo is enforced in Session.onPermission instead (kunai IS the permission
+// prompt tool, so it can stop asking without the CLI's help), which leaves this
+// as the ordinary path it always looked like.
 func (s *Server) setMode(sess *session.Session, mode string) error {
-	if mode != session.BypassPermissionMode {
-		return sess.SetPermissionMode(mode)
-	}
-	if sess.Mode() == session.BypassPermissionMode {
-		return nil // already there; a respawn would cost the turn for nothing
-	}
-	// Checked here rather than after, because the respawn produces a Session with
-	// no guard on it and the check would then always pass. Session.SetPermissionMode
-	// makes the same refusal on the live path, for the orders that go that way.
-	if sess.Guarded() {
-		return errors.New("this session is shared, so it cannot run without permission prompts: stop sharing it first")
-	}
-	ctx, cancel := context.WithTimeout(s.baseCtx, 45*time.Second)
-	defer cancel()
-	next, err := s.mgr.RestartWithMode(ctx, sess.ID, mode, loadTranscriptTurns)
-	if err != nil {
-		return err
-	}
-	s.armSession(next)
-	return nil
+	return sess.SetPermissionMode(mode)
 }
