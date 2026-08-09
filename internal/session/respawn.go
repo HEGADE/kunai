@@ -93,7 +93,13 @@ func (sp spawnSpec) withOverrides(ov restartOverride) spawnSpec {
 	// A proxy-backed (provider) account keeps the provider default across every
 	// respawn. Keyed on the env the same way the server's isProxyProfile is, so
 	// the two can never disagree.
-	if sp.cliEnv["ANTHROPIC_BASE_URL"] != "" {
+	//
+	// An explicitly requested mode wins, though, and that exception is the whole
+	// reason a respawn can carry a mode at all: entering Yolo IS a respawn, since
+	// the CLI refuses to switch into it on a running process. Without this, asking
+	// a Codex or Grok session for Yolo would respawn it straight back into auto
+	// and report success, which is the same silent lie this respawn exists to fix.
+	if sp.cliEnv["ANTHROPIC_BASE_URL"] != "" && ov.mode == "" {
 		sp.mode = ProviderPermissionMode
 	}
 	return sp

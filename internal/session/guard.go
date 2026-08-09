@@ -41,6 +41,19 @@ func (s *Session) SetToolGuard(g ToolGuard) {
 	s.mu.Unlock()
 }
 
+// Guarded reports whether this session is confined by a guard, which in practice
+// means it is shared.
+//
+// Exported for the one caller that has to know BEFORE acting rather than after:
+// entering Yolo mode replaces the process, and the new Session has no guard by
+// construction, so a check that ran afterwards would always pass and the refusal
+// would be exactly as good as not having one.
+func (s *Session) Guarded() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.guard != nil
+}
+
 // guardVerdict is what the guard decided about an incoming ask.
 type guardVerdict struct {
 	denied  bool
