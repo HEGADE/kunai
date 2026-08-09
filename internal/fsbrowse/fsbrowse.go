@@ -49,19 +49,40 @@ func List(dir string) (*Listing, error) {
 	out := make([]Entry, 0, len(entries))
 	for _, e := range entries {
 		full := filepath.Join(abs, e.Name())
-		// Stat (not Lstat) so a symlink to a directory — e.g. /tmp on macOS, or a
-		// symlinked project checkout — is navigable rather than silently dropped.
-		info, err := os.Stat(full)
-		if err != nil {
-			continue // broken symlink, permission denied, etc.
-		}
-		mode := info.Mode()
-		if !mode.IsDir() && !mode.IsRegular() {
-			continue // skip sockets, devices, …
+		typ := e.Type()
+
+		// Only a symlink is followed, and that restraint is a macOS fix rather than
+		// a micro-optimisation.
+		//
+		// ReadDir already knows whether each entry is a directory, so stat'ing every
+		// one of them asks the OS for something it has just been told. On macOS that
+		// question is not free: Downloads, Documents and Desktop are TCC-protected,
+		// and touching them makes the system put up "kunai would like to access
+		// files in your Downloads folder" -- for a folder picker that was only
+		// listing $HOME and had no intention of reading anything in there. The
+		// prompt is indistinguishable from an app being nosy, which is the last
+		// impression a tool that runs shell commands should give.
+		//
+		// A symlink still has to be resolved (Stat, not Lstat) so that /tmp on macOS
+		// and a symlinked checkout stay navigable rather than being dropped as
+		// "not a directory". Those are rare, and none of them is a protected folder.
+		dir := e.IsDir()
+		if typ&os.ModeSymlink != 0 {
+			info, err := os.Stat(full)
+			if err != nil {
+				continue // broken symlink, permission denied, …
+			}
+			mode := info.Mode()
+			if !mode.IsDir() && !mode.IsRegular() {
+				continue
+			}
+			dir = mode.IsDir()
+		} else if !dir && !typ.IsRegular() {
+			continue // sockets, devices, …
 		}
 		out = append(out, Entry{
 			Name: e.Name(),
-			Dir:  info.IsDir(),
+			Dir:  dir,
 			Path: full,
 		})
 	}
