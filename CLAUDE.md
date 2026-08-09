@@ -1052,7 +1052,18 @@ Behavioral invariants that were bugs before (do not regress):
   `Session.ReportError` instead of only logging, because a refusal nobody is told
   about reads as a broken button. Turning it on is confirmed and turning it off is
   not, deliberately: every other mode announces a mis-tap at the next tool call,
-  and this one announces it by the command having already run.
+  and this one announces it by the command having already run. That confirmation
+  **fills the composer** rather than floating above it, borrowing the shape the
+  ended-session state already uses. A bordered strip above the field was tried
+  first and was the same mistake that note records: it competes with the field,
+  cannot match its 720px lane, nests a card inside a card, and leaves the model
+  and account controls on show underneath as if the decision were optional.
+  Filling the field is also the honest shape, since you cannot type while it is
+  open and what you would type is exactly what the answer governs. Its confirm
+  button is the app's own primary white, matching the permission gate's Allow --
+  the nearest thing kunai already had to this decision -- because a filled amber
+  one read as an alert box rather than as a choice, and the warning is carried by
+  the words and by the yellow the composer takes a moment later.
   It is **named rather than described**, which is the opposite of the rule the
   other four modes follow, and that is the point: "Never ask" (the first label)
   read as one more setting on the same dial, and this is not on the dial. A name

@@ -664,7 +664,12 @@
          720px centred and the strip was not), and left the model, effort and
          account controls on show underneath doing nothing. Replacing the field's
          contents states it once and removes every control that would lie. -->
-    <div class="field" class:dead={chat.status === 'gone'} class:yolo>
+    <div
+      class="field"
+      class:dead={chat.status === 'gone'}
+      class:yolo
+      class:asking={armBypass && chat.status !== 'gone'}
+    >
       {#if chat.status === 'gone'}
         <div class="deadrow">
           <div class="deadtext">
@@ -673,27 +678,32 @@
           </div>
           <button class="dbtn" onclick={() => app.reopenActive()}>Reopen it</button>
         </div>
-      {:else}
-      <!-- Sits where the queued prompts do, above the field, because it is about
-           what the next turn will be allowed to do. It states the consequence in
-           the terms that matter (any command, this folder, no prompts) rather
-           than asking "are you sure", which nobody reads. -->
-      {#if armBypass}
-        <div class="armbypass">
-          <div class="abtext">
-            <!-- The name is what it is called; the sentence is what it does. Both,
-                 because a name alone is a thing you agree to without reading. -->
-            <strong>Turn on Yolo mode?</strong>
-            The agent will run any command and change any file it can reach from
-            <span class="mono">{chat.cwd || 'this folder'}</span>, with nothing stopping to check.
-            The composer turns yellow while it is on, and you can switch back at any time.
+      {:else if armBypass}
+        <!-- The question fills the field rather than sitting in a card above it.
+             A strip above the composer was tried and removed once already (see
+             the dead-session note): it competes with the field, cannot match its
+             720px lane, and leaves the controls underneath on show as if the
+             decision were optional. Filling the field is also the honest shape,
+             because you cannot type while this is open and what you would type is
+             exactly what the answer governs.
+             One line of consequence, in the terms that matter -- any command,
+             this folder, no asking. What it looks like while it is on and how to
+             turn it off are both things the UI shows you a second later, so they
+             are not worth a sentence here. -->
+        <div class="deadrow">
+          <div class="deadtext">
+            <p class="dhead">Turn on Yolo mode?</p>
+            <p class="dsub">
+              Claude will run any command in <span class="mono">{chat.cwd || 'this folder'}</span>
+              without asking.
+            </p>
           </div>
-          <div class="abact">
-            <button class="abno" onclick={() => (armBypass = false)}>Cancel</button>
-            <button class="abyes" onclick={confirmBypass}>Turn it on</button>
+          <div class="askact">
+            <button class="dbtn" onclick={() => (armBypass = false)}>Cancel</button>
+            <button class="dbtn go" onclick={confirmBypass}>Turn on</button>
           </div>
         </div>
-      {/if}
+      {:else}
       {#if attachments.length}
         <div class="chips">
           {#each attachments as a (a.id)}
@@ -1600,66 +1610,43 @@
     color: var(--busy);
   }
 
-  /* The confirmation, above the field where the queued prompts sit, because it is
-     about what the next turn may do. */
-  .armbypass {
-    max-width: 720px;
-    margin: 0 auto 8px;
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    flex-wrap: wrap;
-    padding: 11px 14px;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-left: 2px solid var(--busy);
-    border-radius: var(--r-lg);
+  /* Asking borrows the ended-session shape, because it is the same shape: the
+     field stops being a field and states one thing with the actions beside it.
+     Same padding, so the composer does not jump when the question opens. */
+  .field.asking {
+    padding: 14px 16px;
   }
-  .abtext {
-    flex: 1;
-    min-width: 220px;
-    font-size: 12.5px;
-    line-height: 1.55;
-    color: var(--text-3);
-  }
-  .abtext strong {
-    display: block;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .abtext .mono {
-    font-family: var(--mono);
-    font-size: 11.5px;
-    color: var(--text-2);
-  }
-  .abact {
+  .askact {
     flex: none;
     display: flex;
     align-items: center;
     gap: 8px;
   }
-  .abno {
-    height: 30px;
-    padding: 0 12px;
-    border-radius: 9px;
-    font-size: 12.5px;
-    color: var(--text-3);
+  /* The confirming action is the app's own primary white, matching the
+     permission gate's Allow, which is the closest thing kunai already had to
+     this decision. The warning is carried by the words and by the yellow the
+     composer takes a moment later, not by a coloured button -- a filled amber
+     one read as an alert box rather than as a choice. */
+  .dbtn.go {
+    border-color: var(--white);
+    background: var(--white);
+    color: #0b0b0c;
+    font-weight: 550;
   }
-  .abno:hover {
-    background: var(--panel-3);
-    color: var(--text);
+  .dbtn.go:hover {
+    opacity: 0.9;
   }
-  /* Amber, not white: the primary-action white is for the safe default, and this
-     is not it. Amber is already the app's "needs a decision" colour. */
-  .abyes {
-    height: 30px;
-    padding: 0 14px;
-    border-radius: 9px;
-    background: var(--busy);
-    color: #16130c;
-    font-size: 12.5px;
-    font-weight: 600;
+  @media (max-width: 560px) {
+    /* Stacked, or the two buttons squeeze the sentence into a column of single
+       words on a phone. */
+    .field.asking .deadrow {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 12px;
+    }
+    .askact {
+      justify-content: flex-end;
+    }
   }
   .stop {
     margin-right: 6px;
