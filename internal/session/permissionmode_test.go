@@ -79,3 +79,31 @@ func TestLoopKeepsBypassAndBorrowsOtherwise(t *testing.T) {
 		}
 	}
 }
+
+// Yolo is kunai's mode, not the CLI's, and the process runs permissively under
+// it.
+//
+// The CLI's own bypassPermissions can only be set at spawn: it refuses a runtime
+// switch with "the session was not launched with --dangerously-skip-permissions".
+// Using it therefore meant replacing the process every time somebody turned Yolo
+// on, which blanked the conversation while it reloaded. Passing that launch flag
+// on every spawn to avoid the respawn is not a way out either -- measured against
+// a real CLI, it overrides --permission-mode entirely, so a session in Ask
+// stopped asking. So kunai answers the permission requests itself and the CLI
+// runs in acceptEdits, which it accepts live.
+func TestCLIModeForKeepsTheProcessSwitchable(t *testing.T) {
+	if got := CLIModeFor(BypassPermissionMode); got != "acceptEdits" {
+		t.Errorf("CLIModeFor(bypass) = %q, want acceptEdits", got)
+	}
+	// It must be a mode the CLI actually takes, or every Yolo session spawns with
+	// a flag the CLI rejects.
+	if ValidPermissionMode(CLIModeFor(BypassPermissionMode)) == "" {
+		t.Errorf("CLIModeFor(bypass) is not a real mode")
+	}
+	// Every other mode passes through untouched.
+	for _, m := range []string{"default", "auto", "acceptEdits", "plan", ""} {
+		if got := CLIModeFor(m); got != m {
+			t.Errorf("CLIModeFor(%q) = %q, want it unchanged", m, got)
+		}
+	}
+}

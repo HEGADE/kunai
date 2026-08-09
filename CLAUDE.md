@@ -1122,30 +1122,24 @@ Behavioral invariants that were bugs before (do not regress):
   the one place amber is worn by prose instead of by a dot, and it earns the
   exception the same way the brand marks earn theirs: it is the only channel
   reporting a state whose mistakes cannot be taken back after the fact.
-  **Entering it is a respawn, and that is not optional.** The CLI takes a runtime
-  `set_permission_mode` for every other mode and refuses this one: `Cannot set
-  permission mode to bypassPermissions because the session was not launched with
-  --dangerously-skip-permissions`, captured off the control channel of a real
-  2.1.222. kunai never read that reply -- the driver writes control requests and
-  does not wait -- so the refusal was invisible and the first shipped version
-  lied: the session recorded the mode, the composer turned yellow, and the CLI
-  went on raising a permission gate for every Bash call. `Server.setMode` now
-  routes entering bypass through `Manager.RestartWithMode`, the same
-  `spawnSpec` path effort and the shared-tools list already take, so the flag is
-  set where the CLI reads it. Leaving bypass stays the live control request,
-  measured the same way (a running bypassed session answers `success` to
-  `set_permission_mode auto`), and that asymmetry is deliberate: getting OUT
-  should be instant and must never depend on a respawn succeeding. Two
-  consequences. `withOverrides` had to let an explicit mode beat the
-  provider default, or asking a Codex or Grok session for Yolo would respawn it
-  straight back into auto and report success. And the share refusal moved to
-  BEFORE the respawn (`Session.Guarded`), since the new Session has no guard by
-  construction and a check afterwards would always pass. The respawn carries the
-  model's context through `--resume` (verified: the model still answered a
-  question about the pre-switch turn), but the on-screen scrollback only comes
-  back if the transcript is on disk to re-seed from -- which is a pre-existing
-  property of every kunai respawn, identical on the effort path, not something
-  this mode introduced.
+  **Yolo is kunai's mode, not the CLI's**, and that is what makes it a mode you
+  can turn on without losing the process. `Session.onPermission` answers the ask
+  itself when `s.mode` is bypass, and the CLI runs in `acceptEdits` underneath
+  (`CLIModeFor`). Two measurements forced this. The CLI's own
+  `bypassPermissions` cannot be set on a running session -- it answers `Cannot
+  set permission mode to bypassPermissions because the session was not launched
+  with --dangerously-skip-permissions` -- so using it made entering Yolo a
+  respawn, and a respawn blanks the conversation for several seconds while it
+  reloads, on a mode people flip on mid-task. And passing
+  `--dangerously-skip-permissions` on every spawn to make the runtime switch
+  legal is worse than it sounds: measured in kunai against a real CLI, that flag
+  **overrides `--permission-mode` entirely**, so a session in Ask stopped asking
+  about a `curl`. kunai is the `--permission-prompt-tool`, so it does not need
+  the CLI to stop asking; it can stop asking the person. The auto-allow sits
+  **after** the share guard deliberately, so a shared session's folder boundary
+  still runs first and can still deny -- the guard is now consulted under Yolo
+  rather than bypassed by it, which is why this version is safer than the
+  original as well as quieter.
 
 ## Channels
 

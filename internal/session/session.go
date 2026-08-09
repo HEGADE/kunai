@@ -549,6 +549,28 @@ func (s *Session) onPermission(ask *claude.PermissionAsk) {
 			ToolUseID: ask.ToolUseID,
 		})
 		return
+	} else if s.Mode() == BypassPermissionMode {
+		// Yolo, answered here rather than by the CLI, and that is what makes it a
+		// mode you can turn on without losing the process.
+		//
+		// The CLI has its own bypassPermissions and kunai used it at first, which
+		// meant entering Yolo had to replace the process: the CLI refuses to switch
+		// into that mode on a running session, so it was a spawn flag, so it was a
+		// respawn, so the conversation blanked and reloaded every time. But kunai IS
+		// the permission prompt tool. It does not need the CLI to stop asking; it
+		// can stop asking the person. Same promise, no restart.
+		//
+		// Deliberately AFTER the guard: a shared session's folder boundary still
+		// runs first and can still deny, so this can never wave through something
+		// the boundary settled. The CLI's own mode is left at acceptEdits, so the
+		// safe work it already does on its own is untouched and only the asks that
+		// would have reached a human are answered here.
+		_ = s.drv.Resolve(ask.RequestID, claude.PermissionResult{
+			Behavior:     "allow",
+			UpdatedInput: ask.Input, // an allow without it runs the tool with empty input
+			ToolUseID:    ask.ToolUseID,
+		})
+		return
 	} else if v.autoYes {
 		// Cleared by the guard, and the share granted a standing yes for exactly
 		// this case, so the guest keeps working instead of waiting for someone who
@@ -930,7 +952,9 @@ func (s *Session) SetPermissionMode(mode string) error {
 	// on showing the mode you last picked while the session runs in another one.
 	s.emitLocked(s.sequenceLocked(AppEvent{T: EvMode, Mode: mode}))
 	s.mu.Unlock()
-	return s.drv.SetPermissionMode(mode)
+	// The CLI is told the mode it can actually run; Yolo is kunai's own and the
+	// process runs permissively underneath it. See CLIModeFor.
+	return s.drv.SetPermissionMode(CLIModeFor(mode))
 }
 
 // ReportError tells everyone attached that a command they sent was refused.

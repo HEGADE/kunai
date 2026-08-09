@@ -152,7 +152,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	}
 
 	drvOpts := claude.Options{
-		Cwd: opts.Cwd, Model: opts.Model, Effort: opts.Effort, PermissionMode: mode,
+		Cwd: opts.Cwd, Model: opts.Model, Effort: opts.Effort, PermissionMode: CLIModeFor(mode),
 		Bin: opts.Bin, Env: envKV(opts.Env), AppendSystemPrompt: opts.AppendSystemPrompt,
 		DisallowedTools: opts.DisallowedTools,
 	}
@@ -332,24 +332,6 @@ func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seed
 // feature's reconciler from lifting another's restriction.
 func (m *Manager) RestartWithTools(ctx context.Context, id string, denied []string, owner, mode string, seedFn func(configDir, cid string) []SeedTurn) (*Session, error) {
 	return m.restart(ctx, id, restartOverride{tools: &denied, toolsOwner: owner, mode: mode}, seedFn)
-}
-
-// RestartWithMode relaunches a session in a different permission mode.
-//
-// Only one mode needs this, and it needs it absolutely. The CLI takes a runtime
-// set_permission_mode for every other mode, but refuses this one outright:
-//
-//	Cannot set permission mode to bypassPermissions because the session was
-//	not launched with --dangerously-skip-permissions
-//
-// captured from a real 2.1.222 on the control channel. kunai never read that
-// reply -- the driver writes control requests and does not wait -- so the
-// refusal was invisible: the session recorded the mode, the composer turned
-// yellow, and the CLI went on asking about every Bash call. The mode is a
-// property of the process, so changing it means replacing the process, which is
-// the path effort and the shared-tools list already take.
-func (m *Manager) RestartWithMode(ctx context.Context, id, mode string, seedFn func(configDir, cid string) []SeedTurn) (*Session, error) {
-	return m.restart(ctx, id, restartOverride{mode: mode}, seedFn)
 }
 
 // RestartWithAccount relaunches a live session on a different Claude account,
