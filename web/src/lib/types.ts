@@ -333,7 +333,7 @@ export interface Attachment {
   media_type: string
 }
 
-export type PermissionMode = 'default' | 'acceptEdits' | 'auto' | 'plan'
+export type PermissionMode = 'default' | 'acceptEdits' | 'auto' | 'plan' | 'bypassPermissions'
 
 export type Command =
   | { t: 'prompt'; text: string; attachments?: Attachment[] }

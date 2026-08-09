@@ -183,3 +183,42 @@ func TestPermissionAsksSayWhoCausedThem(t *testing.T) {
 			ev.From, FromGuest)
 	}
 }
+
+// A shared session must refuse to stop asking, because the guard is the asking.
+//
+// The two orders are closed in two places, and this covers the live one: the
+// session is already shared and the owner reaches for the mode. The other order
+// (bypass first, then share) is refused by the share create handler, because by
+// then there is no guard to consult and nothing here would fire.
+//
+// The test asserts the mode did not move as well as the error, since a refusal
+// that still records the mode locally would leave the composer showing bypass
+// while the CLI kept asking -- a lie in the safe direction, but still a lie.
+func TestSharedSessionRefusesBypass(t *testing.T) {
+	drv := newFakeDriver()
+	s := newSession("s", t.TempDir(), "", drv)
+	s.SetToolGuard(fakeGuard{})
+
+	before := s.Mode()
+	if err := s.SetPermissionMode(BypassPermissionMode); err == nil {
+		t.Fatal("a shared session accepted bypassPermissions; the folder guard would never run again")
+	}
+	if got := s.Mode(); got != before {
+		t.Errorf("mode moved to %q on a refused change; want it left at %q", got, before)
+	}
+
+	// Every other mode still works while shared: the point is one specific hole,
+	// not freezing the session.
+	if err := s.SetPermissionMode("acceptEdits"); err != nil {
+		t.Fatalf("a shared session refused acceptEdits: %v", err)
+	}
+
+	// And once it is not shared, the owner gets it back.
+	s.SetToolGuard(nil)
+	if err := s.SetPermissionMode(BypassPermissionMode); err != nil {
+		t.Fatalf("an unshared session refused bypassPermissions: %v", err)
+	}
+	if got := s.Mode(); got != BypassPermissionMode {
+		t.Errorf("mode = %q after allowing bypass, want %q", got, BypassPermissionMode)
+	}
+}

@@ -688,8 +688,15 @@ export class ChatConnection {
     this.send({ t: 'interrupt' })
   }
 
+  // Not optimistic, unlike setModel, and the difference is that this one can be
+  // refused: a shared session declines to stop asking permission, because the
+  // guard confining the guest IS the asking. Setting it locally first meant the
+  // pill flipped to a mode the session was not in and stayed there, which is the
+  // worst of the three outcomes -- worse than refusing loudly and worse than
+  // allowing it, because it is the composer reporting a permission state that
+  // is not real. The server echoes a `mode` event on success (it already had to,
+  // for the mode a loop borrows), so the round trip is the confirmation.
   setMode(mode: PermissionMode) {
-    this.mode = mode
     this.send({ t: 'set_mode', mode })
   }
 

@@ -202,10 +202,21 @@ const DefaultPermissionMode = "auto"
 // still switch it.
 const ProviderPermissionMode = "auto"
 
+// BypassPermissionMode is YOLO: the CLI asks about nothing at all.
+//
+// It is not "acceptEdits turned up". The others differ in WHICH calls stop for a
+// human; this one removes the stopping. Verified against a real CLI (2.1.222):
+// a session spawned with it ran a Bash command with zero can_use_tool requests
+// on the control channel. That is the feature, and it is also the reason
+// everything below exists -- kunai has a boundary that is implemented AS a
+// can_use_tool handler (the share guard), and a mode that stops the CLI asking
+// does not weaken that boundary, it deletes it.
+const BypassPermissionMode = "bypassPermissions"
+
 // PermissionModes are the modes a session may be spawned in or switched to. The
 // CLI rejects anything else, and a rejected mode is a session that starts in a
 // mode nobody asked for, so a caller taking one off the wire has to check.
-var PermissionModes = []string{"default", "auto", "acceptEdits", "plan"}
+var PermissionModes = []string{"default", "auto", "acceptEdits", "plan", BypassPermissionMode}
 
 // ValidPermissionMode returns mode when it is one the CLI understands, and ""
 // otherwise, so a caller reads as "use it if it is real, else keep the default".
@@ -217,6 +228,22 @@ func ValidPermissionMode(mode string) string {
 		}
 	}
 	return ""
+}
+
+// ValidGuestMode is ValidPermissionMode for anywhere a guest's work can land.
+//
+// Bypass is refused here whatever it is spelled, and separately from the
+// ordinary validator, so the two cannot be confused at a call site: a share's
+// standing mode goes through this one. The reason is mechanical rather than a
+// matter of trust -- the share guard IS a can_use_tool handler, so a bypassed
+// session never consults it, and a folder boundary that is never consulted is
+// not a boundary. See Session.SetPermissionMode and the share create handler,
+// which close the same hole from the other two directions.
+func ValidGuestMode(mode string) string {
+	if mode == BypassPermissionMode {
+		return ""
+	}
+	return ValidPermissionMode(mode)
 }
 
 // Turn/session states.

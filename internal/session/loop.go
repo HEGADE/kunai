@@ -88,6 +88,21 @@ type LoopStatus struct {
 // The session's own mode is handed back when the loop ends.
 const LoopPermissionMode = "acceptEdits"
 
+// loopModeFor is the mode a loop should borrow given what the session is already
+// in.
+//
+// The borrow exists to make a session MORE autonomous, never less, and on a
+// session already running without permission prompts acceptEdits is a downgrade:
+// the loop would start stopping for the Bash calls the owner had explicitly
+// arranged not to be asked about, which is the overnight hang this constant
+// exists to prevent, arrived at from the other side. So bypass keeps bypass.
+func loopModeFor(current string) string {
+	if current == BypassPermissionMode {
+		return BypassPermissionMode
+	}
+	return LoopPermissionMode
+}
+
 // loopRun is the live state behind a LoopStatus.
 type loopRun struct {
 	cfg       LoopConfig
@@ -151,7 +166,7 @@ func (s *Session) StartLoop(cfg LoopConfig) error {
 
 	// Borrow the autonomous mode for the duration, or the first file edit ends the
 	// run in all but name.
-	if err := s.SetPermissionMode(LoopPermissionMode); err != nil {
+	if err := s.SetPermissionMode(loopModeFor(s.Mode())); err != nil {
 		s.mu.Lock()
 		s.stopLoopLocked(LoopFailed, "the permission mode could not be set: "+err.Error())
 		s.mu.Unlock()
@@ -198,7 +213,7 @@ func (s *Session) ResumeLoop(rec LoopPersist) error {
 	s.persistLoopLocked() // rewrite with the bumped resume count
 	s.mu.Unlock()
 
-	if err := s.SetPermissionMode(LoopPermissionMode); err != nil {
+	if err := s.SetPermissionMode(loopModeFor(s.Mode())); err != nil {
 		s.mu.Lock()
 		s.stopLoopLocked(LoopFailed, "the permission mode could not be set: "+err.Error())
 		s.mu.Unlock()
