@@ -239,12 +239,41 @@
 {/if}
 
 <style>
+  /* Quiet until you go looking for it.
+     Everything here is about a turn that has already finished: how long it took,
+     what it cost, copy it, undo it. None of it is being read while the next
+     reply streams in, and a row of it under every turn is a second row of
+     furniture per exchange -- in a long conversation that is more chrome on
+     screen than conversation. Revealed on hovering the turn it belongs to, which
+     is the same gesture the tool rows and the sidebar already use.
+     Opacity rather than display, so the log does not reflow as the pointer moves
+     down it: the row keeps its height whether or not you can see it. */
   .footer {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 7px;
     padding-top: 2px;
+    opacity: 0;
+    transition: opacity var(--t) var(--ease);
+  }
+  :global(.turn:hover) .footer,
+  :global(.turn:focus-within) .footer,
+  .footer:focus-within {
+    opacity: 1;
+  }
+  /* A phone has no hover, so there it is simply always there. Without this the
+     footer would be unreachable on the device kunai is mostly used from, which
+     is the opposite of tidying up. */
+  @media (hover: none) {
+    .footer {
+      opacity: 1;
+    }
+  }
+  /* A turn whose popover is open must not fade out from under the popover when
+     the pointer leaves the row to reach it. */
+  .footer:has(.pop) {
+    opacity: 1;
   }
   .dur {
     flex: none;

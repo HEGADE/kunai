@@ -31,6 +31,7 @@
   import SessionInfo from './SessionInfo.svelte'
   import WorktreeCard from './WorktreeCard.svelte'
   import TurnFooter from './TurnFooter.svelte'
+  import TurnRail from './TurnRail.svelte'
   import TurnChanges from './TurnChanges.svelte'
   import ReviewDraft from './ReviewDraft.svelte'
   import ShareDialog from './ShareDialog.svelte'
@@ -524,7 +525,10 @@
             </div>
           {/if}
           {#if turn.user !== undefined}
-            <div class="turn user">
+            <!-- data-turn anchors the rail's jump target. Queried rather than
+                 held as a ref, because the log is windowed and re-keys as older
+                 turns are revealed. -->
+            <div class="turn user" data-turn={firstVisible + ti}>
               <div class="ubbl">
                 {#if turn.userFiles?.length}
                   <FileChips files={turn.userFiles} />
@@ -582,6 +586,14 @@
       </div>
     {/if}
   </div>
+
+  <!-- A way back to a question you asked, down the edge of the log. Positioned
+       the way the jump button is: absolute within .screen, clearing the composer
+       via the measured dock height, because .scroll itself scrolls and anything
+       inside it would scroll away with the log it indexes. Outside the
+       !atBottom guard, since the whole point is to leave the bottom.
+       Self-hides below a handful of prompts and on a phone; see TurnRail. -->
+  <TurnRail {turns} {scroller} {firstVisible} bottom={dockH + 14} />
 
   {#if !atBottom}
     <button class="jump" style="bottom: {dockH + 14}px" onclick={() => toBottom(true)} aria-label="Scroll to latest">
