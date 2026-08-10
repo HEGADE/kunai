@@ -81,9 +81,15 @@
   .ti {
     display: inline-flex;
   }
+  /* Tight, because these are rows in a list rather than cards in a stack.
+     At 12px apart a dozen tool calls read as a dozen separate things the eye has
+     to stop at, and the group is taller than the reply it belongs to. A tool
+     call is one line of activity; the space between lines should be the space
+     between lines. The gap survives only so an expanded card's body does not
+     touch the next row's heading. */
   .body {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 3px;
   }
 </style>
