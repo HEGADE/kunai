@@ -691,6 +691,7 @@
       class="field"
       class:dead={chat.status === 'gone'}
       class:yolo
+      class:stacked={chat.queued.length > 0 && chat.status !== 'gone'}
     >
       {#if chat.status === 'gone'}
         <div class="deadrow">
@@ -1322,6 +1323,15 @@
   }
   .field:focus-within {
     border-color: var(--text-4);
+  }
+  /* Queued prompts sit directly on top, so the field gives up its own top arc and
+     the two draw as one shape: the arc at the top of the stack, the arc at the
+     bottom of the field, hairlines in between. The top border goes too, or the
+     seam would be two adjacent 1px lines. */
+  .field.stacked {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+    border-top-color: var(--border);
   }
   /* Yolo mode, worn by the field you type into.
      The border and the typed text both carry it, because either alone is
