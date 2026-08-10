@@ -16,6 +16,43 @@
   const COPY_SVG =
     '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 012-2h8"/></svg>'
 
+  // The wrap toggle's glyph: a line that turns back on itself.
+  const WRAP_SVG =
+    '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M3 12h13a3.5 3.5 0 010 7h-2.5"/><path d="M16 16.5L13.5 19l2.5 2.5"/><path d="M3 18h5"/></svg>'
+
+  // Wrapping is a preference, not a property of one block: somebody who wants
+  // long lines wrapped wants them wrapped everywhere, and having to set it again
+  // on the next fence is the kind of per-instance state that makes a control
+  // feel broken. Kept on the document so every block already on screen turns
+  // over at once, and in localStorage so it survives a reload.
+  const WRAP_KEY = 'kunai.codeWrap'
+
+  export function codeWrapOn(): boolean {
+    try {
+      return localStorage.getItem(WRAP_KEY) === '1'
+    } catch {
+      return false // private mode, or storage disabled: wrapping off is the old behaviour
+    }
+  }
+
+  function applyCodeWrap(on: boolean) {
+    if (typeof document === 'undefined') return
+    document.documentElement.toggleAttribute('data-code-wrap', on)
+  }
+
+  export function setCodeWrap(on: boolean) {
+    try {
+      localStorage.setItem(WRAP_KEY, on ? '1' : '0')
+    } catch {
+      // Not being able to remember it is not a reason to refuse to do it.
+    }
+    applyCodeWrap(on)
+  }
+
+  // Applied once at module load, before the first block paints, so a reload does
+  // not show every fence unwrapped for a frame and then reflow.
+  applyCodeWrap(codeWrapOn())
+
   // A dedicated instance so the streaming path (plain `marked`) never pays for
   // highlighting; only committed blocks use this renderer.
   const richMarked = new Marked({ gfm: true, breaks: true })
@@ -29,6 +66,7 @@
           `<div class="codewrap">` +
           `<div class="cwbar">${label ? `<span class="cwlang">${label}</span>` : ''}` +
           `<span class="cwsp"></span>` +
+          `<button class="cwcopy" data-wrap aria-label="Wrap long lines" title="Wrap long lines">${WRAP_SVG}</button>` +
           `<button class="cwcopy" data-copy aria-label="Copy code">${COPY_SVG}</button></div>` +
           `<pre><code class="hljs">${body}</code></pre></div>`
         )
@@ -118,6 +156,11 @@
   // Copy handler via delegation — safe because committed blocks have stable text
   // (this component only re-derives html when `text` changes).
   function onClick(e: MouseEvent) {
+    const wrap = (e.target as HTMLElement).closest('[data-wrap]') as HTMLElement | null
+    if (wrap) {
+      setCodeWrap(!codeWrapOn())
+      return
+    }
     const btn = (e.target as HTMLElement).closest('[data-copy]') as HTMLElement | null
     if (!btn) return
     const code = btn.closest('.codewrap')?.querySelector('code')?.textContent ?? ''
@@ -279,6 +322,23 @@
     border: none;
     border-radius: 0;
     background: none;
+  }
+  /* Wrapping is set on the document, so every block on screen turns over
+     together rather than one at a time as you scroll past them. The horizontal
+     scrollbar goes with it: keeping it would leave a scrollable axis with
+     nothing off the edge to scroll to. */
+  :global(html[data-code-wrap]) .md :global(pre) {
+    overflow-x: visible;
+  }
+  :global(html[data-code-wrap]) .md :global(pre code) {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  /* Lit while it is on, so the button reports the state it is in rather than
+     only the action it performs. */
+  :global(html[data-code-wrap]) .md :global(.cwcopy[data-wrap]) {
+    color: var(--text);
+    background: var(--panel-3);
   }
   .md :global(.cwbar) {
     display: flex;

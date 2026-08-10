@@ -29,6 +29,7 @@
   import SessionInfo from './SessionInfo.svelte'
   import WorktreeCard from './WorktreeCard.svelte'
   import TurnFooter from './TurnFooter.svelte'
+  import TurnRail from './TurnRail.svelte'
   import TurnChanges from './TurnChanges.svelte'
   import ShareDialog from './ShareDialog.svelte'
   import Hint from './Hint.svelte'
@@ -500,7 +501,10 @@
             </div>
           {/if}
           {#if turn.user !== undefined}
-            <div class="turn user">
+            <!-- data-turn anchors the rail's jump target. Queried rather than
+                 held as a ref, because the log is windowed and re-keys as older
+                 turns are revealed. -->
+            <div class="turn user" data-turn={firstVisible + ti}>
               <div class="ubbl">
                 {#if turn.userFiles?.length}
                   <FileChips files={turn.userFiles} />
@@ -553,6 +557,14 @@
       </div>
     {/if}
   </div>
+
+  <!-- A way back to a question you asked, down the edge of the log. Positioned
+       the way the jump button is: absolute within .screen, clearing the composer
+       via the measured dock height, because .scroll itself scrolls and anything
+       inside it would scroll away with the log it indexes. Outside the
+       !atBottom guard, since the whole point is to leave the bottom.
+       Self-hides below a handful of prompts and on a phone; see TurnRail. -->
+  <TurnRail {turns} {scroller} {firstVisible} />
 
   {#if !atBottom}
     <button class="jump" style="bottom: {dockH + 14}px" onclick={() => toBottom(true)} aria-label="Scroll to latest">
@@ -647,6 +659,7 @@
       class="field"
       class:dead={chat.status === 'gone'}
       class:yolo
+      class:stacked={chat.queued.length > 0 && chat.status !== 'gone'}
     >
       {#if chat.status === 'gone'}
         <div class="deadrow">
@@ -1278,6 +1291,15 @@
   }
   .field:focus-within {
     border-color: var(--text-4);
+  }
+  /* Queued prompts sit directly on top, so the field gives up its own top arc and
+     the two draw as one shape: the arc at the top of the stack, the arc at the
+     bottom of the field, hairlines in between. The top border goes too, or the
+     seam would be two adjacent 1px lines. */
+  .field.stacked {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+    border-top-color: var(--border);
   }
   /* Yolo mode, worn by the field you type into.
      The border and the typed text both carry it, because either alone is

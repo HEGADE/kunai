@@ -169,8 +169,25 @@ func scanHistory(live map[string]bool, limit int, roots []accountRoot, keep map[
 	// multiply the expensive part of this scan by the number of accounts.
 	out := make([]HistoryEntry, 0, len(best))
 	for id, c := range best {
-		cwd, title := probeTranscript(c.path)
+		cwd, title, asked := probeTranscript(c.path)
 		if cwd == "" {
+			continue
+		}
+		// Nobody ever asked this session anything, so it is not a conversation and
+		// Recent is not where it belongs.
+		//
+		// Two things produce these and both are kunai's own doing. A session
+		// created and never prompted -- opened to check something, or spawned by a
+		// test -- leaves a transcript with a cwd and no user turn. And the /usage
+		// poll shells `claude -p` once a minute in kunai's data dir; it deletes the
+		// transcript it makes, but a delete that loses the race leaves one behind,
+		// and a minute later there is another. Both showed up in Recent titled
+		// after their folder, because the title falls back to the directory name
+		// when there is no prompt to name them by -- which is the tell, and now the
+		// rule. Filtering on "was anything ever asked" catches every way this
+		// happens, including ones nobody has thought of, where filtering on a known
+		// folder would only catch the two above.
+		if !asked {
 			continue
 		}
 		if title == "" {
@@ -211,17 +228,22 @@ func scanHistory(live map[string]bool, limit int, roots []accountRoot, keep map[
 // the generated ai-title, else the first real user prompt. Claude Code writes
 // the title entries near the END of the transcript, so they're read from the
 // tail; the head scan only gets the cwd and a first-prompt fallback.
-func probeTranscript(path string) (cwd, title string) {
+// asked reports whether anybody ever prompted this session, which is what
+// separates a conversation from a transcript that merely exists. It is returned
+// apart from the title because the two are not the same question: a session can
+// be prompted and still have no usable title (an attachment with no words), and
+// a transcript can carry a generated title having never been asked anything.
+func probeTranscript(path string) (cwd, title string, asked bool) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", ""
+		return "", "", false
 	}
 	defer f.Close()
 
 	var firstPrompt string
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024) // transcript lines can be large
-	for lines := 0; sc.Scan() && lines < 60 && (cwd == "" || firstPrompt == ""); lines++ {
+	for lines := 0; sc.Scan() && lines < 60 && (cwd == "" || !asked); lines++ {
 		var v struct {
 			Cwd     string `json:"cwd"`
 			Message struct {
@@ -235,11 +257,16 @@ func probeTranscript(path string) (cwd, title string) {
 		if cwd == "" && v.Cwd != "" {
 			cwd = v.Cwd
 		}
-		if firstPrompt == "" && v.Message.Role == "user" && len(v.Message.Content) > 0 {
+		if v.Message.Role == "user" && len(v.Message.Content) > 0 {
 			t := strings.TrimSpace(firstUserText(v.Message.Content))
 			// Skip harness/system wrappers (<system_instruction>, caveats, …).
+			// They are not somebody asking for something, so they do not make this
+			// a conversation either.
 			if t != "" && !strings.HasPrefix(t, "<") {
-				firstPrompt = t
+				asked = true
+				if firstPrompt == "" {
+					firstPrompt = t
+				}
 			}
 		}
 	}
@@ -248,7 +275,7 @@ func probeTranscript(path string) (cwd, title string) {
 	if title == "" {
 		title = firstPrompt
 	}
-	return cwd, truncate(strings.TrimSpace(title), 64)
+	return cwd, truncate(strings.TrimSpace(title), 64), asked
 }
 
 // claudeTitle reads the tail of a transcript and returns Claude Code's current

@@ -71,11 +71,23 @@
     <span class="sp"></span>
     {#if label.added}<span class="stat add">+{label.added}</span>{/if}
     {#if label.removed}<span class="stat del">−{label.removed}</span>{/if}
-    {#if result?.isError}
-      <span class="errdot" title="Tool reported an error"></span>
-    {:else if running}
-      <span class="spin" aria-label="Running" title="Running"></span>
-    {/if}
+    <!-- One slot, always the same width, holding whichever of the three states
+         this call is in. It used to hold only two of them: a failure got a red
+         dot and a running call got a spinner, and a call that finished perfectly
+         got nothing at all. So a settled turn's activity read as a list of
+         things that were merely attempted, and the only way to know a step had
+         actually completed was that it had not complained. The tick is quiet on
+         purpose -- it is the expected outcome, so it belongs at the dimmest tier
+         that is still legible, not in the green reserved for live status. -->
+    <span class="state">
+      {#if result?.isError}
+        <span class="errdot" title="Tool reported an error"></span>
+      {:else if running}
+        <span class="spin" aria-label="Running" title="Running"></span>
+      {:else if result}
+        <svg class="okmark" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-label="Done"><title>Done</title><path d="M20 6L9 17l-5-5" /></svg>
+      {/if}
+    </span>
     <span class="car" aria-hidden="true">
       <svg width="9" height="9" viewBox="0 0 8 8" fill="currentColor"><path d="M2 0l4 4-4 4z" /></svg>
     </span>
@@ -221,6 +233,19 @@
   .open .car {
     transform: rotate(90deg);
     color: var(--text-3);
+  }
+  /* A fixed slot, so the caret sits in the same place on every row whatever the
+     call is doing. Without it a finished row's caret shifted left by the width
+     of the spinner, and a column of tool calls rippled as each one settled. */
+  .state {
+    flex: none;
+    width: 13px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .okmark {
+    color: var(--text-4);
   }
   .errdot {
     flex: none;

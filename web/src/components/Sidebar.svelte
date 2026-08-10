@@ -202,6 +202,45 @@
       return {}
     }
   }
+  // Clearing a folder: the past sessions in it, and only those.
+  //
+  // Armed rather than immediate, like the session Close button, because this
+  // deletes several conversations and their transcripts at once and nothing puts
+  // them back. Armed state is the folder's key rather than a boolean, so opening
+  // one folder's confirmation disarms any other: two armed trash buttons on
+  // screen is two ways to delete the wrong one.
+  let armedGroup = $state('')
+  let armTimer: ReturnType<typeof setTimeout> | undefined
+  const pastOf = (g: { items: GroupedRow[] }) =>
+    g.items.filter((it) => it.kind === 'recent').map((it) => it.h)
+  const liveCountOf = (g: { items: GroupedRow[] }) =>
+    g.items.filter((it) => it.kind === 'live').length
+
+  async function clearGroup(key: string, label: string) {
+    if (armedGroup !== key) {
+      armedGroup = key
+      clearTimeout(armTimer)
+      armTimer = setTimeout(() => (armedGroup = ''), 3000)
+      return
+    }
+    clearTimeout(armTimer)
+    armedGroup = ''
+    const group = sessionGroups.find((g) => g.key === key)
+    if (!group) return
+    const rows = pastOf(group)
+    // Sequential rather than a fan-out: this is a handful of small deletes on one
+    // machine, and doing them one at a time means a failure halfway leaves a list
+    // that still matches what is on disk rather than a partial guess.
+    for (const h of rows) {
+      try {
+        await app.deleteSession(h.machineId, h.id)
+      } catch (e) {
+        app.actionError = `Could not clear ${label}: ${(e as Error).message}`
+        return
+      }
+    }
+  }
+
   function toggleGroup(key: string) {
     collapsed = { ...collapsed, [key]: !collapsed[key] }
     try {
@@ -576,6 +615,34 @@
           aria-label="New session in {group.label}"
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+        </button>
+      </span>
+    {/if}
+    <!-- Clearing a whole folder, for the folders that are only ever clutter: a
+         throwaway directory that collected a dozen one-off sessions is cleared
+         one row at a time today, which is a dozen menus.
+         Only past sessions go. A live one is a running agent and ending it is a
+         different decision with a different button, so a folder holding one
+         offers nothing here rather than quietly taking it with the rest.
+         Armed like the session Close action, and for the same reason with more
+         weight behind it: this deletes several conversations at once and there is
+         no undo. One tap says what it is about to do and how many; a second
+         inside three seconds does it. -->
+    {#if pastOf(group).length > 0 && liveCountOf(group) === 0}
+      <span class="gacts gdel" class:armed={armedGroup === group.key}>
+        <button
+          class="gadd gtrash"
+          onclick={() => clearGroup(group.key, group.label)}
+          title={armedGroup === group.key
+            ? `Tap again to delete ${pastOf(group).length} past ${pastOf(group).length === 1 ? 'session' : 'sessions'} in ${group.label}`
+            : `Delete the past sessions in ${group.label}`}
+          aria-label="Delete the past sessions in {group.label}"
+        >
+          {#if armedGroup === group.key}
+            <span class="garm mono">{pastOf(group).length}</span>
+          {:else}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" /></svg>
+          {/if}
         </button>
       </span>
     {/if}
@@ -1275,6 +1342,12 @@
     .gacts:focus-within {
       opacity: 1;
     }
+    /* An armed folder stays visible after the pointer leaves it, or the
+       confirmation would vanish mid-decision and the second tap would land on
+       nothing. */
+    .gacts.gdel.armed {
+      opacity: 1;
+    }
   }
 
   /* The stem: one hairline down a group's rows, with each session a node on it.
@@ -1857,6 +1930,32 @@
     background: var(--panel);
     color: var(--text-2);
     transition: color 0.12s, background 0.12s;
+  }
+  /* The trash sits apart from the start actions: those two make something and
+     this one destroys something, and a row of three identical squares invites
+     the hand to treat them as three of the same kind of thing. Dimmer at rest
+     for the same reason -- it is the action you want to be sure you meant. */
+  .gdel {
+    margin-left: 2px;
+  }
+  .gtrash {
+    color: var(--text-4);
+    background: none;
+  }
+  .gtrash:hover {
+    color: var(--alert);
+    background: var(--panel);
+  }
+  /* Armed: it stops being an icon and becomes the number it is about to delete,
+     which is the one fact worth confirming. Red, because the second tap is the
+     destructive one and it should not look like the first. */
+  .gdel.armed .gtrash {
+    color: #16100f;
+    background: var(--alert);
+  }
+  .garm {
+    font-size: 11px;
+    font-weight: 650;
   }
   /* A finger is not a cursor. These are the smallest targets in the sidebar and
      there are two of them side by side, so a touch screen gets room to hit the

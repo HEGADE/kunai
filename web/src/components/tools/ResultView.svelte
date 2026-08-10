@@ -65,10 +65,24 @@
     font-size: 10.5px;
     color: var(--text-4);
   }
+  /* Capped, and scrolled rather than truncated.
+     A tool's output is reference material inside a conversation, not the
+     conversation, and an uncapped one buys a `git log` or a test run the whole
+     screen: everything the agent said after it is pushed a page down, so opening
+     one card costs you the thread you were reading. A fixed ceiling keeps the
+     card the same size whatever is in it, and the content is all still there,
+     one scroll away. In px rather than vh so the card does not resize under you
+     when a phone's address bar hides.
+     The ceiling clears the 18-line clamp above it on purpose: below that, a
+     collapsed result offered a scrollbar AND a "show 182 more lines" button at
+     the same time, which are two answers to one question. Collapsed, the clamp
+     is the only affordance; expanded, this is. */
   .out {
     margin: 0;
     padding: 10px 12px;
-    overflow-x: auto;
+    max-height: 372px;
+    overflow: auto;
+    overscroll-behavior: contain; /* scrolling to the end must not scroll the log */
     font-size: 12.5px;
     line-height: 1.5;
     color: var(--text-2);
