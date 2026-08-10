@@ -18,16 +18,10 @@
     turns,
     scroller,
     firstVisible = 0,
-    bottom = 14,
   }: {
     turns: Turn[]
     scroller: HTMLElement | null
     firstVisible?: number
-    // Distance from the bottom of .screen, so the rail clears the composer. Fed
-    // the measured dock height rather than a constant: the composer grows with
-    // the draft, and a rail whose last tick sat behind it would be unreachable
-    // exactly when the conversation is longest.
-    bottom?: number
   } = $props()
 
   // Only prompts. A turn with no user message is the agent continuing (a loop
@@ -43,6 +37,17 @@
   // pixels. The same reason the sidebar renders no heading for a single group.
   const MIN_MARKS = 4
   const show = $derived(marks.length >= MIN_MARKS)
+
+  // Fixed spacing, so the rail is as tall as it needs to be and no taller.
+  //
+  // Spreading the ticks over the whole height was the whole problem: at twenty
+  // prompts they became a comb running the length of the window, a foot from the
+  // real scrollbar, which reads as a second broken scrollbar rather than as an
+  // index. Eight pixels apart makes twenty marks a 152px cluster -- small enough
+  // to be one object the eye takes in at once, which is what an index is.
+  const SPACING = 8
+  const MAX_H = 320
+  const railH = $derived(Math.min((marks.length - 1) * SPACING, MAX_H))
 
   let hovering = $state(false)
   let active = $state(-1)
@@ -67,7 +72,7 @@
   <nav
     class="rail"
     class:open={hovering}
-    style="bottom: {bottom}px"
+    style="height: {railH}px"
     aria-label="Jump to a question"
     onmouseenter={() => (hovering = true)}
     onmouseleave={() => (hovering = false)}
@@ -88,16 +93,24 @@
 {/if}
 
 <style>
-  /* Pinned to the log's own viewport, not to the content, so it does not scroll
-     away with the thing it is for. .scroll is already position: relative. */
+  /* Centred on the log rather than spanning it, and invisible until you go for
+     it. Drawn at rest it is a column of marks nobody asked for, sitting beside
+     the scrollbar and competing with it; the pointer arriving at the right edge
+     is the only moment it has anything to say. */
   .rail {
     position: absolute;
-    top: 14px;
-    /* bottom comes from the prop, so the rail clears the composer as it grows. */
-    right: 6px;
-    width: 22px;
+    top: 50%;
+    transform: translateY(-50%);
+    right: 14px;
+    width: 26px;
     z-index: 8;
+    opacity: 0;
+    transition: opacity var(--t) var(--ease);
     pointer-events: auto;
+  }
+  .rail:hover,
+  .rail:focus-within {
+    opacity: 1;
   }
   /* The hit area is wider than the marks, because a 2px dash is a target nobody
      hits on purpose. The rail itself catches the pointer; the ticks sit inside

@@ -593,7 +593,7 @@
        inside it would scroll away with the log it indexes. Outside the
        !atBottom guard, since the whole point is to leave the bottom.
        Self-hides below a handful of prompts and on a phone; see TurnRail. -->
-  <TurnRail {turns} {scroller} {firstVisible} bottom={dockH + 14} />
+  <TurnRail {turns} {scroller} {firstVisible} />
 
   {#if !atBottom}
     <button class="jump" style="bottom: {dockH + 14}px" onclick={() => toBottom(true)} aria-label="Scroll to latest">
