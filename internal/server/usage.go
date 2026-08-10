@@ -160,13 +160,50 @@ func dropTranscript(configDir, cwd, id string) {
 	if root == "" || id == "" {
 		return
 	}
-	if err := os.Remove(filepath.Join(root, projectSlug(cwd), id+".jsonl")); err == nil {
+	// Retried, because the file is not reliably there when the process that
+	// writes it exits. `claude -p` returning does not guarantee its transcript has
+	// been flushed, so a single delete on the way out can find nothing, report
+	// success by finding nothing, and leave a file that lands a moment later. At
+	// a poll a minute that is a Recent list with a fresh entry in it every minute,
+	// which is exactly what this function was written to prevent and exactly what
+	// was observed: four of them inside five minutes, named after the data dir.
+	//
+	// A few short attempts rather than one, and the whole thing off the caller's
+	// path so a poll never waits on a filesystem. Sessions the Recent list would
+	// show are filtered on "was anything ever asked" anyway (see scanHistory), so
+	// this is about not littering the disk rather than about the list.
+	// The first attempt is synchronous: usually the file is already there, and
+	// deleting it on the spot keeps the common case simple to reason about and to
+	// test. Only a miss goes on to wait, which is the case that could not be
+	// handled inline without making every poll pay for the exception.
+	if removeTranscript(root, cwd, id) {
 		return
 	}
-	matches, _ := filepath.Glob(filepath.Join(root, "*", id+".jsonl"))
-	for _, m := range matches {
-		os.Remove(m)
+	go func() {
+		for i := 0; i < 5; i++ {
+			time.Sleep(400 * time.Millisecond)
+			if removeTranscript(root, cwd, id) {
+				return
+			}
+		}
+	}()
+}
+
+// removeTranscript deletes one poll's transcript and reports whether it found
+// anything. The direct path first, then a search, because the folder name
+// follows the CLI's slug rule rather than ours.
+func removeTranscript(root, cwd, id string) bool {
+	if err := os.Remove(filepath.Join(root, projectSlug(cwd), id+".jsonl")); err == nil {
+		return true
 	}
+	matches, _ := filepath.Glob(filepath.Join(root, "*", id+".jsonl"))
+	found := false
+	for _, m := range matches {
+		if os.Remove(m) == nil {
+			found = true
+		}
+	}
+	return found
 }
 
 // usageCache serves the dashboard without shelling the CLI on every paint, and
