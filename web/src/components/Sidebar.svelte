@@ -293,6 +293,7 @@
     workspace?: string
     projects?: number
     repo?: string
+    project?: string
   }
   const rowId = (r: Row) => (r.kind === 'live' ? r.m.id : r.h.id)
   const sessionGroups = $derived(
@@ -305,6 +306,7 @@
         workspace: m.workspace,
         projects: m.projects,
         repo: m.repo,
+        project: m.project,
       })),
       ...recentDisplay.map((h) => ({
         kind: 'recent' as const,
@@ -313,6 +315,7 @@
         cwd: h.cwd,
         workspace: h.workspace,
         repo: h.repo,
+        project: h.project,
       })),
     ]),
   )
@@ -359,7 +362,7 @@
   // still earns its place when the two genuinely differ, which is a session
   // sitting under a workspace heading somebody named by hand.
   function projectOf(m: TaggedMeta, heading: string): string {
-    const base = m.repo || m.cwd
+    const base = m.repo || m.project || m.cwd
     const name = base.replace(/\/+$/, '').split('/').slice(-1)[0] || ''
     return name && name !== heading ? name : ''
   }
@@ -376,7 +379,7 @@
   function whereOf(m: TaggedMeta): string {
     if (m.repo && wtName(m)) return wtName(m)
     if (m.branch) return m.branch
-    const root = (m.repo || '').replace(/\/+$/, '')
+    const root = (m.repo || m.project || '').replace(/\/+$/, '')
     const cwd = m.cwd.replace(/\/+$/, '')
     if (root && cwd.startsWith(root + '/')) return cwd.slice(root.length + 1)
     return ''

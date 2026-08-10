@@ -329,6 +329,14 @@ func (s *worktreeStore) tagRepos(metas []session.Meta) {
 		if metas[i].Branch == "" {
 			metas[i].Branch = project.Branch(metas[i].Cwd)
 		}
+		// The codebase this directory is part of, so a session started in a
+		// subdirectory groups under the repository rather than under a heading
+		// named after the subdirectory. Past sessions get the same field from a
+		// richer source (their transcript can also rescue a session launched from
+		// a container folder); a live session is answered from cwd alone, because
+		// this runs on every poll and reading a transcript per session per poll to
+		// improve a heading is not a trade worth making.
+		metas[i].Project = project.Root(metas[i].Cwd)
 	}
 }
 

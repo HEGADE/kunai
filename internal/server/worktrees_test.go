@@ -520,3 +520,36 @@ func TestErrorsReachTheUserAsSentences(t *testing.T) {
 		t.Errorf("the message does not say what is wrong: %q", out.Error)
 	}
 }
+
+// A live session started in a subdirectory belongs to the repository above it.
+// Without this the sidebar gave `kunai/web` a heading of its own, split from the
+// codebase it is part of, and did the same for every subdirectory anybody ever
+// launched from.
+func TestTagReposNamesTheCheckoutASubdirectoryBelongsTo(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "kunai")
+	sub := filepath.Join(repo, "web")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	loose := filepath.Join(base, "notes")
+	if err := os.MkdirAll(loose, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newWorktreeStore("", nil)
+	metas := []session.Meta{{ID: "a", Cwd: sub}, {ID: "b", Cwd: loose}}
+	s.tagRepos(metas)
+
+	if metas[0].Project != repo {
+		t.Errorf("subdirectory session Project = %q, want %q", metas[0].Project, repo)
+	}
+	// A directory in no checkout must report nothing rather than guess, so the
+	// heading falls back to the folder as it always did.
+	if metas[1].Project != "" {
+		t.Errorf("session outside any checkout got Project %q, want empty", metas[1].Project)
+	}
+}

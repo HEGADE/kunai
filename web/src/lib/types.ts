@@ -119,6 +119,9 @@ export interface Meta {
   // repo is the main checkout when cwd is a git worktree of it, filled in by the
   // server; see internal/session Meta.Repo.
   repo?: string
+  // project is the checkout cwd sits inside, which is what the sidebar groups
+  // by. See internal/session Meta.Project for how it differs from repo.
+  project?: string
   // branch is that worktree's branch. Shown rather than the directory name,
   // which goes stale when a worktree names itself from its first prompt.
   branch?: string
@@ -361,6 +364,10 @@ export interface HistoryEntry {
   pinned?: boolean // user override, merged from the server's session-metadata store
   workspace?: string // user-set group; a closed session has no project list to infer one
   repo?: string // the main checkout, when cwd is a git worktree of it
+  // project is the codebase this session belongs to when that is not the folder
+  // it was launched from: the checkout containing cwd, or the one its transcript
+  // says the work went into. See projectDir in internal/server/history.go.
+  project?: string
   branch?: string // that worktree's branch, which outlives its directory name
   snoozed_until?: number // parked on the snoozed shelf until this time (unix ms)
   snoozed_at?: number // when the snooze was set

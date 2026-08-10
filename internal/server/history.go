@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hegade/kunai/internal/claude"
+	"github.com/hegade/kunai/internal/project"
 	"github.com/hegade/kunai/internal/session"
 )
 
@@ -35,6 +36,12 @@ type HistoryEntry struct {
 	// Repo is the main checkout when Cwd is a git worktree of it, so a past
 	// worktree session still groups under the codebase it belonged to.
 	Repo string `json:"repo,omitempty"`
+	// Project is the codebase this session belongs to, when that is not the
+	// directory it was launched from: the checkout containing Cwd, or, when Cwd
+	// is a container folder holding no checkout, the one the transcript says the
+	// work went into. See projectDir. Empty when there is no honest answer, and
+	// the heading falls back to the folder as before.
+	Project string `json:"project,omitempty"`
 	// Branch is that worktree's branch, which outlives its directory name.
 	Branch string `json:"branch,omitempty"`
 	// SnoozedUntil and SnoozedAt (unix ms) park this session on the snoozed
@@ -169,8 +176,8 @@ func scanHistory(live map[string]bool, limit int, roots []accountRoot, keep map[
 	// multiply the expensive part of this scan by the number of accounts.
 	out := make([]HistoryEntry, 0, len(best))
 	for id, c := range best {
-		cwd, title, asked := probeTranscript(c.path)
-		if cwd == "" {
+		p := probeTranscript(c.path)
+		if p.Cwd == "" {
 			continue
 		}
 		// Nobody ever asked this session anything, so it is not a conversation and
@@ -187,13 +194,21 @@ func scanHistory(live map[string]bool, limit int, roots []accountRoot, keep map[
 		// rule. Filtering on "was anything ever asked" catches every way this
 		// happens, including ones nobody has thought of, where filtering on a known
 		// folder would only catch the two above.
-		if !asked {
+		if !p.Asked {
 			continue
 		}
+		title := p.Title
 		if title == "" {
-			title = filepath.Base(cwd)
+			title = filepath.Base(p.Cwd)
 		}
-		out = append(out, HistoryEntry{ID: id, Cwd: cwd, Title: title, CLI: c.cli, Mtime: c.mtime})
+		out = append(out, HistoryEntry{
+			ID:      id,
+			Cwd:     p.Cwd,
+			Title:   title,
+			Project: projectDir(p.Cwd, p.Dirs),
+			CLI:     c.cli,
+			Mtime:   c.mtime,
+		})
 	}
 	// Map order is random, so equal timestamps need a tiebreak or the list would
 	// reshuffle between polls.
@@ -223,27 +238,126 @@ func scanHistory(live map[string]bool, limit int, roots []accountRoot, keep map[
 	return out
 }
 
+// projectDir reports the codebase a session belongs to, which is not always the
+// directory it was launched from.
+//
+// The sidebar groups by project, and it grouped by cwd, so a session started in
+// ~/coding got a heading called "coding" -- a folder that holds every codebase
+// on the machine and is not one itself. Twelve of twenty-five rows here sat
+// under ~, ~/coding or /tmp on that rule.
+//
+// The obvious fix is to hide sessions whose folder has no .git, and it is wrong:
+// the two LARGEST sessions on this machine were both launched from ~/coding, so
+// that rule would have deleted the biggest work on the machine from Recent. The
+// folder is uninformative, the session is not.
+//
+// So there are two questions, asked in order.
+//
+//   - Is cwd inside a checkout? Then the checkout is the project, which also
+//     merges `kunai/web` back under `kunai` instead of giving a subdirectory a
+//     heading of its own. Costs a few stats and no transcript at all.
+//   - Otherwise: cwd is a container, so ask the transcript where the work
+//     actually went. Every line records the directory the agent was in, so the
+//     immediate child of cwd that most of them name is the codebase. Buckets are
+//     by immediate child rather than by the raw directory, or a session that
+//     spent its time in `hiring-god/web` would be filed under "web".
+//
+// Three things a candidate must be, each of which a real session tripped over:
+// not a dotfolder (~/.claude is not a project), a directory that still EXISTS
+// (a heading you cannot start a session in is a bad heading, and one deleted
+// folder was outpolling the right answer 25 to 26), and a clear winner. A near
+// tie is not noise to be broken: it means the session genuinely spanned several
+// codebases, there is no single honest heading, and the right answer is to leave
+// it under its folder where naming it a workspace is offered.
+func projectDir(cwd string, dirs map[string]int) string {
+	if cwd == "" {
+		return ""
+	}
+	if root := project.Root(cwd); root != "" {
+		return root
+	}
+	base := strings.TrimRight(cwd, "/")
+	kids := map[string]int{}
+	for dir, n := range dirs {
+		rest, ok := strings.CutPrefix(strings.TrimRight(dir, "/"), base+"/")
+		if !ok {
+			continue
+		}
+		seg, _, _ := strings.Cut(rest, "/")
+		if seg == "" || strings.HasPrefix(seg, ".") {
+			continue
+		}
+		kids[seg] += n
+	}
+	var best, runner string
+	for seg := range kids {
+		if best == "" || kids[seg] > kids[best] {
+			best, runner = seg, best
+			continue
+		}
+		if runner == "" || kids[seg] > kids[runner] {
+			runner = seg
+		}
+	}
+	// minDirLines keeps a single stray `cd` from renaming a group; twice the
+	// runner-up is what "clear winner" means.
+	const minDirLines = 3
+	if best == "" || kids[best] < minDirLines || (runner != "" && kids[best] < 2*kids[runner]) {
+		return ""
+	}
+	path := filepath.Join(base, best)
+	if fi, err := os.Stat(path); err != nil || !fi.IsDir() {
+		return ""
+	}
+	// The child may itself sit inside a checkout rooted higher up (a repo cloned
+	// into a folder of its own); the checkout is the project either way.
+	if root := project.Root(path); root != "" {
+		return root
+	}
+	return path
+}
+
+// transcriptProbe is everything one read of a transcript yields about it. The
+// fields are returned together rather than one at a time because they come from
+// the same two reads, and the whole point of this type is that nothing here
+// costs a third.
+type transcriptProbe struct {
+	// Cwd is the directory the session was launched from.
+	Cwd string
+	// Title is what Claude Code would show for it.
+	Title string
+	// Asked reports whether anybody ever prompted this session, which is what
+	// separates a conversation from a transcript that merely exists. It is kept
+	// apart from Title because the two are not the same question: a session can
+	// be prompted and still have no usable title (an attachment with no words),
+	// and a transcript can carry a generated title having never been asked
+	// anything.
+	Asked bool
+	// Dirs counts, by line, the working directories the tail reported. Every
+	// transcript line carries the directory the agent was in when it was written,
+	// so a session that was started in a container folder and then worked inside
+	// a codebase says so here, in its own record, without kunai having had to
+	// note it down at the time. See projectDir for what is made of it.
+	Dirs map[string]int
+}
+
 // probeTranscript extracts the session cwd (from the head) and the display
 // title, mirroring what Claude Code shows: a user's custom title if set, else
 // the generated ai-title, else the first real user prompt. Claude Code writes
 // the title entries near the END of the transcript, so they're read from the
 // tail; the head scan only gets the cwd and a first-prompt fallback.
-// asked reports whether anybody ever prompted this session, which is what
-// separates a conversation from a transcript that merely exists. It is returned
-// apart from the title because the two are not the same question: a session can
-// be prompted and still have no usable title (an attachment with no words), and
-// a transcript can carry a generated title having never been asked anything.
-func probeTranscript(path string) (cwd, title string, asked bool) {
+func probeTranscript(path string) transcriptProbe {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", "", false
+		return transcriptProbe{}
 	}
 	defer f.Close()
 
+	p := transcriptProbe{}
 	var firstPrompt string
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024) // transcript lines can be large
-	for lines := 0; sc.Scan() && lines < 60 && (cwd == "" || !asked); lines++ {
+	for lines := 0; sc.Scan() && lines < 60 && (p.Cwd == "" || !p.Asked); lines++ {
 		var v struct {
 			Cwd     string `json:"cwd"`
 			Message struct {
@@ -254,8 +368,8 @@ func probeTranscript(path string) (cwd, title string, asked bool) {
 		if json.Unmarshal(sc.Bytes(), &v) != nil {
 			continue
 		}
-		if cwd == "" && v.Cwd != "" {
-			cwd = v.Cwd
+		if p.Cwd == "" && v.Cwd != "" {
+			p.Cwd = v.Cwd
 		}
 		if v.Message.Role == "user" && len(v.Message.Content) > 0 {
 			t := strings.TrimSpace(firstUserText(v.Message.Content))
@@ -263,7 +377,7 @@ func probeTranscript(path string) (cwd, title string, asked bool) {
 			// They are not somebody asking for something, so they do not make this
 			// a conversation either.
 			if t != "" && !strings.HasPrefix(t, "<") {
-				asked = true
+				p.Asked = true
 				if firstPrompt == "" {
 					firstPrompt = t
 				}
@@ -271,34 +385,68 @@ func probeTranscript(path string) (cwd, title string, asked bool) {
 		}
 	}
 
-	title = claudeTitle(f)
-	if title == "" {
-		title = firstPrompt
+	// One tail read feeding both readers. The title has always needed it, so the
+	// directory histogram is free: taking it from the head instead would have
+	// meant giving up the early break above and unmarshalling sixty whole lines
+	// per transcript per poll, for a worse answer. The tail is also the better
+	// sample on its own terms, since it reports where the session was working by
+	// the end rather than which folder somebody happened to type at the start.
+	tail := tailBytes(f)
+	p.Title = claudeTitle(tail)
+	p.Dirs = tailDirs(tail)
+	if p.Title == "" {
+		p.Title = firstPrompt
 	}
-	return cwd, truncate(strings.TrimSpace(title), 64), asked
+	p.Title = truncate(strings.TrimSpace(p.Title), 64)
+	return p
 }
 
-// claudeTitle reads the tail of a transcript and returns Claude Code's current
-// session name: the last custom-title (a user rename) if any, else the last
-// ai-title (generated). These entries are appended near the end of the file, so
-// a bounded tail read finds them without scanning the whole transcript.
-func claudeTitle(f *os.File) string {
+// tailBytes reads the last titleWindow bytes of an open transcript, which
+// is where Claude Code appends the entries the probe is after.
+func tailBytes(f *os.File) []byte {
+	const window = 128 * 1024
 	fi, err := f.Stat()
 	if err != nil {
-		return ""
+		return nil
 	}
-	const window = 128 * 1024
 	start := int64(0)
 	if fi.Size() > window {
 		start = fi.Size() - window
 	}
 	if _, err := f.Seek(start, io.SeekStart); err != nil {
-		return ""
+		return nil
 	}
 	data, err := io.ReadAll(f)
 	if err != nil {
-		return ""
+		return nil
 	}
+	return data
+}
+
+// tailDirs counts the working directory each tail line reported. The first line
+// of a windowed read is usually a fragment, which json rejects, so a truncated
+// line costs one sample and never a wrong one.
+func tailDirs(data []byte) map[string]int {
+	out := map[string]int{}
+	for _, ln := range bytes.Split(data, []byte("\n")) {
+		if !bytes.Contains(ln, []byte(`"cwd"`)) { // cheap prefilter
+			continue
+		}
+		var v struct {
+			Cwd string `json:"cwd"`
+		}
+		if json.Unmarshal(ln, &v) != nil || v.Cwd == "" {
+			continue
+		}
+		out[v.Cwd]++
+	}
+	return out
+}
+
+// claudeTitle returns Claude Code's current session name from the tail of a
+// transcript: the last custom-title (a user rename) if any, else the last
+// ai-title (generated).
+func claudeTitle(data []byte) string {
 	var ai, custom string
 	for _, ln := range bytes.Split(data, []byte("\n")) {
 		if !bytes.Contains(ln, []byte("-title")) { // cheap prefilter

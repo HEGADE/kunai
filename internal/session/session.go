@@ -1153,6 +1153,14 @@ type Meta struct {
 	// the codebase it belongs to: grouping by its own directory would give every
 	// worktree a heading of its own and scatter one repository across the list.
 	Repo string `json:"repo,omitempty"`
+	// Project is the checkout Cwd sits inside, which is what the sidebar groups
+	// by. Merged in by the server for the same reason Repo is. It differs from
+	// Repo in what it answers: Repo is "this directory is a worktree OF that
+	// repository", Project is "this directory is PART of that repository", so a
+	// session started in kunai/web groups under kunai instead of under a heading
+	// called "web". Empty when Cwd is in no checkout, and the heading falls back
+	// to the folder.
+	Project string `json:"project,omitempty"`
 	// Branch is the worktree's branch, when Cwd is one. Merged in by the server
 	// like Repo. It is shown rather than the directory name because a worktree
 	// that names itself from its first prompt renames the branch and leaves the
