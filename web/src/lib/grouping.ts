@@ -24,6 +24,15 @@ export interface Groupable {
   // heading of its own and scatter one repository across the sidebar, which is
   // the opposite of what grouping is for.
   repo?: string
+  // project is the codebase this session belongs to, worked out by the server:
+  // the checkout cwd sits inside, or, for a past session launched from a folder
+  // that holds no checkout, the one its own transcript says the work went into.
+  //
+  // Without it the heading was whatever folder somebody happened to type, so a
+  // session started in ~/coding got a heading called "coding" -- a folder that
+  // holds every codebase on the machine and is not one itself. Empty whenever
+  // the server had no honest answer, which is why cwd is still the fallback.
+  project?: string
 }
 
 export interface SessionGroup<T> {
@@ -46,9 +55,14 @@ export function projectName(cwd: string): string {
 
 // groupLabel is the heading a session belongs under. A name the user set always
 // wins, because they set it precisely to override the directory.
+//
+// Below that the order is most-specific-claim first: repo says "this directory
+// is a worktree of that codebase", project says "this directory is part of, or
+// did its work in, that codebase", and cwd is what is left when neither is
+// known.
 export function groupLabel(s: Groupable): string {
   const named = s.workspace?.trim()
-  return named || projectName(s.repo || s.cwd)
+  return named || projectName(s.repo || s.project || s.cwd)
 }
 
 // isWorkspace reports whether a session holds more than one codebase, which is
@@ -101,7 +115,11 @@ export function groupStartTarget<T extends Groupable & { machineId: string }>(
   // this heading means. Without this, one worktree in a group would make its
   // members' directories disagree and the heading would lose its start button
   // exactly when the repository had the most work going on in it.
-  const home = (s: T) => s.repo || s.cwd
+  // The same precedence groupLabel uses, so "start here" starts where the
+  // heading says. A heading rescued from a container folder must start in the
+  // codebase it names, not back in the folder -- which is why the server only
+  // reports a project directory that still exists.
+  const home = (s: T) => s.repo || s.project || s.cwd
   if (!first || !home(first)) return null
   for (const item of group.items) {
     if (home(item) !== home(first) || item.machineId !== first.machineId) return null

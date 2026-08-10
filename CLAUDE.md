@@ -1331,15 +1331,54 @@ jumping to the end.
   Close action apart from the safe ones.
 - Sessions are grouped in the sidebar by the codebase they belong to
   (`web/src/lib/grouping.ts`, pure and testable). Two kinds of heading, and the
-  difference is who chose the name: a **project** group is derived from the
-  directory the session started in, so every session has one for free; a
-  **workspace** group is named by hand, which is what you reach for once a
-  session holds more than one codebase and the directory it happened to start in
-  stops describing it. A named heading wins over the derived one, sessions
-  sharing a name group together, and clearing the name drops them back under
-  their folder. Pinned stays flat (a pin is a priority list; grouping it would
-  bury the thing you pinned), and a single group renders no heading at all, so a
-  one-project machine looks exactly as it did before.
+  difference is who chose the name: a **project** group is derived, so every
+  session has one for free; a **workspace** group is named by hand, which is what
+  you reach for once a session holds more than one codebase and the directory it
+  happened to start in stops describing it. A named heading wins over the derived
+  one, sessions sharing a name group together, and clearing the name drops them
+  back under their folder. Pinned stays flat (a pin is a priority list; grouping
+  it would bury the thing you pinned), and a single group renders no heading at
+  all, so a one-project machine looks exactly as it did before.
+  What the derived heading is derived FROM took a second pass. It was the
+  directory the session started in, which is not the same thing as its codebase:
+  a session launched from `~/coding` got a heading called **coding**, a folder
+  that holds every codebase on the machine and is not one itself. Twelve of
+  twenty-five rows on this machine sat under `~`, `~/coding` or `/tmp` on that
+  rule. The obvious fix -- hide a session whose folder has no `.git` -- is wrong,
+  and measurably so: the two LARGEST transcripts here (51MB and 10MB) were both
+  launched from `~/coding`, so it would have deleted the biggest work on the
+  machine from Recent. The folder is uninformative; the session is not. So
+  `Meta.Project`/`HistoryEntry.Project` carry a derived answer and `groupLabel`
+  prefers `repo || project || cwd` (most-specific claim first: `repo` is "cwd is
+  a worktree OF that codebase", `project` is "cwd is part of, or did its work in,
+  that codebase"). It is derived in two steps. `project.Root` walks up for a
+  `.git`, which alone merges `kunai/web` back under `kunai` and costs a few
+  stats; that is all a **live** session gets, because this runs on every poll and
+  reading a transcript per session per poll to improve a heading is not a trade
+  worth making. A **past** session gets the second step (`projectDir` in
+  `history.go`): cwd is a container, so ask the transcript where the work went.
+  Every transcript line records the directory the agent was in, so the immediate
+  child of cwd that most of them name is the codebase -- bucketed by immediate
+  child, or a session that spent its time in `hiring-god/web` files under a
+  heading called **web**. This is free, and staying free is the constraint:
+  `claudeTitle` already read a 128KB tail of every transcript on every poll, so
+  the histogram rides those same bytes (`tailBytes` read once, `claudeTitle` and
+  `tailDirs` both fed from it). Taking it from the head instead would have meant
+  giving up `probeTranscript`'s early break and unmarshalling sixty whole lines
+  per transcript per poll, for a worse answer -- the tail is the better sample on
+  its own terms, since it reports where the session was working by the end rather
+  than which folder somebody typed at the start. Three things a candidate must
+  be, each of which a real session tripped over: not a dotfolder (`~/.claude` is
+  not a project), a directory that still **exists** (a heading you cannot start a
+  session in is a bad heading, and one deleted folder was outpolling the right
+  answer 25 to 26), and a **clear winner** (twice the runner-up, at least three
+  lines). A near tie is not noise to be broken: it means the session genuinely
+  spanned several codebases, there is no single honest heading, and the right
+  answer is to leave it under its folder where naming it a workspace is offered.
+  Measured on the real corpus: container headings 12 rows -> 8, four sessions
+  moved to the codebase they actually worked in, `/api/history` unchanged at 37ms.
+  The residue: a **live** session launched from a container folder keeps that
+  folder as its heading until it closes, since only the transcript can rescue it.
 - The workspace name lives in `sessionMetaStore` beside the rename and the pin,
   keyed by session id, because the grouping has to **outlive the process**: a
   session named while running must still be in that workspace tomorrow when it is
