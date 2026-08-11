@@ -629,6 +629,11 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   design). It is a superset of the `selfPID` rule and keeps its load-bearing
   property: the **socket** is skipped, never the port, or a forwarded preview
   (two listeners on one port) would lose its row the instant you shared it.
+  And **a test run is nobody's dev server** (`isTestBinary`): `go test ./...`
+  compiles each package to `<pkg>.test` and a suite with an httptest server binds
+  a real port for the seconds it takes, which kunai caught and offered as a
+  preview to share -- a link to a process that had already exited. Matched on the
+  toolchain's own `.test` suffix rather than a guess.
   And **do not go back to lsof for the socket list on Linux.** That was the
   original source and it silently went blind: a real `next-server` holding
   `*:3000`, owned by kunai's own user, with a readable `/proc/<pid>/fd/22 ->
