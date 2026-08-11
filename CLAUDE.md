@@ -765,7 +765,15 @@ what you are reading and become the record of how the answer was reached, which
 is what the collapsed `ToolGroup` is for. Reopening is keyed on the NUMBER OF
 TURNS rather than on `running`, because a turn's blocks change constantly while
 it works and only a new query should overrule the reader: closing it mid-turn is
-respected for that turn and forgotten by the next.
+respected for that turn and forgotten by the next. Open, it shows the tool
+calls ONLY, in one bounded self-scrolling block above the reply. It used to
+render every block, which was wrong twice: `Chat.svelte` renders the prose below
+it anyway, so opening printed the answer a second time, and interleaving the two
+made a paragraph and a command take turns shoving the conversation down the page.
+Calls above, prose below, and the box capped (260px, px not vh) so a turn that
+makes forty of them does not grow the page by forty rows -- which is the exact
+failure `LiveActivity` was built to prevent and that opening it by default
+reintroduced.
 
 `TurnChanges.svelte` renders a **per-query** changed-files card, right under the
 reply that made the changes: the files that query's Edit/Write/MultiEdit calls
