@@ -44,7 +44,40 @@ type funnelState struct {
 	// InUse maps a taken funnel port to what it currently points at, so the UI can
 	// say "10000 is already serving 127.0.0.1:8080" instead of silently refusing.
 	InUse map[int]string `json:"in_use,omitempty"`
-	Error string         `json:"error,omitempty"`
+	// Stale lists funnel ports still mapped to a loopback address with nothing
+	// behind it: a mapping this machine made for a share gate that has since
+	// moved. They appear in Free as well, since turning public access on again
+	// simply repoints one -- this names them so it can also be done without being
+	// asked. Not sent to the client, which only needs to know what is available.
+	Stale []int  `json:"-"`
+	Error string `json:"error,omitempty"`
+}
+
+// askFunnel reads the Funnel config, through the injected reader when a test has
+// supplied one. Every caller goes through this rather than calling funnelStatus
+// directly, or a new one silently shells out to tailscale in a test that thought
+// it had stubbed the answer.
+func (s *Server) askFunnel(gatePort int) funnelState {
+	if s.funnelStatusFn != nil {
+		return s.funnelStatusFn(gatePort)
+	}
+	return s.funnelStatus(gatePort)
+}
+
+// StaleLoopback reports one funnel port left pointing at a gate that has gone,
+// which is a mapping this machine is the obvious owner of. Lowest port first, so
+// the choice does not wander between calls.
+func (f funnelState) StaleLoopback() (int, bool) {
+	if len(f.Stale) == 0 {
+		return 0, false
+	}
+	best := f.Stale[0]
+	for _, p := range f.Stale[1:] {
+		if p < best {
+			best = p
+		}
+	}
+	return best, true
 }
 
 // tailscaleServeStatus is the subset of `tailscale serve status --json` we read.
@@ -141,6 +174,7 @@ func (s *Server) funnelStatus(gatePort int) funnelState {
 		case served && gatePort != 0 && proxy == target:
 			out.Port = port // already serving this machine's share gate
 		case served && staleLoopback(proxy):
+			out.Stale = append(out.Stale, port)
 			// Pointed at a loopback port with nothing behind it: a mapping kunai
 			// made for a share gate that has since gone. Offered back rather than
 			// reported busy, because otherwise every restart burned one of the three
@@ -477,11 +511,7 @@ func (s *Server) diagnoseBindConflict(err error) string {
 	}
 	// gatePort 0: nothing of ours is running, so no mapping can match it, which
 	// is exactly the state this is called in.
-	ask := s.funnelStatusFn
-	if ask == nil {
-		ask = s.funnelStatus
-	}
-	st := ask(0)
+	st := s.askFunnel(0)
 	held, ok := st.InUse[port]
 	if !ok {
 		return "" // something else has the port; the bind error is all we know

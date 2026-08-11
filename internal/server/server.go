@@ -226,7 +226,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	// only available with a data dir. The gate is constructed either way and simply
 	// never started when there is nothing to serve.
 	s.shares = share.NewStore(shareStorePath(cfg.DataDir))
-	s.gate = newShareGate(s.shares, mgr, s.pwa, gatePortFile(cfg.DataDir))
+	s.gate = newShareGate(s.shares, mgr, s.pwa, gatePortFile(cfg.DataDir), s.images.path())
 	// The lock on the network listener. Constructed always so the owner can set a
 	// PIN before turning -lan on; the listener refuses to start without one.
 	s.lanAuth = lanauth.Open(filepath.Join(cfg.DataDir, "lanauth.json"))

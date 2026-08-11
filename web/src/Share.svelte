@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { setContext } from 'svelte'
   // The page somebody sees when they open a share link: one conversation, and
   // nothing else about the machine it runs on.
   //
@@ -11,10 +12,14 @@
   import BlockView from './components/BlockView.svelte'
   import Spinner from './components/Spinner.svelte'
   import Lightbox from './components/Lightbox.svelte'
+  import { FILE_BASE, sharedImageBase } from './lib/filebase'
 
   // The token is the last path segment of /s/<token>.
   const token = decodeURIComponent(location.pathname.replace(/^.*\/s\//, '').replace(/\/$/, ''))
   const g = new GuestConnection(token)
+  // Pictures the conversation drew. Not the owner's file route, which is
+  // owner-only and off this gate on purpose; see lib/filebase.ts.
+  setContext(FILE_BASE, () => sharedImageBase(token))
 
   let draft = $state('')
   let name = $state('')

@@ -44,6 +44,9 @@ type shareGate struct {
 	// would make "what can a guest reach" a question about every field on it.
 	sessions sessionLookup
 	pwa      fs.FS
+	// imagesDir is where generated pictures live. The only directory this gate
+	// will serve a file from, and empty means it serves none.
+	imagesDir string
 	// portFile remembers the port to bind, so a Funnel mapping made once keeps
 	// working across restarts. Empty means "do not remember" (tests).
 	portFile string
@@ -73,8 +76,8 @@ type sessionLookup interface {
 	Get(id string) (*session.Session, bool)
 }
 
-func newShareGate(shares *share.Store, sessions sessionLookup, pwa fs.FS, portFile string) *shareGate {
-	return &shareGate{shares: shares, sessions: sessions, pwa: pwa, portFile: portFile}
+func newShareGate(shares *share.Store, sessions sessionLookup, pwa fs.FS, portFile, imagesDir string) *shareGate {
+	return &shareGate{shares: shares, sessions: sessions, pwa: pwa, portFile: portFile, imagesDir: imagesDir}
 }
 
 // Port is the localhost port the gate listens on, 0 until started. This is what
@@ -228,6 +231,9 @@ func (g *shareGate) mux() http.Handler {
 	m.HandleFunc("POST /api/share/{token}/pair", g.handlePair)
 	m.HandleFunc("GET /api/share/{token}/pair", g.handlePairStatus)
 	m.HandleFunc("GET /ws/share/{token}", g.handleWS)
+	// A picture the conversation drew. NOT the owner's file route, which reads
+	// the session's own folders and stays off this gate; see sharedimage.go.
+	m.HandleFunc("GET /api/share/{token}/image", g.handleSharedImage)
 	// Only the fingerprinted bundle, and only as files: no directory listing, and
 	// no reaching the rest of the embedded tree.
 	m.Handle("GET /assets/", g.assets())

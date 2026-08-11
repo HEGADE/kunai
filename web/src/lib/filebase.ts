@@ -24,3 +24,18 @@ export function fileBaseFor(origin: string, sessionId: string): string {
   if (!sessionId) return ''
   return `${origin.replace(/\/+$/, '')}/api/sessions/${encodeURIComponent(sessionId)}/file?path=`
 }
+
+// sharedImageBase is the guest equivalent, and it points at a DIFFERENT route on
+// a different listener for a reason worth stating.
+//
+// The owner's route above reads files inside the session's own folders, and it
+// is deliberately absent from the share gate: a share link is a public URL, and
+// that route would hand whoever holds it every image in the project. So a guest
+// gets a route confined to the generated-images directory instead, which holds
+// nothing but pictures the model drew in a conversation they are already
+// watching. Same shape of prefix, so the markdown renderer needs no idea which
+// of the two it was given.
+export function sharedImageBase(token: string): string {
+  if (!token) return ''
+  return `/api/share/${encodeURIComponent(token)}/image?path=`
+}
