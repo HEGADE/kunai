@@ -569,7 +569,12 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   read. The path they send is reduced to its base name and joined to that one
   directory, which makes traversal inexpressible rather than merely refused, and
   the owner's session-folder route stays owner-only and off the gate with its
-  test intact.
+  test intact. A guest also gets the **same "Working…" line the owner
+  sees**: sending left nothing at all between the message and the first token, so
+  a turn that thinks for half a minute was indistinguishable from one that was
+  never delivered, and a guest has no other way to check. The header dot and the
+  Stop button did change, but neither is where somebody looks after pressing
+  Send.
   The directory is swept to `imageKeep` oldest-first, because pictures are ~800KB
   and nothing else would ever delete one. `SetImageSaver` is the whole switch:
   with no saver the tool is never offered, so the capability is gated on being

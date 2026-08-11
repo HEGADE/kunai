@@ -120,6 +120,15 @@
       {/if}
       {#if g.streaming}
         <div class="msg reply"><Markdown text={g.streaming} live /></div>
+      {:else if running && !g.thinking}
+        <!-- The same line the owner sees, and the guest needs it more.
+             Sending left nothing at all between the message and the first token:
+             a turn that thinks for half a minute before writing anything is
+             indistinguishable from one that was never delivered, and the guest
+             cannot check the session any other way. The header dot and the Stop
+             button did change, but neither is where somebody is looking after
+             they press Send. -->
+        <div class="msg reply"><span class="working">Working…</span></div>
       {/if}
       {#if awaiting}
         <p class="waiting">Waiting for the owner to approve something.</p>
@@ -262,6 +271,16 @@
     font-family: var(--serif);
     font-size: 15.5px;
     line-height: 1.62;
+  }
+  .working {
+    font-size: 14px;
+    color: var(--text-3);
+    animation: soften 1.6s ease-in-out infinite;
+  }
+  @keyframes soften {
+    50% {
+      opacity: 0.45;
+    }
   }
   .thinking {
     color: var(--text-4);
