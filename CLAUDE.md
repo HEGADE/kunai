@@ -661,6 +661,40 @@ The web client renders the conversation richly from data already on the client
   a copy button. The in-flight streaming block
   renders unhighlighted for speed (`live` prop); committed blocks highlight once via
   a pure `$derived`.
+- **An image in a reply is a thing you can use**, not just something that paints.
+  `withImageFrames` (in `Markdown.svelte`) resolves the src as before and then
+  wraps every image in a `<figure>` with a caption and a hover toolbar: expand
+  and download. Rendering it was only half the job -- a picture arrives at
+  whatever size the model drew it, inside a message column narrower than that,
+  and the one thing you want to do with a picture somebody made for you is keep
+  it. Inline height is capped (`460px`, px not vh so a phone's address bar hiding
+  cannot resize it) so one image cannot push the rest of the reply off screen;
+  full size is one click away.
+  Four things are load-bearing. The frame is built from **real DOM nodes** and
+  the caption is set with `textContent`, because alt text is model-written prose
+  and string-concatenating it into markup is how a caption becomes an injection.
+  The actions are wired by **delegation** in the component, for the same reason
+  the code-copy button is: figures live inside `{@html}`, so there is no
+  component per picture to hang a handler on. `lib/lightbox.svelte.ts` is a
+  module-level store with ONE `<Lightbox />` mounted per entry point (App and
+  Share), because Markdown renders once per assistant block and dozens are on
+  screen at a time -- per-message overlay state would mount dozens of key
+  handlers each with its own idea of whether it is open. And `saveImage`
+  (`lib/imageActions.ts`) **fetches the bytes and saves a blob** rather than
+  pointing an `<a download>` at the URL: the download attribute is ignored
+  cross-origin, and cross-origin is the ordinary case here, since a session on a
+  peer machine is served from that machine's origin while the app came from the
+  hub. Left as a plain link, Download on a peer's image navigates away from the
+  conversation instead of saving. It falls back to a plain link when fetch is
+  refused, which is better than a button that appears to do nothing.
+  The saved file is named from the `path` query parameter rather than the URL
+  (`fileNameFor`), because every image in a session shares one route and a name
+  taken from the path segments would call all of them "file". A picture that
+  will not load is **marked and explains itself**: the file route refuses
+  anything outside the session's folders (403) or that is not a raster image
+  (415), and the browser's broken-image glyph says which of those happened not at
+  all. The error listener is on the **capture** phase, since an `<img>` error
+  does not bubble.
 - `web/src/components/tools/ToolBody.svelte` dispatches per tool: `Edit` and
   `MultiEdit` render a red/green line diff (`web/src/lib/diff.ts`), `Write` shows
   highlighted content, `Bash` shows the command, `Read`/`Grep`/`Glob` show fields,
