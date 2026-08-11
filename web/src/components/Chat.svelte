@@ -33,7 +33,6 @@
   import TurnFooter from './TurnFooter.svelte'
   import TurnRail from './TurnRail.svelte'
   import TurnChanges from './TurnChanges.svelte'
-  import ReviewDraft from './ReviewDraft.svelte'
   import ShareDialog from './ShareDialog.svelte'
   import Hint from './Hint.svelte'
 
@@ -500,13 +499,6 @@
         </div>
       {/if}
       <div class="log">
-        <!-- A review session's findings, pinned above the work rather than
-             buried under it. The card is the POINT of this session: while the
-             review runs it is the progress display, and when it finishes it is
-             the thing you act on. Putting it at the bottom meant scrolling past
-             minutes of tool calls to reach the only part that matters.
-             Self-hides when this session is not a review. -->
-        <ReviewDraft sessionId={chat.sessionId} machineId={app.activeMachineId ?? ''} />
         {#each turns as turn, ti (firstVisible + ti)}
           {@const live = firstVisible + ti === allTurns.length - 1 && (running || !!chat.streaming || !!chat.thinking)}
           {#if turn.project}

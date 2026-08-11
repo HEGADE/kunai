@@ -165,7 +165,6 @@ func (s *Server) handleFleetWS(w http.ResponseWriter, r *http.Request) {
 func (s *Server) sessionList() []session.Meta {
 	metas := s.mgr.List()
 	s.worktrees.tagRepos(metas)
-	s.tagReviewRepos(metas)
 	if s.sessionMeta != nil {
 		mergeMeta(metas, s.sessionMeta.all())
 	}

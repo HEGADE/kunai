@@ -179,12 +179,6 @@ class AppStore {
   }
   showNew = $state(false)
   showSettings = $state(false)
-  // A review session opens on its findings, not on the conversation. The chat is
-  // still there and is one click away, because being able to argue with the
-  // reviewer is the thing kunai has that a CI reviewer does not; it is just not
-  // the room you start in. reviewAsk seeds the composer when you pick a finding
-  // to ask about, so the question arrives with its subject attached.
-  reviewChat = $state(false)
   reviewAsk = $state('')
   showAccounts = $state(false)
   showChannels = $state(false)
