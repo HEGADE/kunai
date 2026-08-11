@@ -571,6 +571,67 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   (`Scan` -> `Info`, `Info.Brief()`): layout, language mix, git head from `.git`,
   the files that name it. It never opens the code, and the walk skips `.git`,
   `node_modules` and friends and is capped, because it runs while someone waits.
+- `internal/preview` (+ `internal/server/preview.go`, `previewforward.go`,
+  `previewcwd.go`): **seeing what the agent built**. kunai could always say what
+  an agent WROTE and never what it MADE -- the agent ends a task by running the
+  thing (`npm run dev`, a docs server) and that is a port on a machine you are not
+  sitting at. The package answers which ports are listening and whose they are;
+  `previewforward.go` binds the SAME port on the tailnet address and splices TCP,
+  so a phone can open it.
+  Two attribution facts are load-bearing. Ancestry ALONE is wrong for the main
+  case: the agent backgrounds the dev server, the shell exits, and the kernel
+  reparents it to init, severing its chain to `claude` -- so `OwnedBy` matches by
+  ancestry **or** by working directory (`withinDir`, compared segment-wise so
+  `/home/me/app2` is not inside `/home/me/app`).
+  But that rule is only as good as the directory, and it must be **refused for a
+  container** (`attributableDir`): a session started in the HOME directory
+  matched every process under home, which on a personal machine is nearly all of
+  them. Observed live -- a session opened in `/home/ninja` offered `:8443 kunai`
+  and the two ephemeral ports of the other instance's native Codex and Grok
+  proxies as previews to share. Home, anything above it (`/home`, `/Users`) and
+  the filesystem root attribute nothing and leave ancestry to work alone, which
+  is the same distinction the sidebar's grouping had to learn: `~/coding` is
+  where codebases live, not a codebase.
+  And **another kunai is never a preview** (`isOurs`). `selfPID` covers this
+  process only, which was enough until a machine ran two of them -- and the
+  nightly channel is *designed* to sit beside a stable install, so two is the
+  ordinary state of a developer's machine. Matched on process name, the one
+  identifier both listener backends produce, against this binary's own base name
+  plus the `kunai` prefix (the channels are `kunai` and `kunai-nightly` by
+  design). It is a superset of the `selfPID` rule and keeps its load-bearing
+  property: the **socket** is skipped, never the port, or a forwarded preview
+  (two listeners on one port) would lose its row the instant you shared it.
+  And **do not go back to lsof for the socket list on Linux.** That was the
+  original source and it silently went blind: a real `next-server` holding
+  `*:3000`, owned by kunai's own user, with a readable `/proc/<pid>/fd/22 ->
+  socket:[N]` and an entry in `/proc/net/tcp6`, produced **zero** rows from
+  `lsof -i -P -n` and from `lsof -p <pid>` while lsof listed kunai's own sockets
+  in the same run -- so the card was empty for exactly the case the feature
+  exists for, with nothing wrong in the attribution logic. Reproduced twice on a
+  real Next.js dev server. `listen_linux.go` therefore reads `/proc/net/tcp`
+  and `/proc/net/tcp6` directly (state `0A` = LISTEN), decodes the hex address
+  into a real `net.IP` so `::1` and IPv4-mapped loopback need no special case,
+  and maps socket inode -> pid by walking `/proc/<pid>/fd`, which is what `ss`
+  does. Proven side by side against lsof on the failing machine: 8 servers vs 7,
+  the difference being the one that mattered. lsof stays as the fallback and is
+  still the only path on macOS (no `/proc`), which is why `Listeners()` returns
+  an `ok` bool -- "I cannot look" and "nothing is listening" must never collapse
+  into the same answer, the same rule `scanPeers` learned in `discover.go`.
+  Three more that were shipped wrong once each. The link is **always `http://`**:
+  taking the scheme from `-public-url` produced `https://host:3000`, because that
+  origin is https only since kunai terminates TLS on its OWN port with a
+  tailscale cert -- one port over sits a plain dev server, and the forwarder is a
+  raw TCP splice that adds no TLS, so the phone got `ERR_SSL_PROTOCOL_ERROR`
+  (OpenSSL: "wrong version number"). Only the hostname is worth taking from the
+  origin. kunai's own listeners are excluded **by pid** (`preview.selfPID`),
+  never by port: forwarding a preview makes kunai a second listener on that same
+  port, and since entries collapse by port, a port-based exclusion deleted the
+  row the instant you shared it -- still forwarded, with the Stop button gone
+  with it. And the process name comes from `/proc/<pid>/cmdline`, because `comm`
+  is truncated at 15 bytes (`TASK_COMM_LEN`) and rendered Next.js as the
+  baffling `next-server (v1`. The card is width-matched to the composer
+  (`max-width: 720px`), which `.actionbar` in `Chat.svelte` had already learned:
+  full-bleed, it hangs off both sides of the field it sits above.
 - `internal/server`: REST, WS, and the embedded PWA. `history.go` scans
   `~/.claude/projects/*/<sessionId>.jsonl` transcripts for the Recent list and
   parses them into seed turns on resume (that is why resumed sessions show their old

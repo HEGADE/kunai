@@ -28,12 +28,14 @@ type spawnSpec struct {
 	// the main checkout.
 	appendPrompt string
 
-	// disallowedTools is the toolset withheld while the session is shared with
-	// someone who is not its owner. The most important field here to carry: the
-	// others going missing is a nuisance, this one going missing hands a guest
-	// Bash on somebody else's machine. Changing effort mid-share must not be a way
-	// to get it back.
+	// disallowedTools is the toolset withheld from the session, and toolsOwner is
+	// what withheld it. The most important field here to carry: the others going
+	// missing is a nuisance, this one going missing hands a guest Bash on somebody
+	// else's machine. Changing effort mid-share must not be a way to get it back.
+	// The owner travels with it so a respawn cannot leave a restriction nobody
+	// claims, which would make it look like a stale share to the share reconciler.
 	disallowedTools []string
+	toolsOwner      string
 
 	// The context meter's state, so a respawn does not reset it to zero and
 	// mislead until the next turn corrects it.
@@ -57,6 +59,7 @@ func specOf(s *Session) spawnSpec {
 		cliEnv:          s.cliEnv,
 		appendPrompt:    s.appendPrompt,
 		disallowedTools: s.disallowedTools,
+		toolsOwner:      s.toolsOwner,
 		contextTokens:   s.contextTokens,
 		overhead:        s.overhead,
 	}
@@ -70,8 +73,10 @@ func (sp spawnSpec) withOverrides(ov restartOverride) spawnSpec {
 	}
 	if ov.tools != nil {
 		// Non-nil and empty is a real instruction: it is how a share ending gives
-		// the session its full toolset back.
+		// the session its full toolset back. The owner is set from the same
+		// instruction, so lifting a restriction also drops the claim on it.
 		sp.disallowedTools = *ov.tools
+		sp.toolsOwner = ov.toolsOwner
 	}
 	if ov.mode != "" {
 		sp.mode = ov.mode
@@ -114,6 +119,7 @@ func (sp spawnSpec) apply(opts *CreateOptions) {
 	opts.Env = sp.cliEnv
 	opts.AppendSystemPrompt = sp.appendPrompt
 	opts.DisallowedTools = sp.disallowedTools
+	opts.ToolsOwner = sp.toolsOwner
 	opts.ContextTokens = sp.contextTokens
 	opts.Overhead = sp.overhead
 }

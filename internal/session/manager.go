@@ -108,11 +108,14 @@ type CreateOptions struct {
 	// carries it over the same way it carries the account and the effort.
 	AppendSystemPrompt string
 	// DisallowedTools names tools this session must not offer the model, set when
-	// the session is shared with someone who is not its owner. Spawn-time, so it
-	// is carried by spawnSpec across every respawn: a tool restriction silently
-	// dropped by a later effort change would hand a guest the toolset the share
-	// was created to withhold.
+	// the session is shared with someone who is not its owner, and when a pull
+	// request review runs unattended. Spawn-time, so it is carried by spawnSpec
+	// across every respawn: a tool restriction silently dropped by a later effort
+	// change would hand a guest the toolset the share was created to withhold.
 	DisallowedTools []string
+	// ToolsOwner names what withheld them, so a feature that reconciles its own
+	// restrictions cannot lift somebody else's. See Session.toolsOwner.
+	ToolsOwner string
 }
 
 // Create registers a new claude session and returns immediately; the CLI boots
@@ -169,6 +172,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	s.cliEnv = opts.Env
 	s.appendPrompt = opts.AppendSystemPrompt
 	s.disallowedTools = opts.DisallowedTools
+	s.toolsOwner = opts.ToolsOwner
 	s.contextTokens = opts.ContextTokens
 	s.overhead = opts.Overhead
 	s.histBefore = opts.HistBefore
@@ -304,7 +308,11 @@ type restartOverride struct {
 	effort string
 	acct   *acctOverride
 	tools  *[]string
-	mode   string
+	// toolsOwner rides with tools rather than standing alone: who withheld them is
+	// part of the same instruction, and setting one without the other would leave a
+	// restriction nobody claims or an owner for tools that are gone.
+	toolsOwner string
+	mode       string
 }
 
 // RestartWithEffort relaunches a live session at a new reasoning effort by
@@ -320,9 +328,10 @@ func (m *Manager) RestartWithEffort(ctx context.Context, id, effort string, seed
 // used when a session is shared with somebody who is not its owner and when that
 // share ends. The tool list is a spawn-time CLI flag, so like effort it cannot be
 // changed on a running process. mode, when set, becomes the session's standing
-// permission mode.
-func (m *Manager) RestartWithTools(ctx context.Context, id string, denied []string, mode string, seedFn func(configDir, cid string) []SeedTurn) (*Session, error) {
-	return m.restart(ctx, id, restartOverride{tools: &denied, mode: mode}, seedFn)
+// permission mode. owner records what is withholding them, and is what stops one
+// feature's reconciler from lifting another's restriction.
+func (m *Manager) RestartWithTools(ctx context.Context, id string, denied []string, owner, mode string, seedFn func(configDir, cid string) []SeedTurn) (*Session, error) {
+	return m.restart(ctx, id, restartOverride{tools: &denied, toolsOwner: owner, mode: mode}, seedFn)
 }
 
 // RestartWithAccount relaunches a live session on a different Claude account,

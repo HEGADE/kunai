@@ -24,6 +24,7 @@ import (
 	"github.com/hegade/kunai/internal/awake"
 	"github.com/hegade/kunai/internal/cliproxy/codex"
 	"github.com/hegade/kunai/internal/fsbrowse"
+	"github.com/hegade/kunai/internal/ghapp"
 	"github.com/hegade/kunai/internal/lanauth"
 	"github.com/hegade/kunai/internal/push"
 	"github.com/hegade/kunai/internal/schedule"
@@ -120,14 +121,26 @@ type Server struct {
 	worktrees     *worktreeStore           // git worktrees, so several agents share one repo safely
 	fleet         *fleetHub                // pushes the session list to clients instead of them polling for it
 	usageStats    *usagestats.Collector    // what every session cost, read back out of the transcripts
+	// Pull-request review. gh is built lazily from the credentials on disk, and
+	// prReviews binds a review session to the pull request and COMMIT it is a
+	// review of, which the transcript cannot say and posting cannot do without.
+	ghMu      sync.Mutex
+	gh        *ghapp.App
+	prReviews *prReviewStore
+	// reviewCfg is which account and model reviews run on, kept apart from the
+	// session defaults so a review can never spend the window you are working in.
+	reviewCfg *reviewConfigStore
 	// shares and gate are session sharing: a link worth one conversation, served
 	// on a listener of its own so a guest can never reach the routes above. See
 	// sharegate.go for why that is a separate mux rather than a middleware.
 	shares *share.Store
 	// lanAuth is the PIN and sessions guarding the network listener (lanauth.go);
 	// lanNet owns the listeners themselves, which the PIN switches on and off.
-	lanAuth    *lanauth.Store
-	lanNet     *lanServer
+	lanAuth *lanauth.Store
+	lanNet  *lanServer
+	// previews forwards a dev server the agent started onto this machine's
+	// network address, so you can look at it from the phone. See preview.go.
+	previews   *previewForwarder
 	gate       *shareGate
 	funnelMu   sync.Mutex
 	funnelAt   time.Time // when the funnel port was last read (it shells out)
@@ -204,6 +217,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	s.cliproxyLogin = newCLIProxyLoginManager(s.cliproxy)
 	s.codexUC = &codexUsageCache{}
 	s.grokUC = &grokUsageCache{}
+	s.reviewCfg = newReviewConfigStore(cfg.DataDir)
 	s.failover = newFailoverController(s)
 	s.failover.load()            // re-apply the persisted opt-in on boot (default off)
 	go s.discoverModelVersions() // warm the model-version cache off the request path
@@ -218,6 +232,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	s.lanAuth = lanauth.Open(filepath.Join(cfg.DataDir, "lanauth.json"))
 	if cfg.DataDir != "" {
 		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))
+		s.prReviews = newPRReviewStore(filepath.Join(cfg.DataDir, "prreviews.json"))
 		// New accounts log in with the same binary as the default profile, into a
 		// fresh config dir under the data dir. The register callback saves a
 		// completed account, called once from the login's finalize, so it lands
@@ -327,6 +342,18 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/lid", s.handleLid)
 	mux.HandleFunc("GET /api/thermal", s.handleThermal)
 	mux.HandleFunc("POST /api/thermal", s.handleThermal)
+	// Pull-request review. Owner-only, and deliberately absent from the share
+	// gate: these read the machine's repositories and can write to GitHub as the
+	// bot, which is the last thing a public link should reach.
+	mux.HandleFunc("GET /api/github/app", s.handleGitHubStatus)
+	mux.HandleFunc("POST /api/github/app", s.handleSetGitHubApp)
+	mux.HandleFunc("GET /api/github/pulls", s.handlePullRequests)
+	mux.HandleFunc("GET /api/github/review-config", s.handleReviewConfig)
+	mux.HandleFunc("POST /api/github/review-config", s.handleReviewConfig)
+	mux.HandleFunc("POST /api/github/review", s.handleStartReview)
+	mux.HandleFunc("GET /api/sessions/{id}/review", s.handleReviewDraft)
+	mux.HandleFunc("POST /api/sessions/{id}/review/post", s.handlePostReview)
+
 	mux.HandleFunc("GET /api/failover", s.handleFailover)
 	mux.HandleFunc("POST /api/failover", s.handleFailover)
 	mux.HandleFunc("GET /api/clis", s.handleCLIs)
@@ -371,6 +398,8 @@ func (s *Server) routes() *http.ServeMux {
 	// Machine-level pushes: the session list when it changes, stats on a timer the
 	// server owns. Replaces the client polling every machine for both.
 	mux.HandleFunc("GET /ws/fleet", s.handleFleetWS)
+	// Servers the agent started, and forwarding one so a phone can see it.
+	s.previewRoutes(mux)
 	// What every session cost, priced from the transcripts.
 	s.usageRoutes(mux)
 	// The network listener's lock: signing in, and (owner side) managing it.
@@ -401,6 +430,10 @@ func (s *Server) Run(ctx context.Context) error {
 	// check, so setting or clearing the PIN later moves the listeners too.
 	s.lanNet = newLANServer(s, portOf(s.cfg.Addr))
 	s.lanNet.Sync(ctx)
+	// Previews forward onto the address this machine publishes, which is its
+	// tailnet one. Empty on a loopback-only install, where nothing needs
+	// forwarding because localhost already reaches the dev server.
+	s.previews = newPreviewForwarder(ctx, hostOf(s.cfg.Addr))
 	// Bring the share listener back up when links survived the restart. Without
 	// this a share persists in shares.json, looks live in the app, and answers 404
 	// to the person holding it, because nothing is listening on the port Funnel
@@ -450,7 +483,8 @@ func (s *Server) Run(ctx context.Context) error {
 	// and doing it here means the Usage page has an answer before anyone opens it
 	// rather than showing a spinner on its first visit after every upgrade.
 	go s.usageStats.Refresh()
-	s.startTelegram(ctx) // opt-in: drive a session from a Telegram chat
+	s.startReviewSweeper() // throw away the checkouts of reviews nobody is reading
+	s.startTelegram(ctx)   // opt-in: drive a session from a Telegram chat
 	go func() {
 		<-ctx.Done()
 		_ = s.awake.Set(false) // release the keep-awake hold on graceful shutdown
@@ -500,6 +534,7 @@ func (s *Server) explainBind(err error) error {
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	metas := s.mgr.List()
 	s.worktrees.tagRepos(metas)
+	s.tagReviewRepos(metas)
 	if s.sessionMeta != nil {
 		mergeMeta(metas, s.sessionMeta.all())
 	}
@@ -645,6 +680,10 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
 	if s.checkpoints != nil {
 		s.checkpoints.forget(id) // the shadow refs remain for git GC; drop the tracking
 	}
+	// A forwarded port must not outlive the session either. The dev server behind
+	// it dies with the agent, so what is left is an open port on the tailnet
+	// answering nothing, which is untidy at best and misleading at worst.
+	s.previews.closeSession(id)
 	// A share must not outlive the session it points at. Left behind, it is a
 	// public link to a conversation that no longer exists, and worse, to an id
 	// that could later be reused by another one.

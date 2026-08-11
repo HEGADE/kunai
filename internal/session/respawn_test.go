@@ -12,6 +12,7 @@ func fullSpec() spawnSpec {
 		cliEnv:          map[string]string{"CLAUDE_CONFIG_DIR": "/accounts/work"},
 		appendPrompt:    "You are working in a git worktree",
 		disallowedTools: []string{"Bash", "Task", "NotebookEdit"},
+		toolsOwner:      "share",
 		contextTokens:   42_000,
 		overhead:        36_000,
 	}
@@ -56,6 +57,43 @@ func TestToolRestrictionsCanBeCleared(t *testing.T) {
 	kept := fullSpec().withOverrides(restartOverride{tools: nil})
 	if len(kept.disallowedTools) != 3 {
 		t.Errorf("a nil tools override changed them to %v", kept.disallowedTools)
+	}
+}
+
+// Who withheld the tools travels with them, because a restriction nobody claims
+// is indistinguishable from an abandoned share, and the share reconciler lifts
+// those. A review whose owner was lost in an effort change would be respawned a
+// minute later with its turn still running.
+func TestTheToolsOwnerTravelsWithTheTools(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		ov   restartOverride
+	}{
+		{"effort change", restartOverride{effort: "low"}},
+		{"account switch", restartOverride{acct: &acctOverride{name: "B", bin: "claude"}}},
+		{"nothing in particular", restartOverride{}},
+	} {
+		if got := fullSpec().withOverrides(c.ov); got.toolsOwner != "share" {
+			t.Errorf("%s left the restriction unclaimed: owner = %q", c.name, got.toolsOwner)
+		}
+	}
+
+	// Changing the restriction re-states who owns it, so one feature taking over
+	// from another cannot leave the previous owner's name on the new tools.
+	tools := []string{"Bash"}
+	if got := fullSpec().withOverrides(restartOverride{tools: &tools, toolsOwner: "pr-review"}); got.toolsOwner != "pr-review" {
+		t.Errorf("owner = %q, want the one that came with the new tools", got.toolsOwner)
+	}
+	// And lifting the restriction drops the claim with it.
+	none := []string{}
+	if got := fullSpec().withOverrides(restartOverride{tools: &none}); got.toolsOwner != "" {
+		t.Errorf("tools given back but still claimed by %q", got.toolsOwner)
+	}
+
+	var opts CreateOptions
+	fullSpec().apply(&opts)
+	if opts.ToolsOwner != "share" {
+		t.Errorf("apply did not write the owner: %q", opts.ToolsOwner)
 	}
 }
 

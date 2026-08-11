@@ -75,6 +75,16 @@ func TestShareGateServesNothingButShareRoutes(t *testing.T) {
 		// not gated on one: a share link is a public URL, and this route would hand
 		// whoever holds it every image in the project.
 		{"GET", "/api/sessions/abc/file?path=a.png"},
+		// Pull-request review is owner-only at every tier for the same reason and
+		// then some: these read the machine's repositories, and posting writes to
+		// GitHub as the shared bot identity. A public link reaching them would let
+		// whoever holds it comment on the org's pull requests as kunai.
+		{"GET", "/api/github/app"},
+		{"POST", "/api/github/app"},
+		{"GET", "/api/github/pulls?repo=/"},
+		{"POST", "/api/github/review"},
+		{"GET", "/api/sessions/abc/review"},
+		{"POST", "/api/sessions/abc/review/post"},
 		{"GET", "/ws/app/abc"},
 		{"GET", "/ws/fleet"},
 		{"GET", "/"},

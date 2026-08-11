@@ -1,12 +1,23 @@
 <script lang="ts">
   import { getContext } from 'svelte'
   import type { ToolResult } from '../../lib/types'
+  import { shapeOf, stripLineNumbers } from '../../lib/outputShape'
   import { imageResultPath } from '../../lib/toolMeta'
   import { FILE_BASE, type FileBase } from '../../lib/filebase'
+  import CodeView from './CodeView.svelte'
   import ImageFigure from '../ImageFigure.svelte'
 
-  // `path` is the file the tool was pointed at, when it was pointed at one. It
-  // is the only place an image's name exists, since the result carries none.
+  // Tool output, rendered as what it actually is.
+  //
+  // This was one grey `<pre>` whatever came back, which wasted three things the
+  // app already has: a syntax highlighter, a diff renderer, and the path the tool
+  // was given. Reading a Go file looked like reading a log, and reading a unified
+  // diff looked like nothing at all, which matters more now that a review begins
+  // by reading one.
+  //
+  // `path` is passed by the caller when the tool had one (a Read, an Edit), and
+  // is only a hint: a diff is recognised from the content, because it arrives
+  // from Bash and from `git show` where there is no path to go on.
   let {
     result,
     path = '',
@@ -14,10 +25,15 @@
   }: { result: ToolResult; path?: string; maxLines?: number } = $props()
 
   let expanded = $state(false)
-  const text = $derived(result.content.replace(/\n$/, ''))
+  // The Read tool prefixes every line with `   12→`; highlighting that colours
+  // the numbers as code and puts an arrow at the start of every line.
+  const text = $derived(stripLineNumbers(result.content.replace(/\n$/, '')))
   const lines = $derived(text ? text.split('\n') : [])
   const clamped = $derived(!expanded && lines.length > maxLines)
   const shown = $derived(clamped ? lines.slice(0, maxLines).join('\n') : text)
+  // An error is always plain: the message is prose, and highlighting it as the
+  // language of the file it came from would be actively misleading.
+  const shape = $derived(result.isError ? { kind: 'text' as const } : shapeOf(text, path))
 
   // A tool that returned a picture shows the picture.
   //
@@ -46,7 +62,16 @@
       <ImageFigure src={imageSrc} alt={imagePath.split('/').pop() ?? 'image'} caption={imagePath} />
     </div>
   {:else if text}
-    <pre class="out mono">{shown}</pre>
+    {#if shape.kind === 'diff'}
+      <!-- A unified diff reads as red and green or it does not read at all. The
+           highlighter's own diff language does this without needing the
+           before/after pair DiffView wants, which output does not carry. -->
+      <CodeView code={shown} lang="diff" label="diff" maxLines={clamped ? maxLines : lines.length} />
+    {:else if shape.kind === 'code'}
+      <CodeView code={shown} lang={shape.lang} maxLines={clamped ? maxLines : lines.length} />
+    {:else}
+      <pre class="out mono">{shown}</pre>
+    {/if}
     {#if clamped}
       <button class="more" onclick={() => (expanded = true)}>Show {lines.length - maxLines} more lines</button>
     {:else if expanded && lines.length > maxLines}

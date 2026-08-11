@@ -27,8 +27,8 @@
   let open = $state(false)
   const label = $derived(describe(name, input, result))
   // The file this tool was pointed at, when it was pointed at one. Passed to the
-  // result because it is the only place an image's name exists: a Read of a
-  // screenshot comes back as a marker with no filename attached.
+  // result so a Read of a .go file renders as Go and a Read of a .diff as a
+  // diff, rather than as undifferentiated grey text.
   const resultPath = $derived.by(() => {
     const i = (input ?? {}) as Record<string, unknown>
     const p = i.file_path ?? i.notebook_path ?? i.path
@@ -106,6 +106,8 @@
       <ToolBody {name} {input} />
       <AgentTrace blocks={nested} streaming={nestedStreaming} results={nestedResults} />
       {#if result}
+        <!-- The tool's own path is a hint for how to render what came back: a
+             Read of a .go file is Go, a Read of a .diff is a diff. -->
         <ResultView {result} path={resultPath} />
       {:else if running}
         <div class="pending">

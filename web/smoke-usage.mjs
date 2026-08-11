@@ -11,7 +11,7 @@
 // it runs), and that the period control re-windows the client-side data rather
 // than silently doing nothing.
 import { chromium } from 'playwright'
-const url = process.env.KUNAI_URL || 'http://127.0.0.1:8901/'
+const url = 'http://127.0.0.1:8901/'
 const fail = (m) => { console.error('FAIL: ' + m); process.exit(1) }
 const browser = await chromium.launch()
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })

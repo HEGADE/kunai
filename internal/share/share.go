@@ -42,6 +42,14 @@ func (t Tier) Valid() bool {
 // CanPrompt reports whether this tier may send anything to the agent.
 func (t Tier) CanPrompt() bool { return t == TierAsk || t == TierWork }
 
+// ToolsOwner is what a share stamps on a session whose tools it withheld, so the
+// reconciler that gives them back can tell its own restrictions from anyone
+// else's. It exists because a second feature (the pull request reviewer) also
+// withholds tools, and the reconciler used to read the restriction itself as
+// proof of a share: it respawned a review a minute after it began and killed the
+// turn that was running.
+const ToolsOwner = "share"
+
 // DisallowedTools is the tool denylist a session runs with while shared at this
 // tier, passed to the CLI as --disallowedTools. Verified against claude 2.1.220
 // that a denied tool is absent from the session's tool set rather than merely

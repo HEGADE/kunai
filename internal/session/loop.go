@@ -387,6 +387,10 @@ func (s *Session) advanceLoop() {
 // afterTurn decides, once a turn has ended, whether the loop gets another one.
 // Called with the turn's cost already folded into lastCostUSD.
 func (s *Session) afterTurn(turnFailed bool) {
+	// Before anything that might respawn or stop the session, because this is
+	// what a caller collecting the turn's output depends on and it must fire for
+	// every turn regardless of what the loop or failover decide next.
+	s.fireAnswerHook()
 	s.mu.Lock()
 	// The turn-end hook fires for every session (failover reacts to a wall here),
 	// so it runs before the loop-only early return. Snapshot under the lock, call
