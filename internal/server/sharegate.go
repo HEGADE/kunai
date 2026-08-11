@@ -47,6 +47,13 @@ type shareGate struct {
 	// imagesDir is where generated pictures live. The only directory this gate
 	// will serve a file from, and empty means it serves none.
 	imagesDir string
+	// uploads stages a picture a guest sends. Nil means files cannot be sent
+	// through a link at all, which is what an install with no data dir gets.
+	uploads guestUploads
+	// files remembers which upload ids this gate issued to which link, because an
+	// id is the only thing naming a file in a directory shared with the owner's
+	// own uploads. See shareupload.go.
+	files guestFiles
 	// portFile remembers the port to bind, so a Funnel mapping made once keeps
 	// working across restarts. Empty means "do not remember" (tests).
 	portFile string
@@ -76,8 +83,11 @@ type sessionLookup interface {
 	Get(id string) (*session.Session, bool)
 }
 
-func newShareGate(shares *share.Store, sessions sessionLookup, pwa fs.FS, portFile, imagesDir string) *shareGate {
-	return &shareGate{shares: shares, sessions: sessions, pwa: pwa, portFile: portFile, imagesDir: imagesDir}
+func newShareGate(shares *share.Store, sessions sessionLookup, pwa fs.FS, portFile, imagesDir string, uploads guestUploads) *shareGate {
+	return &shareGate{
+		shares: shares, sessions: sessions, pwa: pwa,
+		portFile: portFile, imagesDir: imagesDir, uploads: uploads,
+	}
 }
 
 // Port is the localhost port the gate listens on, 0 until started. This is what
@@ -234,6 +244,8 @@ func (g *shareGate) mux() http.Handler {
 	// A picture the conversation drew. NOT the owner's file route, which reads
 	// the session's own folders and stays off this gate; see sharedimage.go.
 	m.HandleFunc("GET /api/share/{token}/image", g.handleSharedImage)
+	// A picture a guest sends. Paired guests only, images only; see shareupload.go.
+	m.HandleFunc("POST /api/share/{token}/upload", g.handleGuestUpload)
 	// Only the fingerprinted bundle, and only as files: no directory listing, and
 	// no reaching the rest of the embedded tree.
 	m.Handle("GET /assets/", g.assets())

@@ -17,7 +17,7 @@ func withShare(t *testing.T, gatePort int) *Server {
 	if _, err := store.Create(share.Share{SessionID: "s", Tier: share.TierView}, time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{shares: store, gate: newShareGate(store, noSessions{}, testPWA{}, "", "")}
+	s := &Server{shares: store, gate: newShareGate(store, noSessions{}, testPWA{}, "", "", nil)}
 	s.gate.port = gatePort
 	return s
 }

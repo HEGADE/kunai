@@ -181,23 +181,28 @@ func (g *shareGate) runGuestCommand(sess *session.Session, token, device string,
 
 	switch cmd.T {
 	case session.CmdPrompt:
-		// Attachments are refused outright. There is no upload route on this
-		// listener, so a guest has no legitimate way to hold an id, and an id
-		// arriving from one is by definition somebody probing the reader that
-		// resolves it.
-		if len(cmd.Attachments) > 0 {
-			return errors.New("files cannot be attached through a shared link")
+		// Attachments are resolved against what THIS link was issued, never
+		// merely validated in shape. The uploads directory holds the owner's
+		// files too, and an id is all that names one, so an unchecked id is a way
+		// to have somebody else's picture read into the conversation and handed
+		// back. See shareupload.go.
+		atts, content, err := g.guestAttachments(token, sess.Cwd, cmd.Text, cmd.Attachments)
+		if err != nil {
+			return err
 		}
 		// An empty prompt is rejected by the CLI and leaves the turn sitting on
 		// "Working..." forever, having also spent one of the guest's turns. The
 		// same trap the Telegram adapter had to close.
-		if strings.TrimSpace(cmd.Text) == "" {
+		if strings.TrimSpace(cmd.Text) == "" && len(cmd.Attachments) == 0 {
 			return errors.New("type something to send")
 		}
 		// The cap is spent under the store's own lock, before the turn is sent, so
 		// two prompts arriving together cannot both take the last remaining turn.
 		if err := g.shares.SpendTurn(token, device); err != nil {
 			return err
+		}
+		if content != nil {
+			return sess.PromptWithFilesFrom(cmd.Text, content, atts, session.FromGuest)
 		}
 		return sess.PromptFrom(cmd.Text, session.FromGuest)
 
@@ -265,9 +270,14 @@ func redactEvent(ev session.AppEvent, sh *share.Share) (session.AppEvent, bool) 
 		if sh.Detail.ToolInputs {
 			return ev, true
 		}
-		// The words yes, the files no. A strict share withholds what a tool read,
-		// so passing the owner's attachments through verbatim was inconsistent:
-		// the names alone can say more than the conversation does.
+		// A guest keeps its own files. It just sent them, so hiding them means the
+		// message it typed comes back without the picture that was the point of it.
+		if ev.From == string(session.FromGuest) {
+			return ev, true
+		}
+		// The owner's, no. A strict share withholds what a tool read, so passing
+		// the owner's attachments through verbatim was inconsistent: the names
+		// alone can say more than the conversation does.
 		out := ev
 		out.Attachments = nil
 		return out, true
