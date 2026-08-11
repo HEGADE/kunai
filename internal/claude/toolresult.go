@@ -15,6 +15,17 @@ import (
 // ring buffer and is replayed to clients — so we truncate defensively.
 const maxToolResultBytes = 24 * 1024
 
+// ImageResultMarker stands in for an image block in a tool's output.
+//
+// It is a wire contract with the client, not a cosmetic placeholder. The bytes
+// are dropped on purpose -- a Read of a screenshot returns base64 that would
+// cross the socket, sit in the replay ring and be resent on every reconnect, all
+// to show a file the machine already has and can serve on request -- so this is
+// what says "there was a picture here". The client pairs it with the path the
+// tool was given and fetches the image itself; see ResultView.svelte. Mirrored
+// as IMAGE_RESULT_MARKER in web/src/lib/toolMeta.ts.
+const ImageResultMarker = "[image]"
+
 // userMessage is an inbound user-role message (env.Message on a "user" frame).
 type userMessage struct {
 	Role    string          `json:"role"`
@@ -96,7 +107,14 @@ func toolResultText(raw json.RawMessage) (string, bool) {
 			case "text":
 				sb.WriteString(b.Text)
 			case "image":
-				sb.WriteString("[image]")
+				// The bytes are deliberately dropped: a Read of a screenshot comes
+				// back as base64 that would go over the socket, into the replay ring
+				// and into every reconnect, to show a picture the machine already has
+				// on disk and can serve on request. What is left is a MARKER, and the
+				// client treats it as one: seeing it beside a tool whose input named
+				// an image file is what turns the result into the picture (see
+				// ResultView.svelte). Changing this string means changing that.
+				sb.WriteString(ImageResultMarker)
 			}
 		}
 		return capText(sb.String())

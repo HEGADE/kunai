@@ -322,3 +322,31 @@ export function fileEditsOf(blocks: Block[]): FileEdits[] {
   }
   return [...byPath.values()]
 }
+
+// IMAGE_RESULT_MARKER mirrors claude.ImageResultMarker in
+// internal/claude/toolresult.go. A tool that returned a picture has its bytes
+// stripped server-side -- they would cross the socket, sit in the replay ring
+// and be resent on every reconnect, to show a file the machine already has and
+// can serve on request -- and this is what is left in their place.
+export const IMAGE_RESULT_MARKER = '[image]'
+
+// Extensions the session file route will actually serve. Mirrors imageTypes in
+// internal/server/sessionfile.go; SVG is absent there deliberately (a scriptable
+// document served from kunai's own origin), so it is absent here rather than
+// being offered and then refused.
+const SERVABLE_IMAGE = /\.(png|jpe?g|gif|webp|avif|bmp|ico)$/i
+
+// imageResultPath reports the picture a tool result stands for, or '' when it is
+// not one.
+//
+// Both halves are required and neither is enough alone. The marker says the tool
+// returned an image rather than text; the path says WHICH file, and comes from
+// the tool's own input, which is the only place it exists -- the result itself
+// carries no name. Requiring the marker keeps an ordinary Read of a .png's bytes
+// (which does not happen) from being guessed at, and requiring a servable
+// extension keeps the frame from being drawn around a request the route will
+// refuse.
+export function imageResultPath(content: string, path: string): string {
+  if (!path || !SERVABLE_IMAGE.test(path)) return ''
+  return content.includes(IMAGE_RESULT_MARKER) ? path : ''
+}

@@ -1,0 +1,110 @@
+/* The frame around a picture in the conversation: caption, hover actions, and
+   the state for one that would not load.
+ *
+ * Global rather than scoped to a component because two different rendering
+ * mechanisms produce the same markup and must look identical. An image inside an
+ * assistant reply is built as DOM nodes by withImageFrames in Markdown.svelte,
+ * since it lives inside {@html} where there is no component to mount; an image
+ * that came back from a tool is a real ImageFigure.svelte. Duplicating sixty
+ * lines of chrome across the two is how they drift, so the classes are the
+ * contract and this file is the single definition of them.
+ *
+ * Loaded once from main.ts and share.ts, beside hljs-theme.css, which is the
+ * same arrangement for the same reason. */
+
+.imgfr {
+  margin: 14px 0;
+}
+
+/* A quiet surface rather than a card: the image supplies its own edges, so a
+   border around it would be a second one. */
+.imgstage {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0; /* an inline image otherwise leaves a descender gap below it */
+  border-radius: var(--r-sm);
+  background: var(--panel);
+}
+
+.imgstage img {
+  display: block;
+  /* Capped so one picture cannot take the whole column and push the rest of the
+     reply off screen; full size is one click away. In px rather than vh so it
+     does not resize under you when a phone's address bar hides. */
+  max-height: 460px;
+  width: auto;
+  max-width: 100%;
+  border-radius: var(--r-sm);
+  cursor: zoom-in;
+}
+
+/* The actions appear on hover, the same bargain the turn footer makes: there
+   when wanted, never furniture when not. A touch screen has no hover to reveal
+   them with, so there they simply stay. */
+.imgacts {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.13s;
+}
+.imgstage:hover .imgacts,
+.imgacts:focus-within {
+  opacity: 1;
+}
+@media (hover: none) {
+  .imgacts {
+    opacity: 1;
+  }
+}
+
+.imgbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  /* Opaque enough to stay legible over whatever the picture happens to be behind
+     it, which is the one thing chrome over an image has to survive. */
+  background: rgba(18, 18, 20, 0.82);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.imgbtn:hover {
+  color: var(--text);
+  border-color: var(--border-2);
+}
+.imgbtn[data-busy] {
+  opacity: 0.5;
+}
+
+.imgcap {
+  margin: 7px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-3);
+}
+
+/* A picture that would not load. The file route refuses anything outside the
+   session's folders (403) and anything that is not a raster image (415), and the
+   browser's own broken glyph says which of those happened not at all. */
+.imgfr[data-broken] .imgstage {
+  display: block;
+  line-height: 1.5;
+  padding: 14px;
+  border: 1px dashed var(--border-2);
+}
+.imgfr[data-broken] .imgstage img,
+.imgfr[data-broken] .imgacts {
+  display: none;
+}
+.imgfr[data-broken] .imgstage::after {
+  content: 'This image could not be loaded. It may be outside the session’s folders, or not an image kunai can show.';
+  font-size: 12.5px;
+  color: var(--text-3);
+}
