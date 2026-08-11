@@ -10,6 +10,7 @@
   import Markdown from './components/Markdown.svelte'
   import BlockView from './components/BlockView.svelte'
   import Spinner from './components/Spinner.svelte'
+  import Lightbox from './components/Lightbox.svelte'
 
   // The token is the last path segment of /s/<token>.
   const token = decodeURIComponent(location.pathname.replace(/^.*\/s\//, '').replace(/\/$/, ''))
@@ -67,6 +68,11 @@
     return `${Math.round(s / 86400)} d left`
   }
 </script>
+
+<!-- A guest sees pictures too, and the viewer is what makes one legible: without
+     it, clicking to expand would do nothing here while working in the owner's
+     view, which is worse than not offering it. -->
+<Lightbox />
 
 <div class="page">
   <header>

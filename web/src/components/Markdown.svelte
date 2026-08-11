@@ -81,7 +81,7 @@
     const parser = opts.highlight === false ? marked : richMarked
     let html = DOMPurify.sanitize(parser.parse(src ?? '', { async: false }) as string)
     html = withScrollableTables(html)
-    return opts.fileBase ? withLocalImages(html, opts.fileBase) : html
+    return withImageFrames(html, opts.fileBase ?? '')
   }
 
   // Give every table its own horizontal scroller.
@@ -124,25 +124,99 @@
   // Rewritten on the already-sanitized HTML, walking real elements rather than
   // running a regex over markup, so a src containing quotes or angle brackets
   // cannot be used to reshape the document on the way through.
-  function withLocalImages(html: string, base: string): string {
+  // …and give it somewhere to live: a frame with the actions a picture needs.
+  //
+  // Rendering the image was only half of it. A picture arrives at whatever size
+  // the model drew it, in a message column narrower than that, with no way to see
+  // it properly and no way to keep it -- and the one thing you want to do with a
+  // picture somebody made for you is save it. So each image gets a figure with a
+  // caption and a hover toolbar, and the actions are wired by delegation in the
+  // component below.
+  //
+  // Built with real DOM nodes rather than string concatenation, both because
+  // that is how withLocalImages already worked (a src containing quotes or angle
+  // brackets cannot reshape the document on the way through) and because the alt
+  // text is model-written: setting it with textContent means a caption cannot
+  // become markup no matter what it says.
+  function withImageFrames(html: string, base: string): string {
+    if (!html.includes('<img')) return html
     const tpl = document.createElement('template')
     tpl.innerHTML = html
     for (const img of Array.from(tpl.content.querySelectorAll('img'))) {
-      const src = img.getAttribute('src') ?? ''
-      // Anything already addressable is left alone: a real URL, an inline data
-      // URI, and the endpoint's own output if this ever runs twice.
-      if (!src || /^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith(base)) continue
-      img.setAttribute('src', base + encodeURIComponent(src))
-      img.setAttribute('loading', 'lazy')
+      if (img.closest('.imgfr')) continue // already framed, if this ever runs twice
+      resolveImageSrc(img, base)
+      frameImage(img)
     }
     return tpl.innerHTML
   }
+
+  // Point an image at a path on the machine to the endpoint that can actually
+  // serve it.
+  //
+  // An agent writing ![shot](/tmp/x.png) produced an <img> whose src the browser
+  // resolved against kunai's own origin -- and kunai answers every unmatched path
+  // with the app shell, so the image element received HTML and showed a broken
+  // icon. It failed identically in a browser on the machine itself; this was
+  // never about which device was looking.
+  function resolveImageSrc(img: HTMLImageElement, base: string) {
+    img.setAttribute('loading', 'lazy')
+    const src = img.getAttribute('src') ?? ''
+    // Anything already addressable is left alone: a real URL, an inline data
+    // URI, and the endpoint's own output if this ever runs twice. Without a base
+    // (the guest view has no session to read files from) a bare path is left
+    // exactly as it was rather than pointed somewhere that would refuse it.
+    if (!base || !src || /^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith(base)) return
+    img.setAttribute('src', base + encodeURIComponent(src))
+  }
+
+  function frameImage(img: HTMLImageElement) {
+    const alt = img.getAttribute('alt') ?? ''
+    const fig = document.createElement('figure')
+    fig.className = 'imgfr'
+    img.replaceWith(fig)
+
+    const stage = document.createElement('div')
+    stage.className = 'imgstage'
+    stage.appendChild(img)
+    fig.appendChild(stage)
+
+    const acts = document.createElement('div')
+    acts.className = 'imgacts'
+    acts.appendChild(iconButton('img-open', 'View full size', EXPAND_SVG))
+    acts.appendChild(iconButton('img-save', 'Download image', SAVE_SVG))
+    stage.appendChild(acts)
+
+    if (alt) {
+      const cap = document.createElement('figcaption')
+      cap.className = 'imgcap'
+      cap.textContent = alt // never innerHTML: this is model-written prose
+      fig.appendChild(cap)
+    }
+  }
+
+  function iconButton(flag: string, label: string, svg: string): HTMLButtonElement {
+    const b = document.createElement('button')
+    b.className = 'imgbtn'
+    b.type = 'button'
+    b.setAttribute('data-' + flag, '')
+    b.setAttribute('aria-label', label)
+    b.title = label
+    b.innerHTML = svg // a constant defined above, never anything from the model
+    return b
+  }
+
+  const EXPAND_SVG =
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H3v6"/><path d="M15 21h6v-6"/><path d="M3 3l7 7"/><path d="M21 21l-7-7"/></svg>'
+  const SAVE_SVG =
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>'
 </script>
 
 <script lang="ts">
   import { getContext } from 'svelte'
   import { copyText } from '../lib/clipboard'
   import { FILE_BASE, type FileBase } from '../lib/filebase'
+  import { fileNameFor, saveImage } from '../lib/imageActions'
+  import { lightbox } from '../lib/lightbox.svelte'
 
   let { text, live = false }: { text: string; live?: boolean } = $props()
   // Which session's files an image may come from. Taken from context rather than
@@ -156,6 +230,7 @@
   // Copy handler via delegation — safe because committed blocks have stable text
   // (this component only re-derives html when `text` changes).
   function onClick(e: MouseEvent) {
+    if (onImageClick(e)) return
     const wrap = (e.target as HTMLElement).closest('[data-wrap]') as HTMLElement | null
     if (wrap) {
       setCodeWrap(!codeWrapOn())
@@ -173,9 +248,57 @@
       setTimeout(() => btn.removeAttribute('data-copied'), 1200)
     })
   }
+
+  // The image actions, by delegation for the same reason the copy button is:
+  // the figures live inside {@html}, so there is no component per picture to
+  // hang a handler on. Returns true when it consumed the click.
+  function onImageClick(e: MouseEvent): boolean {
+    const t = e.target as HTMLElement
+    const save = t.closest('[data-img-save]') as HTMLElement | null
+    if (save) {
+      const img = save.closest('.imgfr')?.querySelector('img')
+      if (img) void download(img, save)
+      return true
+    }
+    // Expanding is offered as a button AND on the picture itself: the button
+    // says the gesture exists, and clicking the image is what people try first.
+    const open = t.closest('[data-img-open]') as HTMLElement | null
+    const img = open ? open.closest('.imgfr')?.querySelector('img') : (t.closest('.imgstage img') as HTMLImageElement | null)
+    if (img) {
+      lightbox.show(img.currentSrc || img.src, img.getAttribute('alt') ?? '')
+      return true
+    }
+    return false
+  }
+
+  async function download(img: HTMLImageElement, btn: HTMLElement) {
+    const src = img.currentSrc || img.src
+    btn.setAttribute('data-busy', '')
+    try {
+      await saveImage(src, fileNameFor(src, img.getAttribute('alt') ?? ''))
+    } finally {
+      btn.removeAttribute('data-busy')
+    }
+  }
+
+  // A picture that will not load must say so.
+  //
+  // The file route refuses anything outside the session's folders (403) and
+  // anything that is not a raster image (415), and an agent can write a markdown
+  // image for a path that is either. Left alone that is the browser's broken-image
+  // glyph, which says nothing about which of those happened, so the frame is
+  // marked and the caption explains itself instead.
+  //
+  // Captured rather than bubbled: an <img> error event does not bubble, so a
+  // listener on the container only ever sees it on the capture phase.
+  function onError(e: Event) {
+    const img = e.target as HTMLElement
+    if (img?.tagName !== 'IMG') return
+    img.closest('.imgfr')?.setAttribute('data-broken', '')
+  }
 </script>
 
-<div class="md" onclick={onClick} role="presentation">{@html html}</div>
+<div class="md" onclick={onClick} onerrorcapture={onError} role="presentation">{@html html}</div>
 
 <style>
   .md {
@@ -430,5 +553,95 @@
   .md :global(img) {
     max-width: 100%;
     border-radius: var(--r-sm);
+  }
+
+  /* A picture and the things you do with it.
+     The frame is a quiet surface rather than a card: the image supplies its own
+     edges, so a border around it would be a second one. */
+  .md :global(figure.imgfr) {
+    margin: 14px 0;
+  }
+  .md :global(.imgstage) {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+    line-height: 0; /* an inline image otherwise leaves a descender gap below it */
+    border-radius: var(--r-sm);
+    background: var(--panel);
+  }
+  .md :global(.imgstage img) {
+    display: block;
+    /* Capped so one picture cannot take the whole column and push the rest of
+       the reply off screen; full size is one click away. In px rather than vh so
+       it does not resize under you when a phone's address bar hides. */
+    max-height: 460px;
+    width: auto;
+    cursor: zoom-in;
+  }
+  /* The actions appear on hover, the same bargain the turn footer makes: they
+     are always there when wanted and never furniture when not. On a touch screen
+     there is no hover to reveal them with, so they simply stay. */
+  .md :global(.imgacts) {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    gap: 6px;
+    opacity: 0;
+    transition: opacity 0.13s;
+  }
+  .md :global(.imgstage:hover .imgacts),
+  .md :global(.imgacts:focus-within) {
+    opacity: 1;
+  }
+  @media (hover: none) {
+    .md :global(.imgacts) {
+      opacity: 1;
+    }
+  }
+  .md :global(.imgbtn) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    /* Opaque enough to stay legible over whatever the picture happens to be
+       behind it, which is the one thing chrome over an image has to survive. */
+    background: rgba(18, 18, 20, 0.82);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    cursor: pointer;
+  }
+  .md :global(.imgbtn:hover) {
+    color: var(--text);
+    border-color: var(--border-2);
+  }
+  .md :global(.imgbtn[data-busy]) {
+    opacity: 0.5;
+  }
+  .md :global(figcaption.imgcap) {
+    margin-top: 7px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--text-3);
+  }
+  /* A picture that would not load. The frame says so in words, because the
+     browser's own broken glyph does not say which of "outside this session's
+     folders" and "not an image kunai will serve" happened. */
+  .md :global(figure.imgfr[data-broken] .imgstage) {
+    display: block;
+    line-height: 1.5;
+    padding: 14px;
+    border: 1px dashed var(--border-2);
+  }
+  .md :global(figure.imgfr[data-broken] .imgstage img),
+  .md :global(figure.imgfr[data-broken] .imgacts) {
+    display: none;
+  }
+  .md :global(figure.imgfr[data-broken] .imgstage::after) {
+    content: 'This image could not be loaded. It may be outside the session’s folders, or not an image kunai can show.';
+    font-size: 12.5px;
+    color: var(--text-3);
   }
 </style>
