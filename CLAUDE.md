@@ -583,6 +583,24 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   reparents it to init, severing its chain to `claude` -- so `OwnedBy` matches by
   ancestry **or** by working directory (`withinDir`, compared segment-wise so
   `/home/me/app2` is not inside `/home/me/app`).
+  But that rule is only as good as the directory, and it must be **refused for a
+  container** (`attributableDir`): a session started in the HOME directory
+  matched every process under home, which on a personal machine is nearly all of
+  them. Observed live -- a session opened in `/home/ninja` offered `:8443 kunai`
+  and the two ephemeral ports of the other instance's native Codex and Grok
+  proxies as previews to share. Home, anything above it (`/home`, `/Users`) and
+  the filesystem root attribute nothing and leave ancestry to work alone, which
+  is the same distinction the sidebar's grouping had to learn: `~/coding` is
+  where codebases live, not a codebase.
+  And **another kunai is never a preview** (`isOurs`). `selfPID` covers this
+  process only, which was enough until a machine ran two of them -- and the
+  nightly channel is *designed* to sit beside a stable install, so two is the
+  ordinary state of a developer's machine. Matched on process name, the one
+  identifier both listener backends produce, against this binary's own base name
+  plus the `kunai` prefix (the channels are `kunai` and `kunai-nightly` by
+  design). It is a superset of the `selfPID` rule and keeps its load-bearing
+  property: the **socket** is skipped, never the port, or a forwarded preview
+  (two listeners on one port) would lose its row the instant you shared it.
   And **do not go back to lsof for the socket list on Linux.** That was the
   original source and it silently went blind: a real `next-server` holding
   `*:3000`, owned by kunai's own user, with a readable `/proc/<pid>/fd/22 ->

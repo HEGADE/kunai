@@ -21,6 +21,7 @@ package preview
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -43,6 +44,45 @@ import (
 // from inside a project directory would otherwise have its own ports attributed
 // to that project's session by the working-directory rule.
 var selfPID = os.Getpid()
+
+// isOurs reports whether a listening process is another kunai.
+//
+// selfPID covers this process and nothing else, which was enough until a machine
+// ran two of them. The nightly channel is designed to sit beside a stable install
+// (separate service, separate port, separate data dir), so the ordinary state of
+// a developer's machine is two kunai processes -- and the other one's sockets are
+// not somebody's dev server. On a real machine that meant the preview card
+// offering `:8443 kunai` next to the two ephemeral ports of the OTHER instance's
+// native Codex and Grok proxies, which are internal plumbing that exists to be
+// talked to by a `claude` process on this machine and cannot be usefully shared
+// with anyone.
+//
+// Matched on the process name rather than the executable path because that is
+// the one identifier both listener backends produce (/proc on Linux, lsof on
+// macOS), and because the two channels run from different binaries with
+// different names by design (`kunai`, `kunai-nightly`).
+//
+// This is a superset of the selfPID rule and keeps its important property: the
+// socket is skipped, not the PORT. A forwarded preview appears as two listeners
+// on one port, and since entries collapse by port, excluding the port would
+// delete the row the instant you shared it. Skipping only kunai's own socket
+// leaves the row attributed to the dev server that owns it.
+func isOurs(command string) bool {
+	if command == "" {
+		return false
+	}
+	return command == selfName || strings.HasPrefix(command, "kunai")
+}
+
+// selfName is this binary's own name, so a renamed or wrapped install is still
+// recognised as ours even if it is not called kunai at all.
+var selfName = func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return filepath.Base(exe)
+}()
 
 // Server is one listening socket kunai found.
 type Server struct {
@@ -226,12 +266,56 @@ func Owned(servers []Server, parents map[int]int, root int) []Server {
 // and the directory catches it once it is not.
 func OwnedBy(servers []Server, parents map[int]int, root int, cwds map[int]string, sessionCwd string) []Server {
 	var out []Server
+	byDir := attributableDir(sessionCwd)
 	for _, s := range servers {
-		if DescendsFrom(parents, s.PID, root) || withinDir(cwds[s.PID], sessionCwd) {
+		if isOurs(s.Command) {
+			continue // another kunai, not somebody's dev server
+		}
+		if DescendsFrom(parents, s.PID, root) || (byDir && withinDir(cwds[s.PID], sessionCwd)) {
 			out = append(out, s)
 		}
 	}
 	return out
+}
+
+// attributableDir reports whether a directory is specific enough to say that a
+// process running in it belongs to a session started there.
+//
+// The working-directory rule exists for one case: the agent backgrounds a dev
+// server, the shell exits, the kernel reparents it to init, and its ancestry to
+// `claude` is severed. Matching on the directory recovers it. But the rule is
+// only as good as the directory, and a session started in the HOME directory
+// claims every process on the machine, because on a personal machine nearly
+// everything runs somewhere under home. Observed for real: a session opened in
+// /home/ninja offered the other kunai instance's service port and both of its
+// internal provider proxies as previews to share.
+//
+// A directory that CONTAINS projects is not one. The home directory, anything
+// above it (/home, /Users), and the filesystem root are containers by
+// definition, so they attribute nothing and ancestry is left to do the work
+// alone. This is the same distinction the sidebar's grouping had to learn:
+// ~/coding is where codebases live, not a codebase.
+func attributableDir(root string) bool {
+	root = strings.TrimRight(root, "/")
+	if root == "" {
+		return false // the filesystem root, after trimming
+	}
+	home := strings.TrimRight(userHome(), "/")
+	if home == "" {
+		return true // nothing to compare against; the old behaviour
+	}
+	// root is home, or an ancestor of it.
+	return root != home && !withinDir(home, root)
+}
+
+// userHome is a variable so a test can pin it without depending on the machine
+// it runs on.
+var userHome = func() string {
+	h, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return h
 }
 
 // withinDir reports whether a process's directory is the session's, or inside it.
