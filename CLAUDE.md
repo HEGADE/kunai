@@ -618,6 +618,21 @@ The web client renders the conversation richly from data already on the client
   a copy button. The in-flight streaming block
   renders unhighlighted for speed (`live` prop); committed blocks highlight once via
   a pure `$derived`.
+- **A tool that returned a picture shows the picture.** Reading an image rendered
+  as the literal text `[image]`, which is the marker the driver leaves where the
+  bytes were -- right on the wire and useless on screen, and worst in exactly the
+  case kunai exists for, looking at a machine you are not sitting at. Nothing has
+  to be sent to fix it: the file is on that machine and the file route already
+  serves it, the tool's own **input** says which file (the result carries no
+  name), and the marker says there was one. `claude.ImageResultMarker` and
+  `IMAGE_RESULT_MARKER`/`imageResultPath` (`web/src/lib/toolMeta.ts`) are the two
+  halves of that contract, pinned by a test on the Go side. Both halves are
+  required: the marker alone cannot say which file, and a path alone would draw a
+  frame around any Read of a `.png`. The extension list mirrors `imageTypes` in
+  `sessionfile.go` so the frame is never drawn around a request the route will
+  refuse. The **honest limit**: that route is confined to the session's own
+  folders, so an image the agent read from outside them (a screenshot in `/tmp`)
+  is a 403 and renders as the explained broken frame rather than the picture.
 - **An image in a reply is a thing you can use**, not just something that paints.
   `withImageFrames` (in `Markdown.svelte`) resolves the src as before and then
   wraps every image in a `<figure>` with a caption and a hover toolbar: expand

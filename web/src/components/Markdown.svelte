@@ -112,19 +112,7 @@
     return tpl.innerHTML
   }
 
-  // Point an image at a path on the machine to the endpoint that can actually
-  // serve it.
-  //
-  // An agent writing ![shot](/tmp/x.png) produced an <img> whose src the browser
-  // resolved against kunai's own origin -- and kunai answers every unmatched path
-  // with the app shell, so the image element received HTML and showed a broken
-  // icon. It failed identically in a browser on the machine itself; this was
-  // never about which device was looking.
-  //
-  // Rewritten on the already-sanitized HTML, walking real elements rather than
-  // running a regex over markup, so a src containing quotes or angle brackets
-  // cannot be used to reshape the document on the way through.
-  // …and give it somewhere to live: a frame with the actions a picture needs.
+  // Give every image somewhere to live: a frame with the actions a picture needs.
   //
   // Rendering the image was only half of it. A picture arrives at whatever size
   // the model drew it, in a message column narrower than that, with no way to see
@@ -555,93 +543,7 @@
     border-radius: var(--r-sm);
   }
 
-  /* A picture and the things you do with it.
-     The frame is a quiet surface rather than a card: the image supplies its own
-     edges, so a border around it would be a second one. */
-  .md :global(figure.imgfr) {
-    margin: 14px 0;
-  }
-  .md :global(.imgstage) {
-    position: relative;
-    display: inline-block;
-    max-width: 100%;
-    line-height: 0; /* an inline image otherwise leaves a descender gap below it */
-    border-radius: var(--r-sm);
-    background: var(--panel);
-  }
-  .md :global(.imgstage img) {
-    display: block;
-    /* Capped so one picture cannot take the whole column and push the rest of
-       the reply off screen; full size is one click away. In px rather than vh so
-       it does not resize under you when a phone's address bar hides. */
-    max-height: 460px;
-    width: auto;
-    cursor: zoom-in;
-  }
-  /* The actions appear on hover, the same bargain the turn footer makes: they
-     are always there when wanted and never furniture when not. On a touch screen
-     there is no hover to reveal them with, so they simply stay. */
-  .md :global(.imgacts) {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    display: flex;
-    gap: 6px;
-    opacity: 0;
-    transition: opacity 0.13s;
-  }
-  .md :global(.imgstage:hover .imgacts),
-  .md :global(.imgacts:focus-within) {
-    opacity: 1;
-  }
-  @media (hover: none) {
-    .md :global(.imgacts) {
-      opacity: 1;
-    }
-  }
-  .md :global(.imgbtn) {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 7px;
-    /* Opaque enough to stay legible over whatever the picture happens to be
-       behind it, which is the one thing chrome over an image has to survive. */
-    background: rgba(18, 18, 20, 0.82);
-    border: 1px solid var(--border);
-    color: var(--text-2);
-    cursor: pointer;
-  }
-  .md :global(.imgbtn:hover) {
-    color: var(--text);
-    border-color: var(--border-2);
-  }
-  .md :global(.imgbtn[data-busy]) {
-    opacity: 0.5;
-  }
-  .md :global(figcaption.imgcap) {
-    margin-top: 7px;
-    font-size: 12.5px;
-    line-height: 1.45;
-    color: var(--text-3);
-  }
-  /* A picture that would not load. The frame says so in words, because the
-     browser's own broken glyph does not say which of "outside this session's
-     folders" and "not an image kunai will serve" happened. */
-  .md :global(figure.imgfr[data-broken] .imgstage) {
-    display: block;
-    line-height: 1.5;
-    padding: 14px;
-    border: 1px dashed var(--border-2);
-  }
-  .md :global(figure.imgfr[data-broken] .imgstage img),
-  .md :global(figure.imgfr[data-broken] .imgacts) {
-    display: none;
-  }
-  .md :global(figure.imgfr[data-broken] .imgstage::after) {
-    content: 'This image could not be loaded. It may be outside the session’s folders, or not an image kunai can show.';
-    font-size: 12.5px;
-    color: var(--text-3);
-  }
+  /* The frame's own chrome lives in src/image-frame.css, global, because a tool
+     result renders the same classes from a real component (ImageFigure.svelte)
+     and the two must not drift. Only the bare <img> rule above is Markdown's. */
 </style>
