@@ -520,6 +520,53 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   kunai WebSocket + UI session, all with the sidecar never downloaded. Kimi K3 is the
   remaining provider (Moonshot's Anthropic-native `api.kimi.com/coding/v1/messages`,
   the easiest of the three), not built yet.
+- **Making pictures** (`internal/cliproxy/codex/imagetool.go`,
+  `internal/server/generatedimages.go`): pick Codex in kunai, ask for an image,
+  get one. Editing an image you upload works the same way. The premise had to be
+  measured, because the obvious conclusion is wrong and was very nearly shipped
+  as the answer: Claude cannot draw at all, and the Codex proxy posts to
+  `chatgpt.com/backend-api/codex/responses`, which reads like a coding endpoint,
+  so the expected verdict was "this needs an OpenAI platform key billed per
+  picture, and no subscription covers it". It does not. That endpoint accepts the
+  Responses API's built-in `{"type":"image_generation"}` tool on the same OAuth
+  token the Codex provider already uses, and it both generates from a prompt and
+  **edits** an image handed to it as an `input_image` (the backend reports
+  `action:"edit"`). Probed live before a line was written: a 1254x1254 PNG each
+  way, billed as ordinary tokens (2326 in / 69 out for a generate), no API key
+  anywhere.
+  Three facts fix the shape. The **`claude` CLI never asks for the tool**, since
+  it does not know it exists, so the proxy adds it on the way out rather than
+  passing one through -- there is no amount of prompting that makes Claude Code
+  declare another vendor's built-in. It is injected **after**
+  `ConvertClaudeRequestToCodex`, not inside it, because that translator rewrites
+  any non-`function` tool into a function (the tool loop in
+  `translate_request.go`), so a built-in added before translation arrives
+  nameless and is refused; doing it in the Codex proxy's own request builder also
+  leaves Grok, which shares the translator, untouched. And the picture comes back
+  inside a stream the CLI reads as an **Anthropic** response, which has no way to
+  carry an image in an assistant message, so it is written to disk and announced
+  as markdown -- which cost nothing to build, because `withLocalImages` in
+  `Markdown.svelte` already turns `![alt](path)` in a reply into a request to the
+  owner-only file route. Inlining it as a base64 data URL would also have
+  rendered and was rejected: a megabyte of base64 would enter the transcript and
+  be replayed into every later turn's context, a quarter of a million tokens to
+  show one picture once.
+  Images land in `<dataDir>/generated-images/` rather than the session's working
+  directory, and that is forced rather than preferred: the proxy is one
+  process-wide server for every session on the machine and the request carries a
+  model and messages, not a session id, so it cannot know whose cwd to use. It is
+  also the better answer, since a picture is not source and writing one into
+  somebody's repository makes their next `git status` a mess they did not ask
+  for. `handleSessionFile` gains that directory as a root beside the session's
+  own folders and changes in no other way: still owner-only, still images-only,
+  still size-capped and symlink-resolved, and still absent from the share gate.
+  The directory is swept to `imageKeep` oldest-first, because pictures are ~800KB
+  and nothing else would ever delete one. `SetImageSaver` is the whole switch:
+  with no saver the tool is never offered, so the capability is gated on being
+  able to deliver the result rather than on a flag that could disagree with
+  reality. Proven end to end through the real app on a real Codex session --
+  generate, and edit of an uploaded PNG -- each rendering inline in the chat at
+  1254x1254.
 - `internal/project`: reads a directory into the description a session hands a model
   (`Scan` -> `Info`, `Info.Brief()`): layout, language mix, git head from `.git`,
   the files that name it. It never opens the code, and the walk skips `.git`,

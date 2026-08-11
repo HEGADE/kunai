@@ -265,6 +265,13 @@ func ConvertCodexResponseToClaude(_ context.Context, _ string, originalRequestRa
 			params.ThinkingSummarySeen = false
 		case "web_search_call":
 			output = appendCodexWebSearchToolResult(output, params, rootResult, itemResult)
+		case "image_generation_call":
+			// The whole PNG arrives here, base64'd in `result`. Saved and
+			// announced as markdown; see imagetool.go. Without this case the item
+			// fell through the switch and the picture was silently dropped, which
+			// is exactly what happened before: the backend drew it, and kunai
+			// threw it away.
+			output = appendImageResult(output, params, itemResult)
 		}
 	case "response.function_call_arguments.delta":
 		delta := rootResult.Get("delta").String()

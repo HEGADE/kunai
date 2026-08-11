@@ -22,6 +22,7 @@ import (
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/hegade/kunai/internal/awake"
+	"github.com/hegade/kunai/internal/cliproxy/codex"
 	"github.com/hegade/kunai/internal/fsbrowse"
 	"github.com/hegade/kunai/internal/ghapp"
 	"github.com/hegade/kunai/internal/lanauth"
@@ -85,12 +86,15 @@ type Server struct {
 	funnelStatusFn func(gatePort int) funnelState
 	// telegram is the Telegram channel state (token, who may use it, pending
 	// pairings). Nil until startTelegram runs.
-	telegram      *telegram.Store
-	cfg           Config
-	mgr           *session.Manager
-	pwa           fs.FS
-	push          *push.Manager // optional; nil disables Web Push
-	uploadsDir    string
+	telegram   *telegram.Store
+	cfg        Config
+	mgr        *session.Manager
+	pwa        fs.FS
+	push       *push.Manager // optional; nil disables Web Push
+	uploadsDir string
+	// images is where a picture the agent drew lands, and its presence is what
+	// turns image generation on. Nil when there is no data dir.
+	images        *imageSink
 	machines      *machineStore
 	disco         discoveryCache
 	awake         awake.Keeper             // opt-in keep-awake while locked/idle
@@ -195,6 +199,14 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	// manager resolves the default binary), since resolveCLI now consults them.
 	s.providers = newProviderStore(filepath.Join(cfg.DataDir, "providers.json"))
 	s.cliproxy = newCLIProxyManager(cfg.DataDir)
+	// Somewhere for a picture the agent draws to land, and the switch that turns
+	// drawing on: the proxy offers the image tool only once it has a saver, so
+	// the capability is gated on being able to deliver the result rather than on
+	// a separate flag that could disagree. See generatedimages.go.
+	s.images = newImageSink(cfg.DataDir)
+	if s.images != nil {
+		codex.SetImageSaver(s.images)
+	}
 	if cfg.NativeCodex {
 		s.nativeCodex = newNativeCodexManager(cfg.DataDir)
 		s.nativeLogin = newNativeCodexLoginManager(cfg.DataDir)

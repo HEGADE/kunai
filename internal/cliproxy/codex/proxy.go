@@ -145,6 +145,10 @@ func (p *Proxy) buildCodexRequest(model string, inbound []byte) []byte {
 	body, _ = sjson.DeleteBytes(body, "safety_identifier")
 	body, _ = sjson.DeleteBytes(body, "stream_options")
 	body = dropOrphanToolChoice(body)
+	// Offer the built-in image tool. After translation, never inside it: the
+	// tool loop rewrites any non-"function" tool into one, and this is the Codex
+	// proxy's own builder, so Grok (which shares the translator) never sees it.
+	body = injectImageTool(body)
 	if !gjson.GetBytes(body, "instructions").Exists() {
 		body, _ = sjson.SetBytes(body, "instructions", "")
 	}
