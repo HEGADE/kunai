@@ -769,21 +769,26 @@ The web client renders the conversation richly from data already on the client
 - `web/src/lib/{highlight,diff,toolMeta}.ts` hold the shared, pure helpers.
   `highlight.js` is the only new runtime dependency.
 
-While a turn RUNS its activity is open, and it collapses when the turn ends
-(`liveOpen` in `Chat.svelte`, `LiveActivity.svelte`). The asymmetry is the whole
-point: while an agent is working, what it is doing IS the content you are there
-to watch, so making you open the same disclosure at the start of every query is a
-click that only ever has one answer. Once the turn ends those calls stop being
-what you are reading and become the record of how the answer was reached, which
-is what the collapsed `ToolGroup` is for. Reopening is keyed on the NUMBER OF
-TURNS rather than on `running`, because a turn's blocks change constantly while
-it works and only a new query should overrule the reader: closing it mid-turn is
-respected for that turn and forgotten by the next. Open, it shows the tool
-calls ONLY, in one bounded self-scrolling block BELOW the reply. The order is
-load-bearing: what the agent has said so far is the thing being read, so it stays
-where reading starts and grows downward as prose does, while the activity sits at
-the bottom edge next to `Working…`, which is where the eye already is and where
-the newest call appears. Above the reply it is chrome in front of the content. It used to
+While a turn RUNS, its activity is **one line naming the call happening now**
+(`LiveActivity.svelte`), not the list of everything so far. That distinction is
+the whole design and it was briefly lost: opening the disclosure by default
+showed every call at once, so the answer to "what is it doing NOW" sat at the
+bottom of a growing column of what it had already done, which is clutter dressed
+as information. Collapsed, the head IS the answer -- the current tool, the file
+or the **command** it is running (a Bash call says which command, since for a
+shell call the command is the entire answer), and a count of what came before.
+Everything else is the record of how the answer was reached, and it belongs
+behind a click: the disclosure here mid-turn, or the `ToolGroup` summary once the
+turn ends. `liveOpen` therefore defaults to false and is reset per turn, keyed on
+the NUMBER OF TURNS rather than on `running`, because a turn's blocks change
+constantly while it works and only a new query should overrule the reader.
+Opened, it shows the tool calls ONLY, in one bounded self-scrolling block BELOW
+the reply. The order is load-bearing: what the agent has said so far is the thing
+being read, so it stays where reading starts and grows downward as prose does,
+while the activity sits at the bottom edge next to `Working…`, which is where the
+eye already is. Above the reply it is chrome in front of the content, and
+interleaved through it a paragraph and a command take turns shoving the page
+down. It used to
 render every block, which was wrong twice: `Chat.svelte` renders the prose below
 it anyway, so opening printed the answer a second time, and interleaving the two
 made a paragraph and a command take turns shoving the conversation down the page.

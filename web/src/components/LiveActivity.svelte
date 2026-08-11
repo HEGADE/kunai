@@ -32,6 +32,15 @@
   const label = $derived(current ? describe(current.name ?? '', current.input) : null)
   const done = $derived(answered ? calls.length : calls.length - 1)
 
+  // The first line of the current call's own summary (a Bash command, a Grep
+  // pattern), with the agent's `cd … &&` preamble dropped the same way ToolCard
+  // drops it, so the operative command leads.
+  const summary = $derived.by(() => {
+    const first = (label?.text ?? '').split('\n')[0].trim()
+    const cd = first.match(/^cd\s+[^&]+&&\s*([\s\S]+)$/)
+    return cd ? cd[1] : first
+  })
+
   // The activity is bounded and scrolls itself, so a turn that makes forty calls
   // does not grow the page by forty rows: the conversation under it stays where
   // the reader left it. Pinned to the newest call, which is the one worth seeing,
@@ -57,6 +66,11 @@
         <span class="ic"><ToolIcon name={current.name ?? ''} size={13} /></span>
         <span class="now">{label?.action ?? current.name}</span>
         {#if label?.file}<span class="file mono">{label.file}</span>{/if}
+        <!-- What it is running, not merely which tool it is running.
+             "Bash" on its own says a command is going without saying which, and
+             for a shell call the command IS the answer to "what is it doing".
+             One line, clipped: this is a status line, not the transcript. -->
+        {#if !label?.file && summary}<span class="what mono">{summary}</span>{/if}
       {:else}
         <span class="now quiet">Thinking</span>
       {/if}
@@ -129,6 +143,18 @@
   .now.quiet {
     color: var(--text-3);
     font-weight: 400;
+  }
+  /* Clipped rather than wrapped: the head is one line whatever the command is,
+     so a long pipeline cannot make the status line two rows and shift the
+     conversation under it. */
+  .what {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    letter-spacing: 0;
+    color: var(--text-3);
   }
   .file {
     flex: 1;

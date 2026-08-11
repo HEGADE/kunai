@@ -168,23 +168,24 @@
   // itself every time a tool call came back would be unusable exactly while you
   // were trying to read it.
   //
-  // Open while the query runs, closed once it is done, and that asymmetry is the
-  // point. While an agent is working, what it is doing IS the content: you are
-  // watching it, and having to open the same disclosure at the start of every
-  // query is a click that only ever has one answer. Once the turn ends the tool
-  // calls stop being the thing you are reading and become the record of how the
-  // answer was reached, which belongs behind the collapsed group -- that half
-  // already happened on its own, because the finished turn renders ToolGroup
-  // instead of this.
-  let liveOpen = $state(true)
-  // Reopen for each new query, so closing it mid-turn is respected for that turn
-  // and forgotten by the next. Keyed on how many turns there are rather than on
-  // `running`, because a turn's blocks change constantly while it works and only
-  // a NEW turn should reset the reader's choice.
+  // Closed while the query runs, and that is the point rather than a default
+  // nobody revisited.
+  //
+  // Opening it showed every call at once, which is a growing column of commands
+  // where only one of them is happening -- the thing you want to know ("what is
+  // it doing NOW") buried in a list of what it already did. Collapsed, the head
+  // IS that answer: the current call, named, with a count of what came before.
+  // The rest is the record of how the answer was reached, and it belongs behind
+  // the click, either here mid-turn or in the ToolGroup summary afterwards.
+  let liveOpen = $state(false)
+  // Closed again for each new query, so opening it mid-turn to watch something
+  // is respected for that turn and forgotten by the next. Keyed on how many
+  // turns there are rather than on `running`, because a turn's blocks change
+  // constantly while it works and only a NEW turn should reset the choice.
   const liveTurnKey = $derived(allTurns.length)
   $effect(() => {
     void liveTurnKey
-    liveOpen = true
+    liveOpen = false
   })
   let modeOpen = $state(false)
   let modelOpen = $state(false)
