@@ -13,6 +13,8 @@
   import Spinner from './components/Spinner.svelte'
   import Lightbox from './components/Lightbox.svelte'
   import { FILE_BASE, sharedImageBase } from './lib/filebase'
+  import FileChips from './components/FileChips.svelte'
+  import type { Attachment } from './lib/types'
 
   // The token is the last path segment of /s/<token>.
   const token = decodeURIComponent(location.pathname.replace(/^.*\/s\//, '').replace(/\/$/, ''))
@@ -52,10 +54,56 @@
     }
   }
 
+  // Pictures staged for the next message. A guest sends a screenshot far more
+  // often than any other kind of file, and the server accepts nothing else.
+  let files = $state<Attachment[]>([])
+  let fileInput = $state<HTMLInputElement | null>(null)
+  let upErr = $state('')
+  let uploading = $state(false)
+
   function send() {
-    if (!draft.trim()) return
-    g.send(draft)
+    if (!draft.trim() && !files.length) return
+    g.send(draft, files)
     draft = ''
+    files = []
+  }
+
+  async function addFiles(list: FileList | File[]) {
+    upErr = ''
+    uploading = true
+    try {
+      for (const f of Array.from(list)) {
+        try {
+          files = [...files, await g.upload(f)]
+        } catch (e) {
+          // Named rather than swallowed: the server refuses non-images and
+          // oversize ones on purpose, and a picture that silently did not attach
+          // is worse than one that says why.
+          upErr = e instanceof Error ? e.message : 'that file could not be sent'
+        }
+      }
+    } finally {
+      uploading = false
+    }
+  }
+
+  function onFiles(e: Event) {
+    const input = e.currentTarget as HTMLInputElement
+    if (input.files?.length) void addFiles(input.files)
+    input.value = '' // so choosing the same picture twice still fires
+  }
+
+  // Paste is how a screenshot usually arrives, so it is worth taking directly
+  // rather than making somebody save the file first.
+  function onPaste(e: ClipboardEvent) {
+    const imgs = Array.from(e.clipboardData?.items ?? [])
+      .filter((i) => i.kind === 'file' && i.type.startsWith('image/'))
+      .map((i) => i.getAsFile())
+      .filter((f): f is File => !!f)
+    if (imgs.length) {
+      e.preventDefault()
+      void addFiles(imgs)
+    }
   }
 
   function onKey(e: KeyboardEvent) {
@@ -104,6 +152,11 @@
           <div class="msg user" class:guest={item.from === 'guest'}>
             <Markdown text={item.text} />
           </div>
+          <!-- What rode along with it. Metadata only, the same as the owner's
+               view: the bytes went to the model and are never served back. -->
+          {#if item.files?.length}
+            <div class="sentfiles"><FileChips files={item.files} /></div>
+          {/if}
         {:else if item.role === 'assistant'}
           <div class="msg reply">
             {#each item.blocks as b, bi (bi)}
@@ -141,19 +194,37 @@
         <p class="ro">You are watching this session. Only its owner can send to it.</p>
       {:else if g.canSend}
         <div class="composer">
+          {#if files.length}
+            <div class="staged">
+              <FileChips {files} />
+              <button class="clear" onclick={() => (files = [])} aria-label="Remove the attached images">Clear</button>
+            </div>
+          {/if}
+          {#if upErr}<p class="uperr">{upErr}</p>{/if}
           <textarea
             bind:value={draft}
             onkeydown={onKey}
+            onpaste={onPaste}
             rows="2"
             placeholder="Send a message"
             aria-label="Send a message"></textarea>
           <div class="cbar">
+            <input type="file" accept="image/*" multiple bind:this={fileInput} onchange={onFiles} hidden />
+            <button
+              class="attach"
+              onclick={() => fileInput?.click()}
+              disabled={uploading}
+              title="Attach an image"
+              aria-label="Attach an image"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.5l-8.4 8.4a5 5 0 01-7.1-7.1l8.5-8.5a3.3 3.3 0 014.7 4.7l-8.5 8.5a1.7 1.7 0 01-2.3-2.3l7.8-7.8" /></svg>
+            </button>
             <span class="hint">Every file change still needs the owner's approval.</span>
             <span class="spacer"></span>
             {#if running}
               <button class="ghost" onclick={() => g.stop()}>Stop</button>
             {/if}
-            <button class="go" disabled={!draft.trim()} onclick={send}>Send</button>
+            <button class="go" disabled={(!draft.trim() && !files.length) || uploading} onclick={send}>Send</button>
           </div>
         </div>
       {:else if g.info.taken}
@@ -320,6 +391,48 @@
     font-size: 11.5px;
     line-height: 1.5;
     color: var(--text-4);
+  }
+  .sentfiles {
+    display: flex;
+    justify-content: flex-end;
+    margin: -4px 0 2px;
+  }
+  .staged {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 2px 6px;
+  }
+  .clear {
+    flex: none;
+    font-size: 11.5px;
+    color: var(--text-4);
+  }
+  .clear:hover {
+    color: var(--text-2);
+  }
+  .uperr {
+    margin: 0 2px 6px;
+    font-size: 12px;
+    color: var(--alert);
+  }
+  .attach {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    margin-left: -4px;
+    border-radius: var(--r-sm);
+    color: var(--text-4);
+  }
+  .attach:hover:not(:disabled) {
+    color: var(--text-2);
+    background: var(--panel);
+  }
+  .attach:disabled {
+    opacity: 0.5;
   }
   .composer {
     display: flex;

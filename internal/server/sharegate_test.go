@@ -29,7 +29,7 @@ func (noSessions) Get(string) (*session.Session, bool) { return nil, false }
 func testGate(t *testing.T) (*shareGate, *share.Store) {
 	t.Helper()
 	store := share.NewStore(filepath.Join(t.TempDir(), "shares.json"))
-	return newShareGate(store, noSessions{}, testPWA{}, "", ""), store
+	return newShareGate(store, noSessions{}, testPWA{}, "", "", nil), store
 }
 
 // testPWA is an empty asset tree. The routing is what these tests are about, so
@@ -379,7 +379,7 @@ func TestListenerProbeIgnoresPermissionErrors(t *testing.T) {
 // could not be seen. It is also what DELETE is supposed to mean.
 func TestRevokingAnAlreadyGoneShareSucceeds(t *testing.T) {
 	s := &Server{shares: share.NewStore(filepath.Join(t.TempDir(), "shares.json")), mgr: session.NewManager()}
-	s.gate = newShareGate(s.shares, s.mgr, testPWA{}, "", "")
+	s.gate = newShareGate(s.shares, s.mgr, testPWA{}, "", "", nil)
 
 	for _, token := range []string{"never-existed", ""} {
 		rec := httptest.NewRecorder()
@@ -428,7 +428,7 @@ func TestDeviceKeyIsHeaderOnlyExceptOnTheSocket(t *testing.T) {
 // bounded by anything the owner controls. Every one of them subscribes to the
 // session and is fanned out to on every event.
 func TestGuestSocketsAreCapped(t *testing.T) {
-	g := newShareGate(nil, nil, nil, "", "")
+	g := newShareGate(nil, nil, nil, "", "", nil)
 	for i := 0; i < maxGuestSockets; i++ {
 		if !g.enterGuest() {
 			t.Fatalf("refused guest %d, below the cap", i)
@@ -497,7 +497,7 @@ func TestFunnelNeverOffersKunaisOwnPort(t *testing.T) {
 	// And the request that actually takes the port refuses too, since the status
 	// is advisory and can be seconds old.
 	rec := httptest.NewRecorder()
-	s.gate = newShareGate(nil, nil, nil, "", "")
+	s.gate = newShareGate(nil, nil, nil, "", "", nil)
 	s.handleFunnelOn(rec, httptest.NewRequest("POST", "/api/funnel", strings.NewReader(`{"port":8443}`)))
 	if rec.Code != http.StatusConflict {
 		t.Errorf("turning Funnel on for kunai's own port returned %d, want 409", rec.Code)
@@ -608,7 +608,7 @@ func TestAFunnelMappingToADeadGateIsReclaimable(t *testing.T) {
 func TestTheGateKeepsItsPortAcrossRestarts(t *testing.T) {
 	dir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
-	g := newShareGate(nil, nil, nil, gatePortFile(dir), "")
+	g := newShareGate(nil, nil, nil, gatePortFile(dir), "", nil)
 	if err := g.start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -635,7 +635,7 @@ func TestTheGateKeepsItsPortAcrossRestarts(t *testing.T) {
 
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	defer cancel2()
-	g2 := newShareGate(nil, nil, nil, gatePortFile(dir), "")
+	g2 := newShareGate(nil, nil, nil, gatePortFile(dir), "", nil)
 	if err := g2.start(ctx2); err != nil {
 		t.Fatal(err)
 	}
@@ -682,7 +682,7 @@ func TestEveryOfferedPortIsAccepted(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s := &Server{cfg: Config{Addr: "100.0.0.1:9999"}, baseCtx: ctx}
-	s.gate = newShareGate(nil, nil, nil, "", "")
+	s.gate = newShareGate(nil, nil, nil, "", "", nil)
 	defer s.gate.stop()
 
 	offered := s.funnelStatus(s.gate.Port()).Free

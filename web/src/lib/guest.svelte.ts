@@ -6,12 +6,12 @@
 // disabled things one by one would be a list somebody has to keep complete. This
 // holds only what a guest can do, which is read, send, and stop their own turn.
 
-import type { AppEvent, Block, LoopStatus, SessionState, ToolResult } from './types'
+import type { AppEvent, Attachment, Block, LoopStatus, SessionState, ToolResult } from './types'
 
 // Item is one thing in the log, the same shape the owner's client renders so the
 // components can be shared.
 export type Item =
-  | { role: 'user'; text: string; seq?: number; from?: string }
+  | { role: 'user'; text: string; seq?: number; from?: string; files?: Attachment[] }
   | { role: 'assistant'; blocks: Block[]; seq?: number }
   | { role: 'compact'; pre?: number; post?: number; seq?: number }
   | { role: 'loop'; loop?: LoopStatus; seq?: number }
@@ -47,6 +47,19 @@ function deviceKey(token: string): string {
     localStorage.setItem(k, v)
   }
   return v
+}
+
+// refusal reads the server's reason out of its JSON envelope. Showing the raw
+// body put `{"error":"..."}` in front of somebody, which is the server talking to
+// itself rather than to them.
+async function refusal(r: Response): Promise<string> {
+  try {
+    const body = (await r.json()) as { error?: string }
+    if (body?.error) return body.error
+  } catch {
+    // Not JSON; fall through to something honest but generic.
+  }
+  return `that file could not be sent (${r.status})`
 }
 
 export class GuestConnection {
@@ -132,10 +145,32 @@ export class GuestConnection {
     return !!this.info?.paired && this.info.tier !== 'view' && !this.gone
   }
 
-  send(text: string) {
+  send(text: string, attachments: Attachment[] = []) {
     const t = text.trim()
-    if (!t || !this.canSend) return
-    this.ws?.send(JSON.stringify({ t: 'prompt', text: t }))
+    // A picture is a message on its own: "look at this" needs no words, and the
+    // server accepts an empty prompt when files came with it.
+    if ((!t && !attachments.length) || !this.canSend) return
+    this.ws?.send(
+      JSON.stringify({ t: 'prompt', text: t, attachments: attachments.length ? attachments : undefined }),
+    )
+  }
+
+  // upload stages one image against this link. The server refuses anything that
+  // is not a raster image, anyone who is not the paired guest, and any id it did
+  // not issue, so this only has to carry the file and report the answer.
+  async upload(file: File): Promise<Attachment> {
+    const form = new FormData()
+    form.append('file', file)
+    const r = await fetch(`/api/share/${encodeURIComponent(this.token)}/upload`, {
+      method: 'POST',
+      // The same header every other guest request carries. Without it the server
+      // cannot tell which device is asking and correctly refuses as unpaired,
+      // which is a confusing way to be told you forgot to identify yourself.
+      headers: { 'X-Kunai-Device': this.device },
+      body: form,
+    })
+    if (!r.ok) throw new Error(await refusal(r))
+    return (await r.json()) as Attachment
   }
 
   // stop aborts the turn this guest started. The server refuses it for anything
@@ -219,7 +254,7 @@ export class GuestConnection {
         if (ev.context_tokens != null) this.contextTokens = ev.context_tokens
         break
       case 'user':
-        this.items = [...this.items, { role: 'user', text: ev.text ?? '', seq: ev.seq, from: ev.from }]
+        this.items = [...this.items, { role: 'user', text: ev.text ?? '', seq: ev.seq, from: ev.from, files: ev.attachments }]
         break
       case 'delta':
         if (!ev.parent_tool_use_id) this.streaming += ev.text ?? ''

@@ -29,7 +29,7 @@ func gateWithImages(t *testing.T) (*shareGate, string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return newShareGate(store, noSessions{}, testPWA{}, "", imgs), sh.Token, png
+	return newShareGate(store, noSessions{}, testPWA{}, "", imgs, nil), sh.Token, png
 }
 
 func getGate(g *shareGate, path string) *httptest.ResponseRecorder {
@@ -103,7 +103,7 @@ func TestAGateWithNoImagesDirectoryServesNoImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := newShareGate(store, noSessions{}, testPWA{}, "", "")
+	g := newShareGate(store, noSessions{}, testPWA{}, "", "", nil)
 	if w := getGate(g, "/api/share/"+sh.Token+"/image?path=/anything.png"); w.Code == http.StatusOK {
 		t.Errorf("status %d, want a refusal", w.Code)
 	}

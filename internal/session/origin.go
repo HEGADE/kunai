@@ -34,6 +34,14 @@ func (s *Session) PromptFrom(text string, from Origin) error {
 	return s.prompt(&queuedPrompt{Text: text, from: from})
 }
 
+// PromptWithFilesFrom is PromptFrom carrying attachments, for a guest who sent a
+// picture. content is the model-facing content the caller built from them; atts
+// is the metadata the conversation shows. Kept beside PromptFrom rather than
+// widening it, so every existing caller keeps saying exactly what it means.
+func (s *Session) PromptWithFilesFrom(text string, content any, atts []Attachment, from Origin) error {
+	return s.prompt(&queuedPrompt{Text: text, Attachments: atts, content: content, from: from})
+}
+
 // InterruptFrom stops the current turn, but only if from is entitled to.
 //
 // The plain Interrupt is deliberately not exposed to a guest. It calls

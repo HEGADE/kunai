@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -165,4 +166,31 @@ func hexID() string {
 	b := make([]byte, idBytes)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// StageUpload writes bytes into the uploads directory under a fresh id, the same
+// place and shape handleUpload produces. Exported on the server so the share gate
+// can stage a guest's picture without learning where uploads live or how an id is
+// made; see shareupload.go for why the gate is kept that narrow.
+func (s *Server) StageUpload(name, mediaType string, data []byte) (session.Attachment, error) {
+	if s.uploadsDir == "" {
+		return session.Attachment{}, errors.New("no uploads directory")
+	}
+	if mediaType == "" {
+		mediaType = "application/octet-stream"
+	}
+	id := hexID()
+	// 0600 like every other file kunai writes into its data dir: these are
+	// somebody's screenshots, not world-readable scratch.
+	if err := os.WriteFile(filepath.Join(s.uploadsDir, id), data, 0o600); err != nil {
+		return session.Attachment{}, err
+	}
+	return session.Attachment{ID: id, Name: safeName(name), MediaType: mediaType}, nil
+}
+
+// BuildContent exposes buildContent to the share gate under the interface it
+// asks for. Same function the owner's own prompt uses, so a guest's picture
+// reaches the model in exactly the same shape.
+func (s *Server) BuildContent(cwd, text string, atts []session.Attachment) any {
+	return s.buildContent(cwd, text, atts)
 }

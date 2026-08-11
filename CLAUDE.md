@@ -574,7 +574,20 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   a turn that thinks for half a minute was indistinguishable from one that was
   never delivered, and a guest has no other way to check. The header dot and the
   Stop button did change, but neither is where somebody looks after pressing
-  Send.
+  Send. And a guest with a work link can **send a picture**
+  (`internal/server/shareupload.go`), because a screenshot is most of what
+  somebody sends when describing a problem. Three rules replace the blanket
+  refusal that stood there, and each closes a hole the others do not. **Images
+  only**: a non-image upload is copied into the session's working directory so
+  the agent can read it, which for a guest is writing a file into somebody else's
+  repository, while an image is inlined as base64 and never touches the project
+  -- so the safe subset is exactly the one offered. **Only the paired guest**,
+  since uploading is sending. And **only ids this link was issued**
+  (`guestFiles`), which is the load-bearing one: the uploads directory holds the
+  OWNER's files too and an id is all that names one, so an unchecked id is a way
+  to have somebody else's screenshot inlined and read back. `redactEvent` keeps a
+  guest's own attachments and still strips the owner's, or the message they just
+  sent comes back without the picture that was the point of it.
   The directory is swept to `imageKeep` oldest-first, because pictures are ~800KB
   and nothing else would ever delete one. `SetImageSaver` is the whole switch:
   with no saver the tool is never offered, so the capability is gated on being
