@@ -31,6 +31,20 @@
   const answered = $derived(!!current?.id && !!chat.toolResults[current.id])
   const label = $derived(current ? describe(current.name ?? '', current.input) : null)
   const done = $derived(answered ? calls.length : calls.length - 1)
+
+  // The activity is bounded and scrolls itself, so a turn that makes forty calls
+  // does not grow the page by forty rows: the conversation under it stays where
+  // the reader left it. Pinned to the newest call, which is the one worth seeing,
+  // and only while the reader is already at the bottom -- scrolling up to read an
+  // earlier command must not be undone by the next one arriving.
+  let body = $state<HTMLElement | null>(null)
+  $effect(() => {
+    void calls.length
+    const el = body
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+    if (atBottom) el.scrollTop = el.scrollHeight
+  })
 </script>
 
 {#if calls.length}
@@ -52,8 +66,17 @@
       {/if}
     </button>
     {#if open}
-      <div class="body">
-        {#each blocks as b, j (j)}
+      <!-- The tool calls ONLY, never the prose.
+           This rendered every block, which did two things wrong at once. The
+           reply was already rendered below by Chat.svelte, so opening this
+           printed the whole answer a second time; and interleaving the two meant
+           a paragraph, a command, a paragraph, a command, each arrival shoving
+           the rest of the conversation down the page. Keeping the calls here and
+           the prose below means the answer reads as one continuous column with
+           the activity beside it, rather than as a transcript of two things
+           taking turns. -->
+      <div class="body" bind:this={body}>
+        {#each calls as b, j (b.id ?? j)}
           <BlockView block={b} {chat} />
         {/each}
       </div>
@@ -125,7 +148,14 @@
     font-variant-numeric: tabular-nums;
     color: var(--text-4);
   }
+  /* Capped rather than unbounded. A running turn's activity is something you
+     glance at, not the document: letting it grow is what pushed the work off the
+     screen and made the reply chase the bottom of a column. In px rather than vh
+     so a phone's address bar hiding cannot resize it mid-turn. */
   .body {
     padding-left: 4px;
+    max-height: 260px;
+    overflow: auto;
+    overscroll-behavior: contain;
   }
 </style>
