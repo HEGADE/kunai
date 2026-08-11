@@ -3,6 +3,7 @@
   import type { ChatConnection } from '../lib/chat.svelte'
   import { describe } from '../lib/toolMeta'
   import ToolIcon from './tools/ToolIcon.svelte'
+  import FileChip from './tools/FileChip.svelte'
   import BlockView from './BlockView.svelte'
 
   // What the agent is doing, while it is doing it.
@@ -72,7 +73,12 @@
              finished, and the reply arriving says what it concluded. -->
         <span class="ic" class:settled={answered}><ToolIcon name={current.name ?? ''} size={13} /></span>
         <span class="now" class:settled={answered}>{label?.action ?? current.name}</span>
-        {#if label?.file}<span class="file mono">{label.file}</span>{/if}
+        <!-- The same chip the tool card uses, badge and all. It was plain text
+             here, so the one line you actually watch was the one place a file did
+             not carry its language mark: the expanded card showed the badge and
+             the summary above it did not, which reads as two different things
+             rather than the same call twice. -->
+        {#if label?.file}<FileChip path={label.path} name={label.file} />{/if}
         <!-- What it is running, not merely which tool it is running.
              "Bash" on its own says a command is going without saying which, and
              for a shell call the command IS the answer to "what is it doing".
@@ -177,17 +183,6 @@
     font-size: 12px;
     letter-spacing: 0;
     color: var(--text-3);
-  }
-  .file {
-    flex: 1;
-    min-width: 0;
-    font-size: 11.5px;
-    color: var(--text-4);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    /* A path clipped from the left keeps its leading slash where it belongs. */
-    unicode-bidi: plaintext;
   }
   .count {
     flex: none;
