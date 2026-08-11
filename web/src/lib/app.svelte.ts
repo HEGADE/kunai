@@ -1020,12 +1020,42 @@ class AppStore {
     const conn = this.chat
     if (!t || !conn) return
     this.actionError = ''
+
+    // Where the session ran, from whichever source still knows.
+    //
+    // The connection learns its folder from the hello frame, and after a restart
+    // there is no session left to send one -- so on a page loaded AFTER the
+    // restart, conn.cwd is empty and the create was refused with the server's own
+    // "cwd required", which reads as a fault in kunai rather than as the reopen
+    // simply not knowing where to go. Recent does know: it reads the folder out of
+    // the transcript, which is the same file the resume replays. The account and
+    // the title come from there too, for the same reason.
+    let past = this.history.find((h) => h.machineId === t.machineId && h.id === t.id)
+    if (!past && !conn.cwd) {
+      // Recent is only the newest handful, so a session older than that is not in
+      // the cached list even though its transcript is right there. Asked for
+      // directly rather than giving up, because "reopen" failing on an old
+      // session is exactly when somebody has been away long enough to need it.
+      try {
+        const all = await fetchHistory(this.baseForMachine(t.machineId), 1000)
+        past = all.find((h) => h.id === t.id) as TaggedHistoryEntry | undefined
+      } catch {
+        // Leave past unset; the message below is the honest answer.
+      }
+    }
+    const cwd = conn.cwd || past?.cwd || ''
+    if (!cwd) {
+      // Said plainly rather than passed through: nothing here knows the folder,
+      // and the server's own "cwd required" describes its API, not this problem.
+      this.actionError = 'Cannot tell which folder this session ran in. Reopen it from Recent.'
+      return
+    }
     try {
       const meta = await createSession(this.baseForMachine(t.machineId), {
-        cwd: conn.cwd,
+        cwd,
         resume: t.id,
-        title: conn.title,
-        cli: conn.cli || undefined,
+        title: conn.title || past?.title,
+        cli: conn.cli || past?.cli || undefined,
       })
       this.closeTabFor(t.machineId, t.id, { ended: true }) // drop the dead tab
       this.open(t.machineId, meta.id)
