@@ -62,9 +62,16 @@
       <span class="car" aria-hidden="true">
         <svg width="9" height="9" viewBox="0 0 8 8" fill="currentColor"><path d="M2 0l4 4-4 4z" /></svg>
       </span>
-      {#if current && !answered}
-        <span class="ic"><ToolIcon name={current.name ?? ''} size={13} /></span>
-        <span class="now">{label?.action ?? current.name}</span>
+      {#if current}
+        <!-- The most recent call, whether or not it has come back.
+             This used to be shown only while the call was UNANSWERED, which for
+             a fast tool is a blink: a Read returns immediately, so the head was
+             "Thinking" for the whole turn and the file it read was only visible
+             by expanding. Naming it either way means the line always says what
+             the agent is working on; the tick below says whether that work has
+             finished, and the reply arriving says what it concluded. -->
+        <span class="ic" class:settled={answered}><ToolIcon name={current.name ?? ''} size={13} /></span>
+        <span class="now" class:settled={answered}>{label?.action ?? current.name}</span>
         {#if label?.file}<span class="file mono">{label.file}</span>{/if}
         <!-- What it is running, not merely which tool it is running.
              "Bash" on its own says a command is going without saying which, and
@@ -73,6 +80,11 @@
         {#if !label?.file && summary}<span class="what mono">{summary}</span>{/if}
       {:else}
         <span class="now quiet">Thinking</span>
+      {/if}
+      {#if answered}
+        <!-- Settled, so the line reads as "it did this and is now thinking about
+             it" rather than as a call still in flight. -->
+        <svg class="tick" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-label="Done"><path d="M20 6L9 17l-5-5" /></svg>
       {/if}
       {#if done > 0}
         <!-- What it already did, as a number rather than as a column. -->
@@ -147,6 +159,16 @@
   /* Clipped rather than wrapped: the head is one line whatever the command is,
      so a long pipeline cannot make the status line two rows and shift the
      conversation under it. */
+  /* Settled: the call has come back and the agent is thinking about it, so the
+     row recedes a step without losing what it says. */
+  .now.settled,
+  .ic.settled {
+    color: var(--text-3);
+  }
+  .tick {
+    flex: none;
+    color: var(--text-4);
+  }
   .what {
     min-width: 0;
     overflow: hidden;
