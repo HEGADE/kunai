@@ -1,7 +1,10 @@
-# Node / frontend
-web/node_modules/
+# Node / frontend. Unanchored, so this covers a node_modules at ANY depth and not
+# only web/'s: a vitest run from the repo root once left a cache marker in a
+# root-level node_modules/, which was outside `web/node_modules/` and so got
+# committed by a `git add -A`.
+node_modules/
+.vite/
 web/dist/
-web/.vite/
 web/test-results/
 web/playwright-report/
 
