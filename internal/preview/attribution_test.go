@@ -75,6 +75,33 @@ func TestAnotherKunaiIsNeverAPreview(t *testing.T) {
 	}
 }
 
+// A test run is nobody's dev server. `go test ./...` binds a real port for the
+// couple of seconds a suite with an httptest server takes, and offering that is a
+// link to a process that has already exited.
+func TestATestBinaryIsNeverAPreview(t *testing.T) {
+	restore := userHome
+	userHome = func() string { return "/home/ninja" }
+	t.Cleanup(func() { userHome = restore })
+
+	servers := []Server{
+		{Port: 37595, Command: "server.test", PID: 40},
+		{Port: 41000, Command: "preview.test", PID: 41},
+		{Port: 3000, Command: "next-server", PID: 42},
+		// Not a Go test binary: a real program whose name merely contains the word.
+		{Port: 5173, Command: "testbed", PID: 43},
+	}
+	cwds := map[int]string{40: "/home/ninja/app", 41: "/home/ninja/app", 42: "/home/ninja/app", 43: "/home/ninja/app"}
+
+	got := OwnedBy(servers, map[int]int{}, 99, cwds, "/home/ninja/app")
+	var ports []int
+	for _, s := range got {
+		ports = append(ports, s.Port)
+	}
+	if len(ports) != 2 || ports[0] != 3000 || ports[1] != 5173 {
+		t.Errorf("want the real servers only, got %v", ports)
+	}
+}
+
 // The exclusion is of the SOCKET, never the port: a forwarded preview is two
 // listeners on one port, and dropping the port would delete the row the instant
 // you shared it, taking the Stop button with it.

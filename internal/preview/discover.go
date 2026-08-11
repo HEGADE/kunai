@@ -74,6 +74,22 @@ func isOurs(command string) bool {
 	return command == selfName || strings.HasPrefix(command, "kunai")
 }
 
+// isTestBinary reports whether a listener is a test run rather than something
+// somebody would want to open.
+//
+// `go test ./...` compiles each package to `<pkg>.test` and runs it, and a suite
+// that stands up an httptest server binds a real port for the couple of seconds
+// it takes. kunai's scan catches that and offers it as a preview to share, which
+// is a link to a process that has already exited by the time anyone taps it.
+//
+// Matched on the `.test` suffix, which is the toolchain's own naming rather than
+// a guess: a Go test binary is always named that way and nothing a person runs
+// on purpose is. Kept separate from isOurs because it is a different claim --
+// that one says "this is kunai", this one says "this is nobody's dev server".
+func isTestBinary(command string) bool {
+	return strings.HasSuffix(command, ".test")
+}
+
 // selfName is this binary's own name, so a renamed or wrapped install is still
 // recognised as ours even if it is not called kunai at all.
 var selfName = func() string {
@@ -268,8 +284,8 @@ func OwnedBy(servers []Server, parents map[int]int, root int, cwds map[int]strin
 	var out []Server
 	byDir := attributableDir(sessionCwd)
 	for _, s := range servers {
-		if isOurs(s.Command) {
-			continue // another kunai, not somebody's dev server
+		if isOurs(s.Command) || isTestBinary(s.Command) {
+			continue // another kunai, or a test run: neither is somebody's dev server
 		}
 		if DescendsFrom(parents, s.PID, root) || (byDir && withinDir(cwds[s.PID], sessionCwd)) {
 			out = append(out, s)
