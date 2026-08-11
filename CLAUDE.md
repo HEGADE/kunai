@@ -779,7 +779,11 @@ is what the collapsed `ToolGroup` is for. Reopening is keyed on the NUMBER OF
 TURNS rather than on `running`, because a turn's blocks change constantly while
 it works and only a new query should overrule the reader: closing it mid-turn is
 respected for that turn and forgotten by the next. Open, it shows the tool
-calls ONLY, in one bounded self-scrolling block above the reply. It used to
+calls ONLY, in one bounded self-scrolling block BELOW the reply. The order is
+load-bearing: what the agent has said so far is the thing being read, so it stays
+where reading starts and grows downward as prose does, while the activity sits at
+the bottom edge next to `Working…`, which is where the eye already is and where
+the newest call appears. Above the reply it is chrome in front of the content. It used to
 render every block, which was wrong twice: `Chat.svelte` renders the prose below
 it anyway, so opening printed the answer a second time, and interleaving the two
 made a paragraph and a command take turns shoving the conversation down the page.

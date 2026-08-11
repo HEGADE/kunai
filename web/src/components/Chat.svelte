@@ -551,14 +551,21 @@
             <div class="turn">
               <div class="assistant">
                 {#if live}
-                  <!-- While it runs, one line saying what it is doing now, with
-                       the stream behind a disclosure. Rendering every block
-                       inline is what made watching an agent read forty files
-                       push the work off the screen. -->
-                  <LiveActivity blocks={turn.blocks} {chat} bind:open={liveOpen} />
+                  <!-- The reply first, the running activity underneath it.
+                       The order is the point. What the agent has SAID so far is
+                       the thing being read, so it stays where reading starts and
+                       grows downward as prose does; the activity belongs at the
+                       bottom edge, next to "Working…", which is where the eye
+                       already is and where the newest call appears. Above the
+                       reply it was chrome in front of the content, and
+                       interleaved with it (which is what this used to do) a
+                       paragraph and a command took turns shoving the page down.
+                       It collapses up into the ToolGroup summary when the turn
+                       ends; see liveOpen. -->
                   {#each turn.blocks.filter((b) => b.type !== 'tool_use') as b, j (j)}
                     <BlockView block={b} {chat} />
                   {/each}
+                  <LiveActivity blocks={turn.blocks} {chat} bind:open={liveOpen} />
                 {:else}
                   {#if turn.toolCalls > 0}
                     <ToolGroup {turn} {chat} />
