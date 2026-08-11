@@ -777,6 +777,12 @@ bottom of a growing column of what it had already done, which is clutter dressed
 as information. Collapsed, the head IS the answer -- the current tool, the file
 or the **command** it is running (a Bash call says which command, since for a
 shell call the command is the entire answer), and a count of what came before.
+It names the most recent call whether or not that call has come back, which
+matters more than it sounds: it used to be shown only while UNANSWERED, and a
+Read answers in a blink, so the head said "Thinking" for the whole turn and the
+file it read could only be seen by expanding. A settled call recedes a step and
+takes a tick, so the line reads as "it did this and is thinking about it" rather
+than as a call still in flight.
 Everything else is the record of how the answer was reached, and it belongs
 behind a click: the disclosure here mid-turn, or the `ToolGroup` summary once the
 turn ends. `liveOpen` therefore defaults to false and is reset per turn, keyed on
