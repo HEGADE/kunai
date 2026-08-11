@@ -560,6 +560,16 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   for. `handleSessionFile` gains that directory as a root beside the session's
   own folders and changes in no other way: still owner-only, still images-only,
   still size-capped and symlink-resolved, and still absent from the share gate.
+  A **guest** gets a separate route rather than that one
+  (`internal/server/sharedimage.go`, `GET /api/share/{token}/image?path=`),
+  because before images existed nothing in a shared conversation needed a file
+  and every picture rendered as the explained broken frame. It serves ONLY the
+  generated-images directory, which holds nothing but what the model drew in the
+  conversation the guest is already watching, so it leaks nothing they cannot
+  read. The path they send is reduced to its base name and joined to that one
+  directory, which makes traversal inexpressible rather than merely refused, and
+  the owner's session-folder route stays owner-only and off the gate with its
+  test intact.
   The directory is swept to `imageKeep` oldest-first, because pictures are ~800KB
   and nothing else would ever delete one. `SetImageSaver` is the whole switch:
   with no saver the tool is never offered, so the capability is gated on being
@@ -864,6 +874,22 @@ Behavioral invariants that were bugs before (do not regress):
   `pathguard` (symlinks resolved before the containment check), and the served
   set is raster images only — SVG is refused because it is a scriptable document
   and this serves from kunai's own origin.
+- A **Funnel mapping is re-aimed when the gate moves**
+  (`reopenPublicPortIfStale`, the counterpart to `closePublicPortIfIdle`). The
+  mapping is written into tailscaled and points at a NUMBER, so a restart that
+  lands the share gate on a different loopback port leaves it resolving to
+  nothing: the public link dies while the tailnet path keeps working, which
+  reads as "sharing is broken outside Tailscale" rather than as a stale mapping,
+  since from the owner's own machine nothing looks wrong. kunai self-updates and
+  the service manager restarts it unattended, which is precisely when nobody is
+  watching a link they handed out. `funnelStatus` already RECOGNISED the stale
+  mapping (`staleLoopback`) and offered the port back; only a human clicking
+  "make public" ever acted on it. It is narrow on purpose: it repoints only a
+  funnel port already served and pointing at a loopback address with nothing
+  behind it, so a Funnel the owner made for their own app is untouched, the same
+  rule the close path follows. Every caller now reads the config through
+  `askFunnel`, or a new one silently shells out in a test that thought it had
+  stubbed the answer.
 - A **Funnel mapping outlives the process that made it**, and on kunai's own port
   that is fatal rather than untidy. `tailscale funnel --https=<port>` is written
   into tailscaled, so it survives every restart and every reinstall; if it lands

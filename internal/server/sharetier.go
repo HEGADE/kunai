@@ -107,6 +107,7 @@ func (s *Server) reconcileShares(ctx context.Context) {
 		case <-t.C:
 			s.restoreOrphanedSessions(ctx)
 			s.closePublicPortIfIdle()
+			s.reopenPublicPortIfStale()
 		}
 	}
 }
@@ -186,4 +187,57 @@ func sameTools(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// reopenPublicPortIfStale re-aims a Funnel mapping at the share gate after the
+// gate has moved.
+//
+// The counterpart to closePublicPortIfIdle, and it exists because a restart is
+// not a rare event: kunai self-updates and the service manager brings it back,
+// unattended, which is exactly when nobody is watching a link they handed out.
+// A Funnel mapping is written into tailscaled and points at a NUMBER, so when
+// the gate comes back on a different loopback port the mapping still resolves --
+// to nothing. The public link then fails while the tailnet path keeps working,
+// which reads as "sharing is broken outside Tailscale" rather than as a stale
+// mapping, because from the owner's own machine nothing looks wrong at all.
+//
+// Nothing repointed it before: funnelStatus knew how to RECOGNISE the stale
+// mapping (staleLoopback) and offered the port back, but only the owner clicking
+// "make public" again ever acted on it.
+//
+// Deliberately narrow. It only ever repoints a mapping this machine's own gate
+// is the obvious owner of: a funnel port whose target is a loopback address with
+// nothing behind it. A mapping pointing anywhere else, including one the owner
+// made for their own app, is left exactly as it is -- the same rule that stops
+// closePublicPortIfIdle turning off somebody else's Funnel.
+func (s *Server) reopenPublicPortIfStale() {
+	if s.shares == nil || s.gate == nil || s.shares.Empty() {
+		return // nothing shared, so nothing should be public
+	}
+	port := s.gate.Port()
+	if port == 0 {
+		return // the gate is not up; there is nothing to point at yet
+	}
+	st := s.askFunnel(port)
+	if !st.Available || st.Port != 0 {
+		return // no tailscale to ask, or already aimed at us
+	}
+	// staleLoopback is what put a served port in Free, so a port that is both
+	// served and free is one of ours that has been left behind. A port that is
+	// free because nothing was ever served on it is not something to claim: the
+	// owner never asked for this machine to be public.
+	stale, ok := st.StaleLoopback()
+	if !ok {
+		return
+	}
+	args := funnelOnArgs(stale, port)
+	if out, err := execOut(args[0], args[1:]...); err != nil {
+		// Reported and retried on the next tick, never fatal: a link that cannot be
+		// repointed is a thing to say out loud, not a reason to stop serving the
+		// people who can already reach it.
+		logShare("could not re-aim public port %d at the share gate: %v %s", stale, err, strings.TrimSpace(out))
+		return
+	}
+	s.forgetFunnel()
+	logShare("public port %d was pointing at a gate that had moved; re-aimed at 127.0.0.1:%d", stale, port)
 }
