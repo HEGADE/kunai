@@ -79,7 +79,14 @@ func (s *Server) handleSessionFile(w http.ResponseWriter, r *http.Request) {
 	// The same confinement a shared session's tool calls get, and for the same
 	// reason: symlinks resolved BEFORE the containment check, so a link inside the
 	// folder pointing at /etc cannot be followed out of it.
-	abs, err := pathguard.ResolveAny(s.shareRoots(sess), rel)
+	// Plus wherever generated images land, which is kunai's own directory rather
+	// than the session's: the proxy that draws them serves every session on this
+	// machine and cannot know which one asked. See generatedimages.go.
+	roots := s.shareRoots(sess)
+	if d := s.images.path(); d != "" {
+		roots = append(roots, d)
+	}
+	abs, err := pathguard.ResolveAny(roots, rel)
 	if err != nil {
 		if errors.Is(err, pathguard.ErrOutside) {
 			writeErr(w, http.StatusForbidden, "that file is outside this session's folders")
