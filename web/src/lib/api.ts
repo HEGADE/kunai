@@ -749,13 +749,36 @@ export const PHASE_LABEL: Record<ReviewPhase, string> = {
   done: 'Done',
 }
 
+// What GitHub said when kunai asked whether the App actually works. Not a
+// boolean: "the key is wrong", "the App is installed nowhere" and "GitHub did
+// not answer" need three different sentences and lead to three different
+// actions, and collapsing them is what made a broken setup report Configured.
+export interface GitHubCheck {
+  name?: string
+  install_url?: string
+  orgs?: string[]
+  // The App covers only selected repositories somewhere, which is the setting
+  // behind the confusing failure: everything reports configured and one
+  // repository still refuses because it was never ticked.
+  partial?: boolean
+  warning?: string
+}
+
 export interface GitHubAppState {
   configured: boolean
   app_id?: string
+  check?: GitHubCheck
+  // Credentials that were fine when saved and are not any more: a revoked key,
+  // a deleted App.
+  error?: string
 }
 
-export function githubApp(base: string): Promise<GitHubAppState> {
-  return fetch(at(base, '/api/github/app')).then((r) => json<GitHubAppState>(r))
+// `check` costs two round trips to github.com, so it is asked for only where
+// somebody is looking at the setup, never by the dashboard's poll.
+export function githubApp(base: string, check = false): Promise<GitHubAppState> {
+  return fetch(at(base, `/api/github/app${check ? '?check=1' : ''}`)).then((r) =>
+    json<GitHubAppState>(r),
+  )
 }
 
 export function setGitHubApp(

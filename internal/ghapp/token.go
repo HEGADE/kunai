@@ -69,6 +69,11 @@ type Installation struct {
 	Account struct {
 		Login string `json:"login"`
 	} `json:"account"`
+	// RepositorySelection is "all" or "selected". Worth surfacing, because
+	// "selected" is the setting that produces the confusing failure: the App is
+	// installed on the org, everything looks configured, and one repository
+	// still refuses because it was never ticked.
+	RepositorySelection string `json:"repository_selection"`
 }
 
 // Installations lists everywhere this App is installed. Authenticated as the App
@@ -93,6 +98,39 @@ func (a *App) InstallationFor(ctx context.Context, owner, repo string) (Installa
 	path := fmt.Sprintf("/repos/%s/%s/installation", url.PathEscape(owner), url.PathEscape(repo))
 	if err := a.do(ctx, http.MethodGet, path, authApp, nil, &out); err != nil {
 		return Installation{}, fmt.Errorf("kunai is not installed on %s/%s (install the App on that repository): %w", owner, repo, err)
+	}
+	return out, nil
+}
+
+// Identity is the App's own record: what it is called and where it can be
+// installed. Read with the App JWT, which is one of the few things that
+// credential is allowed to do.
+type Identity struct {
+	Name string `json:"name"`
+	// Slug is the App's URL name, which is what builds the install link. GitHub
+	// gives no other way to construct that URL, and an "install it" message with
+	// no link is an instruction to go and find something.
+	Slug    string `json:"slug"`
+	HTMLURL string `json:"html_url"`
+}
+
+// InstallURL is where somebody installs this App on an organisation.
+func (i Identity) InstallURL() string {
+	if i.Slug == "" {
+		return ""
+	}
+	return "https://github.com/apps/" + i.Slug + "/installations/new"
+}
+
+// Whoami reads the App's own record, which is also the cheapest possible proof
+// that the id and the private key belong together: GitHub will not answer this
+// at all unless the JWT it was signed with verifies against the App named by the
+// id. Saving credentials without asking it is what let a mismatched pair sit on
+// disk reporting "Configured" until the first review failed.
+func (a *App) Whoami(ctx context.Context) (Identity, error) {
+	var out Identity
+	if err := a.do(ctx, http.MethodGet, "/app", authApp, nil, &out); err != nil {
+		return Identity{}, err
 	}
 	return out, nil
 }

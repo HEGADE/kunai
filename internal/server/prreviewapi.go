@@ -35,10 +35,30 @@ type prSummary struct {
 
 // handleGitHubStatus reports whether this machine can act as the App. It never
 // returns the key, or anything derived from it.
+//
+// `?check=1` additionally asks GitHub whether the App still works and where it
+// is installed. Off by default because this endpoint is polled by the dashboard
+// and the check costs two round trips to github.com; the settings screen, which
+// is where somebody is actually looking at this, asks for it.
 func (s *Server) handleGitHubStatus(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"configured": githubConfigured(s.cfg.DataDir)}
-	if app, err := s.githubApp(); err == nil {
+	app, err := s.githubApp()
+	if err == nil {
 		out["app_id"] = app.AppID()
+	}
+	if err == nil && r.URL.Query().Get("check") != "" {
+		if creds, cErr := loadGitHubCredentials(s.cfg.DataDir); cErr == nil {
+			check, vErr := verifyGitHubApp(r.Context(), creds)
+			if vErr != nil {
+				// Credentials that were fine when they were saved and are not any
+				// more: a revoked key, a deleted App. Reported as the reason
+				// rather than as a bare "not configured", which would send
+				// somebody to re-paste a key that was never the problem.
+				out["error"] = vErr.Error()
+			} else {
+				out["check"] = check
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -68,11 +88,27 @@ func (s *Server) handleSetGitHubApp(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"configured": false})
 		return
 	}
+	// Checked against GitHub BEFORE anything is written, so a mismatched pair is
+	// refused while the two fields somebody just pasted are still on screen. The
+	// old behaviour was to check only that the PEM parsed, which meant a key from
+	// a different App saved cleanly, reported "Configured", and failed days later
+	// as an unexplained error on the dashboard.
+	creds, err := ghapp.LoadCredentials(req.AppID, []byte(req.PrivateKey))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	check, err := verifyGitHubApp(r.Context(), creds)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	if err := saveGitHubCredentials(s.cfg.DataDir, req.AppID, req.PrivateKey); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"configured": true})
+	writeJSON(w, http.StatusOK, map[string]any{"configured": true, "app_id": req.AppID, "check": check})
 }
 
 // handlePullRequests lists the open pull requests on a repository this machine

@@ -39,15 +39,21 @@
   let rcfg = $state<ReviewConfig>({})
   const accounts = $derived(app.machines.find((m) => m.id === machineId)?.stats?.clis ?? [])
 
+  // Asked WITH the check, because this is the one screen where somebody is
+  // looking at the setup and can act on the answer. The dashboard's poll asks
+  // without it: the check costs two round trips to github.com.
   $effect(() => {
     void machineId
-    githubApp(base)
+    checking = true
+    githubApp(base, true)
       .then((s) => (appState = s))
       .catch(() => (appState = { configured: false }))
+      .finally(() => (checking = false))
     reviewConfig(base)
       .then((c) => (rcfg = c))
       .catch(() => (rcfg = {}))
   })
+  let checking = $state(false)
 
   async function saveReviewCfg(patch: ReviewConfig) {
     const next = { ...rcfg, ...patch }
@@ -109,16 +115,54 @@
 </p>
 
 {#if appState?.configured}
+  <!-- "Configured" alone was the message being shown while nothing worked: it
+       reported that two files exist on disk, which is true of a key from the
+       wrong App and of an App installed on nothing. What it says now is what
+       GitHub answered when asked. -->
   <div class="row">
-    <span class="ok">Configured</span>
+    {#if checking}
+      <span class="quiet">Checking with GitHub…</span>
+    {:else if appState.error}
+      <span class="bad">Not working</span>
+    {:else if appState.check?.orgs?.length}
+      <span class="ok">Working</span>
+      <span class="aid">
+        {appState.check.name ? appState.check.name + ' · ' : ''}installed on {appState.check.orgs.join(', ')}
+      </span>
+    {:else}
+      <span class="warn">Not finished</span>
+    {/if}
     {#if appState.app_id}<span class="mono aid">App {appState.app_id}</span>{/if}
     <button class="mini" onclick={clear} disabled={busy}>Remove</button>
   </div>
+
+  {#if appState.error}
+    <p class="err">{appState.error}</p>
+  {:else if appState.check?.warning}
+    <p class="warnline">
+      {appState.check.warning}
+      {#if appState.check.install_url}
+        <a href={appState.check.install_url} target="_blank" rel="noreferrer">Install it &rarr;</a>
+      {/if}
+    </p>
+  {:else if appState.check?.partial}
+    <!-- The setting behind the confusing failure: everything reports configured
+         and one repository still refuses because it was never ticked. -->
+    <p class="lead quiet">
+      This App covers only selected repositories on at least one organisation. A
+      repository that was not ticked will refuse, even though everything here
+      looks right.
+      {#if appState.check.install_url}
+        <a href={appState.check.install_url} target="_blank" rel="noreferrer">Change what it covers &rarr;</a>
+      {/if}
+    </p>
+  {/if}
 {:else}
   <p class="lead quiet">
     Register an App on your organisation with pull requests read and write,
     contents read, and metadata read. Leave webhooks off, then paste its id and a
-    private key here.
+    private key here. kunai checks both against GitHub before saving, so a
+    mismatched pair is refused here rather than at the first review.
   </p>
 {/if}
 
@@ -211,6 +255,27 @@
   .ok {
     font-size: 12.5px;
     color: var(--live);
+  }
+  /* The same two status colours the rest of the app uses: amber is "needs you",
+     red is "broken". No new hue for a setup screen. */
+  .warn {
+    font-size: 12.5px;
+    color: var(--busy);
+  }
+  .bad {
+    font-size: 12.5px;
+    color: var(--alert);
+  }
+  .warnline {
+    margin: 0 0 10px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--busy);
+  }
+  .warnline a,
+  .lead a {
+    color: inherit;
+    text-underline-offset: 2px;
   }
   .ok.inline {
     display: block;
