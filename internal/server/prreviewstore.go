@@ -55,6 +55,17 @@ type prReview struct {
 	// Draft is the parsed findings, saved when the review turn ends. Absent until
 	// then, which is how the UI tells "still working" from "nothing found".
 	Draft *review.Draft `json:"draft,omitempty"`
+	// Phase is how far the review got: survey, find, verify or done. Recorded so
+	// the view can say what is happening rather than showing an unexplained
+	// several-minute wait, which on a phased review is longer than it was.
+	Phase string `json:"phase,omitempty"`
+	// Dropped are the candidates the verification pass refuted, with its reason.
+	//
+	// Kept deliberately. A reviewer you can audit is one you will trust: showing
+	// "4 considered and dropped" with the reasons behind a click is what says the
+	// filtering is real, where silently presenting three findings looks exactly
+	// like a reviewer that only managed to find three.
+	Dropped []review.Dropped `json:"dropped,omitempty"`
 	// ParseError explains a reply that carried no usable review block, so the UI
 	// can say what happened instead of showing an empty draft for ever.
 	ParseError string `json:"parse_error,omitempty"`

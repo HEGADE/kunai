@@ -71,13 +71,16 @@ await page.route('**/api/sessions/*/review', (route) =>
       from_fork: false,
       requester: '@shorya',
       summary: 'Sound overall, with one caller left behind.',
-      total: 2,
-      inline: 1,
+      phase: 'done',
+      total: 3,
+      inline: 2,
       summary_count: 1,
       findings: [
         {
           index: 0, file: 'internal/session/loop.go', line: 212, side: 'RIGHT',
           title: 'Interrupt leaves the loop record on disk', body: 'The file outlives the run.',
+          severity: 'blocker', confidence: 'high', category: 'correctness', verified: true,
+          evidence: 'Followed Interrupt: it returns before stopLoopLocked runs.',
           inline: true, suggestion: 'stopLoopLocked()',
           hunk: [
             { kind: ' ', new: 211, text: 'func stop() {' },
@@ -88,11 +91,49 @@ await page.route('**/api/sessions/*/review', (route) =>
         {
           index: 1, file: 'internal/server/history.go', line: 88, side: 'RIGHT',
           title: 'The caller still expects the old shape', body: 'It will not compile.',
+          severity: 'major', confidence: 'medium', category: 'compatibility', verified: true,
           inline: false, why: 'this pull request does not change internal/server/history.go',
+        },
+        {
+          index: 2, file: 'web/src/lib/sidebar.ts', line: 40, side: 'RIGHT',
+          title: 'shortAgo rounds down at the minute boundary', body: 'Cosmetic.',
+          severity: 'minor', confidence: 'low', category: 'correctness', verified: false,
+          inline: true,
+        },
+      ],
+      // What verification refuted, kept with the reason so the filtering can be
+      // audited rather than taken on trust.
+      dropped: [
+        {
+          file: 'internal/session/manager.go', line: 17, severity: 'blocker',
+          title: 'Create races with Close',
+          why: 'Both take mu; the race described cannot happen.',
         },
       ],
     }),
   }),
+)
+
+// The session list is stubbed too, reporting idle. The view reads the session's
+// live state to decide between "still working" and the finished verdict, and the
+// scratch server's session never leaves `starting` because nothing ever prompts
+// it over the socket. Stubbing the state is the difference between exercising
+// the progress line and exercising the review.
+const sessionRow = {
+  id: 'review-smoke',
+  cwd: '/tmp/review-demo',
+  model: 'opus',
+  effort: 'high',
+  cli: 'Claude',
+  title: 'Review #128 Snooze the sidebar rows',
+  state: 'idle',
+  created_at: new Date(Date.now() - 60000).toISOString(),
+  project: '/tmp/review-demo',
+}
+await page.route((u) => new URL(u).pathname === '/api/sessions', (route) =>
+  route.request().method() === 'GET'
+    ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([sessionRow]) })
+    : route.continue(),
 )
 
 await page.goto(url)
@@ -112,9 +153,9 @@ const head = (await page.locator('.top').innerText()).toLowerCase()
 if (!head.includes('lyzr/kunai#128')) fail(`the header does not name the pull request: ${head}`)
 if (!head.includes('conversation')) fail('there is no way through to the conversation')
 
-// Two findings, each a self-contained card, badged with where it will land.
+// Three findings, each a self-contained card, badged with where it will land.
 const cards = view.locator('.card')
-if ((await cards.count()) !== 2) fail(`rendered ${await cards.count()} cards, want 2`)
+if ((await cards.count()) !== 3) fail(`rendered ${await cards.count()} cards, want 3`)
 const first = (await cards.first().innerText()).toLowerCase()
 if (!first.includes('inline')) fail('the first finding is not badged inline')
 if (!first.includes('stoplooplocked')) fail('the finding does not carry the code it is about')
@@ -122,28 +163,106 @@ if (!(await cards.nth(1).innerText()).toLowerCase().includes('summary')) {
   fail('the unanchorable finding is not badged as going to the summary')
 }
 
+// 5. The review has a SHAPE. This is the fix for the thing that made it
+// unreadable: a wall of identical cards in emission order, with nothing saying
+// which one was the data-loss bug.
+//
+// Most serious first, regardless of the order they arrived in, and every card
+// names its severity as text beside the colour: a reader who cannot separate
+// red from amber must still be able to read the review.
+const sevOrder = await cards.locator('.sev').allInnerTexts()
+if (sevOrder.join(',').toLowerCase() !== 'blocker,major,minor') {
+  fail(`findings are not sorted most serious first: ${sevOrder.join(',')}`)
+}
+
+// The verdict line is the one thing worth reading before any of the findings.
+const verdict = (await page.locator('.verdict').innerText()).toLowerCase()
+if (!/1 blocker/.test(verdict)) fail(`the verdict does not lead with the blocker: ${verdict}`)
+if (!/refuted/.test(verdict)) fail(`the verdict does not mention what was refuted: ${verdict}`)
+
+// An unchecked claim says so. A reviewer that hedges when it is unsure is what
+// earns belief when it is not.
+if (!(await cards.nth(2).innerText()).toLowerCase().includes('not independently checked')) {
+  fail('an unverified finding does not say that it is unverified')
+}
+if (!first.includes('followed interrupt')) fail('a verified finding does not show its evidence')
+
+// 6. What the review considered and threw away, with the reason. A reviewer you
+// can audit is one you will trust: three findings from a reviewer that refuted
+// four is a different thing from three findings from one that found three.
+await page.locator('.rhead').click()
+await page.waitForTimeout(200)
+const audit = (await page.locator('.refuted').innerText()).toLowerCase()
+if (!audit.includes('create races with close')) fail('the refuted finding is not listed')
+if (!audit.includes('both take mu')) fail('the refuted finding does not say why it was dropped')
+
+// 7. Filtering, because a twelve-finding review judged one card at a time is why
+// people stop reading at the fourth.
+await page.locator('.chip.sev-minor').click()
+await page.waitForTimeout(250)
+if ((await cards.count()) !== 1) fail(`filtering to minor showed ${await cards.count()} cards, want 1`)
+
+// Bulk is scoped to what is SHOWN, so "drop all" under a filter cannot silently
+// drop the blockers that were filtered away.
+await page.locator('.bact:has-text("Drop all")').click()
+await page.waitForTimeout(250)
+await page.locator('.chip:has-text("All")').click()
+await page.waitForTimeout(250)
+if (!(await page.locator('.post').innerText()).includes('2')) {
+  fail(`drop-all under a filter did not stay scoped to the filter: ${await page.locator('.post').innerText()}`)
+}
+
+// 8. Editing, so a finding whose point is right and whose wording is wrong does
+// not have to be thrown away to get rid of the sentence.
+await cards.first().locator('button:has-text("Edit")').click()
+await page.waitForTimeout(200)
+await page.locator('.ed-title').fill('Interrupt leaves the loop file behind')
+await page.locator('.sevpick:has-text("Minor")').click()
+await page.locator('.ed-save').click()
+await page.waitForTimeout(300)
+const edited = (await view.innerText()).toLowerCase()
+if (!edited.includes('leaves the loop file behind')) fail('an edited finding did not keep the new wording')
+if (!edited.includes('rewritten by you')) fail('an edited finding does not say it was rewritten')
+// Lowering its severity has to move the card, or the sort is a lie.
+const afterEdit = await cards.locator('.sev').allInnerTexts()
+if (afterEdit[0].toLowerCase() === 'blocker') fail('an edited severity did not re-sort the list')
+
+// And it has to move the HEADLINE. Overruling the only blocker down to a minor
+// while the verdict still announces a blocker is the summary lying about the
+// thing it exists to summarise, which a screenshot caught and every selector
+// assertion above walked straight past.
+const afterVerdict = (await page.locator('.verdict').innerText()).toLowerCase()
+if (afterVerdict.includes('blocker')) {
+  fail(`the verdict still claims a blocker after the only one was overruled: ${afterVerdict}`)
+}
+// The filter chips count the same way, or a chip offers a count its own filter
+// then shows nothing for.
+if (await page.locator('.chip.sev-blocker').count()) {
+  fail('a Blocker filter chip survived the last blocker being overruled')
+}
+
+await page.screenshot({ path: '/tmp/review-draft.png', fullPage: true })
+
 // Post names what it will send, and dropping one changes that number: the
 // header is a promise about what lands on the pull request.
-if (!(await page.locator('.post').innerText()).includes('2')) {
-  fail('Post does not say how many findings it will send')
+await page.locator('.bact:has-text("Keep all")').click()
+await page.waitForTimeout(250)
+if (!(await page.locator('.post').innerText()).includes('3')) {
+  fail(`Post does not say how many findings it will send: ${await page.locator('.post').innerText()}`)
 }
 await cards.first().locator('button:has-text("Drop")').click()
 await page.waitForTimeout(300)
-if (!(await page.locator('.post').innerText()).includes('1')) {
+if (!(await page.locator('.post').innerText()).includes('2')) {
   fail('dropping a finding did not change what Post promises')
 }
 
-// Keyboard, because a review is a rhythm rather than a page you scroll.
-// Dropping the last one is a decision, not a dead end: the summary is still a
+// Dropping every one is a decision, not a dead end: the summary is still a
 // review, so the button changes what it promises rather than going grey.
-await page.keyboard.press('j')
-await page.keyboard.press('d')
+await page.locator('.bact:has-text("Drop all")').click()
 await page.waitForTimeout(300)
 if (!(await page.locator('.post').innerText()).toLowerCase().includes('summary')) {
   fail('with every finding dropped, Post does not say it will send the summary alone')
 }
-
-await page.screenshot({ path: '/tmp/review-draft.png' })
 if (crashes.length) fail('uncaught page exception: ' + crashes.join(' | '))
 console.log('PASS: no App is invisible, a bad key is refused, and a review opens on its findings')
 await browser.close()

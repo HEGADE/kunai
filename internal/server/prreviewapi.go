@@ -206,6 +206,15 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request) {
 		"owner": rec.Owner, "repo": rec.Repo, "number": rec.Number, "title": rec.Title,
 		"head_sha": rec.HeadSHA, "from_fork": rec.FromFork, "requester": rec.Requester,
 		"posted_url": rec.PostedURL, "parse_error": rec.ParseError,
+		// How far the review has got. A phased review takes longer than the
+		// single-shot one did, so "Reviewing 4m" with nothing else to say reads
+		// as a hang; naming the phase is what makes the wait legible.
+		"phase": rec.Phase,
+		// What verification refuted, with its reasons. Shown so the filtering can
+		// be audited: three findings from a reviewer that dropped four is a
+		// different thing from three findings from a reviewer that found three,
+		// and only this can tell them apart.
+		"dropped": droppedRows(rec.Dropped),
 	}
 	// Placement is recomputed here rather than stored, because it depends on the
 	// diff and the diff is the thing that changes. The counts the card promises
@@ -220,17 +229,36 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// droppedRows is the wire shape of the refuted candidates. Deliberately thinner
+// than a finding: these are not going to be posted and cannot be un-dropped, so
+// what a reader needs is the claim, where it was, and why it did not survive.
+func droppedRows(dropped []review.Dropped) []map[string]any {
+	out := make([]map[string]any, 0, len(dropped))
+	for _, d := range dropped {
+		out = append(out, map[string]any{
+			"file":     d.Finding.File,
+			"line":     d.Finding.Line,
+			"title":    d.Finding.Title,
+			"severity": string(d.Finding.Severity),
+			"why":      d.Why,
+		})
+	}
+	return out
+}
+
 // handlePostReview sends the draft to GitHub.
 func (s *Server) handlePostReview(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Keep []int `json:"keep"`
+		Keep    []int        `json:"keep"`
+		Edits   []reviewEdit `json:"edits"`
+		Summary string       `json:"summary"`
 	}
 	// A body is optional: posting everything is the common case.
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
-	posted, err := s.postReview(ctx, r.PathValue("id"), req.Keep)
+	posted, err := s.postReview(ctx, r.PathValue("id"), req.Keep, req.Edits, req.Summary)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -269,12 +297,20 @@ func placements(plan review.Plan, files []review.FileDiff) []map[string]any {
 			// anybody can judge without going to look it up, and sending them
 			// elsewhere to look is how a review becomes a chore.
 			"hunk":       review.HunkFor(files, pl.Finding),
-			"file":       pl.Finding.File,
-			"line":       pl.Finding.Line,
-			"end_line":   pl.Finding.EndLine,
-			"side":       pl.Finding.Side,
-			"title":      pl.Finding.Title,
-			"body":       pl.Finding.Body,
+			"file":     pl.Finding.File,
+			"line":     pl.Finding.Line,
+			"end_line": pl.Finding.EndLine,
+			"side":     pl.Finding.Side,
+			"title":    pl.Finding.Title,
+			"body":     pl.Finding.Body,
+			// How bad if true, and how sure it is true. Two fields rather than
+			// one score, for the reason severity.go gives: they answer different
+			// questions and a single number can only lie about one of them.
+			"severity":   string(pl.Finding.Severity),
+			"confidence": string(pl.Finding.Confidence),
+			"category":   pl.Finding.Category,
+			"evidence":   pl.Finding.Evidence,
+			"verified":   pl.Finding.Verified,
 			"suggestion": pl.Finding.Suggestion,
 			"inline":     pl.Inline,
 			"why":        pl.Why,

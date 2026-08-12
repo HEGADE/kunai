@@ -8,7 +8,10 @@
 // able to exercise it against a diff fixture rather than against GitHub.
 package review
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // Side is which version of the file a line belongs to. GitHub's names are kept
 // rather than translated, because they are what goes on the wire and a mismatch
@@ -43,6 +46,32 @@ type Finding struct {
 	// small, local, unambiguous fixes: a suggestion on a design opinion means
 	// somebody clicks Apply and the bot has written code nobody reviewed.
 	Suggestion string `json:"suggestion,omitempty"`
+	// Severity is how much this matters if it is true, and Confidence is how
+	// likely it is to be true. See severity.go for why those are two fields and
+	// not one number.
+	//
+	// Severity is what gives a review its shape: without it a reader faces a
+	// dozen identical cards in whatever order the model happened to emit them,
+	// with no way to tell the data-loss bug from the observation.
+	Severity Severity `json:"severity,omitempty"`
+	// Confidence drives the verification phase as well as the display: anything
+	// below high is handed back to be refuted before it may be posted.
+	Confidence Confidence `json:"confidence,omitempty"`
+	// Category is what the finding is about, for grouping and filtering. It never
+	// affects ranking.
+	Category string `json:"category,omitempty"`
+	// Evidence is what the finding rests on, in the reviewer's own words: the
+	// call site it followed, the invariant it checked. Recorded because the
+	// verification phase judges the claim against it, and because a finding whose
+	// reasoning is visible is one a person can overrule quickly.
+	Evidence string `json:"evidence,omitempty"`
+	// Verified is true when an independent pass tried to refute this and failed.
+	//
+	// Its absence is not a black mark: a finding can skip verification by being
+	// demonstrated in the first place, and one can miss it because the pass could
+	// not be read. But a reader must be able to tell "this was checked" from
+	// "this was asserted", and only the flag can say so.
+	Verified bool `json:"verified,omitempty"`
 }
 
 // Normalise fills in the defaults and repairs the shapes a model gets wrong,
@@ -56,6 +85,12 @@ func (f Finding) Normalise() Finding {
 	}
 	f.Title = strings.TrimSpace(f.Title)
 	f.Body = strings.TrimSpace(f.Body)
+	f.Evidence = strings.TrimSpace(f.Evidence)
+	// Repaired rather than rejected, for the reason given in severity.go: a real
+	// blocker that arrived labelled "critical" must not be lost to vocabulary.
+	f.Severity = normaliseSeverity(f.Severity)
+	f.Confidence = normaliseConfidence(f.Confidence)
+	f.Category = normaliseCategory(f.Category)
 	// A range written backwards is the common slip and is unambiguous, so it is
 	// corrected rather than rejected: losing a real finding to a typo would be a
 	// worse outcome than quietly agreeing with what was obviously meant.
@@ -95,6 +130,13 @@ type Draft struct {
 // Normalise cleans every finding and drops the ones carrying nothing to say. A
 // finding with no title is not a finding, and posting an empty comment on a
 // colleague's line is worse than posting nothing.
+//
+// It also SORTS, by severity, most serious first. The prompt asks for that order
+// too, but asking is not a guarantee and the order is what a reader relies on to
+// stop reading: whatever is at the top has to be the worst thing found. Since
+// every finding now carries a severity, that promise can be kept here rather
+// than hoped for. The sort is stable, so within one severity the reviewer's own
+// ordering survives.
 func (d Draft) Normalise() Draft {
 	out := Draft{Summary: strings.TrimSpace(d.Summary)}
 	for _, f := range d.Findings {
@@ -104,5 +146,25 @@ func (d Draft) Normalise() Draft {
 		}
 		out.Findings = append(out.Findings, f)
 	}
+	sort.SliceStable(out.Findings, func(i, j int) bool {
+		return out.Findings[i].Severity.Rank() < out.Findings[j].Severity.Rank()
+	})
 	return out
+}
+
+// Counts tallies the findings by severity, which is the review's headline: two
+// blockers and five minors is a different pull request from seven minors, and a
+// reader must be able to tell those apart before reading any of them.
+func (d Draft) Counts() (blocker, major, minor int) {
+	for _, f := range d.Findings {
+		switch f.Severity {
+		case SeverityBlocker:
+			blocker++
+		case SeverityMajor:
+			major++
+		default:
+			minor++
+		}
+	}
+	return blocker, major, minor
 }

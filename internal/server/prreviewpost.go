@@ -20,12 +20,30 @@ import (
 	"github.com/hegade/kunai/internal/review"
 )
 
+// reviewEdit is one finding as the user rewrote it before posting.
+//
+// Only the words may be changed, never the anchor. That is a boundary rather
+// than an oversight: the file, line and side decide which line of somebody's
+// pull request a comment lands on, they were derived server-side from the diff
+// that was actually read, and accepting them back from the client would make
+// "post this review" a way to write an arbitrary comment on an arbitrary line.
+// Severity is included because it is a judgement, and disagreeing with the
+// reviewer's judgement is exactly what this screen is for.
+type reviewEdit struct {
+	Index    int    `json:"index"`
+	Title    string `json:"title"`
+	Body     string `json:"body"`
+	Severity string `json:"severity"`
+}
+
 // postReview sends a drafted review to GitHub.
 //
 // keep, when non-empty, is the set of finding indexes the user chose to keep, so
 // pruning in the UI is honoured server-side rather than trusted to have already
-// happened.
-func (s *Server) postReview(ctx context.Context, sessionID string, keep []int) (ghapp.SubmittedReview, error) {
+// happened. edits and summary carry the user's rewording, for the same reason:
+// what lands on GitHub is decided here, from what the client asked for, rather
+// than assembled by the client and forwarded.
+func (s *Server) postReview(ctx context.Context, sessionID string, keep []int, edits []reviewEdit, summary string) (ghapp.SubmittedReview, error) {
 	if s.prReviews == nil {
 		return ghapp.SubmittedReview{}, fmt.Errorf("no data dir configured, so reviews cannot be posted")
 	}
@@ -77,7 +95,7 @@ func (s *Server) postReview(ctx context.Context, sessionID string, keep []int) (
 	if err != nil {
 		return ghapp.SubmittedReview{}, err
 	}
-	plan := review.Build(kept(*rec.Draft, keep), review.ParseDiff(toReviewFiles(files)))
+	plan := review.Build(kept(applyEdits(*rec.Draft, edits, summary), keep), review.ParseDiff(toReviewFiles(files)))
 
 	meta := review.Meta{Owner: rec.Owner, Repo: rec.Repo, HeadSHA: rec.HeadSHA, Requester: rec.Requester}
 	req := ghapp.ReviewRequest{
@@ -132,6 +150,54 @@ func comments(plan review.Plan) []ghapp.ReviewComment {
 // Post published the lot, which is the worst possible reading of that gesture.
 // JSON gives us the distinction for free: an absent field decodes to nil, `[]`
 // does not.
+// applyEdits folds the user's rewording into the draft, by index.
+//
+// Applied BEFORE kept(), so the indexes an edit names are the same ones the
+// selection names: both refer to positions in the draft as the client was shown
+// it, and filtering first would silently shift every edit onto a neighbouring
+// finding.
+//
+// An empty field means "unchanged" rather than "delete this", because the two
+// are indistinguishable over JSON and the harmful reading is the one that
+// publishes an empty comment on somebody's line.
+func applyEdits(d review.Draft, edits []reviewEdit, summary string) review.Draft {
+	if summary = strings.TrimSpace(summary); summary != "" {
+		d.Summary = summary
+	}
+	if len(edits) == 0 {
+		return d
+	}
+
+	byIndex := make(map[int]reviewEdit, len(edits))
+	for _, e := range edits {
+		byIndex[e.Index] = e
+	}
+	out := review.Draft{Summary: d.Summary, Findings: make([]review.Finding, len(d.Findings))}
+	copy(out.Findings, d.Findings)
+	for i := range out.Findings {
+		e, ok := byIndex[i]
+		if !ok {
+			continue
+		}
+		if t := strings.TrimSpace(e.Title); t != "" {
+			out.Findings[i].Title = t
+		}
+		if b := strings.TrimSpace(e.Body); b != "" {
+			out.Findings[i].Body = b
+		}
+		if sev := strings.TrimSpace(e.Severity); sev != "" {
+			out.Findings[i].Severity = review.Severity(sev)
+		}
+	}
+	// Deliberately NOT normalised here, even though an edited severity may be
+	// anything the client sent. Normalise sorts, and sorting now would move the
+	// findings out from under the indexes that kept() is about to use, quietly
+	// posting a different set than the one that was chosen. Build normalises at
+	// the end of the chain, which repairs an unrecognised severity in time and
+	// after the last thing that cares about position.
+	return out
+}
+
 func kept(d review.Draft, keep []int) review.Draft {
 	if keep == nil {
 		return d

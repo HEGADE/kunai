@@ -50,7 +50,16 @@ import (
 // The happy consequence is that the toolset no longer depends on trust: a fork
 // and your own branch get exactly the same one, so there is no second list to
 // keep in step and no way to hand a stranger's diff more than it should have.
-var reviewToolset = []string{"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Task"}
+//
+// Task is deliberately NOT withheld any more, and it is what makes the
+// verification phase worth having. A subagent starts with a fresh context: it
+// sees the claim it was given and nothing of the reasoning that produced it,
+// which is precisely the independence the phase exists to buy, and it gets that
+// independence in parallel and for free. Running the checks in this session
+// instead would mean asking the model that just wrote the findings whether the
+// findings are right, which is the failure the phase was added to fix. A
+// subagent inherits these same restrictions, so it can read and nothing else.
+var reviewToolset = []string{"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"}
 
 // reviewToolsOwner marks a review's restriction as the review's own, so nothing
 // else lifts it. See session.CreateOptions.ToolsOwner.
@@ -118,7 +127,9 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 		_ = worktree.RemoveReview(wt)
 		return nil, err
 	}
-	prompt := review.Prompt(review.Request{
+	// The review as a sequence of phases rather than one question. NewRun decides
+	// for itself whether this change is big enough to be worth surveying first.
+	run := review.NewRun(review.Request{
 		Repo: repo.String(), Number: number, Title: pr.Title, Author: pr.User.Login,
 		BaseRef: pr.Base.Ref, HeadSHA: sha, FromFork: fromFork,
 		DiffPath:   diffPath,
@@ -164,20 +175,29 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 			Title: pr.Title, HeadSHA: sha, FromFork: fromFork,
 			RepoDir: repoRoot, Worktree: wt.Path,
 			Requester: requester, CreatedAt: time.Now(),
+			Phase: string(run.Phase),
 		})
 	}
+	s.reviewRuns.put(sess.ID, &reviewRun{run: run, files: files})
+
 	// Collected from inside the session rather than by subscribing to it. A
 	// subscriber is dropped when its buffer fills (emitLocked), which is right for
 	// a phone that cannot keep up and fatal here: a review streams for minutes, the
 	// watcher was routinely dropped part-way, and it then saved nothing and logged
 	// nothing because from its side the conversation had simply ended. Three real
 	// reviews produced neither a draft nor a parse error before this was found.
-	sess.SetAnswerHook(func(text string) { s.saveDraft(sess.ID, text, files) })
+	//
+	// Every turn now feeds the phase machine, which asks the next question or
+	// finishes. See prreviewrun.go.
+	sess.SetAnswerHook(func(text string) { s.advanceReview(sess.ID, text) })
 
 	// Sent as a brief rather than as a prompt: the instructions and the whole diff
 	// are context the model must read, not something the user said, and printing
 	// them into the chat buried the review under several screens of schema.
-	brief := fmt.Sprintf("Review %s#%d", repo, number)
+	prompt, brief, ok := run.Next()
+	if !ok {
+		return nil, fmt.Errorf("internal: a new review had nothing to ask")
+	}
 	if err := sess.PromptBrief(prompt, brief); err != nil {
 		return nil, fmt.Errorf("the review session was created but would not start: %w", err)
 	}
@@ -221,29 +241,6 @@ func (s *Server) worktreeRoot() string {
 // at a second account or a provider is the obvious next control, and having the
 // call site already ask for one means adding it does not touch this file.
 func (s *Server) reviewAccount() string { return "" }
-
-// saveDraft parses the agent's answer and records it against the session.
-func (s *Server) saveDraft(sessionID, text string, files []ghapp.FileDiff) {
-	if s.prReviews == nil {
-		return
-	}
-	draft, err := review.Parse(text)
-	if err != nil {
-		s.prReviews.update(sessionID, func(rec *prReview) {
-			rec.ParseError = err.Error()
-		})
-		log.Printf("pr review: session %s produced no usable review block: %v", sessionID, err)
-		return
-	}
-	// Placement is decided now, while the diff that decided it is in hand, so the
-	// draft the user reads is already the truth about where each finding lands.
-	plan := review.Build(draft, review.ParseDiff(toReviewFiles(files)))
-	total, inline, summary := plan.Counts()
-	s.prReviews.update(sessionID, func(rec *prReview) {
-		rec.Draft, rec.ParseError = &draft, ""
-	})
-	log.Printf("pr review: session %s drafted %d finding(s), %d inline and %d in the summary", sessionID, total, inline, summary)
-}
 
 // repoAt reads the GitHub repository a local checkout belongs to.
 func (s *Server) repoAt(dir string) (ghapp.Repo, error) {

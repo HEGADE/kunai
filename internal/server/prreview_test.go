@@ -164,14 +164,25 @@ func TestKeptFiltersTheDraft(t *testing.T) {
 // there is one list, so there is no second list to keep in step and no way for a
 // stranger's diff to be handed more than your own branch gets.
 func TestAReviewCanOnlyRead(t *testing.T) {
-	for _, tool := range []string{"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Task"} {
+	for _, tool := range []string{"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"} {
 		if !contains(reviewToolset, tool) {
 			t.Errorf("a review can still use %s, which is either a way to change the tree it is reading or a way to hang on a permission ask", tool)
 		}
 	}
 	// Reading is the whole job, and none of these ever needs permission, which is
 	// what makes an unwatched review possible at all.
-	for _, tool := range []string{"Read", "Grep", "Glob"} {
+	//
+	// Task is on this list rather than the withheld one, and that is what the
+	// verification phase is built on: a subagent starts from a fresh context, so
+	// it judges a claim without having seen the reasoning that produced it.
+	//
+	// Allowing it widens nothing, and that was measured rather than assumed.
+	// Probed against a real CLI with --disallowedTools "Bash,Write,Edit", a Task
+	// subagent reported its own toolset as Agent, Glob, Grep, Read, Skill and
+	// ToolSearch: the restriction propagates, and the run recorded no permission
+	// denials, so neither failure the withheld list guards against is reachable
+	// through a subagent.
+	for _, tool := range []string{"Read", "Grep", "Glob", "Task"} {
 		if contains(reviewToolset, tool) {
 			t.Errorf("%s is withheld, so the review cannot read the code it is reviewing", tool)
 		}
@@ -233,4 +244,80 @@ func contains(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// Editing is by index into the draft the client was shown, and so is keeping.
+// The two must agree, which means edits are applied BEFORE the filter: applying
+// them after would shift every edit onto a neighbouring finding, silently
+// posting one finding's words under another finding's line.
+func TestEditsApplyBeforeTheSelectionIsFiltered(t *testing.T) {
+	draft := review.Draft{Findings: []review.Finding{
+		{File: "a.go", Line: 1, Title: "first", Body: "b1", Severity: review.SeverityBlocker},
+		{File: "b.go", Line: 2, Title: "second", Body: "b2", Severity: review.SeverityBlocker},
+		{File: "c.go", Line: 3, Title: "third", Body: "b3", Severity: review.SeverityBlocker},
+	}}
+
+	edited := applyEdits(draft, []reviewEdit{{Index: 2, Title: "rewritten third"}}, "")
+	got := kept(edited, []int{2})
+
+	if len(got.Findings) != 1 {
+		t.Fatalf("kept %d findings, want 1", len(got.Findings))
+	}
+	if got.Findings[0].File != "c.go" || got.Findings[0].Title != "rewritten third" {
+		t.Fatalf("got %+v, want the edit on c.go", got.Findings[0])
+	}
+}
+
+// An empty field means "unchanged", never "delete this". The two are
+// indistinguishable over JSON and the harmful reading is the one that publishes
+// a blank comment on somebody's line.
+func TestAnEmptyEditLeavesTheFindingAlone(t *testing.T) {
+	draft := review.Draft{Findings: []review.Finding{
+		{File: "a.go", Line: 1, Title: "keep me", Body: "and me", Severity: review.SeverityMajor},
+	}}
+	got := applyEdits(draft, []reviewEdit{{Index: 0, Title: "", Body: "   "}}, "")
+	if got.Findings[0].Title != "keep me" || got.Findings[0].Body != "and me" {
+		t.Fatalf("an empty edit blanked the finding: %+v", got.Findings[0])
+	}
+}
+
+// Only the words may be edited. The anchor decides which line of somebody's
+// pull request a comment lands on, and it stays server-side: there is no way to
+// express a new file or line here, and that is the point.
+func TestAnEditCannotMoveTheAnchor(t *testing.T) {
+	draft := review.Draft{Findings: []review.Finding{
+		{File: "a.go", Line: 7, Side: review.SideRight, Title: "t", Severity: review.SeverityMinor},
+	}}
+	got := applyEdits(draft, []reviewEdit{{Index: 0, Title: "new words", Severity: "blocker"}}, "")
+	if got.Findings[0].File != "a.go" || got.Findings[0].Line != 7 {
+		t.Fatalf("the anchor moved: %+v", got.Findings[0])
+	}
+	if got.Findings[0].Severity != review.SeverityBlocker {
+		t.Errorf("the edited severity was not applied: %q", got.Findings[0].Severity)
+	}
+}
+
+// A hand-typed severity must not reach GitHub unrecognised. applyEdits
+// deliberately does not normalise (it would sort, breaking the indexes above),
+// so Build has to be the thing that repairs it.
+func TestAnUnrecognisedEditedSeverityIsRepairedByBuild(t *testing.T) {
+	draft := review.Draft{Findings: []review.Finding{
+		{File: "a.go", Line: 1, Title: "t", Severity: review.SeverityMinor},
+	}}
+	edited := applyEdits(draft, []reviewEdit{{Index: 0, Severity: "SUPER URGENT"}}, "")
+	plan := review.Build(edited, nil)
+	if got := plan.Placements[0].Finding.Severity; got != review.SeverityMajor {
+		t.Fatalf("severity = %q, want it repaired to major", got)
+	}
+}
+
+// The summary is editable too, and an untouched one must survive.
+func TestSummaryEditIsOptional(t *testing.T) {
+	draft := review.Draft{Summary: "the model's words"}
+	if got := applyEdits(draft, nil, ""); got.Summary != "the model's words" {
+		t.Errorf("an empty summary edit overwrote it: %q", got.Summary)
+	}
+	if got := applyEdits(draft, nil, "mine"); got.Summary != "mine" {
+		t.Errorf("summary = %q, want the edit", got.Summary)
+	}
 }

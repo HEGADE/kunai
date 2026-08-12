@@ -127,6 +127,12 @@ type Server struct {
 	ghMu      sync.Mutex
 	gh        *ghapp.App
 	prReviews *prReviewStore
+	// reviewRuns holds the phase machine of every review currently working. In
+	// memory only: a review's progression is meaningless without the session
+	// executing it, and that does not survive a restart either, so persisting it
+	// would only create a state nothing could resume. What is persisted is the
+	// outcome, on prReviews.
+	reviewRuns *reviewRunners
 	// reviewCfg is which account and model reviews run on, kept apart from the
 	// session defaults so a review can never spend the window you are working in.
 	reviewCfg *reviewConfigStore
@@ -230,6 +236,10 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	// The lock on the network listener. Constructed always so the owner can set a
 	// PIN before turning -lan on; the listener refuses to start without one.
 	s.lanAuth = lanauth.Open(filepath.Join(cfg.DataDir, "lanauth.json"))
+	// Always constructed, with or without a data dir: a review can run without
+	// anywhere to persist its outcome, and a nil map here would panic the answer
+	// hook rather than degrade.
+	s.reviewRuns = newReviewRunners()
 	if cfg.DataDir != "" {
 		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))
 		s.prReviews = newPRReviewStore(filepath.Join(cfg.DataDir, "prreviews.json"))

@@ -653,6 +653,15 @@ export interface PullRequest {
   reviewed_at?: string
 }
 
+// How bad a finding is if it is true. Mirrors internal/review/severity.go, and
+// the two must be changed together.
+export type Severity = 'blocker' | 'major' | 'minor'
+
+// How sure the review is that the finding is true at all, which is a separate
+// question from how much it matters. Anything below 'high' was independently
+// re-examined before it could reach here.
+export type Confidence = 'high' | 'medium' | 'low'
+
 // ReviewFinding is one row of the draft. `inline` is the promise the card makes:
 // whether this lands on the line itself or in the summary, and `why` explains a
 // demotion in words meant for a person.
@@ -665,10 +674,51 @@ export interface ReviewFinding {
   side: string
   title: string
   body: string
+  severity: Severity
+  confidence: Confidence
+  category?: string
+  // What the finding rests on, in the reviewer's own words. Shown so a claim can
+  // be overruled quickly rather than taken on trust.
+  evidence?: string
+  // True when an independent pass tried to refute this and failed. Its absence
+  // is not a black mark: a finding can skip verification by being demonstrated
+  // in the first place. But "this was checked" and "this was asserted" must be
+  // distinguishable, and only this can say which.
+  verified?: boolean
   suggestion?: string
   inline: boolean
   why?: string
 }
+
+// severityRank orders findings most serious first. Unknown values sort last:
+// a severity nobody recognises must not be able to push itself to the top of a
+// review. Mirrors Severity.Rank in internal/review/severity.go.
+export function severityRank(s: Severity | string): number {
+  switch (s) {
+    case 'blocker':
+      return 0
+    case 'major':
+      return 1
+    case 'minor':
+      return 2
+    default:
+      return 3
+  }
+}
+
+// A candidate the verification pass refuted, kept with its reason. Shown so the
+// filtering can be audited: three findings from a reviewer that dropped four is
+// a different thing from three findings from a reviewer that only found three.
+export interface DroppedFinding {
+  file: string
+  line: number
+  title: string
+  severity: Severity
+  why: string
+}
+
+// How far a review has got. Mirrors internal/review/phase.go.
+export type ReviewPhase = 'survey' | 'find' | 'verify' | 'done'
 
 export interface ReviewDraft {
   owner: string
@@ -680,11 +730,23 @@ export interface ReviewDraft {
   requester?: string
   posted_url?: string
   parse_error?: string
+  phase?: ReviewPhase
   summary?: string
   findings?: ReviewFinding[]
+  dropped?: DroppedFinding[]
   total?: number
   inline?: number
   summary_count?: number
+}
+
+// What each phase is called on screen, and what it is actually doing. A phased
+// review takes longer than the single-shot one did, so a bare "Reviewing 4m"
+// reads as a hang; naming the phase is what makes the wait legible.
+export const PHASE_LABEL: Record<ReviewPhase, string> = {
+  survey: 'Reading the change',
+  find: 'Looking for problems',
+  verify: 'Checking what it found',
+  done: 'Done',
 }
 
 export interface GitHubAppState {
@@ -732,17 +794,30 @@ export function reviewDraft(base: string, sessionId: string): Promise<ReviewDraf
   return fetch(at(base, `/api/sessions/${sessionId}/review`)).then((r) => json<ReviewDraft>(r))
 }
 
-// postReview sends the draft. `keep` is the findings the user did not drop; an
-// empty list means all of them.
+// One finding as the user rewrote it. Only the words: the file and line decide
+// which line of somebody's pull request a comment lands on, and the server keeps
+// those to itself rather than accepting them back from here.
+export interface ReviewEdit {
+  index: number
+  title?: string
+  body?: string
+  severity?: Severity
+}
+
+// postReview sends the draft. `keep` is the findings the user did not drop: a
+// nil list means all of them, an EMPTY list means they read everything and
+// dropped it all, and the server tells those two apart.
 export function postReview(
   base: string,
   sessionId: string,
   keep: number[],
+  edits: ReviewEdit[] = [],
+  summary = '',
 ): Promise<{ url: string }> {
   return fetch(at(base, `/api/sessions/${sessionId}/review/post`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ keep }),
+    body: JSON.stringify({ keep, edits, summary }),
   }).then((r) => json<{ url: string }>(r))
 }
 

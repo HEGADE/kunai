@@ -111,10 +111,24 @@ func permalink(f Finding, meta Meta) string {
 
 // CommentBody renders one inline comment: the claim, the reasoning, and a
 // suggested change when the fix is small enough to be offered as one.
+//
+// The severity is part of the title rather than a separate line, because the
+// author of the pull request reads this in a notification email with no other
+// context: "Blocker: the retry loop never terminates" tells them whether to stop
+// what they are doing, and the same sentence without the first word does not.
+//
+// A confidence below high is stated too. That looks like weakness and is the
+// opposite: a reviewer that hedges when it is unsure earns the right to be
+// believed when it does not, and the alternative is every finding arriving in
+// the same certain voice regardless of what is behind it.
 func CommentBody(f Finding) string {
 	var b strings.Builder
 	if f.Title != "" {
 		b.WriteString("**")
+		if label := f.Severity.Label(); label != "" {
+			b.WriteString(label)
+			b.WriteString(": ")
+		}
 		b.WriteString(f.Title)
 		b.WriteString("**")
 	}
@@ -134,7 +148,27 @@ func CommentBody(f Finding) string {
 		b.WriteString(f.Suggestion)
 		b.WriteString("\n```")
 	}
+	if note := confidenceNote(f); note != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(note)
+	}
 	return b.String()
+}
+
+// confidenceNote is the hedge, or nothing at all. Only said when it is true:
+// annotating every finding with "confidence: high" is noise that trains people
+// to stop reading the line that matters.
+func confidenceNote(f Finding) string {
+	switch f.Confidence {
+	case ConfidenceMedium:
+		return "<sub>Worth checking: this rests on an assumption the review could not confirm.</sub>"
+	case ConfidenceLow:
+		return "<sub>A suspicion rather than a demonstrated bug. Confirm before acting on it.</sub>"
+	default:
+		return ""
+	}
 }
 
 // signature is the one line of attribution. With a shared bot identity across a
