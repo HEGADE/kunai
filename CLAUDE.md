@@ -595,6 +595,70 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   reality. Proven end to end through the real app on a real Codex session --
   generate, and edit of an uploaded PNG -- each rendering inline in the chat at
   1254x1254.
+- `internal/review`, `internal/ghapp`, `internal/server/prreview*.go`: **reviewing a
+  pull request**. A review is an ORDINARY SESSION (same manager, same socket, same
+  sidebar) given a detached worktree at the pull request's head, a prompt, and a
+  toolset narrowed to reading. Nothing polls: a review happens because somebody
+  clicked. Reviews post through a **GitHub App** so they appear as a bot rather than
+  under whoever ran kunai, which is why shelling `gh` was rejected: it authenticates
+  as the human. The App has **no webhook** (kunai exposes nothing inbound).
+  The engine runs in **phases**, and that is a rewrite of a single-shot design whose
+  failure is worth keeping: it asked for everything in one prompt and ended by
+  telling the model to "delete the findings you cannot demonstrate", which is the
+  author of a claim marking its own homework. The characteristic failure of machine
+  review is confident nonsense, and asking harder does not catch it. So:
+  **Survey** (what is this change for, where is the risk) -> **Find** (hunt, and be
+  generous, because recall is the half that cannot be recovered later) ->
+  **Verify** (hand every claim to a `Task` subagent and ask it to REFUTE the thing,
+  defaulting to refuted when it cannot be demonstrated) -> **Rank**. `internal/review/phase.go`
+  is the state machine and is pure: it takes the text an agent replied with and says
+  what to ask next, so the whole progression is testable against fixtures rather than
+  a live CLI. `prreviewrun.go` turns the handle.
+  Both skips answer the cost objection: a small change (`worthSurveying`) goes
+  straight to Find, and a Find whose every candidate came back `high` confidence has
+  nothing for Verify to do. The answer hook fires at the end of EVERY turn including
+  ones a person typed, so the driver **stops consuming answers once the phases are
+  done**, or asking the reviewer a follow-up would be read as a malformed phase reply
+  and replace a good draft with a parse error.
+  `Task` is deliberately NOT withheld, and allowing it widens nothing: probed against
+  a real CLI with `--disallowedTools "Bash,Write,Edit"`, a subagent reported its own
+  toolset as Agent, Glob, Grep, Read, Skill, ToolSearch, with no permission denials.
+  Bash IS withheld even on your own team's code (a permission mode that runs safe work
+  still stops to ask about a risky command, and nobody watches a review by design).
+  A finding carries **severity and confidence as two fields**, because they answer
+  different questions -- how bad if true, how likely to be true -- and one score can
+  only lie about one of them. Severity is what gives the review a shape; without it a
+  reader faces a dozen identical cards in emission order with nothing saying which is
+  the data-loss bug. A verdict may **lower** a severity or confidence and never raise
+  either, so verification restrains claims instead of giving each a second chance to
+  inflate. An unrecognised severity sorts LAST and normalises to `major` (the middle
+  rung); an unrecognised confidence normalises to `medium`, never `high`, because
+  `high` is what SKIPS verification.
+  Two index-mapping hazards are pinned by tests, both silent and both posting the
+  wrong thing: a verdict echoes its claim's `file`, so one that has drifted onto the
+  wrong claim is discarded rather than refuting an unrelated finding, and edits are
+  applied BEFORE the keep-filter, since filtering first shifts every edit onto its
+  neighbour. Editing may change only the words and the severity: the anchor decides
+  which line of somebody's pull request a comment lands on and stays server-side.
+  What verification refuted is **kept and shown**, collapsed, with reasons. Three
+  findings from a reviewer that dropped four is a different thing from three findings
+  from one that only found three, and nothing else can tell them apart.
+  `ReviewView.svelte` is the only review surface (`ReviewDraft.svelte` is gone: two
+  implementations of one thing is how they drift, and these had). It decides "is the
+  review over" from the recorded **phase**, not the session's state, because a
+  finished review reopened later has a session reporting `starting` while it resumes.
+  The verdict counts the EDITED severity, or overruling the only blocker still
+  announces a blocker.
+  **Setup is verified against GitHub before anything is written** (`githubverify.go`).
+  Checking only that the PEM parses passes for a key from a different App, for the
+  right key with the wrong id, and for an App installed nowhere, so all three reported
+  "Configured" and failed later as a raw error on the dashboard. `Whoami` proves the
+  id and key belong together; `Installations` answers the step everybody misses, since
+  registering an App and installing it are separate actions. The three outcomes need
+  three sentences: a pair GitHub refuses is refused while the fields are still on
+  screen, an App installed nowhere saves with a link to install it, and an unreachable
+  GitHub saves too and says so, because refusing there sends somebody to re-paste a key
+  that was always correct.
 - `internal/project`: reads a directory into the description a session hands a model
   (`Scan` -> `Info`, `Info.Brief()`): layout, language mix, git head from `.git`,
   the files that name it. It never opens the code, and the walk skips `.git`,
