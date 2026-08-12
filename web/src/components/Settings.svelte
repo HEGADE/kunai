@@ -35,6 +35,19 @@
   const section = $derived(app.settingsSection)
   const go = (s: SettingsSection) => app.setSettingsSection(s)
 
+  // On a phone the rail is a horizontal strip, so the open section can be
+  // scrolled off the right-hand end: arriving at /settings/unattended showed a
+  // strip starting at Notifications with nothing marked, which reads as no
+  // section being open at all. Only ever scrolls SIDEWAYS (inline), and only
+  // when the strip actually scrolls, so the desktop rail is untouched.
+  let rail = $state<HTMLElement | null>(null)
+  $effect(() => {
+    void section
+    const el = rail
+    if (!el || el.scrollWidth <= el.clientWidth) return
+    el.querySelector('.rlink.on')?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' })
+  })
+
   // What each section is, said once. The blurb is not decoration: a settings
   // page that lists only nouns makes you open every one to find the switch you
   // came for.
@@ -280,33 +293,67 @@
   )
 </script>
 
+  <!-- One glyph per section, in the same hand as the app's own nav icons: 24
+       viewBox, 1.7 stroke, round caps. Eight text labels in a column is a list
+       rather than a navigation; the icon is what makes a section findable
+       without reading, and it is the only thing that gives the rail a left edge
+       to align to. -->
+  {#snippet icon(s: SettingsSection)}
+    {#if s === 'notifications'}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 10-12 0c0 6-2.5 7.5-2.5 7.5h17S18 14 18 8z" /><path d="M13.7 19a2 2 0 01-3.4 0" /></svg>
+    {:else if s === 'machines'}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2" /><rect x="3" y="13" width="18" height="7" rx="2" /><path d="M7 7.5h.01M7 16.5h.01" /></svg>
+    {:else if s === 'accounts'}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5" /><path d="M5 20c0-3.6 3.1-6 7-6s7 2.4 7 6" /></svg>
+    {:else if s === 'providers'}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6.4" y="6.4" width="11.2" height="11.2" rx="2.2" /><path d="M9.9 2.9v3.5M14.1 2.9v3.5M9.9 17.6v3.5M14.1 17.6v3.5M2.9 9.9h3.5M2.9 14.1h3.5M17.6 9.9h3.5M17.6 14.1h3.5" /></svg>
+    {:else if s === 'channels'}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2" /><path d="M7.8 7.8a6 6 0 000 8.4M16.2 16.2a6 6 0 000-8.4" /><path d="M4.9 4.9a10 10 0 000 14.2M19.1 19.1a10 10 0 000-14.2" /></svg>
+    {:else if s === 'network'}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 9.5a15 15 0 0119 0" /><path d="M5.5 13a10.5 10.5 0 0113 0" /><path d="M8.5 16.5a6 6 0 017 0" /><path d="M12 20h.01" /></svg>
+    {:else if s === 'unattended'}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8.5 8.5 0 019.5 4a8.5 8.5 0 1010.5 10.5z" /></svg>
+    {:else}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h9M4 12h9M4 18.5h5" /><path d="M15.5 17.5l2 2 4-4.5" /></svg>
+    {/if}
+  {/snippet}
+
 <Page title="Settings">
+
   <div class="layout">
-    <nav class="rail" aria-label="Settings sections">
+    <nav class="rail" aria-label="Settings sections" bind:this={rail}>
       <!-- The group headings are the point: they say whose settings the links
            under them change. Without that, a page of switches cannot tell you
            which ones follow the machine picker, which is what made the old
            column unreadable. -->
       <div class="rgroup">This device</div>
       <button class="rlink" class:on={section === 'notifications'} onclick={() => go('notifications')}>
-        Notifications
+        <span class="ric">{@render icon('notifications')}</span>
+        <span class="rlbl">Notifications</span>
       </button>
 
       <div class="rgroup">Fleet</div>
       <button class="rlink" class:on={section === 'machines'} onclick={() => go('machines')}>
-        Machines
+        <span class="ric">{@render icon('machines')}</span>
+        <span class="rlbl">Machines</span>
         <span class="rcount mono">{app.machines.length}</span>
       </button>
 
       {#if selM}
         <!-- The machine's own name as the heading. A static word like "Machine"
-             would be one more thing that does not say which one. -->
+             would be one more thing that does not say which one.
+             It sits on the group-label line and above a hairline, because as a
+             plain dot-and-name row at link height it read as a nav item that
+             happened to be disabled. -->
         <div class="rgroup mach">
           <span class="rdot" class:live={selM.online}></span>
           <span class="rmach">{selM.label}</span>
         </div>
         {#each MACHINE_SECTIONS as s (s)}
-          <button class="rlink" class:on={section === s} onclick={() => go(s)}>{SECTIONS[s].title}</button>
+          <button class="rlink" class:on={section === s} onclick={() => go(s)}>
+            <span class="ric">{@render icon(s)}</span>
+            <span class="rlbl">{SECTIONS[s].title}</span>
+          </button>
         {/each}
       {/if}
     </nav>
@@ -662,10 +709,10 @@
     display: flex;
     align-items: center;
     gap: 7px;
-    padding: 18px 10px 6px;
-    font-size: 10.5px;
+    padding: 16px 10px 5px;
+    font-size: 10px;
     font-weight: 600;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.09em;
     text-transform: uppercase;
     color: var(--text-4);
   }
@@ -673,14 +720,20 @@
     padding-top: 2px;
   }
   /* The machine's name is a value, not a label, so it keeps its own case and
-     takes the mono voice this app gives data everywhere else. */
+     takes the mono voice this app gives data everywhere else. The rule above it
+     is what stops it reading as a nav item that happens to be disabled: a
+     heading needs to sit on something, and a dot plus a word at link height
+     sits on nothing. */
   .rgroup.mach {
     text-transform: none;
     letter-spacing: 0;
+    margin-top: 10px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
   }
   .rmach {
     font-family: var(--mono, monospace);
-    font-size: 11.5px;
+    font-size: 11px;
     font-weight: 500;
     color: var(--text-3);
     overflow: hidden;
@@ -700,24 +753,50 @@
   .rlink {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
+    gap: 10px;
     padding: 7px 10px;
     border-radius: 8px;
     color: var(--text-3);
     font-size: 13px;
     text-align: left;
   }
+  .rlbl {
+    flex: 1;
+    min-width: 0;
+  }
+  /* The icon is dimmer than its label at rest and comes up with it on hover, so
+     a row reads as one thing rather than as a glyph next to a word. */
+  .ric {
+    flex: none;
+    width: 17px;
+    height: 17px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-4);
+    transition: color 0.12s;
+  }
+  .ric :global(svg) {
+    width: 17px;
+    height: 17px;
+  }
   .rlink:hover {
     background: var(--panel);
     color: var(--text);
+  }
+  .rlink:hover .ric {
+    color: var(--text-3);
   }
   .rlink.on {
     background: var(--panel-2);
     color: var(--text);
     font-weight: 550;
   }
+  .rlink.on .ric {
+    color: var(--text);
+  }
   .rcount {
+    flex: none;
     font-size: 11px;
     color: var(--text-4);
   }
