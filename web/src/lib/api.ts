@@ -368,8 +368,10 @@ export function setCLIs(base: string, clis: CLIProfile[]): Promise<CLIProfile[]>
 }
 
 // getProviders / saveProvider / removeProvider manage a machine's proxy-backed
-// model sources (Codex/Grok/Kimi via a local CLIProxyAPI). Machine-local, like
-// clis; saving one upserts by name and creates its config dir server-side.
+// model sources (Codex/Grok/Kimi). Machine-local, like clis; saving one upserts
+// by name and creates its config dir server-side. Which proxy serves one is the
+// server's business: kunai's own in-process proxy for Codex and Grok, the
+// downloaded sidecar for Kimi or for a login that is missing.
 export function getProviders(base: string): Promise<Provider[]> {
   return fetch(at(base, '/api/providers')).then((r) => json<Provider[]>(r))
 }
