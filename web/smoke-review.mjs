@@ -35,10 +35,13 @@ if (await page.locator('.prs').count()) {
     (await page.locator('.prs').first().innerText()))
 }
 
-// 2. Settings explains what to do, and never shows key material. Opened from the
-// nav rather than by URL: settings is a view, not a route.
+// 2. Settings explains what to do, and never shows key material. Settings is a
+// route now and its sections are a rail, so the GitHub App lives under Reviews
+// rather than at the bottom of one long column.
 await page.locator('button[aria-label="Settings"]').first().click()
 await page.waitForTimeout(1200)
+await page.locator('.rlink:has-text("Reviews")').click()
+await page.waitForTimeout(600)
 const gh = page.locator('text=Reviews are posted by a GitHub App')
 if (!(await gh.count())) fail('the GitHub section is missing from Settings')
 const body = await page.locator('body').innerText()

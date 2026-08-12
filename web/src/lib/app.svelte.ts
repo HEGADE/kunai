@@ -102,10 +102,33 @@ const WARM_TABS = 5
 const RESTART_POLL_MS = 2_000
 const RESTART_WAIT_MS = 45_000
 
-// The one non-session route. Named once so the writer (syncUrl) and the reader
-// (applyPath) cannot drift into disagreeing about a string, which is the classic
-// way a route half-works: it navigates but the back button lands nowhere.
-const USAGE_PATH = '/usage'
+// The views that are PLACES rather than dialogs, and the path each one lives at.
+//
+// Named once so the writer (syncUrl) and the reader (applyPath) cannot drift
+// into disagreeing about a string, which is the classic way a route half-works:
+// it navigates but the back button lands nowhere.
+//
+// They are routes for the reason Usage was made one first. A modal is for a
+// decision you are making on top of what you were doing, and it takes the screen
+// hostage to say so. Settings, your accounts, your providers and your channels
+// are places you go, read, change something and come back to, so being a route
+// buys the back button, a reload that lands where you were, a link you can send,
+// and the full width instead of a 720px sheet with the app greyed out behind it.
+const VIEW_PATHS = {
+  usage: '/usage',
+  settings: '/settings',
+  accounts: '/accounts',
+  providers: '/providers',
+  channels: '/channels',
+} as const
+
+export type ViewName = keyof typeof VIEW_PATHS
+
+// Reverse lookup, built once. applyPath needs path -> name and syncUrl needs
+// name -> path, and deriving one from the other is what keeps them honest.
+const PATH_VIEWS: Record<string, ViewName> = Object.fromEntries(
+  Object.entries(VIEW_PATHS).map(([name, path]) => [path, name as ViewName]),
+)
 
 class AppStore {
   machines = $state<Machine[]>([this.selfSeed()])
@@ -178,7 +201,29 @@ class AppStore {
     })
   }
   showNew = $state(false)
-  showSettings = $state(false)
+  // Which place is open, or null for the dashboard or a session. ONE field
+  // rather than five booleans, because "exactly one of these is showing" is an
+  // invariant and five independent flags cannot hold it: every open method used
+  // to have to remember to close the other four by hand, which is a rule you
+  // enforce by copy-paste until somebody adds a sixth.
+  view = $state<ViewName | null>(null)
+  // Read by the components. Kept as names rather than `view === 'settings'` at
+  // every call site, because a template reads better saying what is on screen.
+  get showSettings() {
+    return this.view === 'settings'
+  }
+  get showAccounts() {
+    return this.view === 'accounts'
+  }
+  get showChannels() {
+    return this.view === 'channels'
+  }
+  get showProviders() {
+    return this.view === 'providers'
+  }
+  get showUsage() {
+    return this.view === 'usage'
+  }
   // A review session opens on its findings, not on the conversation. The chat is
   // still there and is one click away, because being able to argue with the
   // reviewer is the thing kunai has that a CI reviewer does not; it is just not
@@ -186,11 +231,7 @@ class AppStore {
   // to ask about, so the question arrives with its subject attached.
   reviewChat = $state(false)
   reviewAsk = $state('')
-  showAccounts = $state(false)
-  showChannels = $state(false)
-  showProviders = $state(false)
   showAllSessions = $state(false)
-  showUsage = $state(false)
   listError = $state('')
   // actionError is why the last thing you asked for did not happen: switching
   // account, changing effort, closing.
@@ -699,9 +740,9 @@ class AppStore {
     }
     this.activeKey = key
     this.showNew = false
-    // Opening a session leaves Usage, or syncUrl would keep the address bar on
-    // /usage while a conversation is on screen.
-    this.showUsage = false
+    // Opening a session leaves whatever place was open, or syncUrl would keep
+    // the address bar on /settings while a conversation is on screen.
+    this.view = null
     this.syncUrl()
     // Looking at a session is what retires its attention: the unread-Done
     // brightness (per-device) and any snooze or Woke pill (server-side, so the
@@ -771,68 +812,60 @@ class AppStore {
   }
 
   newSession() {
-    this.showSettings = false
+    this.view = null
     this.showNew = true
   }
   closeNew() {
     this.showNew = false
   }
-  openSettings() {
+
+  // openView replaces the five near-identical open methods that each had to
+  // remember to close the other four. Every one of these is a route now, so it
+  // pushes a URL: they survive a reload, the back button works on them, and they
+  // can be sent to somebody.
+  openView(name: ViewName) {
     this.showNew = false
-    this.showSettings = true
+    this.view = name
+    this.syncUrl()
+  }
+  closeView() {
+    this.view = null
+    this.syncUrl()
+  }
+
+  openSettings() {
+    this.openView('settings')
   }
   closeSettings() {
-    this.showSettings = false
+    this.closeView()
   }
   openAccounts() {
-    this.showNew = false
-    this.showSettings = false
-    this.showChannels = false
-    this.showProviders = false
-    this.showAccounts = true
+    this.openView('accounts')
   }
   closeAccounts() {
-    this.showAccounts = false
+    this.closeView()
   }
   openChannels() {
-    this.showNew = false
-    this.showSettings = false
-    this.showAccounts = false
-    this.showProviders = false
-    this.showChannels = true
+    this.openView('channels')
   }
   closeChannels() {
-    this.showChannels = false
+    this.closeView()
   }
   openProviders() {
-    this.showNew = false
-    this.showSettings = false
-    this.showAccounts = false
-    this.showChannels = false
-    this.showProviders = true
+    this.openView('providers')
   }
   closeProviders() {
-    this.showProviders = false
+    this.closeView()
   }
-  // Usage is a route, not a dialog: it survives a reload, the back button works
-  // on it, and it can be linked to. Everything else in this block is an overlay
-  // over whatever you were doing; this one replaces it, so it pushes a URL.
   openUsage() {
-    this.showNew = false
-    this.showSettings = false
-    this.showAccounts = false
-    this.showChannels = false
-    this.showProviders = false
-    this.showUsage = true
-    this.syncUrl()
+    this.openView('usage')
   }
   closeUsage() {
-    this.showUsage = false
-    this.syncUrl()
+    this.closeView()
   }
   openAllSessions() {
     this.showNew = false
-    this.showSettings = false
+    this.view = null
     this.showAllSessions = true
   }
   closeAllSessions() {
@@ -1144,20 +1177,20 @@ class AppStore {
     }
   }
 
-  // --- URL routing: /usage, /m/<machineSlug>/<sessionId>, legacy /<sessionId> = self ---
+  // --- URL routing: the VIEW_PATHS places, /m/<machineSlug>/<sessionId>, legacy /<sessionId> = self ---
 
   private navigating = false
   private pendingDeepLink: { machineId: string; id: string } | null = null
 
   private syncUrl() {
     if (this.navigating) return
-    // Usage wins while it is open, because it is what is on screen; the session
-    // it was opened over keeps its tab and comes back with the URL when it
-    // closes. Order matters here rather than being a style choice: the other way
-    // round, opening Usage from inside a session would leave the address bar
-    // pointing at the session and the back button would do nothing.
-    const want = this.showUsage
-      ? USAGE_PATH
+    // An open place wins over the session behind it, because it is what is on
+    // screen; the session keeps its tab and comes back with the URL when the
+    // place closes. Order matters here rather than being a style choice: the
+    // other way round, opening Settings from inside a session would leave the
+    // address bar pointing at the session and the back button would do nothing.
+    const want = this.view
+      ? VIEW_PATHS[this.view]
       : this.activeId && this.activeMachineId
         ? `/m/${this.activeMachineId}/${this.activeId}`
         : '/'
@@ -1191,13 +1224,14 @@ class AppStore {
       void this.resumeById(decodeURIComponent(handoff[1]), cwd)
       return
     }
-    // Checked before currentPath, which would otherwise read "usage" as a bare
-    // legacy session id and try to open a session by that name.
-    if (location.pathname.replace(/\/+$/, '') === USAGE_PATH) {
-      this.showUsage = true
+    // Checked before currentPath, which would otherwise read "settings" as a
+    // bare legacy session id and try to open a session by that name.
+    const place = PATH_VIEWS[location.pathname.replace(/\/+$/, '')]
+    if (place) {
+      this.view = place
       return
     }
-    this.showUsage = false
+    this.view = null
     const { machineId, id } = this.currentPath()
     this.navigating = true
     try {

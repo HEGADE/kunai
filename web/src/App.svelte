@@ -24,7 +24,7 @@
   // bar above it read as a rendering fault rather than a design.
   $effect(() => {
     applyThemeColor(
-      themeColorFor({ nightly: app.isNightly, fullView: !!app.chat || app.showUsage }),
+      themeColorFor({ nightly: app.isNightly, fullView: !!app.chat || !!app.view }),
     )
   })
 
@@ -75,13 +75,25 @@
      route now, so it claims it too. -->
 <div
   class="shell"
-  data-full={app.chat || app.showUsage ? 'true' : undefined}
+  data-full={app.chat || app.view ? 'true' : undefined}
   class:collapsed={!app.sidebarOpen}
 >
   <aside class="sidebar"><Sidebar /></aside>
   <main class="main">
+    <!-- The places, each a route. They render in the main pane rather than over
+         it: a modal is for a decision you are making on top of what you were
+         doing, and settings, accounts, providers and channels are none of them.
+         See VIEW_PATHS in lib/app.svelte.ts. -->
     {#if app.showUsage}
       <div class="pane"><Usage /></div>
+    {:else if app.showSettings}
+      <div class="pane"><Settings /></div>
+    {:else if app.showAccounts}
+      <div class="pane"><Accounts /></div>
+    {:else if app.showProviders}
+      <div class="pane"><Providers /></div>
+    {:else if app.showChannels}
+      <div class="pane"><Channels /></div>
     {:else if app.chat}
       <!-- A review session opens on its findings rather than on the transcript.
            The conversation is one click away (the view's Conversation button),
@@ -108,20 +120,11 @@
   </main>
 </div>
 
+<!-- What is left as an overlay, and it is the right test: New session is a
+     decision you make on top of what you are looking at, and so is the full
+     session list. Both hand you back to where you were. -->
 {#if app.showNew}
   <NewSession />
-{/if}
-{#if app.showSettings}
-  <Settings />
-{/if}
-{#if app.showChannels}
-  <Channels />
-{/if}
-{#if app.showAccounts}
-  <Accounts />
-{/if}
-{#if app.showProviders}
-  <Providers />
 {/if}
 {#if app.showAllSessions}
   <AllSessions />
