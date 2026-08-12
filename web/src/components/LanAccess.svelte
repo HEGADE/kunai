@@ -97,7 +97,9 @@
 </script>
 
 {#if pinState}
-  <div class="hd">Network access</div>
+  <!-- No heading of its own: this is the whole of Settings' Network section and
+       the section header already names it. It carried one when it was a block
+       among many in one long column. -->
   <div class="card">
     <!-- The state, said in one line, before any control. -->
     <div class="row">
@@ -231,13 +233,6 @@
      names Settings uses for its own rows do not reach here -- borrowing them
      rendered this panel as a wall of unstyled text. Owning the look is also the
      honest arrangement for a component that is meant to be movable. */
-  .hd {
-    font-size: 10.5px;
-    letter-spacing: 0.09em;
-    text-transform: uppercase;
-    color: var(--text-4);
-    padding: 16px 2px 8px;
-  }
   .card {
     display: flex;
     flex-direction: column;

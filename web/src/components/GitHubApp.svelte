@@ -106,8 +106,8 @@
   }
 </script>
 
-<div class="sec">GitHub</div>
-
+<!-- No "GitHub" heading: this is the whole of Settings' Reviews section and the
+     section header already names it. -->
 <p class="lead">
   Reviews are posted by a GitHub App, so they appear as a bot on your team's pull
   requests rather than under your own account. The App needs no webhook: kunai

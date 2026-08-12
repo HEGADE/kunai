@@ -8,10 +8,7 @@
   import Home from './components/Home.svelte'
   import NewSession from './components/NewSession.svelte'
   import Settings from './components/Settings.svelte'
-  import Accounts from './components/Accounts.svelte'
-  import Providers from './components/Providers.svelte'
   import Usage from './components/Usage.svelte'
-  import Channels from './components/Channels.svelte'
   import AllSessions from './components/AllSessions.svelte'
   import { applyThemeColor, themeColorFor } from './lib/themeColor'
   import PinGate from './components/PinGate.svelte'
@@ -87,13 +84,11 @@
     {#if app.showUsage}
       <div class="pane"><Usage /></div>
     {:else if app.showSettings}
+      <!-- Accounts, Providers and Channels are sections of Settings rather than
+           views of their own. They were pages here, which meant Accounts existed
+           twice: this one with the real sign-in flow, and a second list inside
+           Settings that linked across to it. -->
       <div class="pane"><Settings /></div>
-    {:else if app.showAccounts}
-      <div class="pane"><Accounts /></div>
-    {:else if app.showProviders}
-      <div class="pane"><Providers /></div>
-    {:else if app.showChannels}
-      <div class="pane"><Channels /></div>
     {:else if app.chat}
       <!-- A review session opens on its findings rather than on the transcript.
            The conversation is one click away (the view's Conversation button),

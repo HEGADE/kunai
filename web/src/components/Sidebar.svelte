@@ -887,7 +887,17 @@
         title="Channels"
         body="Reach a session from somewhere that is not this app. Telegram is set up here: pair a chat, and you can drive an agent from your phone without kunai open."
       >
-        <button class="navitem" onclick={() => app.openChannels()} aria-label="Channels">
+        <!-- These three are doors into Settings rather than places of their own,
+             so each marks itself current when its section is the one open. A nav
+             item that opens a page and then claims nothing is open is how you end
+             up building the same page twice. -->
+        <button
+          class="navitem"
+          class:on={app.showSettings && app.settingsSection === 'channels'}
+          aria-current={app.showSettings && app.settingsSection === 'channels' ? 'page' : undefined}
+          onclick={() => app.openChannels()}
+          aria-label="Channels"
+        >
           <!-- Signal, not a speech bubble: a channel is a way IN to a session
                from outside, and the bubble already belongs to the sessions
                themselves. Deliberately generic rather than Telegram's plane,
@@ -902,7 +912,13 @@
         title="Accounts"
         body="The Claude logins this machine can run a session on. Add another and you can work on two subscriptions at once, or hand a session to whichever one still has quota."
       >
-        <button class="navitem" onclick={() => app.openAccounts()} aria-label="Accounts">
+        <button
+          class="navitem"
+          class:on={app.showSettings && app.settingsSection === 'accounts'}
+          aria-current={app.showSettings && app.settingsSection === 'accounts' ? 'page' : undefined}
+          onclick={() => app.openAccounts()}
+          aria-label="Accounts"
+        >
           <!-- Claude's own mark, in Claude's own colour. These are Claude logins
                and nothing else, so the most direct thing the icon can say is the
                name of the thing. It is the only warm pixel in the sidebar, which
@@ -917,7 +933,13 @@
         title="Providers"
         body="Run the agent on a model that is not Claude. A Codex or Grok subscription is authorised here, and every tool, edit and permission keeps working; only the model answering changes."
       >
-        <button class="navitem" onclick={() => app.openProviders()} aria-label="Providers">
+        <button
+          class="navitem"
+          class:on={app.showSettings && app.settingsSection === 'providers'}
+          aria-current={app.showSettings && app.settingsSection === 'providers' ? 'page' : undefined}
+          onclick={() => app.openProviders()}
+          aria-label="Providers"
+        >
           <!-- A chip: which brain answers. The whole idea of a provider is that
                everything else about the session is unchanged and only the thing
                doing the thinking is swapped, so the icon is the part being
@@ -957,7 +979,17 @@
         title="Settings"
         body="Machines on your tailnet, the thermal guard that stops unattended work before a closed laptop cooks, notifications, and updates."
       >
-        <button class="navitem" onclick={() => app.openSettings()} aria-label="Settings">
+        <!-- Current only for the sections the three shortcuts above do not
+             claim, or two nav items would light up for one page. -->
+        {@const ownSection =
+          app.showSettings && !['accounts', 'providers', 'channels'].includes(app.settingsSection)}
+        <button
+          class="navitem"
+          class:on={ownSection}
+          aria-current={ownSection ? 'page' : undefined}
+          onclick={() => app.openSettings()}
+          aria-label="Settings"
+        >
           <span class="nic">{@render gear()}</span>
           <span class="nlbl">Settings</span>
         </button>

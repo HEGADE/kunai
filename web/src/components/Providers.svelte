@@ -1,7 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { app } from '../lib/app.svelte'
-  import Page from './Page.svelte'
   import type { Provider } from '../lib/types'
   import {
     getProviders,
@@ -25,7 +24,9 @@
   // The lede used to promise a local CLIProxyAPI, which stopped being true for
   // the two providers anybody actually picks -- and was an implementation
   // detail either way.
-  let machineId = $state(app.activeMachineId ?? app.machines[0]?.id ?? '')
+  // A section of Settings. The machine comes from there, so two pickers can
+  // never disagree about which machine is on screen.
+  let { machineId }: { machineId: string } = $props()
   const base = $derived(app.baseForMachine(machineId))
   const machine = $derived(app.machines.find((m) => m.id === machineId) ?? null)
 
@@ -206,25 +207,13 @@
   const modelOf = (p: Provider): string => p.models?.opus ?? Object.values(p.models ?? {})[0] ?? ''
 </script>
 
-<Page title="Model providers">
-  {#snippet actions()}
-    {#if app.machines.length > 1}
-      <label class="mpick">
-        <select bind:value={machineId} aria-label="Machine">
-          {#each app.machines as m (m.id)}
-            <option value={m.id}>{m.label}{m.self ? ' · this machine' : ''}</option>
-          {/each}
-        </select>
-        <svg class="mchev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-      </label>
-    {/if}
-  {/snippet}
-
-  <div class="wrap">
-  <p class="lede">
-    Run non-Claude models (Codex, Grok, Kimi) on {machine ? machine.label : 'this machine'}.
-    Sign in once and kunai talks to the provider for you. The agent (tools, edits,
-    commands) is unchanged — only the model behind it differs.
+<!-- The section header says what providers are. This says the one thing it
+     cannot fit and that people get wrong: the agent is unchanged, only the model
+     behind it differs. -->
+<p class="lede">
+    Sign in once and kunai talks to the provider for you. Tools, edits and
+    commands work exactly as they do on Claude; only the model behind them
+    changes.
   </p>
 
   {#if error}
@@ -311,8 +300,6 @@
       {/if}
     </div>
   {/if}
-  </div>
-</Page>
 
 <style>
   /* A column rather than a sheet. The width is the one thing the sheet was
@@ -323,30 +310,6 @@
     max-width: 620px;
     margin: 0 auto;
     padding: 20px 16px calc(40px + var(--safe-bottom));
-  }
-  .mpick {
-    flex: none;
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-  }
-  .mpick select {
-    appearance: none;
-    -webkit-appearance: none;
-    height: 32px;
-    padding: 0 28px 0 12px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 100px;
-    color: var(--text-2);
-    font-size: 12.5px;
-    max-width: 150px;
-  }
-  .mchev {
-    position: absolute;
-    right: 10px;
-    color: var(--text-4);
-    pointer-events: none;
   }
   .lede {
     margin: 13px 2px 18px;

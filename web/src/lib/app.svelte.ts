@@ -117,9 +117,6 @@ const RESTART_WAIT_MS = 45_000
 const VIEW_PATHS = {
   usage: '/usage',
   settings: '/settings',
-  accounts: '/accounts',
-  providers: '/providers',
-  channels: '/channels',
 } as const
 
 export type ViewName = keyof typeof VIEW_PATHS
@@ -129,6 +126,29 @@ export type ViewName = keyof typeof VIEW_PATHS
 const PATH_VIEWS: Record<string, ViewName> = Object.fromEntries(
   Object.entries(VIEW_PATHS).map(([name, path]) => [path, name as ViewName]),
 )
+
+// The sections of Settings, which is now the ONE place configuration lives.
+//
+// Accounts, Providers and Channels were separate pages. That was the mistake
+// worth naming: Accounts then existed twice, once as its own page with the real
+// sign-in flow and once as a section listing the same accounts with a link
+// across to the other one. Two surfaces for one idea is not navigation, it is a
+// question the reader has to answer before they can do anything.
+//
+// They are sections here and reachable at /settings/<section>, so the sidebar
+// shortcuts still go straight to them. One surface, several doors.
+export const SETTINGS_SECTIONS = [
+  'notifications',
+  'machines',
+  'accounts',
+  'providers',
+  'channels',
+  'network',
+  'unattended',
+  'reviews',
+] as const
+
+export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
 
 class AppStore {
   machines = $state<Machine[]>([this.selfSeed()])
@@ -207,19 +227,12 @@ class AppStore {
   // to have to remember to close the other four by hand, which is a rule you
   // enforce by copy-paste until somebody adds a sixth.
   view = $state<ViewName | null>(null)
-  // Read by the components. Kept as names rather than `view === 'settings'` at
-  // every call site, because a template reads better saying what is on screen.
+  // Which section of Settings is open. Its own state rather than part of `view`
+  // because it survives leaving and coming back, which is what makes the
+  // sidebar shortcuts feel like doors into one room instead of separate rooms.
+  settingsSection = $state<SettingsSection>('machines')
   get showSettings() {
     return this.view === 'settings'
-  }
-  get showAccounts() {
-    return this.view === 'accounts'
-  }
-  get showChannels() {
-    return this.view === 'channels'
-  }
-  get showProviders() {
-    return this.view === 'providers'
   }
   get showUsage() {
     return this.view === 'usage'
@@ -833,29 +846,29 @@ class AppStore {
     this.syncUrl()
   }
 
-  openSettings() {
+  // Settings, optionally straight to a section. The sidebar's Accounts,
+  // Providers and Channels buttons come through here: same room, different door.
+  openSettings(section?: SettingsSection) {
+    if (section) this.settingsSection = section
     this.openView('settings')
   }
   closeSettings() {
     this.closeView()
   }
-  openAccounts() {
-    this.openView('accounts')
+  // Changing section inside Settings is a navigation, so it takes the URL with
+  // it: a section you are reading is a thing you can link somebody to.
+  setSettingsSection(section: SettingsSection) {
+    this.settingsSection = section
+    this.syncUrl()
   }
-  closeAccounts() {
-    this.closeView()
+  openAccounts() {
+    this.openSettings('accounts')
   }
   openChannels() {
-    this.openView('channels')
-  }
-  closeChannels() {
-    this.closeView()
+    this.openSettings('channels')
   }
   openProviders() {
-    this.openView('providers')
-  }
-  closeProviders() {
-    this.closeView()
+    this.openSettings('providers')
   }
   openUsage() {
     this.openView('usage')
@@ -1190,7 +1203,9 @@ class AppStore {
     // other way round, opening Settings from inside a session would leave the
     // address bar pointing at the session and the back button would do nothing.
     const want = this.view
-      ? VIEW_PATHS[this.view]
+      ? this.view === 'settings'
+        ? `${VIEW_PATHS.settings}/${this.settingsSection}`
+        : VIEW_PATHS[this.view]
       : this.activeId && this.activeMachineId
         ? `/m/${this.activeMachineId}/${this.activeId}`
         : '/'
@@ -1226,9 +1241,20 @@ class AppStore {
     }
     // Checked before currentPath, which would otherwise read "settings" as a
     // bare legacy session id and try to open a session by that name.
-    const place = PATH_VIEWS[location.pathname.replace(/\/+$/, '')]
+    const path = location.pathname.replace(/\/+$/, '')
+    const place = PATH_VIEWS[path]
     if (place) {
       this.view = place
+      return
+    }
+    // /settings/<section>. An unknown section falls back rather than 404s: a
+    // link that outlives a rename should still land in Settings.
+    if (path.startsWith(VIEW_PATHS.settings + '/')) {
+      const wanted = path.slice(VIEW_PATHS.settings.length + 1)
+      if ((SETTINGS_SECTIONS as readonly string[]).includes(wanted)) {
+        this.settingsSection = wanted as SettingsSection
+      }
+      this.view = 'settings'
       return
     }
     this.view = null

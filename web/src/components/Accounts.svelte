@@ -1,7 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { app } from '../lib/app.svelte'
-  import Page from './Page.svelte'
   import type { AccountInfo } from '../lib/types'
   import {
     fetchAccounts,
@@ -17,7 +16,13 @@
   // scoped to the selected machine. The list reads like a small credential
   // roster: a status dot, the name, and its role; a signed-out account is dimmed
   // because you cannot switch a session onto it.
-  let machineId = $state(app.activeMachineId ?? app.machines[0]?.id ?? '')
+  //
+  // A section of Settings rather than a page of its own. It was both for a
+  // while, and that was the worst of the two: this UI, with the real sign-in
+  // flow, AND a second list of the same accounts inside Settings that linked
+  // across to here. The machine now comes from Settings, which is also what
+  // stops two machine pickers from disagreeing on screen.
+  let { machineId }: { machineId: string } = $props()
   const base = $derived(app.baseForMachine(machineId))
   const machine = $derived(app.machines.find((m) => m.id === machineId) ?? null)
 
@@ -154,26 +159,6 @@
     a.ready === undefined ? 'checking' : a.ready ? '' : 'signed out'
 </script>
 
-<Page title="Claude accounts">
-  {#snippet actions()}
-    {#if app.machines.length > 1}
-      <label class="mpick">
-        <select bind:value={machineId} aria-label="Machine">
-          {#each app.machines as m (m.id)}
-            <option value={m.id}>{m.label}{m.self ? ' · this machine' : ''}</option>
-          {/each}
-        </select>
-        <svg class="mchev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-      </label>
-    {/if}
-  {/snippet}
-
-  <div class="wrap">
-  <p class="lede">
-    Run more than one Claude on {machine ? machine.label : 'this machine'} (a personal
-    and a work subscription, say) and choose which one each session runs on. When one
-    hits its limit, switch a session to the other.
-  </p>
 
   {#if error}
     <p class="state err">{error}</p>
@@ -270,49 +255,12 @@
       {/if}
     </div>
   {/if}
-  </div>
-</Page>
 
 <style>
   /* A column rather than a sheet. The width is what a sheet was giving for free
      and a full-width page is not: prose and forms stop being readable past
      about this, so the constraint stays even though the modal that imposed it
      is gone. */
-  .wrap {
-    max-width: 620px;
-    margin: 0 auto;
-    padding: 20px 16px calc(40px + var(--safe-bottom));
-  }
-  .mpick {
-    flex: none;
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-  }
-  .mpick select {
-    appearance: none;
-    -webkit-appearance: none;
-    height: 32px;
-    padding: 0 28px 0 12px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 100px;
-    color: var(--text-2);
-    font-size: 12.5px;
-    max-width: 150px;
-  }
-  .mchev {
-    position: absolute;
-    right: 10px;
-    color: var(--text-4);
-    pointer-events: none;
-  }
-  .lede {
-    margin: 13px 2px 18px;
-    font-size: 13px;
-    line-height: 1.6;
-    color: var(--text-3);
-  }
 
   /* The roster: one framed panel, hairline-divided rows. A single account reads
      as one line, not a card, so a machine's whole identity list is legible in a
