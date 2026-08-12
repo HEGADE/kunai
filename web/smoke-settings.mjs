@@ -73,6 +73,23 @@ for (const s of ['notifications', 'machines', 'accounts', 'providers', 'channels
   if (blurb.length < 20) fail(`${s} has no line saying what it decides: "${blurb}"`)
 }
 
+// 3b. Every section is built from the ONE shared card, and none of them runs off
+// the side. Both are what went wrong when each section styled itself: Reviews
+// was a wall of bare paragraphs and inputs next to Accounts' cards, and its
+// status line, an unwrapped flex row carrying an App name, a list of orgs and a
+// numeric id, pushed the page wider than the window.
+for (const s of ['accounts', 'providers', 'network', 'unattended', 'reviews', 'machines']) {
+  await page.goto(url + 'settings/' + s)
+  await page.waitForTimeout(1000)
+  if (!(await page.locator('.st-card').count())) {
+    fail(`${s} does not use the shared settings card`)
+  }
+  const over = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  )
+  if (over > 0) fail(`${s} overflows the window by ${over}px`)
+}
+
 // 4. The rail says whose settings each section changes. This is the fix for the
 // actual clutter: one column mixed a browser-scoped switch with machine-scoped
 // ones and nothing said which followed the picker.
@@ -138,7 +155,7 @@ const chip = phone.locator('.rlink').first()
 const box = await chip.boundingBox()
 if (!box || box.height < 30) fail(`a settings chip is only ${box?.height}px tall, too small to tap`)
 // The card must not run off the side.
-const card = await phone.locator('.card').first().boundingBox()
+const card = await phone.locator('.st-card').first().boundingBox()
 if (!card || card.x < 0 || card.x + card.width > 390) {
   fail(`the settings card overflows the phone: x=${card?.x} w=${card?.width}`)
 }

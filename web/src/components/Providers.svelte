@@ -217,31 +217,42 @@
   </p>
 
   {#if error}
-    <p class="state err">{error}</p>
-  {:else if loading}
-    <div class="roster" aria-hidden="true"><div class="row"><span class="nm skname"></span></div></div>
-  {:else if providers.length}
-    <div class="roster">
-      {#each providers as p (p.name)}
-        <div class="row">
-          <span class="nm">{p.name}</span>
-          {#if modelOf(p)}<span class="model mono">{modelOf(p)}</span>{/if}
-          <button class="rm" onclick={() => remove(p)} aria-label="Remove {p.name}" title="Remove {p.name}">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" /><path d="M6 6l1 14a2 2 0 002 2h6a2 2 0 002-2l1-14" /></svg>
-          </button>
-        </div>
-      {/each}
-    </div>
+    <p class="st-note bad">{error}</p>
   {:else}
-    <p class="state">No providers yet. Add one below to run another model.</p>
+    <!-- The providers and the way to add one in ONE card, the same shape the
+         accounts list uses: they are the same kind of list. -->
+    <div class="st-card">
+      {#if loading}
+        <div class="st-row" aria-hidden="true"><span class="skname"></span></div>
+      {:else}
+        {#each providers as p (p.name)}
+          <div class="st-row">
+            <span class="st-k">
+              <span class="st-name">{p.name}</span>
+            </span>
+            {#if modelOf(p)}<span class="st-val">{modelOf(p)}</span>{/if}
+            <button class="st-btn ghost danger" onclick={() => remove(p)} aria-label="Remove {p.name}">
+              Remove
+            </button>
+          </div>
+        {/each}
+      {/if}
+
+      {#if step === 'idle'}
+        <button class="st-row add" onclick={() => (step = 'type')}>
+          <span class="plus" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+          </span>
+          <span class="st-k">
+            <span class="st-name">Add provider</span>
+            <span class="st-sub-text">Sign in to Codex, Grok or Kimi</span>
+          </span>
+        </button>
+      {/if}
+    </div>
   {/if}
 
-  {#if step === 'idle'}
-    <button class="add" onclick={() => (step = 'type')}>
-      <span class="plus"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg></span>
-      <span class="addtext"><span class="at">Add provider</span><span class="as">Sign in to Codex, Grok or Kimi</span></span>
-    </button>
-  {:else}
+  {#if step !== 'idle'}
     <div class="flow">
       {#if step === 'type'}
         <div class="fhead"><span class="fstep">Choose a provider</span></div>
@@ -317,129 +328,36 @@
     line-height: 1.6;
     color: var(--text-3);
   }
-  .roster {
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    background: var(--panel);
-    overflow: hidden;
-  }
-  .row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 16px;
-    min-height: 52px;
-  }
-  .row + .row {
-    border-top: 1px solid var(--border);
-  }
-  .nm {
+  /* The roster and the add row come from settings.css. What stays is the
+     skeleton and the add row's plus, as in Accounts: they are the same list. */
+  .skname {
     flex: 1;
-    min-width: 0;
-    font-size: 14.5px;
-    font-weight: 550;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .model {
-    flex: none;
-    font-size: 11.5px;
-    color: var(--text-3);
-    background: var(--panel-3);
-    border-radius: 6px;
-    padding: 2px 8px;
-    max-width: 45%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .rm {
-    flex: none;
-    width: 30px;
-    height: 30px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 8px;
-    color: var(--text-4);
-    transition: color 0.12s, background 0.12s;
-  }
-  .rm:hover,
-  .rm:active {
-    color: var(--alert);
+    height: 11px;
+    max-width: 120px;
+    border-radius: 4px;
     background: var(--panel-2);
   }
-  .skname {
-    height: 11px;
-    width: 120px;
-    border-radius: 4px;
-    background: var(--panel-3);
-    animation: pulse 1.1s ease-in-out infinite;
-  }
-  @keyframes pulse {
-    0%,
-    100% {
-      opacity: 0.3;
-    }
-    50% {
-      opacity: 1;
-    }
-  }
-  .state {
-    font-size: 13px;
-    color: var(--text-4);
-    padding: 14px 4px;
-  }
-  .state.err {
-    color: var(--alert);
-  }
   .add {
-    display: flex;
-    align-items: center;
-    gap: 12px;
     width: 100%;
-    text-align: left;
-    margin-top: 12px;
-    padding: 13px 16px;
-    border: 1px dashed var(--border-2);
-    border-radius: var(--r-lg);
-    color: var(--text-2);
-    transition: border-color 0.12s, background 0.12s;
+    background: none;
   }
   .add:hover {
-    border-color: var(--text-4);
-    background: var(--panel);
+    background: var(--panel-2);
   }
   .plus {
     flex: none;
-    width: 30px;
-    height: 30px;
+    width: 24px;
+    height: 24px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 9px;
-    border: 1px solid var(--border-2);
+    border-radius: 7px;
+    border: 1px solid var(--border);
     color: var(--text-3);
   }
   .add:hover .plus {
     color: var(--text-2);
-    border-color: var(--text-4);
-  }
-  .addtext {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-  }
-  .at {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .as {
-    font-size: 11.5px;
-    color: var(--text-4);
+    border-color: var(--border-2);
   }
   .flow {
     margin-top: 12px;

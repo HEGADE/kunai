@@ -5,6 +5,10 @@ import '@fontsource-variable/source-serif-4'
 import './app.css'
 import './hljs-theme.css'
 import './image-frame.css'
+// One card, one row, one button, one field, shared by every settings section.
+// Global for the reason the file says: scoped styles are what let six sections
+// each describe a different row.
+import './settings.css'
 import App from './App.svelte'
 import { startUpdatePolling, reloadWhenSafe } from './lib/updater'
 

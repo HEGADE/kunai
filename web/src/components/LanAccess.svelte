@@ -100,11 +100,11 @@
   <!-- No heading of its own: this is the whole of Settings' Network section and
        the section header already names it. It carried one when it was a block
        among many in one long column. -->
-  <div class="card">
+  <div class="st-card">
     <!-- The state, said in one line, before any control. -->
-    <div class="row">
-      <span class="k">
-        <span class="name">
+    <div class="st-row">
+      <span class="st-k">
+        <span class="st-name">
           {#if !pinState.set}
             Off — no PIN set
           {:else if pinState.enabled}
@@ -113,7 +113,7 @@
             PIN ready — network access is off
           {/if}
         </span>
-        <span class="sub">
+        <span class="st-sub-text">
           {#if !pinState.set}
             Another device on your wifi can reach {label} without Tailscale, once you
             set a PIN. Setting one turns it on straight away.
@@ -125,14 +125,14 @@
         </span>
       </span>
       {#if !editing}
-        <button class="btn" onclick={() => { editing = true; pin = '' }}>
+        <button class="st-btn" onclick={() => { editing = true; pin = '' }}>
           {pinState.set ? 'Change' : 'Set a PIN'}
         </button>
       {/if}
     </div>
 
     {#if editing}
-      <div class="row ed">
+      <div class="st-row ed">
         <!-- Visible on purpose: see the note at the top of this file. -->
         <input
           class="pinin mono"
@@ -145,7 +145,7 @@
           onkeydown={(e) => e.key === 'Enter' && save()}
           aria-label="New PIN"
         />
-        <button class="btn savepin" onclick={save} disabled={!canSave}>Save</button>
+        <button class="st-btn solid savepin" onclick={save} disabled={!canSave}>Save</button>
         <button class="plain" onclick={() => { editing = false; pin = ''; err = '' }}>Cancel</button>
       </div>
       <!-- One live line that says what is still missing, so Save is never a
@@ -167,13 +167,13 @@
     <!-- Where to point the other device. Without this the PIN is set and you
          still have to go and find your own address. -->
     {#if pinState.set && pinState.urls.length}
-      <div class="row">
-        <span class="k">
-          <span class="name">Open on another device</span>
+      <div class="st-row">
+        <span class="st-k">
+          <span class="st-name">Open on another device</span>
           {#each pinState.urls as u (u)}
-            <span class="sub mono url">{u}</span>
+            <span class="st-sub-text mono url">{u}</span>
           {/each}
-          <span class="sub">
+          <span class="st-sub-text">
             The certificate is self-signed, so the browser warns once per device.
           </span>
         </span>
@@ -182,10 +182,10 @@
            the address above looking perfect from here and timing out over there,
            with nothing to say why, so the way out is printed next to it. -->
       {#if pinState.firewall}
-        <div class="row">
-          <span class="k">
-            <span class="name warn">{pinState.firewall.tool} may be blocking it</span>
-            <span class="sub">
+        <div class="st-row">
+          <span class="st-k">
+            <span class="st-name warn">{pinState.firewall.tool} may be blocking it</span>
+            <span class="st-sub-text">
               This machine's firewall drops incoming connections by default. If the
               other device cannot reach the address, run this once:
             </span>
@@ -196,11 +196,11 @@
     {/if}
 
     {#if pinState.set && devices.length}
-      <div class="row">
-        <span class="k">
-          <span class="name">Signed in ({devices.length})</span>
+      <div class="st-row">
+        <span class="st-k">
+          <span class="st-name">Signed in ({devices.length})</span>
           {#each devices as d (`${d.created}-${d.label ?? ''}`)}
-            <span class="sub">
+            <span class="st-sub-text">
               {d.label || 'device'} · added {ago(d.created)} · seen {ago(d.seen)}
             </span>
           {/each}
@@ -210,10 +210,10 @@
     {/if}
 
     {#if pinState.set && !editing}
-      <div class="row">
-        <span class="k">
-          <span class="name">Remove the PIN</span>
-          <span class="sub">Removes the PIN and stops serving this network straight away.</span>
+      <div class="st-row">
+        <span class="st-k">
+          <span class="st-name">Remove the PIN</span>
+          <span class="st-sub-text">Removes the PIN and stops serving this network straight away.</span>
         </span>
         {#if armRemove}
           <span class="confirm">
@@ -233,54 +233,14 @@
      names Settings uses for its own rows do not reach here -- borrowing them
      rendered this panel as a wall of unstyled text. Owning the look is also the
      honest arrangement for a component that is meant to be movable. */
-  .card {
-    display: flex;
-    flex-direction: column;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    overflow: hidden;
-  }
-  .row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px;
-    padding: 12px 16px;
-  }
-  /* A hairline between rows, never above the first: the card's own edge does
-     that job already. A feedback line sits BETWEEN two rows, so the adjacency
-     has to survive one or the divider silently disappears exactly when a
-     message is showing. */
-  .row + .row,
-  .rule + .row {
+  /* The card, rows, labels and buttons come from settings.css, shared with every
+     other section. What is left here is what only this panel has: the PIN entry,
+     the live rule under it, and the firewall command.
+     One rule has to survive the move: a feedback line sits BETWEEN two rows, so
+     the divider has to follow a rule as well as a row or it disappears exactly
+     when a message is showing. */
+  .rule + :global(.st-row) {
     border-top: 1px solid var(--border);
-  }
-  .k {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-  .name {
-    font-size: 13px;
-    color: var(--text-2);
-  }
-  .sub {
-    font-size: 11px;
-    line-height: 1.45;
-    color: var(--text-4);
-  }
-  .btn {
-    flex: none;
-    height: 28px;
-    padding: 0 13px;
-    border-radius: 8px;
-    background: var(--text);
-    color: #0b0b0c;
-    font-size: 12.5px;
-    font-weight: 600;
   }
   .savepin:disabled {
     opacity: 0.35;

@@ -42,14 +42,17 @@ await page.locator('button[aria-label="Settings"]').first().click()
 await page.waitForTimeout(1200)
 await page.locator('.rlink:has-text("Reviews")').click()
 await page.waitForTimeout(600)
-const gh = page.locator('text=Reviews are posted by a GitHub App')
+const gh = page.locator('text=Reviews post as a bot')
 if (!(await gh.count())) fail('the GitHub section is missing from Settings')
 const body = await page.locator('body').innerText()
 if (/BEGIN RSA PRIVATE KEY-----\n/.test(body)) fail('Settings rendered key material')
 if (!/pull requests read and write/.test(body)) fail('Settings does not say what permissions the App needs')
 
 // 3. A bad key is refused at the moment somebody can fix it, not at first use.
-await page.locator('input[placeholder="App id"]').first().fill('123456')
+// The App id field is labelled rather than placeholder-labelled now, and its
+// placeholder is an example id. Matched by its label so a copy change to the
+// example cannot break this again.
+await page.locator('.st-field:has-text("App id") input').first().fill('123456')
 await page.locator('textarea[placeholder^="-----BEGIN"]').first().fill('not a key at all')
 await page.locator('button:has-text("Save")').first().click()
 await page.waitForTimeout(800)

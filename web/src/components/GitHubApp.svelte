@@ -30,6 +30,9 @@
   let busy = $state(false)
   let err = $state('')
   let saved = $state('')
+  // Replacing a working key is a rare job. The form used to sit open under a
+  // working App, which made the section look like setup you had not finished.
+  let showKey = $state(false)
 
   const base = $derived(app.baseForMachine(machineId))
 
@@ -78,6 +81,7 @@
       // box, and leaving it there invites a screenshot.
       appId = ''
       key = ''
+      showKey = false
       saved = 'Saved'
       setTimeout(() => (saved = ''), 2500)
     } catch (e) {
@@ -106,249 +110,209 @@
   }
 </script>
 
-<!-- No "GitHub" heading: this is the whole of Settings' Reviews section and the
-     section header already names it. -->
-<p class="lead">
-  Reviews are posted by a GitHub App, so they appear as a bot on your team's pull
-  requests rather than under your own account. The App needs no webhook: kunai
-  only ever calls out.
-</p>
-
-{#if appState?.configured}
-  <!-- "Configured" alone was the message being shown while nothing worked: it
-       reported that two files exist on disk, which is true of a key from the
-       wrong App and of an App installed on nothing. What it says now is what
-       GitHub answered when asked. -->
-  <div class="row">
-    {#if checking}
-      <span class="quiet">Checking with GitHub…</span>
-    {:else if appState.error}
-      <span class="bad">Not working</span>
-    {:else if appState.check?.orgs?.length}
-      <span class="ok">Working</span>
-      <span class="aid">
-        {appState.check.name ? appState.check.name + ' · ' : ''}installed on {appState.check.orgs.join(', ')}
+<!-- The App itself: what GitHub said when asked, and the way to replace or
+     remove it. A status is a row with a dot, like every other status in this
+     app, rather than a coloured word floating in a paragraph. -->
+<div class="st-card">
+  {#if appState?.configured}
+    <div class="st-row">
+      <span
+        class="st-dot"
+        class:on={!checking && !appState.error && !!appState.check?.orgs?.length}
+        class:bad={!!appState.error}
+        class:warn={!checking && !appState.error && !appState.check?.orgs?.length}
+      ></span>
+      <span class="st-k">
+        <span class="st-name">
+          {#if checking}
+            Checking with GitHub…
+          {:else if appState.error}
+            Not working
+          {:else if appState.check?.orgs?.length}
+            Working
+          {:else}
+            Not finished
+          {/if}
+        </span>
+        <!-- Wraps. This line carries an App name, a list of organisations and a
+             numeric id, and as an unwrapped flex row it ran off the side of the
+             page. -->
+        <span class="st-sub-text" class:bad={!!appState.error}>
+          {#if appState.error}
+            {appState.error}
+          {:else if appState.check?.orgs?.length}
+            {appState.check.name ? appState.check.name + ' · ' : ''}installed on {appState.check.orgs.join(', ')}{appState.app_id
+              ? ` · App ${appState.app_id}`
+              : ''}
+          {:else if appState.app_id}
+            App {appState.app_id}
+          {/if}
+        </span>
       </span>
-    {:else}
-      <span class="warn">Not finished</span>
+      <button class="st-btn ghost danger" onclick={clear} disabled={busy}>Remove</button>
+    </div>
+
+    {#if appState.check?.warning}
+      <div class="st-row">
+        <span class="st-dot warn"></span>
+        <span class="st-k">
+          <span class="st-sub-text warn">{appState.check.warning}</span>
+        </span>
+        {#if appState.check.install_url}
+          <a class="st-btn" href={appState.check.install_url} target="_blank" rel="noreferrer">Install it</a>
+        {/if}
+      </div>
+    {:else if appState.check?.partial}
+      <!-- The setting behind the confusing failure: everything reports
+           configured and one repository still refuses because it was never
+           ticked. -->
+      <div class="st-row">
+        <span class="st-dot warn"></span>
+        <span class="st-k">
+          <span class="st-sub-text warn">
+            This App covers only selected repositories on at least one organisation.
+            A repository that was not ticked will refuse, even though everything
+            here looks right.
+          </span>
+        </span>
+        {#if appState.check.install_url}
+          <a class="st-btn" href={appState.check.install_url} target="_blank" rel="noreferrer">Change</a>
+        {/if}
+      </div>
     {/if}
-    {#if appState.app_id}<span class="mono aid">App {appState.app_id}</span>{/if}
-    <button class="mini" onclick={clear} disabled={busy}>Remove</button>
-  </div>
-
-  {#if appState.error}
-    <p class="err">{appState.error}</p>
-  {:else if appState.check?.warning}
-    <p class="warnline">
-      {appState.check.warning}
-      {#if appState.check.install_url}
-        <a href={appState.check.install_url} target="_blank" rel="noreferrer">Install it &rarr;</a>
-      {/if}
-    </p>
-  {:else if appState.check?.partial}
-    <!-- The setting behind the confusing failure: everything reports configured
-         and one repository still refuses because it was never ticked. -->
-    <p class="lead quiet">
-      This App covers only selected repositories on at least one organisation. A
-      repository that was not ticked will refuse, even though everything here
-      looks right.
-      {#if appState.check.install_url}
-        <a href={appState.check.install_url} target="_blank" rel="noreferrer">Change what it covers &rarr;</a>
-      {/if}
-    </p>
+  {:else}
+    <div class="st-row">
+      <span class="st-dot"></span>
+      <span class="st-k">
+        <span class="st-name">No App yet</span>
+        <!-- One line. What to go and do is a note under the card: a row states a
+             state, and a paragraph inside one leaves its status dot floating in
+             the middle of four lines of prose. -->
+        <span class="st-sub-text">Reviews cannot be posted until this machine has one.</span>
+      </span>
+    </div>
   {/if}
-{:else}
-  <p class="lead quiet">
-    Register an App on your organisation with pull requests read and write,
-    contents read, and metadata read. Leave webhooks off, then paste its id and a
-    private key here. kunai checks both against GitHub before saving, so a
-    mismatched pair is refused here rather than at the first review.
-  </p>
-{/if}
 
-<div class="fields">
-  <input class="min mono" placeholder="App id" bind:value={appId} autocomplete="off" />
-  <textarea
-    class="min mono key"
-    placeholder="-----BEGIN RSA PRIVATE KEY-----"
-    bind:value={key}
-    spellcheck="false"
-    autocomplete="off"
-  ></textarea>
-  <button class="save" onclick={save} disabled={busy || !appId.trim() || !key.trim()}>
-    {appState?.configured ? 'Replace key' : 'Save'}
-  </button>
+  <!-- Replacing a working key is a rare job, so it stays shut until asked for
+       rather than sitting open under a working App. -->
+  {#if !appState?.configured || showKey}
+    <div class="st-form">
+      <div class="st-field">
+        <span class="st-label">App id</span>
+        <input class="st-input mono" placeholder="4426586" bind:value={appId} autocomplete="off" />
+      </div>
+      <div class="st-field">
+        <span class="st-label">Private key</span>
+        <textarea
+          class="st-textarea mono"
+          placeholder="-----BEGIN RSA PRIVATE KEY-----"
+          bind:value={key}
+          spellcheck="false"
+          autocomplete="off"
+        ></textarea>
+      </div>
+      <div class="st-actions">
+        <button class="st-btn solid" onclick={save} disabled={busy || !appId.trim() || !key.trim()}>
+          {busy ? 'Checking with GitHub…' : appState?.configured ? 'Replace key' : 'Save and check'}
+        </button>
+        {#if appState?.configured}
+          <button class="st-btn ghost" onclick={() => (showKey = false)}>Cancel</button>
+        {/if}
+      </div>
+    </div>
+  {:else}
+    <div class="st-row">
+      <span class="st-k">
+        <span class="st-name">Private key</span>
+        <span class="st-sub-text">
+          Give each machine its own. An App holds several and revokes them one at a
+          time, so a lost laptop costs one key rather than a redistribution.
+        </span>
+      </span>
+      <button class="st-btn" onclick={() => (showKey = true)}>Replace</button>
+    </div>
+  {/if}
 </div>
-
-<p class="lead quiet">
-  Give each machine its own key. An App can hold several and revoke them one at a
-  time, so a lost laptop costs one key instead of a redistribution to everybody.
-</p>
 
 {#if appState?.configured}
-  <div class="sec">Reviews run on</div>
-  <p class="lead">
-    A review is long and arrives when a colleague opens a pull request, not when
-    you are ready for it. Point it at a second account or a provider and it can
-    never spend the window you are working in.
-  </p>
-  <div class="picks">
-    <label class="pick">
-      <span class="plbl">Account</span>
-      <select class="min" value={rcfg.cli ?? ''} onchange={(e) => saveReviewCfg({ cli: e.currentTarget.value })}>
-        <option value="">Default{accounts[0] ? ` (${accounts[0]})` : ''}</option>
-        {#each accounts as a (a)}
-          <option value={a}>{a}</option>
-        {/each}
-      </select>
-    </label>
-    <label class="pick">
-      <span class="plbl">Model</span>
-      <select class="min" value={rcfg.model ?? ''} onchange={(e) => saveReviewCfg({ model: e.currentTarget.value })}>
-        <option value="">Default</option>
-        {#each MODELS as m (m.id)}
-          <option value={m.id}>{modelLabel(m.id)}</option>
-        {/each}
-      </select>
-    </label>
+  <div class="st-sub">Reviews run on</div>
+  <div class="st-card">
+    <div class="st-form">
+      <p class="st-sub-text">
+        A review is long and arrives when a colleague opens a pull request, not when
+        you are ready for it. Point it at a second account or a provider and it can
+        never spend the window you are working in.
+      </p>
+      <div class="st-pair">
+        <label class="st-field">
+          <span class="st-label">Account</span>
+          <select
+            class="st-select"
+            value={rcfg.cli ?? ''}
+            onchange={(e) => saveReviewCfg({ cli: e.currentTarget.value })}
+          >
+            <option value="">Default{accounts[0] ? ` (${accounts[0]})` : ''}</option>
+            {#each accounts as a (a)}
+              <option value={a}>{a}</option>
+            {/each}
+          </select>
+        </label>
+        <label class="st-field">
+          <span class="st-label">Model</span>
+          <select
+            class="st-select"
+            value={rcfg.model ?? ''}
+            onchange={(e) => saveReviewCfg({ model: e.currentTarget.value })}
+          >
+            <option value="">Default</option>
+            {#each MODELS as m (m.id)}
+              <option value={m.id}>{modelLabel(m.id)}</option>
+            {/each}
+          </select>
+        </label>
+      </div>
+    </div>
   </div>
 {/if}
 
-<div class="sec">Your GitHub handle</div>
-<p class="lead">
-  Named in the reviews you request. With one bot identity shared across the team,
-  this is the only thing that says who to ask about a finding.
-</p>
-<div class="fields">
-  <input class="min mono" placeholder="shorya" bind:value={who} autocomplete="off" />
-  <button class="save" onclick={saveWho}>Save</button>
+<div class="st-sub">Your handle</div>
+<div class="st-card">
+  <div class="st-form">
+    <p class="st-sub-text">
+      Named in the reviews you request. With one bot identity shared across the team,
+      this is the only thing that says who to ask about a finding.
+    </p>
+    <div class="st-pair">
+      <label class="st-field">
+        <span class="st-label">GitHub username</span>
+        <input class="st-input mono" placeholder="shorya" bind:value={who} autocomplete="off" />
+      </label>
+    </div>
+    <div class="st-actions">
+      <button class="st-btn" onclick={saveWho}>Save</button>
+    </div>
+  </div>
 </div>
 
-{#if err}<p class="err">{err}</p>{/if}
-{#if saved}<p class="ok inline">{saved}</p>{/if}
+{#if !appState?.configured}
+  <p class="st-note">
+    Reviews post as a bot rather than under your own account, which is what the App
+    is for. Register one with pull requests read and write, contents read and
+    metadata read, and leave webhooks off: kunai only ever calls out. Both fields
+    are checked against GitHub before they are saved, so a mismatched pair is
+    refused here rather than at your first review.
+  </p>
+{/if}
+
+{#if err}<p class="st-note bad">{err}</p>{/if}
+{#if saved}<p class="st-note">{saved}</p>{/if}
 
 <style>
-  .sec {
-    font-size: 11.5px;
-    font-weight: 550;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--text-3);
-    padding: 20px 0 8px;
-  }
-  .lead {
-    margin: 0 0 10px;
-    font-size: 12.5px;
-    line-height: 1.6;
-    color: var(--text-3);
-  }
-  .quiet {
-    color: var(--text-4);
-    font-size: 11.5px;
-  }
-  .row {
-    display: flex;
+  /* Everything here comes from settings.css. What is left is the one thing that
+     is specific to this section. */
+  a.st-btn {
+    text-decoration: none;
+    display: inline-flex;
     align-items: center;
-    gap: 10px;
-    margin-bottom: 10px;
-  }
-  .ok {
-    font-size: 12.5px;
-    color: var(--live);
-  }
-  /* The same two status colours the rest of the app uses: amber is "needs you",
-     red is "broken". No new hue for a setup screen. */
-  .warn {
-    font-size: 12.5px;
-    color: var(--busy);
-  }
-  .bad {
-    font-size: 12.5px;
-    color: var(--alert);
-  }
-  .warnline {
-    margin: 0 0 10px;
-    font-size: 12px;
-    line-height: 1.6;
-    color: var(--busy);
-  }
-  .warnline a,
-  .lead a {
-    color: inherit;
-    text-underline-offset: 2px;
-  }
-  .ok.inline {
-    display: block;
-    margin: 8px 0 0;
-  }
-  .aid {
-    font-size: 11.5px;
-    color: var(--text-4);
-  }
-  .fields {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-bottom: 10px;
-  }
-  .picks {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 10px;
-    flex-wrap: wrap;
-  }
-  .pick {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    min-width: 160px;
-  }
-  .plbl {
-    font-size: 11px;
-    color: var(--text-4);
-  }
-  select.min {
-    appearance: none;
-    cursor: pointer;
-  }
-  .min {
-    width: 100%;
-    padding: 9px 11px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    color: var(--text);
-    font-size: 12.5px;
-    outline: none;
-  }
-  .min:focus {
-    border-color: var(--border-2);
-  }
-  .key {
-    min-height: 76px;
-    resize: vertical;
-    line-height: 1.45;
-  }
-  .save,
-  .mini {
-    align-self: flex-start;
-    padding: 7px 14px;
-    border-radius: var(--r-sm);
-    background: var(--panel-3);
-    color: var(--text-2);
-    font-size: 12.5px;
-    font-weight: 500;
-  }
-  .save:hover,
-  .mini:hover {
-    color: var(--text);
-  }
-  .save:disabled {
-    opacity: 0.5;
-  }
-  .err {
-    margin: 8px 0 0;
-    font-size: 12px;
-    color: var(--alert);
   }
 </style>

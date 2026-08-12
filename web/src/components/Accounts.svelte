@@ -161,46 +161,52 @@
 
 
   {#if error}
-    <p class="state err">{error}</p>
-  {:else if loading}
-    <div class="roster" aria-hidden="true">
-      {#each [0, 1] as i (i)}
-        <div class="row"><span class="dot checking"></span><span class="skname"></span></div>
-      {/each}
-    </div>
+    <p class="st-note bad">{error}</p>
   {:else}
-    <div class="roster">
-      {#each accounts as a (a.name)}
-        <div class="row" class:off={a.ready === false}>
-          <span
-            class="dot"
-            class:on={a.ready === true}
-            class:hollow={a.ready === false}
-            class:checking={a.ready === undefined}></span>
-          <span class="nm">{a.name}</span>
-          {#if a.default}<span class="tag">default</span>{/if}
-          {#if statusText(a)}<span class="status">{statusText(a)}</span>{/if}
-          {#if !a.default}
-            <button class="rm" onclick={() => remove(a)} aria-label="Remove {a.name}" title="Remove {a.name}">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" /><path d="M6 6l1 14a2 2 0 002 2h6a2 2 0 002-2l1-14" /></svg>
-            </button>
-          {/if}
+    <!-- The accounts and the way to add one live in ONE card. They were two
+         containers with two different borders, one of them dashed, which made a
+         list of two things look like two unrelated widgets. -->
+    <div class="st-card">
+      {#if loading}
+        <div class="st-row" aria-hidden="true">
+          <span class="st-dot"></span><span class="skname"></span>
         </div>
-      {/each}
+      {:else}
+        {#each accounts as a (a.name)}
+          <div class="st-row" class:off={a.ready === false}>
+            <span
+              class="st-dot"
+              class:on={a.ready === true}
+              class:checking={a.ready === undefined}></span>
+            <span class="st-k">
+              <span class="st-name">{a.name}</span>
+              {#if statusText(a)}<span class="st-sub-text">{statusText(a)}</span>{/if}
+            </span>
+            {#if a.default}<span class="st-badge">default</span>{/if}
+            {#if !a.default}
+              <button class="st-btn ghost danger" onclick={() => remove(a)} aria-label="Remove {a.name}">
+                Remove
+              </button>
+            {/if}
+          </div>
+        {/each}
+      {/if}
+
+      {#if step === 'idle'}
+        <button class="st-row add" onclick={() => (step = 'name')}>
+          <span class="plus" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+          </span>
+          <span class="st-k">
+            <span class="st-name">Add account</span>
+            <span class="st-sub-text">Sign in another Claude subscription</span>
+          </span>
+        </button>
+      {/if}
     </div>
   {/if}
 
-  {#if step === 'idle'}
-    <button class="add" onclick={() => (step = 'name')}>
-      <span class="plus">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
-      </span>
-      <span class="addtext">
-        <span class="at">Add account</span>
-        <span class="as">Sign in another Claude subscription</span>
-      </span>
-    </button>
-  {:else}
+  {#if step !== 'idle'}
     <div class="flow">
       {#if step === 'name'}
         <div class="fhead"><span class="fstep">New account</span><span class="fnum">Step 1 of 2</span></div>
@@ -261,167 +267,48 @@
      and a full-width page is not: prose and forms stop being readable past
      about this, so the constraint stays even though the modal that imposed it
      is gone. */
-
-  /* The roster: one framed panel, hairline-divided rows. A single account reads
-     as one line, not a card, so a machine's whole identity list is legible in a
-     glance. */
-  .roster {
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    background: var(--panel);
-    overflow: hidden;
+  /* The roster and the add row come from settings.css. What stays here is only
+     what is specific to this section: the skeleton, the dimming of a signed-out
+     account, and the add row's plus. */
+  .off {
+    opacity: 0.55;
   }
-  .row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 16px;
-    min-height: 52px;
-  }
-  .row + .row {
-    border-top: 1px solid var(--border);
-  }
-  .row.off .nm {
-    color: var(--text-3);
-  }
-
-  /* The status dot is the whole signal: filled green when signed in, a hollow
-     ring when signed out, a soft pulse while the check is still in flight. */
-  .dot {
-    flex: none;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    box-sizing: border-box;
-  }
-  .dot.on {
-    background: var(--live);
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--live) 16%, transparent);
-  }
-  .dot.hollow {
-    border: 1.5px solid var(--text-4);
-  }
-  .dot.checking {
-    background: var(--text-3);
-    animation: pulse 1.1s ease-in-out infinite;
-  }
-  @keyframes pulse {
-    0%,
-    100% {
-      opacity: 0.3;
-    }
-    50% {
-      opacity: 1;
-    }
-  }
-  .nm {
-    flex: 1;
-    min-width: 0;
-    font-size: 14.5px;
-    font-weight: 550;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .tag {
-    flex: none;
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
-    color: var(--text-4);
-    padding: 3px 7px;
-    border: 1px solid var(--border-2);
-    border-radius: 6px;
-  }
-  .status {
-    flex: none;
-    font-family: var(--mono);
-    font-size: 11.5px;
-    color: var(--text-3);
-  }
-  .rm {
-    flex: none;
-    width: 30px;
-    height: 30px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 8px;
-    color: var(--text-4);
-    transition: color 0.12s, background 0.12s;
-  }
-  .rm:hover,
-  .rm:active {
-    color: var(--alert);
-    background: var(--panel-2);
+  .st-dot.checking {
+    background: var(--text-4);
+    opacity: 0.5;
   }
   .skname {
+    flex: 1;
     height: 11px;
-    width: 96px;
+    max-width: 120px;
     border-radius: 4px;
-    background: var(--panel-3);
-    animation: pulse 1.1s ease-in-out infinite;
+    background: var(--panel-2);
   }
-
-  .state {
-    font-size: 13px;
-    color: var(--text-4);
-    padding: 14px 4px;
-  }
-  .state.err {
-    color: var(--alert);
-  }
-
-  /* Add is a distinct dashed slot below the list, not a row in it. */
+  /* The add row is a row of the same card, not a dashed slot beside it: two
+     containers with two different borders made a list of two things look like
+     two unrelated widgets. */
   .add {
-    display: flex;
-    align-items: center;
-    gap: 12px;
     width: 100%;
-    text-align: left;
-    margin-top: 12px;
-    padding: 13px 16px;
-    border: 1px dashed var(--border-2);
-    border-radius: var(--r-lg);
-    color: var(--text-2);
-    transition: border-color 0.12s, background 0.12s;
+    background: none;
   }
   .add:hover {
-    border-color: var(--text-4);
-    background: var(--panel);
+    background: var(--panel-2);
   }
   .plus {
     flex: none;
-    width: 30px;
-    height: 30px;
+    width: 24px;
+    height: 24px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 9px;
-    border: 1px solid var(--border-2);
+    border-radius: 7px;
+    border: 1px solid var(--border);
     color: var(--text-3);
   }
   .add:hover .plus {
     color: var(--text-2);
-    border-color: var(--text-4);
+    border-color: var(--border-2);
   }
-  .addtext {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-  }
-  .at {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .as {
-    font-size: 11.5px;
-    color: var(--text-4);
-  }
-
   /* The two-step add flow. Numbering is real here: name, then sign in. */
   .flow {
     margin-top: 12px;

@@ -1,0 +1,277 @@
+/* The settings design system.
+ *
+ * Global rather than scoped, and prefixed `st-`, because the whole problem it
+ * solves is that every section used to invent its own look. Accounts was cards,
+ * Reviews was a wall of paragraphs and bare inputs, one "Add" affordance was a
+ * dashed outline while every other control was solid, and each component set its
+ * own row height and padding. Scoped styles are what let that happen: six files
+ * each describing a row, none of them the same row.
+ *
+ * So there is one card, one row, one button, one field, and every section uses
+ * them. A new section gets the look for free, and changing the look is one edit
+ * rather than six.
+ *
+ * The metrics are deliberately tight. The first attempt gave a row 14px of
+ * padding and a 13.5px label, which on a one-word row like "Claude" produced a
+ * 110px-tall box holding a single word and a badge a hand-span away from it.
+ * Settings is a dense surface: it is read by scanning, not by dwelling.
+ */
+
+/* --- containers ---------------------------------------------------------- */
+
+.st-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.st-card + .st-card,
+.st-card + .st-actions,
+.st-actions + .st-card,
+.st-card + .st-sub,
+.st-note + .st-card {
+  margin-top: 10px;
+}
+
+/* A group heading INSIDE a section, for the two or three parts of a section
+   that are genuinely separate concerns. Quiet, because the section header is
+   the loud one. */
+.st-sub {
+  margin: 22px 0 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
+/* --- rows ---------------------------------------------------------------- */
+
+.st-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 14px;
+  min-height: 46px;
+}
+.st-row + .st-row {
+  border-top: 1px solid var(--border);
+}
+/* The label side. Always flex:1 so the control lands on the right edge of the
+   CARD rather than of the window, which is the difference between a control
+   beside its label and one a hand-span away from it. */
+.st-k {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+}
+.st-name {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.35;
+}
+.st-sub-text {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-4);
+  max-width: 52ch;
+  overflow-wrap: anywhere;
+}
+/* The one status colour this app reserves for "be careful". */
+.st-sub-text.warn {
+  color: color-mix(in srgb, var(--busy) 80%, var(--text-3));
+}
+.st-sub-text.bad {
+  color: var(--alert);
+}
+/* Values read in mono, the voice this app gives data everywhere else. */
+.st-val {
+  flex: none;
+  font-family: var(--mono, monospace);
+  font-size: 11.5px;
+  color: var(--text-4);
+}
+
+/* --- controls ------------------------------------------------------------ */
+
+.st-btn {
+  flex: none;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.st-btn:hover {
+  background: var(--panel-3);
+  color: var(--text);
+}
+.st-btn.solid {
+  background: var(--white);
+  color: #0b0b0c;
+}
+.st-btn.solid:hover {
+  background: var(--white);
+  opacity: 0.9;
+}
+.st-btn.ghost {
+  background: none;
+  color: var(--text-4);
+}
+.st-btn.ghost:hover {
+  background: var(--panel-2);
+  color: var(--text-2);
+}
+.st-btn.danger:hover {
+  color: var(--alert);
+}
+.st-btn:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.st-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* A badge is a fact about a row, not a control, so it is flat text on a quiet
+   fill rather than an outlined pill that reads as a button you cannot press. */
+.st-badge {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--panel-2);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
+.st-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-4);
+}
+.st-dot.on {
+  background: var(--live);
+}
+.st-dot.bad {
+  background: var(--alert);
+}
+.st-dot.warn {
+  background: var(--busy);
+}
+
+/* --- fields -------------------------------------------------------------- */
+
+.st-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.st-label {
+  font-size: 11px;
+  color: var(--text-4);
+}
+.st-input,
+.st-textarea,
+.st-select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 11px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12.5px;
+  font-family: inherit;
+  outline: none;
+}
+.st-input:focus,
+.st-textarea:focus,
+.st-select:focus {
+  border-color: var(--border-2);
+}
+.st-textarea {
+  min-height: 78px;
+  line-height: 1.45;
+  resize: vertical;
+}
+.st-select {
+  appearance: none;
+  cursor: pointer;
+}
+/* A form inside a card: same padding as a row, stacked. */
+.st-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+}
+.st-form + .st-form,
+.st-row + .st-form {
+  border-top: 1px solid var(--border);
+}
+/* Two fields side by side, collapsing on a narrow screen rather than
+   overflowing, which is what an unwrapped flex row does. */
+.st-pair {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.st-pair > .st-field {
+  flex: 1 1 150px;
+}
+
+/* --- prose --------------------------------------------------------------- */
+
+.st-note {
+  margin: 10px 2px 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-4);
+  max-width: 60ch;
+}
+.st-note a,
+.st-link {
+  color: var(--text-2);
+  text-underline-offset: 2px;
+}
+.st-note a:hover,
+.st-link:hover {
+  color: var(--text);
+}
+.st-note.warn {
+  color: color-mix(in srgb, var(--busy) 80%, var(--text-3));
+}
+.st-note.bad {
+  color: var(--alert);
+}
+
+/* An empty section says what to do rather than nothing at all. */
+.st-empty {
+  padding: 18px 14px;
+  font-size: 12.5px;
+  color: var(--text-4);
+}
+
+@media (max-width: 760px) {
+  .st-row {
+    padding: 11px 12px;
+  }
+  .st-form {
+    padding: 12px;
+  }
+}

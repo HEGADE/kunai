@@ -323,11 +323,11 @@
       {#if machErr}<p class="err">{machErr}</p>{/if}
 
       {#if section === 'notifications'}
-        <div class="card">
-          <div class="row">
-            <span class="rk">
-              <span class="rname">Push notifications</span>
-              <span class="rsub">
+        <div class="st-card">
+          <div class="st-row">
+            <span class="st-k">
+              <span class="st-name">Push notifications</span>
+              <span class="st-sub-text">
                 {#if !supported}
                   This browser cannot receive them.
                 {:else}
@@ -350,28 +350,28 @@
             {/if}
           </div>
         </div>
-        {#if hint}<p class="note">{hint}</p>{/if}
-        <p class="note">
+        {#if hint}<p class="st-note">{hint}</p>{/if}
+        <p class="st-note">
           Notifications are per device, so turning them on here does not turn them on
           anywhere else you use kunai.
         </p>
 
       {:else if section === 'machines'}
-        <div class="card">
+        <div class="st-card">
           {#each app.machines as m (m.id)}
             <!-- Selecting a machine is what everything under its name in the
                  rail then follows, so the row says so rather than leaving you
                  to infer it from a highlight. -->
-            <div class="row mrow" class:sel={selM?.id === m.id}>
+            <div class="st-row mrow" class:sel={selM?.id === m.id}>
               <button class="mpick" onclick={() => (pickedM = m.id)} aria-label="Settings for {m.label}">
-                <span class="rk">
+                <span class="st-k">
                   <span class="mtop">
                     <span class="rdot" class:live={m.online}></span>
-                    <span class="rname">{m.label}</span>
+                    <span class="st-name">{m.label}</span>
                     {#if m.self}<span class="tag">this one</span>{/if}
                     {#if selM?.id === m.id && app.machines.length > 1}<span class="tag on">showing</span>{/if}
                   </span>
-                  <span class="rsub mono">
+                  <span class="st-sub-text mono">
                     {#if m.stats}
                       kunai {m.stats.kunai_version || '—'} · claude {m.stats.claude_version || '—'}{m.stats.arch ? ` · ${m.stats.os}/${m.stats.arch}` : ''}
                     {:else if !m.online}
@@ -384,12 +384,12 @@
               </button>
               <span class="macts">
                 {#if outdated(m)}
-                  <button class="btn solid" disabled={app.updating[m.id]} onclick={() => app.updateMachine(m.id)}>
+                  <button class="st-btn solid" disabled={app.updating[m.id]} onclick={() => app.updateMachine(m.id)}>
                     {updateLabel(m)}
                   </button>
                 {/if}
                 {#if !m.self}
-                  <button class="btn ghost" onclick={() => app.removeMachine(m.id)}>Remove</button>
+                  <button class="st-btn ghost" onclick={() => app.removeMachine(m.id)}>Remove</button>
                 {/if}
               </span>
               {#if app.updateError[m.id]}
@@ -403,18 +403,18 @@
              setting, so it sits under the list it changes instead of among the
              switches. -->
         <div class="foot">
-          <button class="btn" onclick={discover} disabled={discovering}>
+          <button class="st-btn" onclick={discover} disabled={discovering}>
             {discovering ? 'Scanning the tailnet…' : 'Find machines'}
           </button>
-          <button class="btn ghost" onclick={() => (showAddMachine = !showAddMachine)}>
+          <button class="st-btn ghost" onclick={() => (showAddMachine = !showAddMachine)}>
             {showAddMachine ? 'Cancel' : 'Add by address'}
           </button>
         </div>
         {#if showAddMachine}
-          <div class="card pad">
-            <input class="min" placeholder="Label" bind:value={newLabel} autocomplete="off" />
+          <div class="st-card pad">
+            <input class="st-input" placeholder="Label" bind:value={newLabel} autocomplete="off" />
             <input
-              class="min mono"
+              class="st-input mono"
               placeholder="https://host.tailnet.ts.net:8443"
               bind:value={newUrl}
               autocomplete="off"
@@ -422,31 +422,31 @@
               spellcheck="false"
               onkeydown={(e) => e.key === 'Enter' && addMachine()}
             />
-            <button class="btn solid" onclick={addMachine} disabled={adding || !newUrl.trim()}>
+            <button class="st-btn solid" onclick={addMachine} disabled={adding || !newUrl.trim()}>
               {adding ? 'Adding…' : 'Add machine'}
             </button>
           </div>
         {/if}
-        <p class="note">
+        <p class="st-note">
           Machines on your tailnet are found on their own. Adding by address is for one
           that discovery cannot see.
         </p>
 
       {:else if !selM}
-        <p class="note">No machines yet.</p>
+        <p class="st-note">No machines yet.</p>
       {:else if !selM.online}
-        <p class="note">{selM.label} is offline. Nothing here can be changed until it is back.</p>
+        <p class="st-note">{selM.label} is offline. Nothing here can be changed until it is back.</p>
 
       {:else if section === 'accounts'}
         <!-- The accounts themselves, with their real sign-in flow. Settings used
              to carry a second, worse copy of this list beside a link to it. -->
         <Accounts machineId={selM.id} />
         {#if selM.stats?.clis && selM.stats.clis.length > 1}
-          <div class="card">
-            <div class="row">
-              <span class="rk">
-                <span class="rname">Move to another account at the limit</span>
-                <span class="rsub">
+          <div class="st-card">
+            <div class="st-row">
+              <span class="st-k">
+                <span class="st-name">Move to another account at the limit</span>
+                <span class="st-sub-text">
                   When one hits its 5-hour or weekly wall, carry on from the account with
                   the most left, Claude or provider.
                 </span>
@@ -476,12 +476,12 @@
         <LanAccess base={selM.url} label={selM.label} />
 
       {:else if section === 'unattended'}
-        <div class="card">
+        <div class="st-card">
           {#if selM.stats?.keep_awake_supported}
-            <div class="row">
-              <span class="rk">
-                <span class="rname">Stay awake while locked</span>
-                <span class="rsub">Needs the lid open and power.</span>
+            <div class="st-row">
+              <span class="st-k">
+                <span class="st-name">Stay awake while locked</span>
+                <span class="st-sub-text">Needs the lid open and power.</span>
               </span>
               <button
                 class="switch"
@@ -497,10 +497,10 @@
             </div>
           {/if}
           {#if selM.stats?.keep_lid_supported}
-            <div class="row">
-              <span class="rk">
-                <span class="rname">Keep working with the lid closed</span>
-                <span class="rsub" class:warn={!selM.stats.thermal_privileged}>
+            <div class="st-row">
+              <span class="st-k">
+                <span class="st-name">Keep working with the lid closed</span>
+                <span class="st-sub-text" class:warn={!selM.stats.thermal_privileged}>
                   {#if selM.stats.thermal_privileged}
                     The machine will not sleep when you shut it.
                   {:else}
@@ -522,10 +522,10 @@
             </div>
           {/if}
           {#if selM.stats}
-            <div class="row">
-              <span class="rk">
-                <span class="rname">Stop everything if it overheats</span>
-                <span class="rsub">
+            <div class="st-row">
+              <span class="st-k">
+                <span class="st-name">Stop everything if it overheats</span>
+                <span class="st-sub-text">
                   {#if selM.stats.cpu_temp_c > 0}
                     Running at {Math.round(selM.stats.cpu_temp_c)}°C now.
                   {:else if selM.stats.thermal_pressure}
@@ -551,7 +551,7 @@
               <!-- The limits belong to the switch above, so they are inside the
                    same card and indented under it rather than floating as their
                    own group. -->
-              <div class="row sub">
+              <div class="st-row sub">
                 <div class="limits">
                   {#if selM.stats.cpu_temp_c > 0}
                     <label class="lim">
@@ -595,8 +595,8 @@
                         })}
                     />
                     <span class="checkk">
-                      <span class="rname sm">Power off if it keeps climbing</span>
-                      <span class="rsub" class:warn={!selM.stats.thermal_privileged}>
+                      <span class="st-name sm">Power off if it keeps climbing</span>
+                      <span class="st-sub-text" class:warn={!selM.stats.thermal_privileged}>
                         {#if selM.stats.thermal_privileged}
                           A last resort, once stopping the work was not enough.
                         {:else}
@@ -634,6 +634,10 @@
 </Page>
 
 <style>
+  /* The card, row, button and field come from settings.css, shared by every
+     section. What is left here is the page's own frame: the rail, the section
+     header, and the handful of things only this page has. */
+
   /* Rail beside panel, the pair centred as one block. Centring the LAYOUT and
      not the panel is what stops the content stranding itself against the left
      edge of a wide screen with a lake of empty to its right. */
@@ -641,9 +645,9 @@
     display: grid;
     grid-template-columns: 190px minmax(0, 1fr);
     gap: 34px;
-    max-width: 920px;
+    max-width: 900px;
     margin: 0 auto;
-    padding: 24px 20px calc(56px + var(--safe-bottom));
+    padding: 22px 20px calc(56px + var(--safe-bottom));
   }
   .rail {
     display: flex;
@@ -725,135 +729,30 @@
      something to be: a page whose content is three switches used to open with
      three switches floating against nothing. */
   .shead {
-    margin: 0 0 16px;
+    margin: 0 0 14px;
   }
   .shead h2 {
     margin: 0;
-    font-size: 19px;
+    font-size: 17px;
     font-weight: 600;
     letter-spacing: -0.015em;
     color: var(--text);
   }
   .shead p {
-    margin: 5px 0 0;
+    margin: 4px 0 0;
     font-size: 12.5px;
-    line-height: 1.6;
-    color: var(--text-4);
-    max-width: 52ch;
-  }
-
-  /* The card is the unit of this page. Rows live inside one, divided by
-     hairlines, so a group of settings reads as a group instead of as loose
-     lines ruled across the whole width. */
-  .card {
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    background: var(--panel);
-    overflow: hidden;
-  }
-  .card + .card,
-  .card + .foot,
-  .foot + .card {
-    margin-top: 14px;
-  }
-  .card.pad {
-    display: flex;
-    flex-direction: column;
-    gap: 9px;
-    padding: 14px;
-    background: none;
-  }
-
-  .row {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    flex-wrap: wrap;
-    padding: 14px 16px;
-  }
-  .row + .row {
-    border-top: 1px solid var(--border);
-  }
-  .rk {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    text-align: left;
-  }
-  .rname {
-    font-size: 13.5px;
-    color: var(--text);
-  }
-  .rname.sm {
-    font-size: 12.5px;
-    color: var(--text-2);
-  }
-  .rsub {
-    font-size: 11.5px;
     line-height: 1.55;
     color: var(--text-4);
-    max-width: 46ch;
-    overflow-wrap: anywhere;
-  }
-  /* The one status colour this app reserves for "be careful". */
-  .rsub.warn {
-    color: color-mix(in srgb, var(--busy) 80%, var(--text-3));
-  }
-  /* Settings that only exist while the switch above them is on. */
-  .row.sub {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
-    padding-left: 30px;
-    background: var(--bg);
+    max-width: 56ch;
   }
 
-  /* A machine row: the whole left side is the target, because picking a machine
-     is the point of this list. */
-  .mrow {
-    padding: 0;
-  }
-  .mrow.sel {
-    background: var(--panel-2);
-  }
-  .mpick {
-    flex: 1;
-    min-width: 0;
-    padding: 14px 16px;
-    background: none;
-  }
-  .mpick:hover .rname {
-    color: var(--text);
-  }
-  .mtop {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .macts {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding-right: 16px;
-  }
-  .tag {
-    font-size: 9.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--text-4);
-  }
-  .tag.on {
-    color: var(--text-3);
-  }
-
+  /* The switch. The one control this page owns that settings.css does not,
+     because nothing else in the app uses one. */
   .switch {
     flex: none;
     position: relative;
-    width: 44px;
-    height: 26px;
+    width: 40px;
+    height: 23px;
     border-radius: 100px;
     background: var(--panel-3);
     border: 1px solid var(--border);
@@ -870,17 +769,66 @@
     position: absolute;
     top: 2px;
     left: 2px;
-    width: 20px;
-    height: 20px;
+    width: 17px;
+    height: 17px;
     border-radius: 50%;
     background: var(--text-3);
     transition: transform 0.15s, background 0.15s;
   }
   .switch.on .knob {
-    transform: translateX(18px);
+    transform: translateX(17px);
     background: #0b0b0c;
   }
 
+  /* A machine row: the whole left side is the target, because picking a machine
+     is the point of this list. */
+  .mrow {
+    padding: 0;
+  }
+  .mrow.sel {
+    background: var(--panel-2);
+  }
+  .mpick {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    padding: 11px 14px;
+    background: none;
+  }
+  .mpick:hover :global(.st-name) {
+    color: var(--text);
+  }
+  .mtop {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .macts {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-right: 14px;
+  }
+  .tag {
+    font-size: 9.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-4);
+  }
+  .tag.on {
+    color: var(--text-3);
+  }
+
+  /* Settings that only exist while the switch above them is on, indented under
+     it and on the page's own background so the nesting is visible. */
+  .st-row.sub {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    padding-left: 30px;
+    background: var(--bg);
+  }
   .limits {
     display: flex;
     flex-wrap: wrap;
@@ -891,9 +839,6 @@
     align-items: baseline;
     gap: 7px;
     font-size: 12px;
-    color: var(--text-3);
-  }
-  .limk {
     color: var(--text-3);
   }
   .num {
@@ -931,64 +876,19 @@
     gap: 2px;
   }
 
-  .btn {
-    padding: 6px 13px;
-    border-radius: 8px;
-    background: var(--panel-2);
-    color: var(--text-2);
-    font-size: 12px;
-    font-weight: 500;
-  }
-  .btn:hover {
-    background: var(--panel-3);
-    color: var(--text);
-  }
-  .btn.solid {
-    background: var(--white);
-    color: #0b0b0c;
-  }
-  .btn.ghost {
+  .st-card.pad {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 12px 14px;
     background: none;
-    color: var(--text-4);
-  }
-  .btn.ghost:hover {
-    background: var(--panel-2);
-    color: var(--text-2);
-  }
-  .btn:disabled {
-    opacity: 0.5;
   }
   .foot {
     display: flex;
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
-    margin-top: 14px;
-  }
-
-  .min {
-    width: 100%;
-    padding: 9px 11px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    color: var(--text);
-    font-size: 12.5px;
-    outline: none;
-  }
-  .min:focus {
-    border-color: var(--border-2);
-  }
-  .card.pad .btn {
-    align-self: flex-start;
-  }
-
-  .note {
-    margin: 14px 2px 0;
-    font-size: 11.5px;
-    line-height: 1.6;
-    color: var(--text-4);
-    max-width: 52ch;
+    margin-top: 10px;
   }
   .err {
     margin: 0 0 12px;
@@ -998,7 +898,7 @@
   .err.small {
     flex-basis: 100%;
     margin: 0;
-    padding: 0 16px 12px;
+    padding: 0 14px 12px;
     font-size: 11px;
   }
 
@@ -1045,14 +945,11 @@
     .rlink.on {
       border-color: var(--border-2);
     }
-    .row {
-      padding: 13px 13px;
-    }
     .mpick {
-      padding: 13px;
+      padding: 11px 12px;
     }
     .macts {
-      padding: 0 13px 13px;
+      padding: 0 12px 11px;
     }
   }
 </style>
