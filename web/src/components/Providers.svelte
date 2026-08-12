@@ -14,9 +14,16 @@
   } from '../lib/api'
 
   // Add a non-Claude model (Codex/Grok/Kimi) with no terminal and no config:
-  // pick a provider, sign in once in the browser, pick a model. kunai runs a
-  // local CLIProxyAPI itself and points the agent at it; the only human step is
-  // the OAuth authorize, bridged exactly like a Claude account login.
+  // pick a provider, sign in once in the browser, pick a model. The only human
+  // step is the OAuth authorize, bridged exactly like a Claude account login.
+  //
+  // What kunai does with that login is deliberately NOT said on screen, because
+  // there is no longer one answer: Codex and Grok go through kunai's own
+  // in-process proxy (default on), while Kimi still needs the downloaded
+  // CLIProxyAPI sidecar, as does either of the others if its login is missing.
+  // The lede used to promise a local CLIProxyAPI, which stopped being true for
+  // the two providers anybody actually picks -- and was an implementation
+  // detail either way.
   let machineId = $state(app.activeMachineId ?? app.machines[0]?.id ?? '')
   const base = $derived(app.baseForMachine(machineId))
   const machine = $derived(app.machines.find((m) => m.id === machineId) ?? null)
@@ -219,10 +226,8 @@
 
   <p class="lede">
     Run non-Claude models (Codex, Grok, Kimi) on {machine ? machine.label : 'this machine'}.
-    kunai runs a local
-    <a href="https://github.com/router-for-me/CLIProxyAPI" target="_blank" rel="noopener noreferrer">CLIProxyAPI</a>
-    for you; you just sign in once. The agent (tools, edits, commands) is unchanged
-    — only the model behind it differs.
+    Sign in once and kunai talks to the provider for you. The agent (tools, edits,
+    commands) is unchanged — only the model behind it differs.
   </p>
 
   {#if error}
@@ -394,11 +399,6 @@
     font-size: 13px;
     line-height: 1.6;
     color: var(--text-3);
-  }
-  .lede a {
-    color: var(--text-2);
-    text-decoration: underline;
-    text-underline-offset: 2px;
   }
   .roster {
     border: 1px solid var(--border);

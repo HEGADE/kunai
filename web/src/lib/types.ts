@@ -66,9 +66,10 @@ export interface CLIProfile {
   dir?: string // the account's Claude config folder (what separates two logins)
 }
 
-// A proxy-backed model source (Codex/Grok/Kimi via a local CLIProxyAPI). It runs
-// the same `claude` agent pointed at the proxy; only the model behind it changes.
-// Mirrors the Go Provider struct.
+// A proxy-backed model source (Codex/Grok/Kimi). It runs the same `claude` agent
+// pointed at a local proxy; only the model behind it changes. Which proxy is the
+// server's choice -- kunai's own for Codex and Grok, the CLIProxyAPI sidecar for
+// Kimi -- and nothing here depends on it. Mirrors the Go Provider struct.
 export interface Provider {
   name: string
   base_url: string // ANTHROPIC_BASE_URL, e.g. http://127.0.0.1:8317
