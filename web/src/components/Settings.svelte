@@ -409,7 +409,10 @@
             <!-- Selecting a machine is what everything under its name in the
                  rail then follows, so the row says so rather than leaving you
                  to infer it from a highlight. -->
-            <div class="st-row mrow" class:sel={selM?.id === m.id}>
+            <!-- Only marked as chosen when there is something to choose between:
+                 on a one-machine fleet a highlighted row is a band of fill
+                 answering a question nobody asked. -->
+            <div class="st-row mrow" class:sel={selM?.id === m.id && app.machines.length > 1}>
               <button class="mpick" onclick={() => (pickedM = m.id)} aria-label="Settings for {m.label}">
                 <span class="st-k">
                   <span class="mtop">
@@ -449,29 +452,39 @@
         <!-- Finding and adding machines is fleet management rather than a
              setting, so it sits under the list it changes instead of among the
              switches. -->
-        <div class="foot">
-          <button class="st-btn" onclick={discover} disabled={discovering}>
+        <div class="st-actions foot">
+          <button class="st-btn quiet" onclick={discover} disabled={discovering}>
             {discovering ? 'Scanning the tailnet…' : 'Find machines'}
           </button>
-          <button class="st-btn ghost" onclick={() => (showAddMachine = !showAddMachine)}>
+          <button class="st-btn" onclick={() => (showAddMachine = !showAddMachine)}>
             {showAddMachine ? 'Cancel' : 'Add by address'}
           </button>
         </div>
         {#if showAddMachine}
-          <div class="st-card pad">
-            <input class="st-input" placeholder="Label" bind:value={newLabel} autocomplete="off" />
-            <input
-              class="st-input mono"
-              placeholder="https://host.tailnet.ts.net:8443"
-              bind:value={newUrl}
-              autocomplete="off"
-              autocapitalize="off"
-              spellcheck="false"
-              onkeydown={(e) => e.key === 'Enter' && addMachine()}
-            />
-            <button class="st-btn solid" onclick={addMachine} disabled={adding || !newUrl.trim()}>
-              {adding ? 'Adding…' : 'Add machine'}
-            </button>
+          <div class="st-form">
+            <div class="st-pair">
+              <label class="st-field">
+                <span class="st-label">Label</span>
+                <input class="st-input" placeholder="Studio Mac" bind:value={newLabel} autocomplete="off" />
+              </label>
+              <label class="st-field">
+                <span class="st-label">Address</span>
+                <input
+                  class="st-input mono"
+                  placeholder="https://host.tailnet.ts.net:8443"
+                  bind:value={newUrl}
+                  autocomplete="off"
+                  autocapitalize="off"
+                  spellcheck="false"
+                  onkeydown={(e) => e.key === 'Enter' && addMachine()}
+                />
+              </label>
+            </div>
+            <div class="st-actions">
+              <button class="st-btn solid" onclick={addMachine} disabled={adding || !newUrl.trim()}>
+                {adding ? 'Adding…' : 'Add machine'}
+              </button>
+            </div>
           </div>
         {/if}
         <p class="st-note">
@@ -861,17 +874,20 @@
 
   /* A machine row: the whole left side is the target, because picking a machine
      is the point of this list. */
+  /* The row's own padding moves onto the button, so the whole left side is the
+     target rather than just the words in it. The numbers have to match the
+     shared row exactly or the machine list sits off the page's left edge. */
   .mrow {
     padding: 0;
   }
   .mrow.sel {
-    background: var(--panel-2);
+    background: var(--panel);
   }
   .mpick {
     flex: 1;
     min-width: 0;
     display: flex;
-    padding: 11px 14px;
+    padding: 13px 10px;
     background: none;
   }
   .mpick:hover :global(.st-name) {
@@ -887,7 +903,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding-right: 14px;
+    padding-right: 10px;
   }
   .tag {
     font-size: 9.5px;
@@ -899,14 +915,18 @@
     color: var(--text-3);
   }
 
-  /* Settings that only exist while the switch above them is on, indented under
-     it and on the page's own background so the nesting is visible. */
+  /* Settings that only exist while the switch above them is on. Indented and
+     hung off a single vertical hairline, which says "these belong to the thing
+     above" with one line rather than by putting a box around them. */
   .st-row.sub {
     flex-direction: column;
     align-items: flex-start;
     gap: 12px;
-    padding-left: 30px;
-    background: var(--bg);
+    margin-left: 2px;
+    padding-left: 16px;
+    border-top: none;
+    border-left: 1px solid var(--border);
+    border-radius: 0;
   }
   .limits {
     display: flex;
@@ -955,19 +975,8 @@
     gap: 2px;
   }
 
-  .st-card.pad {
-    display: flex;
-    flex-direction: column;
-    gap: 9px;
-    padding: 12px 14px;
-    background: none;
-  }
   .foot {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-top: 10px;
+    margin-top: 14px;
   }
   .err {
     margin: 0 0 12px;
@@ -977,7 +986,7 @@
   .err.small {
     flex-basis: 100%;
     margin: 0;
-    padding: 0 14px 12px;
+    padding: 0 10px 12px;
     font-size: 11px;
   }
 
@@ -1025,10 +1034,10 @@
       border-color: var(--border-2);
     }
     .mpick {
-      padding: 11px 12px;
+      padding: 12px 8px;
     }
     .macts {
-      padding: 0 12px 11px;
+      padding: 0 8px 12px;
     }
   }
 </style>

@@ -1,46 +1,52 @@
 /* The settings design system.
  *
- * Global rather than scoped, and prefixed `st-`, because the whole problem it
- * solves is that every section used to invent its own look. Accounts was cards,
- * Reviews was a wall of paragraphs and bare inputs, one "Add" affordance was a
- * dashed outline while every other control was solid, and each component set its
- * own row height and padding. Scoped styles are what let that happen: six files
- * each describing a row, none of them the same row.
+ * Global rather than scoped, and prefixed `st-`, because the problem it solves
+ * is that every section used to invent its own look: six files each describing
+ * a row, none of them the same row.
  *
- * So there is one card, one row, one button, one field, and every section uses
- * them. A new section gets the look for free, and changing the look is one edit
- * rather than six.
+ * The rule that shapes everything here: A BORDER IS A LAST RESORT.
  *
- * The metrics are deliberately tight. The first attempt gave a row 14px of
- * padding and a 13.5px label, which on a one-word row like "Claude" produced a
- * 110px-tall box holding a single word and a badge a hand-span away from it.
- * Settings is a dense surface: it is read by scanning, not by dwelling.
+ * The first version of this file did the opposite. Every group was a bordered,
+ * filled card; inside it every button was a filled grey rectangle; inside those
+ * a field was another filled grey rectangle. Boxes inside boxes inside boxes,
+ * and because they were all the same grey, none of them meant anything. A
+ * paragraph of prose about which account reviews run on was wrapped in a box
+ * for no reason other than that a box was what this file had to offer.
+ *
+ * So grouping is done with space and a hairline BETWEEN rows, never with a box
+ * around them. There is no fill and no outline on a group. Rows sit flush to
+ * the section's left edge, so the page has one strong vertical line down the
+ * left instead of three nested ones.
+ *
+ * Fill is spent on exactly two things, because spending it on everything is
+ * what made the page grey: the ONE primary action of a section, and a hover.
+ * Every other control is text, coloured rather than boxed. A "Remove" that is
+ * a grey rectangle competes with the sentence next to it; a "Remove" in quiet
+ * text does not, and is no harder to press.
  */
 
-/* --- containers ---------------------------------------------------------- */
+/* --- groups -------------------------------------------------------------- */
 
+/* Not a card. A run of rows divided by hairlines, with nothing drawn around
+   them. Kept named .st-card so a section reads as "these belong together". */
 .st-card {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--panel);
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
-.st-card + .st-card,
 .st-card + .st-actions,
 .st-actions + .st-card,
-.st-card + .st-sub,
 .st-note + .st-card {
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
-/* A group heading INSIDE a section, for the two or three parts of a section
-   that are genuinely separate concerns. Quiet, because the section header is
-   the loud one. */
+/* A heading INSIDE a section, for its two or three genuinely separate parts.
+   The space above it is what separates the groups; it needs no line and no box
+   to do that job. */
 .st-sub {
-  margin: 22px 0 8px;
-  font-size: 10.5px;
+  margin: 26px 0 2px;
+  font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--text-4);
 }
@@ -50,22 +56,33 @@
 .st-row {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 11px 14px;
-  min-height: 46px;
+  gap: 16px;
+  /* Negative margin against matching padding: the text lines up with the
+     section heading above it, while a hover fill still has room to breathe
+     rather than hugging the letters. */
+  margin: 0 -10px;
+  padding: 13px 10px;
+  border-radius: 9px;
 }
 .st-row + .st-row {
   border-top: 1px solid var(--border);
+  border-radius: 0;
 }
-/* The label side. Always flex:1 so the control lands on the right edge of the
-   CARD rather than of the window, which is the difference between a control
-   beside its label and one a hand-span away from it. */
+/* A row you can press earns a fill, but only under the pointer. */
+button.st-row {
+  width: 100%;
+  text-align: left;
+  background: none;
+}
+button.st-row:hover {
+  background: var(--panel);
+}
 .st-k {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   text-align: left;
 }
 .st-name {
@@ -75,9 +92,9 @@
 }
 .st-sub-text {
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: 1.55;
   color: var(--text-4);
-  max-width: 52ch;
+  max-width: 56ch;
   overflow-wrap: anywhere;
 }
 /* The one status colour this app reserves for "be careful". */
@@ -97,61 +114,74 @@
 
 /* --- controls ------------------------------------------------------------ */
 
+/* Text, not a box. This is the default because most controls on a settings
+   page are secondary to the sentence beside them. */
 .st-btn {
   flex: none;
-  padding: 6px 12px;
-  border-radius: 8px;
-  background: var(--panel-2);
-  color: var(--text-2);
-  font-size: 12px;
+  padding: 4px 2px;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-3);
+  font-size: 12.5px;
   font-weight: 500;
-  border: 1px solid transparent;
   white-space: nowrap;
 }
 .st-btn:hover {
-  background: var(--panel-3);
   color: var(--text);
-}
-.st-btn.solid {
-  background: var(--white);
-  color: #0b0b0c;
-}
-.st-btn.solid:hover {
-  background: var(--white);
-  opacity: 0.9;
-}
-.st-btn.ghost {
-  background: none;
-  color: var(--text-4);
-}
-.st-btn.ghost:hover {
-  background: var(--panel-2);
-  color: var(--text-2);
 }
 .st-btn.danger:hover {
   color: var(--alert);
 }
+/* The one action a section is FOR. Filled, and there should be at most one
+   visible at a time. */
+.st-btn.solid {
+  padding: 6px 13px;
+  background: var(--white);
+  color: #0b0b0c;
+  font-weight: 550;
+}
+.st-btn.solid:hover {
+  color: #0b0b0c;
+  opacity: 0.9;
+}
+/* One step below primary: a real button, quietly filled, for an action that is
+   not the point of the section but is more than a link. */
+.st-btn.quiet {
+  padding: 6px 12px;
+  background: var(--panel-2);
+  color: var(--text-2);
+}
+.st-btn.quiet:hover {
+  background: var(--panel-3);
+  color: var(--text);
+}
+.st-btn.ghost {
+  color: var(--text-4);
+}
+.st-btn.ghost:hover {
+  color: var(--text-2);
+}
 .st-btn:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   pointer-events: none;
 }
 .st-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 14px;
   flex-wrap: wrap;
 }
 
-/* A badge is a fact about a row, not a control, so it is flat text on a quiet
-   fill rather than an outlined pill that reads as a button you cannot press. */
+/* A fact about a row, not a control, so it is quiet text rather than an
+   outlined pill that reads as a button you cannot press. */
 .st-badge {
   flex: none;
-  padding: 2px 7px;
-  border-radius: 5px;
-  background: var(--panel-2);
+  /* The trailing letter-space would otherwise hang past the row's right edge,
+     leaving the badge looking clipped against nothing. */
+  margin-right: -0.08em;
   font-size: 9.5px;
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-4);
 }
@@ -178,31 +208,40 @@
 .st-field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
 .st-label {
   font-size: 11px;
   color: var(--text-4);
 }
+/* A field is the one place an outline is doing real work: it says "you may type
+   here". No fill, so it reads as an opening in the page rather than another
+   grey block sitting on it. */
 .st-input,
 .st-textarea,
 .st-select {
   width: 100%;
   min-width: 0;
-  padding: 8px 11px;
-  background: var(--bg);
+  padding: 9px 11px;
+  background: none;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 9px;
   color: var(--text);
   font-size: 12.5px;
   font-family: inherit;
   outline: none;
+  transition: border-color 0.12s;
+}
+.st-input:hover,
+.st-textarea:hover,
+.st-select:hover {
+  border-color: var(--border-2);
 }
 .st-input:focus,
 .st-textarea:focus,
 .st-select:focus {
-  border-color: var(--border-2);
+  border-color: var(--text-4);
 }
 .st-textarea {
   min-height: 78px;
@@ -213,36 +252,32 @@
   appearance: none;
   cursor: pointer;
 }
-/* A form inside a card: same padding as a row, stacked. */
+/* A form: fields stacked in the section's own column, with no box around them.
+   The prose that explains a form is part of the form, not a caption on a card. */
 .st-form {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 14px;
+  gap: 12px;
+  padding: 12px 0 2px;
 }
-.st-form + .st-form,
-.st-row + .st-form {
-  border-top: 1px solid var(--border);
-}
-/* Two fields side by side, collapsing on a narrow screen rather than
-   overflowing, which is what an unwrapped flex row does. */
+/* Two fields side by side, wrapping rather than overflowing. */
 .st-pair {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 .st-pair > .st-field {
-  flex: 1 1 150px;
+  flex: 1 1 160px;
 }
 
 /* --- prose --------------------------------------------------------------- */
 
 .st-note {
-  margin: 10px 2px 0;
+  margin: 14px 0 0;
   font-size: 11.5px;
-  line-height: 1.6;
+  line-height: 1.65;
   color: var(--text-4);
-  max-width: 60ch;
+  max-width: 62ch;
 }
 .st-note a,
 .st-link {
@@ -260,18 +295,15 @@
   color: var(--alert);
 }
 
-/* An empty section says what to do rather than nothing at all. */
 .st-empty {
-  padding: 18px 14px;
+  padding: 16px 0;
   font-size: 12.5px;
   color: var(--text-4);
 }
 
 @media (max-width: 760px) {
   .st-row {
-    padding: 11px 12px;
-  }
-  .st-form {
-    padding: 12px;
+    margin: 0 -8px;
+    padding: 12px 8px;
   }
 }

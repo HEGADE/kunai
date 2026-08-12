@@ -235,9 +235,10 @@
 </div>
 
 {#if appState?.configured}
+  <!-- No box. This is a sentence and two menus; wrapping it in a bordered card
+       was a container drawn because a container was what was on offer. -->
   <div class="st-sub">Reviews run on</div>
-  <div class="st-card">
-    <div class="st-form">
+  <div class="st-form">
       <p class="st-sub-text">
         A review is long and arrives when a colleague opens a pull request, not when
         you are ready for it. Point it at a second account or a provider and it can
@@ -271,26 +272,23 @@
           </select>
         </label>
       </div>
-    </div>
   </div>
 {/if}
 
 <div class="st-sub">Your handle</div>
-<div class="st-card">
-  <div class="st-form">
-    <p class="st-sub-text">
-      Named in the reviews you request. With one bot identity shared across the team,
-      this is the only thing that says who to ask about a finding.
-    </p>
-    <div class="st-pair">
-      <label class="st-field">
-        <span class="st-label">GitHub username</span>
-        <input class="st-input mono" placeholder="shorya" bind:value={who} autocomplete="off" />
-      </label>
-    </div>
-    <div class="st-actions">
-      <button class="st-btn" onclick={saveWho}>Save</button>
-    </div>
+<div class="st-form">
+  <p class="st-sub-text">
+    Named in the reviews you request. With one bot identity shared across the team,
+    this is the only thing that says who to ask about a finding.
+  </p>
+  <div class="st-pair">
+    <label class="st-field">
+      <span class="st-label">GitHub username</span>
+      <input class="st-input mono" placeholder="shorya" bind:value={who} autocomplete="off" />
+    </label>
+  </div>
+  <div class="st-actions">
+    <button class="st-btn quiet" onclick={saveWho}>Save</button>
   </div>
 </div>
 
