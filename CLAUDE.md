@@ -1003,6 +1003,28 @@ Behavioral invariants that were bugs before (do not regress):
   offline. `app.svelte.ts` now uses `location.origin` for the `self` entry, on the
   grounds that the origin which just served the app is the one address proven
   reachable. Peers are untouched; their published URL is the only way to them.
+- The **guest page follows the conversation**, which it did not do at all: there
+  was no scrolling logic in `Share.svelte`, so a shared link opened at the TOP of
+  the transcript and a streaming reply grew below the fold while the reader
+  watched a stationary screen. That is the one thing a share is for -- somebody
+  opens it to see what is happening now. Two attempts got it wrong the same way
+  before the third worked, and the reason is worth keeping: scroll POSITION
+  cannot tell you whether the reader moved. The column grows under them
+  constantly (a picture finishing its download long after the markup that holds
+  it, a reply streaming), so every position-based heuristic read "the content got
+  taller" as "they scrolled up" and unpinned itself the instant after it pinned.
+  Intent therefore comes only from things that unambiguously are intent (wheel,
+  touchmove, keydown), growth is handled by a `ResizeObserver` on the column, and
+  each programmatic jump SPENDS the `scrollend` it causes (`ownScrolls`) so the
+  browser's own event cannot be mistaken for a person. The "Latest" pill is
+  anchored to the footer's top edge rather than a fixed offset, because that
+  footer is a composer for one guest, a join box for another and one line for a
+  third, and a guessed offset landed the pill on top of whichever was tallest.
+  On a phone (`max-width: 560px`) the picture cap drops to 300px (460 is over
+  half an 844px screen), the send controls take a 40px tap target, the composer
+  bar wraps so the owner's-approval caveat keeps its own line rather than being
+  squeezed out, and the join box stops taking a sixth of the screen from somebody
+  who may only ever want to watch.
 - **The network listener is locked** (`internal/lanauth` for the rules,
   `internal/server/lanauth.go` for the wire, `lanauthadmin.go` for managing it).
   kunai is open source, so the whole scheme is public to an attacker; nothing here
