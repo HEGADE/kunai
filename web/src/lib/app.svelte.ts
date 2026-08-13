@@ -245,6 +245,15 @@ class AppStore {
   reviewChat = $state(false)
   reviewAsk = $state('')
   showAllSessions = $state(false)
+  // Whether a full round of the fan-out has finished, history included.
+  //
+  // "No sessions yet" is a conclusion, and the sidebar was drawing it before it
+  // had looked: sessions and history arrive over the network, history on a
+  // slower beat than the session list, so a machine full of work opened on an
+  // empty sidebar saying to go and start something. The same mistake as a card
+  // that renders while it is still loading, and worse, because this one tells
+  // you a fact about your machine that is not true.
+  listed = $state(false)
   listError = $state('')
   // actionError is why the last thing you asked for did not happen: switching
   // account, changing effort, closing.
@@ -436,6 +445,10 @@ class AppStore {
     this.machines = nextMachines
     this.stats = nextMachines.find((m) => m.self)?.stats ?? this.stats
     this.listError = nextMachines.every((m) => !m.online) ? 'No machines reachable' : ''
+    // Only true once a round has actually completed, including the history that
+    // Recent is built from. Until then nothing may claim there are no sessions:
+    // see `listed` for why that claim was being made before anything had looked.
+    if (what.history) this.listed = true
   }
 
   private async refreshMachine(m: Machine, what: { history?: boolean; stats?: boolean }) {

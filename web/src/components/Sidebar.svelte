@@ -846,7 +846,12 @@
       </button>
     {/if}
 
-    {#if activeList.length === 0 && recentList.length === 0 && !app.listError}
+    <!-- app.listed is what makes this honest rather than merely quiet: sessions
+         and history arrive over the network, so without it a machine full of
+         work opened on "No sessions yet" and an invitation to go and start
+         something. Nothing is shown until a round has finished; an empty
+         sidebar for a moment says nothing, which is the truth at that point. -->
+    {#if app.listed && activeList.length === 0 && recentList.length === 0 && !app.listError}
       <div class="empty">
         <p class="e1">{query ? 'No matches' : 'No sessions yet'}</p>
         <p class="e2">
