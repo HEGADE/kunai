@@ -47,8 +47,19 @@
   // instant it opens, with status still resolving. The names ship in /api/stats
   // only when the machine has a real choice (>1 account); a single-account
   // machine has none cached, so it falls through to the skeleton.
+  //
+  // PROVIDERS ARE FILTERED OUT, and that is a correctness fix rather than
+  // tidiness. `stats.clis` is what a New Session picker offers, which is
+  // accounts AND providers (cliNames on the server appends providerList);
+  // /api/accounts is accounts alone. Seeded raw, this listed Codex and Grok as
+  // Claude subscriptions for the second before the fetch landed, and then
+  // dropped them, so the section both said something false and jumped as it
+  // corrected itself. provider_models is keyed by provider name, which is
+  // exactly the set to remove.
   function seedFromCache() {
-    const names = machine?.stats?.clis ?? []
+    const stats = machine?.stats
+    const providers = new Set(Object.keys(stats?.provider_models ?? {}))
+    const names = (stats?.clis ?? []).filter((n) => !providers.has(n))
     accounts = names.map((n, i) => ({ name: n, default: i === 0 }))
   }
 
