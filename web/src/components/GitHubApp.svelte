@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
   import { app } from '../lib/app.svelte'
   import {
     githubApp,
@@ -45,18 +46,43 @@
   // Asked WITH the check, because this is the one screen where somebody is
   // looking at the setup and can act on the answer. The dashboard's poll asks
   // without it: the check costs two round trips to github.com.
-  $effect(() => {
-    void machineId
-    checking = true
-    githubApp(base, true)
-      .then((s) => (appState = s))
-      .catch(() => (appState = { configured: false }))
-      .finally(() => (checking = false))
-    reviewConfig(base)
-      .then((c) => (rcfg = c))
-      .catch(() => (rcfg = {}))
-  })
+  //
+  // Guarded on the VALUES rather than left to the effect's own dependencies,
+  // and that is not belt-and-braces. Measured: this effect re-ran four times in
+  // sixteen seconds with `machineId` and `base` identical every time, on ONE
+  // component instance (onMount fired once, so it was not a remount).
+  //
+  // What re-triggered it was reading the PROP. Settings passes
+  // `machineId={selM.id}`, and selM is derived from app.machines, which the
+  // store replaces on its poll beat; the prop is invalidated even though the id
+  // is the same string. The neighbouring sections were immune only because
+  // their effects happen to read `base` and never the prop: measured at 1 fetch
+  // on load and 0 while idle, against this one's 3 and 2.
+  //
+  // The visible cost was the status line: every re-run set `checking`, so the
+  // row flipped from "Working" back to "Checking with GitHub…" for the second or
+  // two the two GitHub round trips take, every few seconds, for ever.
+  //
+  // Remembering what was last loaded fixes it whatever the cause, which an
+  // untrack around the body alone would not: the effect still runs, it just
+  // finds nothing to do.
   let checking = $state(false)
+  let loadedFor = ''
+  $effect(() => {
+    const want = `${machineId}|${base}`
+    if (loadedFor === want) return
+    loadedFor = want
+    untrack(() => {
+      checking = true
+      githubApp(base, true)
+        .then((s) => (appState = s))
+        .catch(() => (appState = { configured: false }))
+        .finally(() => (checking = false))
+      reviewConfig(base)
+        .then((c) => (rcfg = c))
+        .catch(() => (rcfg = {}))
+    })
+  })
 
   async function saveReviewCfg(patch: ReviewConfig) {
     const next = { ...rcfg, ...patch }
