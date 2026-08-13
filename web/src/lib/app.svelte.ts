@@ -114,6 +114,27 @@ const RESTART_WAIT_MS = 45_000
 // are places you go, read, change something and come back to, so being a route
 // buys the back button, a reload that lands where you were, a link you can send,
 // and the full width instead of a 720px sheet with the app greyed out behind it.
+// How long one machine gets to answer a refresh before it is treated as offline
+// for that round.
+//
+// The fan-out assigns its results together, so the slowest machine decides when
+// ANYTHING appears at all: this number is how long the sidebar can be blank
+// because a laptop in the fleet is asleep. Four seconds is well past a healthy
+// tailnet hop, where these answer in tens of milliseconds, and short enough
+// that a dead peer is an inconvenience rather than an empty app. A machine that
+// was merely slow is back on the next round.
+const machineDeadlineMs = 4000
+
+// A promise with a deadline. The underlying fetch is not aborted, because doing
+// that would mean threading a signal through every api function for no gain
+// here: the result of a request nobody is waiting for is simply dropped.
+function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timed out')), ms)
+    p.then(resolve, reject).finally(() => clearTimeout(timer))
+  })
+}
+
 const VIEW_PATHS = {
   usage: '/usage',
   settings: '/settings',
@@ -406,7 +427,24 @@ class AppStore {
   // get the lot.
   async refresh(what: { history?: boolean; stats?: boolean } = { history: true, stats: true }) {
     const machines = this.machines
-    const results = await Promise.allSettled(machines.map((m) => this.refreshMachine(m, what)))
+    // Every machine is given a deadline, and that is what stops ONE of them
+    // holding the whole app hostage.
+    //
+    // The round is a Promise.allSettled over the fleet and the results are
+    // assigned together, so until the slowest machine answers there is nothing
+    // to render. Nothing here had a timeout, and a browser fetch to a machine
+    // that is asleep or off the tailnet does not fail quickly: it hangs. So one
+    // unreachable peer left the sidebar empty for as long as the browser was
+    // willing to wait, and reloading "fixed" it only because a fresh attempt
+    // sometimes failed faster.
+    //
+    // A machine that misses the deadline is simply offline for this round,
+    // which is a path that already exists and already does the right thing:
+    // its last known rows are kept and its dot goes out. The next round tries
+    // again, so a machine that was merely slow comes back on its own.
+    const results = await Promise.allSettled(
+      machines.map((m) => withDeadline(this.refreshMachine(m, what), machineDeadlineMs)),
+    )
 
     // A single blipped fetch must not blank a machine's rows: keeping the
     // last-known sessions/history for a machine that failed this tick is what
