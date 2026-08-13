@@ -76,6 +76,27 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 		return nil, err
 	}
 
+	// A review already running for this pull request is handed back rather than
+	// joined by a second one. Clicking Review twice, or clicking it again after a
+	// push moved the head, otherwise started another whole run: two sessions with
+	// the same name in the sidebar, two worktrees, two lots of quota, and two
+	// drafts of which only one can ever be posted. Bounded to a LIVE session, so
+	// a finished review never blocks re-reviewing at a new commit.
+	if s.prReviews != nil {
+		for _, rec := range s.prReviews.all() {
+			if rec.Number != number || !strings.EqualFold(rec.Owner, repo.Owner) || !strings.EqualFold(rec.Repo, repo.Name) {
+				continue
+			}
+			if rec.Posted() {
+				continue
+			}
+			if sess, live := s.mgr.Get(rec.SessionID); live {
+				log.Printf("pr review: %s#%d is already being reviewed in session %s; reusing it", repo, number, rec.SessionID)
+				return sess, nil
+			}
+		}
+	}
+
 	pr, err := app.PullRequest(ctx, repo, number)
 	if err != nil {
 		return nil, err

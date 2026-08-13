@@ -309,6 +309,18 @@
       <p class="empty">Loading…</p>
     {:else if !draft}
       <p class="empty">This session is not a pull-request review.</p>
+    {:else if !findings.length && !running && draft.phase && draft.phase !== 'done'}
+      <!-- Stopped before it finished. This MUST NOT fall through to "nothing
+           worth reporting", which is the same lie this view has told once
+           before: a review parked on a permission question claimed a clean bill
+           of health for code it had not started reading. The cause is different
+           now (the run ends part-way, in one of the phases) and the rule is the
+           same, so the recorded phase is what tells them apart. -->
+      <p class="empty">
+        This review stopped while {PHASE_LABEL[draft.phase].toLowerCase()} and never
+        finished, so nothing has been looked at yet. Start it again from the
+        dashboard.
+      </p>
     {:else if !findings.length && !running}
       <p class="empty">Nothing worth reporting. Posting sends that as the review.</p>
     {/if}
