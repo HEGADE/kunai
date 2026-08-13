@@ -126,3 +126,33 @@ export function groupStartTarget<T extends Groupable & { machineId: string }>(
   }
   return { machineId: first.machineId, cwd: home(first) }
 }
+
+// Which folder headings the sidebar actually shows.
+//
+// A sidebar that lists every codebase ever opened stops being a place you look
+// and becomes a place you scroll: the list grew until the nav at the bottom was
+// pushed off the screen. So folders holding nothing but PAST work are capped.
+//
+// Two things are never counted against the cap and never dropped. A folder with
+// something LIVE in it stays, because the sidebar's job is to show what is
+// happening, and hiding a running agent to make room for a folder somebody last
+// opened on Tuesday is exactly the wrong way round. And pinned work is
+// unaffected by construction, since a pin lifts a session out of the groups
+// into its own flat section above them.
+//
+// Everything cut is one tap away under "View all sessions", which is searchable
+// and paginated, and the count of what was cut is returned so that link can say
+// so rather than letting a folder go missing without explanation.
+export function visibleGroups<T>(
+  groups: SessionGroup<T>[],
+  isLive: (item: T) => boolean,
+  max: number,
+): { shown: SessionGroup<T>[]; hidden: number } {
+  let quiet = 0
+  const shown = groups.filter((g) => {
+    if (g.items.some(isLive)) return true
+    quiet += 1
+    return quiet <= max
+  })
+  return { shown, hidden: groups.length - shown.length }
+}

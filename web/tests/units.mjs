@@ -10,7 +10,7 @@
 // agents nobody is watching, which is the worst thing to be wrong about quietly.
 
 import { shortAgo, longAgo, secondsSince } from '../src/lib/reltime.ts'
-import { groupSessions, groupStartTarget, projectName } from '../src/lib/grouping.ts'
+import { groupSessions, groupStartTarget, projectName, visibleGroups } from '../src/lib/grouping.ts'
 import { summarise, isAwaiting, isWorking } from '../src/lib/sidebar.ts'
 import {
   chosenCli, isProvider, providerModelChoices, providerModelToSend, showEffort,
@@ -225,3 +225,42 @@ eq("total tokens count every tier", totalTokens(tok({ in: 1, w5: 2, w1: 3, r: 4,
 console.log(`${pass}/${pass + fails.length} passed`)
 for (const f of fails) console.log(`FAIL ${f}`)
 process.exit(fails.length ? 1 : 0)
+
+// --- how many folders the sidebar shows -------------------------------------
+// A quiet folder is one holding nothing but past work. Those are capped; a
+// folder with something LIVE in it is never counted against the cap and never
+// dropped, because hiding a running agent to make room for one somebody last
+// opened on Tuesday is the wrong way round.
+const grp = (label, kinds) => ({ key: label, label, named: false, items: kinds.map((k) => ({ kind: k })) })
+const isLive = (r) => r.kind === 'live'
+const quiet = (label) => grp(label, ['recent'])
+const busy = (label) => grp(label, ['live'])
+
+eq(
+  'quiet folders are capped',
+  visibleGroups([quiet('a'), quiet('b'), quiet('c'), quiet('d'), quiet('e')], isLive, 3).shown.map((g) => g.label),
+  ['a', 'b', 'c'],
+)
+eq(
+  'the cut folders are counted, so the link can say so',
+  visibleGroups([quiet('a'), quiet('b'), quiet('c'), quiet('d'), quiet('e')], isLive, 3).hidden,
+  2,
+)
+eq(
+  'a live folder is never dropped, however far down it sits',
+  visibleGroups([quiet('a'), quiet('b'), quiet('c'), quiet('d'), busy('live-one')], isLive, 3).shown.map((g) => g.label),
+  ['a', 'b', 'c', 'live-one'],
+)
+eq(
+  'live folders do not spend the quiet budget',
+  visibleGroups([busy('L1'), busy('L2'), quiet('a'), quiet('b'), quiet('c'), quiet('d')], isLive, 3)
+    .shown.map((g) => g.label),
+  ['L1', 'L2', 'a', 'b', 'c'],
+)
+eq(
+  'a folder holding one live session among past ones stays',
+  visibleGroups([quiet('a'), quiet('b'), quiet('c'), grp('mixed', ['recent', 'live'])], isLive, 3)
+    .shown.map((g) => g.label),
+  ['a', 'b', 'c', 'mixed'],
+)
+eq('nothing hidden when the list is short', visibleGroups([quiet('a')], isLive, 3).hidden, 0)

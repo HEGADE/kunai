@@ -3,7 +3,7 @@
   import { createSession } from '../lib/api'
   import { enablePush, pushState } from '../lib/push'
   import type { TaggedHistoryEntry, TaggedMeta } from '../lib/types'
-  import { groupSessions, groupStartTarget } from '../lib/grouping'
+  import { groupSessions, groupStartTarget, visibleGroups } from '../lib/grouping'
   import { shortAgo } from '../lib/reltime'
   import { hasWork, isAwaiting, isUnreadDone, isWorking, needsAttention, recedes, summarise, workedFor } from '../lib/sidebar'
   import { isSnoozed, isWoke, snoozeIn } from '../lib/snooze'
@@ -296,7 +296,20 @@
     project?: string
   }
   const rowId = (r: Row) => (r.kind === 'live' ? r.m.id : r.h.id)
-  const sessionGroups = $derived(
+  // How many folders that hold nothing but PAST work the sidebar will show.
+  //
+  // A folder with a live session is never counted against it and never dropped:
+  // the sidebar's job is to show what is happening, and hiding a running agent
+  // to make room for a folder somebody last opened on Tuesday would be the
+  // wrong way round. Pinned work is not affected either, since a pin lifts a
+  // session out of the groups and into its own flat section above them.
+  //
+  // So the limit only bites on quiet folders, and everything it cuts is one tap
+  // away under "View all sessions", which is searchable and paginated. Without
+  // it the list grew with every codebase ever opened until the nav at the
+  // bottom was scrolled off the screen.
+  const QUIET_GROUP_MAX = 3
+  const allGroups = $derived(
     groupSessions<GroupedRow>([
       ...activeUnpinned.map((m) => ({
         kind: 'live' as const,
@@ -319,6 +332,16 @@
       })),
     ]),
   )
+  // The rule itself lives in grouping.ts, pure, because "a folder with
+  // something live in it is never hidden" is the half that would regress
+  // silently and the half a test can hold.
+  const visible = $derived(
+    visibleGroups(allGroups, (r) => r.kind === 'live', QUIET_GROUP_MAX),
+  )
+  const sessionGroups = $derived(visible.shown)
+  // What the limit is holding back, so "View all sessions" can say so rather
+  // than leaving somebody to wonder where a folder went.
+  const hiddenGroups = $derived(visible.hidden)
   // Ask about each heading's folder as the headings appear, so the worktree
   // button is only ever offered where it can work. Once per folder, guarded by
   // `probed`, so re-rendering the list costs nothing.
@@ -816,7 +839,11 @@
       <!-- No icon: the gutter is 14px wide and holds row state marks, so an icon
            here would have to sit outside the text column and make a fourth left
            edge out of a link. The words are the affordance. -->
-      <button class="viewall" onclick={() => app.openAllSessions()}>View all sessions →</button>
+      <!-- Names what is being held back when the folder limit is biting, so a
+           folder that was on this list yesterday does not simply go missing. -->
+      <button class="viewall" onclick={() => app.openAllSessions()}>
+        {hiddenGroups > 0 ? `View all sessions · ${hiddenGroups} more folder${hiddenGroups > 1 ? 's' : ''} →` : 'View all sessions →'}
+      </button>
     {/if}
 
     {#if activeList.length === 0 && recentList.length === 0 && !app.listError}
