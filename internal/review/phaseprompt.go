@@ -174,11 +174,27 @@ const findMethod = `1. Read the diffs of the files that carry the risk, not all 
 // default to refuted. A verifier that gives the benefit of the doubt confirms
 // everything, and a pass that confirms everything is worse than no pass at all,
 // because it puts a stamp on claims nobody checked.
-func VerifyPrompt(candidates []Finding) string {
+func VerifyPrompt(r Request, candidates []Finding) string {
 	var b strings.Builder
 
 	b.WriteString("<kunai-review>\n")
-	b.WriteString("A review of this pull request produced the claims below. Your job is not to review the code again. It is to find out which of these claims are WRONG.\n\n")
+	b.WriteString("A review of the pull request below produced the claims that follow. Your job is not to review the code again. It is to find out which of these claims are WRONG.\n\n")
+
+	// Stated in full, because this phase now runs in its OWN session with no
+	// memory of the review that produced the claims. That is the entire point of
+	// giving it one: a verifier that can see the finder's reasoning is not an
+	// independent check, it is the same context agreeing with itself. The cost is
+	// that nothing may be left implicit here, and "this pull request" was.
+	writeIdentity(&b, r)
+	b.WriteString("\nYou are checked out in a worktree at that commit, so you can read any file in this repository at the exact version the claims are about.\n")
+	if r.DiffDir != "" {
+		fmt.Fprintf(&b, "Each changed file's diff is at `%s/<the file's path>.diff`.\n", r.DiffDir)
+	}
+	if r.DiffPath != "" {
+		fmt.Fprintf(&b, "The whole diff is in `%s`.\n", r.DiffPath)
+	}
+	b.WriteString("\n")
+
 	b.WriteString(verifyMethod)
 
 	b.WriteString("\n## The claims\n\n")

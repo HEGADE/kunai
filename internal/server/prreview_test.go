@@ -16,6 +16,7 @@ import (
 
 	"github.com/hegade/kunai/internal/ghapp"
 	"github.com/hegade/kunai/internal/review"
+	"github.com/hegade/kunai/internal/session"
 )
 
 // GitHub rejects a zero start_line, so a single-line comment must OMIT the field
@@ -352,5 +353,76 @@ func TestAFinishedReviewDoesNotBlockAFreshOne(t *testing.T) {
 		if reviewInFlight(c.rec) {
 			t.Errorf("%s was treated as still in flight, so a new review would be refused", c.name)
 		}
+	}
+}
+
+// The verification phase runs in a session of its own, and that session is a
+// second name for the SAME review. Everything must still be recorded against
+// the review's own session: it is the one prReviews is keyed by, the one the
+// sidebar shows and the one the view opens.
+func TestABorrowedSessionRecordsAgainstTheReviewItBelongsTo(t *testing.T) {
+	dir := t.TempDir()
+	s := &Server{prReviews: newPRReviewStore(dir + "/prreviews.json"), reviewRuns: newReviewRunners()}
+	s.prReviews.put(prReview{SessionID: "owner", Owner: "o", Repo: "r", Number: 1, Phase: "verify"})
+
+	holder := &reviewRun{run: &review.Run{Phase: review.PhaseDone}, owner: "owner", verify: "borrowed"}
+	s.reviewRuns.put("owner", holder)
+	s.reviewRuns.put("borrowed", holder)
+
+	holder.mu.Lock()
+	s.finishReview(holder)
+	holder.mu.Unlock()
+
+	rec, ok := s.prReviews.get("owner")
+	if !ok {
+		t.Fatal("the review's own record is gone")
+	}
+	if rec.Draft == nil {
+		t.Error("the draft was not recorded against the review's own session")
+	}
+	if _, stray := s.prReviews.get("borrowed"); stray {
+		t.Error("the borrowed session got a review record of its own")
+	}
+	// Both names are forgotten, or a later turn in either would be read as a
+	// phase reply and replace a good draft with a parse error.
+	if _, still := s.reviewRuns.get("owner"); still {
+		t.Error("the finished review is still registered under its own id")
+	}
+	if _, still := s.reviewRuns.get("borrowed"); still {
+		t.Error("the finished review is still registered under the borrowed id")
+	}
+}
+
+// A phase given no worktree cannot be given a session, and that must cost a
+// weaker check rather than the whole phase.
+func TestAPhaseWithNowhereToRunFallsBackInsteadOfDying(t *testing.T) {
+	s := &Server{reviewRuns: newReviewRunners()}
+	holder := &reviewRun{owner: "owner"} // no worktree
+	if s.startVerifySession(holder, "prompt", "brief") {
+		t.Fatal("startVerifySession claimed a session with no worktree to run it in")
+	}
+	if holder.verify != "" {
+		t.Error("a failed borrow left a session id behind")
+	}
+}
+
+// A session a phase borrowed must resolve to the repository its REVIEW is of.
+// It has no record of its own, so without this its worktree
+// (.../worktrees/kunai/review/5) is taken for a repository and the sidebar grows
+// a heading called "5" for as long as the check runs. That is the exact bug
+// tagReviewRepos was written to prevent.
+func TestABorrowedSessionIsTaggedWithTheRepoItIsReviewing(t *testing.T) {
+	dir := t.TempDir()
+	s := &Server{prReviews: newPRReviewStore(dir + "/prreviews.json"), reviewRuns: newReviewRunners()}
+	s.prReviews.put(prReview{SessionID: "owner", RepoDir: "/home/me/kunai", Number: 5})
+
+	holder := &reviewRun{owner: "owner", verify: "borrowed"}
+	s.reviewRuns.put("owner", holder)
+	s.reviewRuns.put("borrowed", holder)
+
+	metas := []session.Meta{{ID: "borrowed", Cwd: "/w/worktrees/kunai/review/5"}}
+	s.tagReviewRepos(metas)
+	if metas[0].Repo != "/home/me/kunai" {
+		t.Fatalf("repo = %q, want the repository the review is of", metas[0].Repo)
 	}
 }

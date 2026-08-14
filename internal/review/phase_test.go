@@ -275,7 +275,7 @@ func TestUnreadableVerdictsLeaveFindingsUnverified(t *testing.T) {
 // The verifier is asked for one entry per claim and told the index refers to the
 // list it was shown, so the prompt must actually number them from zero.
 func TestVerifyPromptNumbersTheClaimsFromZero(t *testing.T) {
-	p := VerifyPrompt([]Finding{
+	p := VerifyPrompt(Request{}, []Finding{
 		{File: "a.go", Line: 7, Title: "first", Severity: SeverityMajor, Confidence: ConfidenceLow},
 		{File: "b.go", Line: 9, Title: "second", Severity: SeverityMinor, Confidence: ConfidenceMedium},
 	})
@@ -290,7 +290,7 @@ func TestVerifyPromptNumbersTheClaimsFromZero(t *testing.T) {
 // the benefit of the doubt confirms everything, and a pass that confirms
 // everything is worse than no pass, because it stamps claims nobody checked.
 func TestVerifyPromptDefaultsToRefuted(t *testing.T) {
-	p := VerifyPrompt([]Finding{{File: "a.go", Title: "x"}})
+	p := VerifyPrompt(Request{}, []Finding{{File: "a.go", Title: "x"}})
 	if !strings.Contains(p, "Default to refuted") {
 		t.Error("VerifyPrompt() does not tell the verifier to default to refuted")
 	}
@@ -352,4 +352,24 @@ func findBlock(findings string) string {
 
 func verdictBlock(verdicts string) string {
 	return "```" + VerdictFenceTag + "\n{\"verdicts\":[" + verdicts + "]}\n```"
+}
+
+// The verify phase now runs in a session of its own, with no memory of the
+// review that produced the claims. That is the point of giving it one: a
+// verifier that can see the finder's reasoning is not an independent check.
+//
+// The cost is that nothing may be left implicit in this prompt, and something
+// was: it opened with "A review of this pull request", which names nothing at
+// all to a context that has never seen the pull request.
+func TestVerifyPromptStandsAlone(t *testing.T) {
+	p := VerifyPrompt(Request{
+		Repo: "HEGADE/kunai", Number: 5, Title: "Nightly", BaseRef: "main",
+		HeadSHA: "8c802e4d", DiffDir: ".kunai-review/diff",
+	}, []Finding{{File: "a.go", Line: 1, Title: "x"}})
+
+	for _, want := range []string{"HEGADE/kunai", "#5 Nightly", "8c802e4d", ".kunai-review/diff", "worktree"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("VerifyPrompt() does not say %q, so a fresh session cannot find the code", want)
+		}
+	}
 }

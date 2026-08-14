@@ -25,11 +25,13 @@ package server
 // findings that were refuted, and how far it got.
 
 import (
+	"context"
 	"log"
 	"sync"
 
 	"github.com/hegade/kunai/internal/ghapp"
 	"github.com/hegade/kunai/internal/review"
+	"github.com/hegade/kunai/internal/session"
 )
 
 // reviewRun is one review in flight: the phase machine plus the diff its
@@ -38,6 +40,19 @@ type reviewRun struct {
 	mu    sync.Mutex
 	run   *review.Run
 	files []ghapp.FileDiff
+
+	// owner is the session the REVIEW belongs to: the one prReviews is keyed by,
+	// the one the sidebar shows and the one the view opens. A phase running in a
+	// session of its own registers that session against this same holder, so its
+	// answer routes back here, but everything recorded is recorded against this.
+	owner string
+	// verify is the session running the verification phase, empty when that phase
+	// is not running or is sharing the owner's session.
+	verify string
+	// worktree and spawn are what a phase needs to be given a session of its own:
+	// the checkout to read and the account to run on.
+	worktree string
+	spawn    session.CreateOptions
 }
 
 // reviewRunners holds the reviews currently working, by session id.
@@ -61,6 +76,21 @@ func (r *reviewRunners) get(sessionID string) (*reviewRun, bool) {
 	defer r.mu.Unlock()
 	run, ok := r.runs[sessionID]
 	return run, ok
+}
+
+// ownerOf is the review a session belongs to, which for a session a phase
+// borrowed is not the same as the session itself. Empty when this session is
+// not part of any review.
+func (r *reviewRunners) ownerOf(sessionID string) string {
+	if r == nil {
+		return ""
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if run, ok := r.runs[sessionID]; ok {
+		return run.owner
+	}
+	return ""
 }
 
 // drop forgets a finished review, so a long-lived server does not accumulate
@@ -89,42 +119,126 @@ func (s *Server) advanceReview(sessionID, text string) {
 		// Only the find phase reports an error, and it means the review produced
 		// nothing readable. Recorded so the view can say what happened rather
 		// than showing an empty draft for ever.
-		s.prReviews.update(sessionID, func(rec *prReview) {
+		s.prReviews.update(holder.owner, func(rec *prReview) {
 			rec.ParseError = err.Error()
 			rec.Phase = string(review.PhaseDone)
 		})
-		s.reviewRuns.drop(sessionID)
+		s.endRun(holder)
 		log.Printf("pr review: session %s produced no usable review block: %v", sessionID, err)
 		return
 	}
 
 	prompt, brief, more := holder.run.Next()
-	s.prReviews.update(sessionID, func(rec *prReview) {
+	s.prReviews.update(holder.owner, func(rec *prReview) {
 		rec.Phase = string(holder.run.Phase)
 	})
 
 	if !more {
-		s.finishReview(sessionID, holder)
+		s.finishReview(holder)
 		return
 	}
 
-	sess, live := s.mgr.Get(sessionID)
+	// The verification phase gets a session of ITS OWN.
+	//
+	// Independence is the whole reason the phase exists, and running it in the
+	// session that produced the findings does not have it: that context still
+	// holds the reasoning that wrote them, so the model orchestrating the check
+	// is the same one being checked, agreeing with itself. Only the Task
+	// subagents were ever really independent. A fresh session is the honest
+	// version, and the prompt now carries everything it needs (see VerifyPrompt).
+	//
+	// It is also where the money is. That session's context starts at the system
+	// prompt plus the claims, tens of thousands of tokens, where the find session
+	// ends around 210k on a large review and re-bills all of it on every step.
+	if holder.run.Phase == review.PhaseVerify && holder.verify == "" {
+		if s.startVerifySession(holder, prompt, brief) {
+			return
+		}
+		// Falling through is deliberate: a session that could not be created must
+		// cost a weaker check, never the whole phase.
+		log.Printf("pr review: could not give %s its own session to verify in; checking in place", holder.owner)
+	}
+
+	target := holder.owner
+	if holder.verify != "" {
+		target = holder.verify
+	}
+	sess, live := s.mgr.Get(target)
 	if !live {
 		// The session was closed mid-review. Whatever was found so far is still
 		// worth keeping, so it is saved rather than thrown away.
-		log.Printf("pr review: session %s went away during the %s phase", sessionID, holder.run.Phase)
-		s.finishReview(sessionID, holder)
+		log.Printf("pr review: session %s went away during the %s phase", target, holder.run.Phase)
+		s.finishReview(holder)
 		return
 	}
 	if err := sess.PromptBrief(prompt, brief); err != nil {
-		log.Printf("pr review: session %s could not start the %s phase: %v", sessionID, holder.run.Phase, err)
-		s.finishReview(sessionID, holder)
+		log.Printf("pr review: session %s could not start the %s phase: %v", target, holder.run.Phase, err)
+		s.finishReview(holder)
 	}
+}
+
+// startVerifySession runs the verification phase in a session of its own,
+// reporting whether it managed to.
+//
+// The session reads the same worktree and runs on the same account, and it is
+// registered against the SAME holder so its answer comes back to this review
+// rather than being taken for a conversation. It is closed the moment it
+// answers: it exists to be asked one question.
+func (s *Server) startVerifySession(holder *reviewRun, prompt, brief string) bool {
+	if holder.worktree == "" {
+		return false
+	}
+	opts := holder.spawn
+	opts.Cwd = holder.worktree
+	opts.Title = brief
+
+	sess, err := s.mgr.Create(context.Background(), opts)
+	if err != nil {
+		log.Printf("pr review: verify session for %s would not start: %v", holder.owner, err)
+		return false
+	}
+	s.armSession(sess)
+	holder.verify = sess.ID
+	// Registered under the new id as well, so the hook finds this same holder.
+	s.reviewRuns.put(sess.ID, holder)
+	sess.SetAnswerHook(func(text string) { s.advanceReview(sess.ID, text) })
+
+	if err := sess.PromptBrief(prompt, brief); err != nil {
+		log.Printf("pr review: verify session for %s would not accept its prompt: %v", holder.owner, err)
+		s.closeVerifySession(holder)
+		return false
+	}
+	log.Printf("pr review: checking %s's findings in session %s, with no memory of what wrote them", holder.owner, sess.ID)
+	return true
+}
+
+// closeVerifySession ends the borrowed session and forgets it. Safe to call when
+// there is none.
+func (s *Server) closeVerifySession(holder *reviewRun) {
+	if holder.verify == "" {
+		return
+	}
+	id := holder.verify
+	holder.verify = ""
+	s.reviewRuns.drop(id)
+	if s.mgr == nil {
+		return
+	}
+	// On its own goroutine: this runs inside that session's own answer hook, and
+	// closing waits for the driver to stop.
+	go s.mgr.Close(id)
+}
+
+// endRun forgets a finished review, including any session a phase borrowed.
+func (s *Server) endRun(holder *reviewRun) {
+	s.closeVerifySession(holder)
+	s.reviewRuns.drop(holder.owner)
 }
 
 // finishReview places the findings against the diff and records the outcome.
 // Called with holder.mu held.
-func (s *Server) finishReview(sessionID string, holder *reviewRun) {
+func (s *Server) finishReview(holder *reviewRun) {
+	sessionID := holder.owner
 	draft := holder.run.Draft()
 	dropped := holder.run.Dropped
 
@@ -146,7 +260,7 @@ func (s *Server) finishReview(sessionID string, holder *reviewRun) {
 		rec.Dropped = dropped
 		rec.Phase = string(review.PhaseDone)
 	})
-	s.reviewRuns.drop(sessionID)
+	s.endRun(holder)
 
 	blocker, major, minor := draft.Counts()
 	log.Printf("pr review: session %s drafted %d finding(s) (%d blocker, %d major, %d minor), %d inline and %d in the summary; %d refuted",

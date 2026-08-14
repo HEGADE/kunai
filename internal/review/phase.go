@@ -170,7 +170,7 @@ func (r *Run) Next() (prompt, brief string, ok bool) {
 	case PhaseFind:
 		return FindPrompt(r.Req, r.Survey), fmt.Sprintf("Review %s#%d", r.Req.Repo, r.Req.Number), true
 	case PhaseVerify:
-		return VerifyPrompt(r.Candidates), fmt.Sprintf("Verify %d finding(s)", len(r.Candidates)), true
+		return VerifyPrompt(r.Req, r.Candidates), fmt.Sprintf("Check %d finding(s)", len(r.Candidates)), true
 	default:
 		return "", "", false
 	}

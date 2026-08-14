@@ -170,7 +170,10 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 	if model == "" {
 		model = s.model()
 	}
-	sess, err := s.mgr.Create(ctx, session.CreateOptions{
+	// One spec, used for this session and for any a later phase is given of its
+	// own, so a borrowed session cannot end up on a different account or with a
+	// looser toolset than the review it belongs to.
+	spawn := session.CreateOptions{
 		Cwd:     wt.Path,
 		Title:   fmt.Sprintf("Review #%d %s", number, pr.Title),
 		Model:   model,
@@ -186,7 +189,8 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 		// about a minute in, which ended the running turn and looked from the
 		// outside like the review stopping by itself.
 		ToolsOwner: reviewToolsOwner,
-	})
+	}
+	sess, err := s.mgr.Create(ctx, spawn)
 	if err != nil {
 		_ = worktree.RemoveReview(wt)
 		return nil, err
@@ -203,7 +207,10 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 			Surveyed: run.Phase == review.PhaseSurvey,
 		})
 	}
-	s.reviewRuns.put(sess.ID, &reviewRun{run: run, files: files})
+	s.reviewRuns.put(sess.ID, &reviewRun{
+		run: run, files: files,
+		owner: sess.ID, worktree: wt.Path, spawn: spawn,
+	})
 
 	// Collected from inside the session rather than by subscribing to it. A
 	// subscriber is dropped when its buffer fills (emitLocked), which is right for
@@ -266,6 +273,16 @@ func (s *Server) tagReviewRepos(metas []session.Meta) {
 		}
 		if dir := s.prReviews.repoOf(metas[i].ID); dir != "" {
 			metas[i].Repo = dir
+			continue
+		}
+		// A session a phase borrowed has no record of its own (it is a second
+		// name for a review, not a review), so it has to be resolved through the
+		// review it belongs to. Without this the verification session brings back
+		// the exact bug this function exists to prevent, for as long as it runs:
+		// its directory (.../worktrees/kunai/review/5) is taken for a repository
+		// and the sidebar grows a heading called "5".
+		if owner := s.reviewRuns.ownerOf(metas[i].ID); owner != "" {
+			metas[i].Repo = s.prReviews.repoOf(owner)
 		}
 	}
 }

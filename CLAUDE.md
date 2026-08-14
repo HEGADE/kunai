@@ -626,6 +626,26 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   in the UI read "Not independently checked" and no reader could tell that from a
   reviewer nobody had asked to check. Confidence is now a report to the reader and
   nothing else, and `needsVerification` is just "is there anything to verify".
+  **Verify runs in a session of its OWN** (`startVerifySession`), and that is a
+  correctness fix before it is a cost one. Independence is the entire reason the
+  phase exists, and running it in the session that produced the findings does not
+  have it: that context still holds the reasoning that wrote them, so the model
+  orchestrating the check is the same one being checked, agreeing with itself.
+  Only the `Task` subagents were ever really independent. The borrowed session
+  reads the same worktree on the same account (one `spawnSpec` shared by both, so
+  it cannot end up on a different account or with a looser toolset), is
+  registered against the SAME `reviewRun` so its answer routes back to the
+  review, and is closed the moment it answers. Everything is recorded against
+  `reviewRun.owner`, the review's own session: the one `prReviews` is keyed by,
+  the one the sidebar shows and the one the view opens. Two consequences are
+  load-bearing. `VerifyPrompt` takes the `Request` now, because a fresh context
+  has never seen the pull request and the prompt opened with "A review of this
+  pull request", which names nothing at all. And `tagReviewRepos` resolves a
+  borrowed session through `reviewRuns.ownerOf`, because it has no record of its
+  own and would otherwise bring back the phantom-repo bug that function exists to
+  prevent, giving the sidebar a heading called "5" for as long as the check runs.
+  A session that cannot be created falls back to checking in place: that must
+  cost a weaker check, never the whole phase.
   An answer that cannot be PARSED is asked for again once (`Run.repair`,
   `RepairPrompt`, `maxRepairs`) before the review is given up on, because it was
   being thrown away whole over a missing fence: one real run died on "the reply
