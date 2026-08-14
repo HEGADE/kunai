@@ -702,6 +702,24 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   finished review's session stays live by design, so asking for a fresh review
   after a push handed back the old draft at the old commit -- exactly when a new
   reading is most wanted.
+  The dashboard row reads its review state from the SERVER
+  (`prSummary.Review`, from `prReviewStore.latestFor`), never from state the
+  component holds. It used to remember a review only in a local map, so it knew
+  about one just while that tab stayed open: a refresh, or opening a session and
+  coming back, put "Review" back on a pull request that already had one, and
+  clicking it started another whole reading. That is minutes of work and real
+  quota spent because a button forgot. The row says what a finished review FOUND
+  ("3 findings", "Nothing found") rather than "ready", since the count is the
+  only thing that says whether it is worth opening, and a review of an older
+  commit offers a fresh reading instead of pointing at a stale draft. The card
+  follows a running review on a 5s poll and stops the moment none is running;
+  it used to say "Reviewing" for ever, because the list was re-read only when the
+  repositories changed. Every request goes through `fetchQuery` (`keys.pulls`,
+  `keys.githubApp`), because **Home is mounted twice** (the dashboard and the
+  sidebar's compact copy) and each fetch was therefore firing twice against
+  somebody's GitHub rate limit -- the same trap the usage meters hit, with the
+  same fix. Measured after: 1 App call and 1 listing per repo at first paint, 0
+  over the next 20 idle seconds.
   The surface is a **deck you triage**, not a document you read, and that is a
   rewrite of one that was correct and unusable. It showed every part of every
   finding at full size at once -- a wall of body prose, a block of evidence, a

@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +32,29 @@ type prSummary struct {
 	// ReviewedAt is when kunai last reviewed THIS commit, which is what turns the
 	// Review button into "reviewed 2h ago". Zero when it has not been.
 	ReviewedAt *time.Time `json:"reviewed_at,omitempty"`
+	// Review is what THIS machine holds for this pull request, if anything.
+	//
+	// Distinct from ReviewedAt, which comes from GitHub and only knows about
+	// reviews that were POSTED, possibly by a colleague. This is the local one:
+	// running, drafted and waiting to be read, or finished. Without it the row
+	// knew about a review only while the tab that started it stayed open, so a
+	// refresh offered "Review" again on a pull request that already had one.
+	Review *prReviewRef `json:"review,omitempty"`
+}
+
+// prReviewRef is the local review behind a row, in the shape the row needs.
+type prReviewRef struct {
+	SessionID string `json:"session_id"`
+	Phase     string `json:"phase"`
+	// Running is true while the review is still working on its answer, which is
+	// the same question startReview asks before joining one.
+	Running  bool `json:"running"`
+	Findings int  `json:"findings"`
+	Posted   bool `json:"posted"`
+	Failed   bool `json:"failed"`
+	// Stale is true when the review read a commit that is no longer the head, so
+	// the row can offer a fresh reading rather than the old draft.
+	Stale bool `json:"stale"`
 }
 
 // handleGitHubStatus reports whether this machine can act as the App. It never
@@ -140,7 +164,41 @@ func (s *Server) handlePullRequests(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := enrich(ctx, app, repo, prs)
+	// What this machine already holds, folded in after the GitHub calls because
+	// it is a local map lookup and must not be inside the concurrent fan-out.
+	for i := range out {
+		out[i].Review = s.reviewRefFor(repo, out[i].Number, out[i].HeadSHA)
+	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// reviewRefFor is the local review behind one row, or nil when there is none.
+//
+// head is the pull request's CURRENT head, so a review read at an earlier commit
+// reports itself stale and the row can offer a fresh reading. That matters more
+// than it sounds: a stale draft still posts (its comments are re-anchored, see
+// reanchor.go), but somebody looking at the dashboard should be able to see that
+// the branch moved on without opening it.
+func (s *Server) reviewRefFor(repo ghapp.Repo, number int, head string) *prReviewRef {
+	if s.prReviews == nil {
+		return nil
+	}
+	rec, ok := s.prReviews.latestFor(repo.Owner, repo.Name, number)
+	if !ok {
+		return nil
+	}
+	ref := &prReviewRef{
+		SessionID: rec.SessionID,
+		Phase:     rec.Phase,
+		Running:   reviewInFlight(rec),
+		Posted:    rec.Posted(),
+		Failed:    rec.ParseError != "",
+		Stale:     head != "" && rec.HeadSHA != "" && !strings.EqualFold(head, rec.HeadSHA),
+	}
+	if rec.Draft != nil {
+		ref.Findings = len(rec.Draft.Findings)
+	}
+	return ref
 }
 
 // prDetailWorkers bounds how many pull requests are looked up at once. Each one

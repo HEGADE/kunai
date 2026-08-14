@@ -406,6 +406,46 @@ if ((await trail.locator('li.done').count()) !== 2) fail('the trail does not sho
 if (await page.locator('.bar').count()) fail('a running review offered a Post button')
 await page.screenshot({ path: '/tmp/review-running.png', fullPage: true })
 
+// 12. The dashboard row tells the truth about a review it did not start.
+//
+// It used to know about one only from state held in the component that started
+// it, so a refresh, or going to a session and coming back, put "Review" back on
+// a pull request that already had a review. Clicking it then started another
+// whole reading: minutes of work and real quota, spent because a button forgot.
+// The row reads the server now, so a fresh page load is enough.
+const fresh = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+const ROWS = [
+  { number: 5, title: 'Running', author: 'a', base_ref: 'main', head_sha: 'x', draft: false, from_fork: false,
+    additions: 1, deletions: 1,
+    review: { session_id: 's1', phase: 'find', running: true, findings: 0, posted: false, failed: false, stale: false } },
+  { number: 6, title: 'Ready', author: 'a', base_ref: 'main', head_sha: 'x', draft: false, from_fork: false,
+    additions: 1, deletions: 1,
+    review: { session_id: 's2', phase: 'done', running: false, findings: 3, posted: false, failed: false, stale: false } },
+  { number: 7, title: 'Found nothing', author: 'a', base_ref: 'main', head_sha: 'x', draft: false, from_fork: false,
+    additions: 1, deletions: 1,
+    review: { session_id: 's3', phase: 'done', running: false, findings: 0, posted: false, failed: false, stale: false } },
+  { number: 8, title: 'Moved on', author: 'a', base_ref: 'main', head_sha: 'x', draft: false, from_fork: false,
+    additions: 1, deletions: 1,
+    review: { session_id: 's4', phase: 'done', running: false, findings: 2, posted: false, failed: false, stale: true } },
+]
+await fresh.route((u) => new URL(u).pathname === '/api/github/app', (r) =>
+  r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ configured: true, app_id: '1' }) }))
+await fresh.route((u) => new URL(u).pathname === '/api/github/pulls', (r) =>
+  r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(ROWS) }))
+await fresh.goto(url)
+await fresh.waitForTimeout(2500)
+const rowText = async (n) => (await fresh.locator(`main .prs .row:has-text("#${n}")`).first().innerText()).toLowerCase()
+if (!(await rowText(5)).includes('reviewing')) fail('a running review is not reported on its row after a reload')
+// "Ready" says nothing about whether it is worth opening; the count does.
+if (!(await rowText(6)).includes('3 findings')) fail('a finished review does not say what it found')
+if (!(await rowText(7)).includes('nothing found')) fail('a review that found nothing does not say so')
+// A review of an older commit is not this pull request's review any more, so the
+// row offers a fresh reading rather than pointing at a stale draft.
+if (!/\breview\b/.test(await rowText(8)) || (await rowText(8)).includes('findings')) {
+  fail(`a stale review does not offer a fresh reading: ${await rowText(8)}`)
+}
+await fresh.close()
+
 if (crashes.length) fail('uncaught page exception: ' + crashes.join(' | '))
 console.log('PASS: no App is invisible, a bad key is refused, and a review reads as a deck you triage')
 await browser.close()

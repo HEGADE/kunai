@@ -30,8 +30,14 @@
   const reviewRepos = $derived.by(() => {
     if (!sel) return []
     const seen = new Map<string, { machineId: string; cwd: string; label: string }>()
-    const add = (machineId: string, repo?: string, cwd?: string) => {
-      const dir = (repo || cwd || '').replace(/\/+$/, '')
+    // Most specific claim first, which is the same precedence the sidebar's
+    // grouping uses (repo is "cwd is a worktree OF that codebase", project is
+    // "cwd is part of, or did its work in, that codebase"). Taking cwd first
+    // listed a session opened in ~/coding as a repository called "coding" and
+    // spent a GitHub round trip on it every load, the same way a heading called
+    // "coding" was wrong for the same reason.
+    const add = (machineId: string, repo?: string, cwd?: string, project?: string) => {
+      const dir = (repo || project || cwd || '').replace(/\/+$/, '')
       if (!dir || machineId !== sel.id || seen.has(dir)) return
       // A review's own throwaway checkout is not a repository. The server tags
       // those sessions with the repo they are reviewing, but a record it cannot
@@ -40,8 +46,8 @@
       if (/\/worktrees\/[^/]+\/review\/[^/]+$/.test(dir)) return
       seen.set(dir, { machineId, cwd: dir, label: dir.split('/').pop() || dir })
     }
-    for (const s of app.sessions) add(s.machineId, s.repo, s.cwd)
-    for (const h of app.history) add(h.machineId, h.repo, h.cwd)
+    for (const s of app.sessions) add(s.machineId, s.repo, s.cwd, s.project)
+    for (const h of app.history) add(h.machineId, h.repo, h.cwd, h.project)
     return [...seen.values()]
   })
   const selSessions = $derived(sel ? app.sessions.filter((s) => s.machineId === sel.id).length : 0)

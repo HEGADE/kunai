@@ -18,6 +18,7 @@ package server
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -158,6 +159,32 @@ func (s *prReviewStore) all() []prReview {
 		out = append(out, rec)
 	}
 	return out
+}
+
+// latestFor is the most recent review this machine holds for one pull request.
+//
+// It exists so the dashboard can tell the truth after a reload. The row used to
+// know about a review only from state held in the component that started it, so
+// navigating away and back, or simply refreshing, made a running review vanish
+// from the row and offer "Review" again -- which on a finished review now starts
+// a whole second one and spends real quota, because the button looked untouched.
+//
+// Newest wins: a pull request reviewed at three commits has three records, and
+// the one worth reporting is the last reading.
+func (s *prReviewStore) latestFor(owner, repo string, number int) (prReview, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var best prReview
+	found := false
+	for _, rec := range s.data {
+		if rec.Number != number || !strings.EqualFold(rec.Owner, owner) || !strings.EqualFold(rec.Repo, repo) {
+			continue
+		}
+		if !found || rec.CreatedAt.After(best.CreatedAt) {
+			best, found = rec, true
+		}
+	}
+	return best, found
 }
 
 func (s *prReviewStore) delete(sessionID string) {

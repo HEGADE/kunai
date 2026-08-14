@@ -651,6 +651,23 @@ export interface PullRequest {
   additions: number
   deletions: number
   reviewed_at?: string
+  // The review THIS machine holds, if any. Distinct from reviewed_at, which
+  // comes from GitHub and only knows about reviews that were posted. Without it
+  // a row knew about a review only while the tab that started it stayed open, so
+  // a refresh offered "Review" again on a pull request that already had one and
+  // clicking it spent a fresh quota.
+  review?: PullRequestReview
+}
+
+export interface PullRequestReview {
+  session_id: string
+  phase?: ReviewPhase
+  running: boolean
+  findings: number
+  posted: boolean
+  failed: boolean
+  // The review read a commit that is no longer the head.
+  stale: boolean
 }
 
 // How bad a finding is if it is true. Mirrors internal/review/severity.go, and
