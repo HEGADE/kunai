@@ -377,15 +377,14 @@ func (s *Server) handlePostReview(w http.ResponseWriter, r *http.Request) {
 // Returns the changed files alongside the plan, because each finding is served
 // with the diff lines it is about and those come from the same fetch.
 func (s *Server) planFor(ctx context.Context, rec prReview) (review.Plan, []review.FileDiff) {
-	app, err := s.githubApp()
-	if err != nil {
+	// Through the cache. This used to call GitHub on every read of the draft, and
+	// a phased review re-reads it at the end of every phase, so opening a review
+	// that finished minutes ago waited on a round trip for a diff that cannot
+	// have changed: it is a commit's diff, and the commit is in the key.
+	rf := s.filesAt(ctx, ghapp.Repo{Owner: rec.Owner, Name: rec.Repo}, rec.Number, rec.HeadSHA)
+	if rf == nil {
 		return review.Build(*rec.Draft, nil), nil
 	}
-	files, err := app.PullRequestFiles(ctx, ghapp.Repo{Owner: rec.Owner, Name: rec.Repo}, rec.Number)
-	if err != nil {
-		return review.Build(*rec.Draft, nil), nil
-	}
-	rf := toReviewFiles(files)
 	return review.Build(*rec.Draft, review.ParseDiff(rf)), rf
 }
 

@@ -764,6 +764,31 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   prose. The RAW text is tokenised and each token escaped ON THE WAY OUT:
   escaping first would run the patterns over `&lt;` and put a marker inside an
   entity. Unit-tested, including that ordinary English comes through untouched.
+  **A review takes the whole window** (`App.svelte`'s `reviewFull`). It is a
+  reading surface with two columns and a decision at the end; the session list
+  beside it is a list of things you are deliberately not doing, and nothing in it
+  is reachable from inside a review anyway. That makes the review header the only
+  navigation on screen, which is why it grew one: back to the sessions, and a
+  LABELLED close. Not a bare X, because an X says "make this go away" and says
+  nothing about what goes with it -- here the draft is on disk and survives, and
+  what ends is a CLI process sitting idle in a throwaway checkout. The control
+  turns over to a tick and reads "Done" once the review is posted.
+  **Posting changes the whole screen, so nothing floats over it.** The bar stops
+  being a decision and becomes a receipt (who it went out as, and a link), the
+  keyboard hints go, and every Drop and Edit goes with them: offering to change a
+  finding that is already public is offering to change something that has left
+  the building. There is deliberately no success toast -- a toast is for
+  something that happened where you are NOT looking, and this is the opposite.
+  Opening a finished review is fast now because `planFor` goes through
+  `diffCache` (`prreviewfiles.go`): it used to call GitHub for the pull
+  request's files on EVERY read of the draft, and a phased review re-reads it at
+  the end of every phase, so a reader waited on a round trip for a diff that
+  cannot have changed. The key is the COMMIT, which is what makes it cacheable
+  without a staleness question; posting asks for the current head and gets its
+  own entry, so re-anchoring is unaffected. A failure is not cached.
+  The load state is a **skeleton in the shape of the review**, not the word
+  "Loading": the wait is a fraction of a second now, and a skeleton keeps that
+  moment from being a flash of text and stops the page jumping when it lands.
   The surface is a **deck you triage**, not a document you read, and that is a
   rewrite of one that was correct and unusable. It showed every part of every
   finding at full size at once -- a wall of body prose, a block of evidence, a

@@ -133,6 +133,9 @@ type Server struct {
 	// would only create a state nothing could resume. What is persisted is the
 	// outcome, on prReviews.
 	reviewRuns *reviewRunners
+	// diffs remembers a commit's changed files, so opening a finished review does
+	// not wait on a GitHub round trip for a diff that cannot have changed.
+	diffs *diffCache
 	// reviewCfg is which account and model reviews run on, kept apart from the
 	// session defaults so a review can never spend the window you are working in.
 	reviewCfg *reviewConfigStore
@@ -240,6 +243,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	// anywhere to persist its outcome, and a nil map here would panic the answer
 	// hook rather than degrade.
 	s.reviewRuns = newReviewRunners()
+	s.diffs = newDiffCache()
 	if cfg.DataDir != "" {
 		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))
 		s.prReviews = newPRReviewStore(filepath.Join(cfg.DataDir, "prreviews.json"))

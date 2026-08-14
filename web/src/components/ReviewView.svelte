@@ -1,7 +1,15 @@
 <script lang="ts">
   import { tick } from 'svelte'
   import { app } from '../lib/app.svelte'
-  import { reviewDraft, postReview, PHASE_LABEL, type ReviewDraft, type ReviewEdit, type Severity } from '../lib/api'
+  import {
+    reviewDraft,
+    postReview,
+    closeSession,
+    PHASE_LABEL,
+    type ReviewDraft,
+    type ReviewEdit,
+    type Severity,
+  } from '../lib/api'
   import { workedFor } from '../lib/sidebar'
   import { severityLabel, SEVERITIES } from '../lib/severity'
   import { ordered, decide, type Edits, type FindingEdit } from '../lib/review'
@@ -190,7 +198,10 @@
         summaryEdit ?? '',
       )
       draft = { ...(draft as ReviewDraft), posted_url: res.url }
-      toasts.done('Review posted.', { label: 'Open on GitHub', run: () => window.open(res.url, '_blank') })
+      // No toast. The whole screen changes to say it landed, and a floating
+      // notice on top of that is the app telling you twice: once in the place
+      // you were looking and once over the top of it. A toast is for something
+      // that happened where you are NOT looking.
     } catch (e) {
       // A toast, not a line at the end of the list. Post is a button in the bar
       // at the BOTTOM of the screen and the findings above it scroll, so the
@@ -201,6 +212,27 @@
     } finally {
       posting = false
     }
+  }
+
+  // Ending the review: the agent and its throwaway checkout go, the draft stays.
+  //
+  // Worth being precise about, because "close" on anything else in kunai means
+  // "stop this work" and here it does not. The findings are on disk, the review
+  // reopens from Recent, and what actually ends is a CLI process sitting idle in
+  // a worktree that the sweeper would otherwise take twenty minutes to notice.
+  let finishing = $state(false)
+  async function finish() {
+    if (finishing) return
+    finishing = true
+    try {
+      await closeSession(base, sessionId)
+      app.closeTabFor(machineId, sessionId, { ended: true })
+    } catch (e) {
+      toasts.error((e as Error).message)
+    } finally {
+      finishing = false
+    }
+    app.back()
   }
 
   // A review is a rhythm: move, judge, move. Ignored while typing, and absent on
@@ -251,6 +283,14 @@
 
 <div class="rv">
   <header class="top">
+    <!-- The way out. A review takes the whole window, so this header is the only
+         navigation on screen and it has to carry it: back to where you came
+         from, and done with this review entirely. -->
+    <button class="back" onclick={() => app.back()} title="Back to your sessions">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7" /></svg>
+      <span class="bl">Sessions</span>
+    </button>
+
     <div class="ident">
       {#if draft}
         <span class="repo mono">{draft.owner}/{draft.repo}#{draft.number}</span>
@@ -259,7 +299,23 @@
         <span class="repo mono">Review</span>
       {/if}
     </div>
-    <button class="conv" onclick={() => (app.reviewChat = true)}>Conversation</button>
+
+    <div class="tacts">
+      <button class="conv" onclick={() => (app.reviewChat = true)}>Conversation</button>
+      <!-- Not an X. An X says "make this go away" and gives no hint what goes
+           with it, which on a review that has not been posted is exactly the
+           wrong impression: the draft is on disk and survives, the agent and its
+           checkout are what end. So the control is LABELLED, and it says which
+           of those two things is happening. -->
+      <button class="fin" class:done={posted} onclick={finish} disabled={finishing}>
+        <span class="ring" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            {#if posted}<path d="M5 12.5l4.5 4.5L19 7.5" />{:else}<path d="M7 7l10 10M17 7L7 17" />{/if}
+          </svg>
+        </span>
+        {posted ? 'Done' : 'Close review'}
+      </button>
+    </div>
   </header>
 
   <div class="body">
@@ -285,7 +341,23 @@
         the conversation and ask it to answer again in the required format.
       </p>
     {:else if !loaded}
-      <p class="empty">Loading&hellip;</p>
+      <!-- The shape of what is coming, rather than the word "Loading".
+           A review that finished an hour ago is a static document on disk, so
+           this is a fraction of a second now that the diff behind it is cached;
+           a skeleton keeps that moment from being a flash of the word "Loading"
+           and stops the page jumping when the real thing lands. -->
+      <div class="skel" aria-label="Loading the review" aria-busy="true">
+        <div class="sk head"></div>
+        <div class="sk pip"></div>
+        <div class="sk line"></div>
+        <div class="sk line short"></div>
+        {#each [0, 1, 2] as i (i)}
+          <div class="sk row">
+            <div class="sk gut"></div>
+            <div class="sk claim"></div>
+          </div>
+        {/each}
+      </div>
     {:else if !draft}
       <p class="empty">This session is not a pull-request review.</p>
     {:else if !findings.length && !running && draft.phase && draft.phase !== 'done'}
@@ -366,6 +438,7 @@
             open={openIndex === f.index}
             dropped={dropped.has(f.index)}
             cursor={i === cursor}
+            sent={posted}
             position={i + 1}
             total={shown.length}
             edit={edits[f.index]}
@@ -426,6 +499,12 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .tacts {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: none;
+  }
   .conv {
     flex: none;
     padding: 6px 13px;
@@ -438,12 +517,153 @@
     background: var(--panel);
   }
 
+  /* The way back, on the left where a back control belongs, labelled because
+     this header is the only navigation on screen once the review takes the
+     window. The label folds away when there is no room for it. */
+  .back {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex: none;
+    padding: 6px 12px 6px 9px;
+    margin-right: 4px;
+    border-radius: 999px;
+    color: var(--text-3);
+    font-size: 12.5px;
+  }
+  .back:hover {
+    color: var(--text);
+    background: var(--panel);
+  }
+
+  /* Ending the review. Deliberately not a bare X in a corner: an X says "make
+     this go away" and says nothing about what goes with it, which here is the
+     agent and its throwaway checkout and NOT the findings. The ring holds the
+     mark and turns over to a tick once the review has been posted, so the same
+     control reads as "abandon this" before and "that is finished" after. */
+  .fin {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 14px 5px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    font-size: 12.5px;
+    font-weight: 550;
+  }
+  .ring {
+    display: grid;
+    place-items: center;
+    width: 21px;
+    height: 21px;
+    border-radius: 50%;
+    border: 1px solid var(--border-2);
+    color: var(--text-4);
+    transition: transform 0.16s, color 0.16s, border-color 0.16s;
+  }
+  .fin:hover {
+    color: var(--text);
+    border-color: var(--border-2);
+  }
+  .fin:hover .ring {
+    color: var(--text);
+    border-color: currentColor;
+    /* A quarter turn: the mark completes into an X on the way out, which is a
+       small thing that makes the control feel answered rather than merely
+       clicked. */
+    transform: rotate(90deg);
+  }
+  .fin.done {
+    color: var(--live);
+    border-color: color-mix(in srgb, var(--live) 45%, var(--border));
+  }
+  .fin.done .ring {
+    color: var(--live);
+    border-color: color-mix(in srgb, var(--live) 55%, var(--border-2));
+  }
+  .fin.done:hover .ring {
+    transform: none;
+  }
+  .fin:disabled {
+    opacity: 0.5;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ring {
+      transition: none;
+    }
+    .fin:hover .ring {
+      transform: none;
+    }
+  }
+
+  /* The shape of what is coming. */
+  .skel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-top: 4px;
+  }
+  .sk {
+    border-radius: 6px;
+    background: linear-gradient(90deg, var(--panel) 25%, var(--panel-2) 50%, var(--panel) 75%);
+    background-size: 260% 100%;
+    animation: shimmer 1.5s linear infinite;
+  }
+  @keyframes shimmer {
+    to {
+      background-position: -260% 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sk {
+      animation: none;
+    }
+  }
+  .sk.head {
+    height: 34px;
+    width: 46%;
+    border-radius: 8px;
+  }
+  .sk.pip {
+    height: 11px;
+    width: 22%;
+    margin-bottom: 6px;
+  }
+  .sk.line {
+    height: 13px;
+    width: 92%;
+  }
+  .sk.line.short {
+    width: 64%;
+    margin-bottom: 14px;
+  }
+  .sk.row {
+    display: grid;
+    grid-template-columns: 92px 1fr;
+    gap: 18px;
+    background: none;
+    animation: none;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .sk.gut {
+    height: 30px;
+  }
+  .sk.claim {
+    height: 30px;
+    width: 78%;
+  }
+
   .body {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
     padding: 18px 18px 32px;
-    max-width: 860px;
+    /* Wider than a chat column, because the review now has the whole window and
+       a finding is a claim beside a gutter beside its code, not a paragraph.
+       Still capped: prose set to 1900px is not read, it is scanned past. */
+    max-width: 1120px;
     width: 100%;
     margin: 0 auto;
   }

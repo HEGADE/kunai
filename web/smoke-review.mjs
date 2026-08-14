@@ -162,6 +162,19 @@ const head = (await page.locator('.top').innerText()).toLowerCase()
 if (!head.includes('lyzr/kunai#128')) fail(`the header does not name the pull request: ${head}`)
 if (!head.includes('conversation')) fail('there is no way through to the conversation')
 
+// A review takes the WHOLE window: the session list beside it is a list of
+// things you are deliberately not doing. That makes this header the only
+// navigation on screen, so it has to carry both ways out.
+if (await page.locator('aside.sidebar').isVisible().catch(() => false)) {
+  fail('the session sidebar is still taking a third of the review')
+}
+if (!(await page.locator('.top .back').count())) fail('a full-window review has no way back')
+// And a way to END it. Not a bare X in a corner: it is labelled, because what
+// goes is the agent and its checkout, and what stays is the draft.
+const fin = page.locator('.top .fin')
+if (!(await fin.count())) fail('there is no way to close the review')
+if (!/close review/i.test(await fin.innerText())) fail(`the close control is unlabelled: ${await fin.innerText()}`)
+
 // Three findings. Rows now, not cards: one finding used to fill a laptop screen
 // with its body, its evidence and a thirteen-line hunk, so the review could not
 // be seen at all. Collapsed rows are what make it a list you work through.
@@ -455,6 +468,41 @@ if ((await trail.locator('li.done').count()) !== 2) fail('the trail does not sho
 // And no action bar, because there is nothing yet to decide about.
 if (await page.locator('.bar').count()) fail('a running review offered a Post button')
 await page.screenshot({ path: '/tmp/review-running.png', fullPage: true })
+
+// 11b. Posting changes the whole screen, so nothing floats over the top of it.
+//
+// A toast is for something that happened where you are NOT looking. The bar
+// becomes a receipt and the close control becomes Done; a notice on top of that
+// is the app telling you the same thing twice.
+await page.setViewportSize({ width: 1280, height: 900 })
+await page.route('**/api/sessions/*/review/post', (route) =>
+  route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ url: 'https://example.test/pr/1' }) }),
+)
+await page.route('**/api/sessions/*/review', (route) =>
+  route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      owner: 'lyzr', repo: 'kunai', number: 128, title: 'T', head_sha: 'a', from_fork: false,
+      phase: 'done', summary: 'ok',
+      findings: [{ index: 0, file: 'a.go', line: 1, side: 'RIGHT', severity: 'minor', confidence: 'high',
+        verified: true, inline: true, title: 'one', body: 'b' }],
+    }),
+  }),
+)
+await page.goto(url)
+await page.waitForTimeout(1200)
+await page.locator(".row:has(.node:not([data-state='past']))").first().click()
+await page.waitForTimeout(1500)
+await page.locator('.post').click()
+await page.waitForTimeout(800)
+if (await page.locator('.toast').count()) fail('posting raised a toast over a screen that already says it landed')
+if (!(await page.locator('.bar.sent').count())) fail('the bar does not become a receipt once the review is posted')
+if (await page.locator('.bar .keys').count()) fail('the keyboard hints survive a posted review, where there is nothing left to decide')
+if (!/done/i.test(await page.locator('.top .fin').innerText())) fail('the close control does not become Done once posted')
+// Every decision is spent: offering Drop on a finding that is already public is
+// offering to change something that has left the building.
+if (await page.locator('.row .drop').count()) fail('a posted review still offers to drop its findings')
 
 // 12. The dashboard row tells the truth about a review it did not start.
 //

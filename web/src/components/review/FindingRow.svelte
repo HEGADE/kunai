@@ -32,6 +32,7 @@
     open,
     dropped,
     cursor,
+    sent,
     position,
     total,
     edit,
@@ -44,6 +45,9 @@
     open: boolean
     dropped: boolean
     cursor: boolean
+    // Sent already. Every decision on this card is spent, so offering Drop and
+    // Edit is offering to change something that has left the building.
+    sent: boolean
     // Where this sits in the deck, 1-based. A reader working through a review
     // needs to know how much is left, and nothing else on the card says.
     position: number
@@ -171,12 +175,16 @@
         {/if}
 
         <div class="acts">
-          <button class="drop" class:on={dropped} onclick={ondrop}>{dropped ? 'Put it back' : 'Drop'}</button>
-          <button class="quiet" onclick={() => (editing = true)}>Edit the wording</button>
+          {#if !sent}
+            <button class="drop" class:on={dropped} onclick={ondrop}>{dropped ? 'Put it back' : 'Drop'}</button>
+            <button class="quiet" onclick={() => (editing = true)}>Edit the wording</button>
+          {/if}
+          <!-- Still worth having once it is posted: arguing with a finding that
+               is now public is exactly when you most want to. -->
           <button class="quiet ask" onclick={onask}>Ask about this &rarr;</button>
         </div>
       {/if}
-    {:else}
+    {:else if !sent}
       <!-- Closed, the decision still has to be reachable: triage must never
            require opening anything. -->
       <button class="drop tight" class:on={dropped} onclick={ondrop}>{dropped ? 'Put it back' : 'Drop'}</button>
@@ -342,6 +350,7 @@
   .clamped {
     display: -webkit-box;
     -webkit-line-clamp: 4;
+    line-clamp: 4;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }

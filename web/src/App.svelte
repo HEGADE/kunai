@@ -41,6 +41,9 @@
   let reviewOf = $state<Record<string, boolean>>({})
   const key = $derived(app.chat ? `${app.activeMachineId}:${app.chat.sessionId}` : '')
   const isReview = $derived(!!key && reviewOf[key] === true)
+  // The review takes the window. Not while you are arguing with it in the chat:
+  // that is an ordinary conversation and wants the ordinary shell around it.
+  const reviewFull = $derived(isReview && !app.reviewChat)
   $effect(() => {
     const k = key
     const chat = app.chat
@@ -72,10 +75,16 @@
      which on a phone is what decides whether the sidebar or the pane is on
      screen. A session used to be the only thing that could claim it; Usage is a
      route now, so it claims it too. -->
+<!-- A review takes the whole window.
+     It is a reading surface with two columns of its own and a decision to make
+     at the end of it, and the session list beside it is a list of things you are
+     deliberately not doing right now. Nothing in the sidebar is reachable from
+     inside a review anyway: the way out is the review's own header, which is why
+     that header had to grow one. -->
 <div
   class="shell"
   data-full={app.chat || app.view ? 'true' : undefined}
-  class:collapsed={!app.sidebarOpen}
+  class:collapsed={!app.sidebarOpen || reviewFull}
 >
   <aside class="sidebar"><Sidebar /></aside>
   <main class="main">
