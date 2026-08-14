@@ -310,7 +310,61 @@ const barBox = await page.locator('.bar').boundingBox()
 if (!barBox || barBox.width > 390) fail('the action bar overflows a phone')
 await page.screenshot({ path: '/tmp/review-phone.png', fullPage: true })
 
-// 10. A review IN PROGRESS, which is the screen somebody actually stares at:
+// 9b. Arguing with the reviewer is not a one-way door.
+//
+// "Ask about this" swaps the findings for the transcript, and nothing swapped
+// them back: the only way to return to the thing you were deciding about was to
+// close the session and reopen it. The whole reason to argue with a finding is
+// to then act on it.
+await page.setViewportSize({ width: 1280, height: 900 })
+await page.waitForTimeout(300)
+await rows.first().locator('.disc').click()
+await page.waitForTimeout(250)
+await rows.first().locator('button:has-text("Ask about this")').click()
+await page.waitForTimeout(600)
+if (await page.locator('.rv').count()) fail('Ask about this did not open the conversation')
+const back = page.locator('.abtn.findings')
+if (!(await back.count())) fail('there is no way back to the findings from the conversation')
+await back.click()
+await page.waitForTimeout(600)
+if (!(await page.locator('.rv').count())) fail('the way back to the findings did not work')
+
+// 10. A failure is a TOAST, not a line at the end of the list.
+//
+// Post is a button in the bar at the bottom and the findings above it scroll, so
+// the reason it failed was being rendered somewhere the reader was not looking
+// and styled like a footnote. "This pull request has moved on" is the most
+// important sentence on the screen at that moment.
+await page.locator('.bact:has-text("Keep all")').click()
+await page.waitForTimeout(250)
+await page.route('**/api/sessions/*/review/post', (route) =>
+  route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'the bot is not installed here' }) }),
+)
+await page.locator('.post').click()
+await page.waitForTimeout(700)
+const toast = page.locator('.toast.error')
+if (!(await toast.count())) fail('a failed post said nothing where the reader was looking')
+if (!(await toast.innerText()).toLowerCase().includes('not installed')) {
+  fail(`the toast does not carry the reason: ${await toast.innerText()}`)
+}
+// Above the fold, which is the entire point: it must not need scrolling to.
+const tBox = await toast.boundingBox()
+if (!tBox || tBox.y > 200) fail(`the toast is not where the reader is looking (y=${tBox?.y})`)
+// An error waits to be read rather than removing itself mid-sentence.
+await page.waitForTimeout(5000)
+if (!(await toast.count())) fail('the error dismissed itself while it was being read')
+// Pressing a failing button again is one problem, not two.
+await page.locator('.post').click()
+await page.waitForTimeout(700)
+if ((await page.locator('.toast').count()) !== 1) {
+  fail(`pressing a failing button twice stacked ${await page.locator('.toast').count()} toasts`)
+}
+await page.locator('.toast .x').click()
+await page.waitForTimeout(300)
+if (await page.locator('.toast').count()) fail('a toast could not be dismissed')
+await page.unroute('**/api/sessions/*/review/post')
+
+// 11. A review IN PROGRESS, which is the screen somebody actually stares at:
 // the phases run for minutes and there is nothing else on the page. A spinner
 // and a clock cannot tell working from hung, so the wait reads as a hang.
 await page.setViewportSize({ width: 1280, height: 900 })

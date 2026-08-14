@@ -12,6 +12,8 @@
   import BlockView from './components/BlockView.svelte'
   import Spinner from './components/Spinner.svelte'
   import Lightbox from './components/Lightbox.svelte'
+  import Toast from './components/Toast.svelte'
+  import { toasts } from './lib/toast.svelte'
   import { FILE_BASE, sharedImageBase } from './lib/filebase'
   import FileChips from './components/FileChips.svelte'
   import type { Attachment } from './lib/types'
@@ -42,6 +44,18 @@
 
   const running = $derived(g.sessionState === 'running')
   const awaiting = $derived(g.sessionState === 'awaiting_permission')
+
+  // Raised where the guest is looking rather than appended to the transcript.
+  // This column pins itself to the bottom and grows constantly, so a red line at
+  // the end of it is the one place a message can be both present and missed.
+  // A link that has expired is a different thing and stays a full-page message
+  // (see g.gone): that is the end of the session, not a failed action.
+  $effect(() => {
+    const line = g.errorLine
+    if (!line) return
+    g.errorLine = ''
+    toasts.error(line)
+  })
 
   async function askToJoin() {
     asking = true
@@ -197,6 +211,7 @@
      it, clicking to expand would do nothing here while working in the owner's
      view, which is worse than not offering it. -->
 <Lightbox />
+<Toast />
 
 <div class="page">
   <header>
@@ -267,7 +282,6 @@
       {#if awaiting}
         <p class="waiting">Waiting for the owner to approve something.</p>
       {/if}
-      {#if g.errorLine}<p class="err">{g.errorLine}</p>{/if}
       </div>
     </main>
 
@@ -503,11 +517,6 @@
     margin: 0;
     font-size: 12.5px;
     color: var(--busy);
-  }
-  .err {
-    margin: 0;
-    font-size: 12.5px;
-    color: var(--alert);
   }
   footer {
     position: relative; /* the jump pill anchors to this edge */

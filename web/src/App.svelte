@@ -13,6 +13,7 @@
   import { applyThemeColor, themeColorFor } from './lib/themeColor'
   import PinGate from './components/PinGate.svelte'
   import Lightbox from './components/Lightbox.svelte'
+  import Toast from './components/Toast.svelte'
   import { lanPin } from './lib/lanpin.svelte'
 
   // Keep the browser's own chrome (the status bar behind the notch, the address
@@ -65,6 +66,7 @@
 <!-- One viewer for every picture in the app; see lib/lightbox.svelte.ts for why
      it is not per-message state. Renders nothing until an image asks to be shown. -->
 <Lightbox />
+<Toast />
 
 <!-- data-full marks "the main pane is showing a whole view, not the dashboard",
      which on a phone is what decides whether the sidebar or the pane is on

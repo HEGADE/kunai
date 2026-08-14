@@ -93,6 +93,12 @@ func demotionReason(f Finding, anchors *Anchors) string {
 	if f.File == "" || f.Line <= 0 {
 		return "no file and line, so it belongs in the summary"
 	}
+	// Checked before the anchor questions because it is the more specific truth
+	// and leads somewhere different: this line may well still be commentable, and
+	// commenting on it would put the finding against code it was never about.
+	if f.Stale {
+		return "the code this is about has changed since the review read it"
+	}
 	if anchors == nil || !anchors.Touches(f.File) {
 		return "this pull request does not change " + f.File
 	}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick, setContext, untrack } from 'svelte'
   import { app } from '../lib/app.svelte'
+  import { toasts } from '../lib/toast.svelte'
   import { FILE_BASE, fileBaseFor } from '../lib/filebase'
   import { uploadFile, getProviderModels, getShare } from '../lib/api'
   import type { ChatConnection } from '../lib/chat.svelte'
@@ -37,6 +38,24 @@
   import Hint from './Hint.svelte'
 
   let { chat }: { chat: ChatConnection } = $props()
+
+  // An error the server sent is raised as a toast rather than appended to the
+  // log, and that is a fix for two things at once.
+  //
+  // It used to render as a red line after the last turn, INSIDE the scrolling
+  // area, so a refusal you needed to see (the server declining to enter Yolo on
+  // a shared session, say) arrived wherever you happened to be scrolled to. And
+  // it was never cleared, so it stayed at the end of the conversation for the
+  // rest of the session, long after it stopped being true.
+  //
+  // Cleared as it is raised, which makes it a one-shot: the toast now owns how
+  // long it lives, and an error is the one kind that waits to be dismissed.
+  $effect(() => {
+    const line = chat.errorLine
+    if (!line) return
+    chat.errorLine = ''
+    toasts.error(line)
+  })
 
   // An image path the agent wrote resolves against THIS session on ITS machine.
   // Published once here, read wherever markdown is rendered (see lib/filebase).
@@ -448,6 +467,25 @@
          at a glance; a phone drops to coloured icons. Close is icon-only and
          alert-red, set apart by a hairline, so a terminal action stands out. -->
     <div class="actions">
+      <!-- The way back to a review's findings.
+           Without it, arguing with the reviewer was a one-way door: "Ask about
+           this" swapped the findings for the transcript and nothing anywhere
+           swapped them back, so the only way to return to the thing you were
+           deciding about was to close the session and reopen it. app.reviewChat
+           is only ever true for a review (it is reset whenever the session
+           changes), so its truth is the whole condition and Chat needs to know
+           nothing else about reviews. -->
+      {#if app.reviewChat}
+        <button
+          class="abtn findings"
+          onclick={() => (app.reviewChat = false)}
+          aria-label="Back to the findings"
+          title="Back to the findings"
+        >
+          <span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11" /><path d="M4 6l1 1 2-2" /><path d="M4 12l1 1 2-2" /><path d="M4 18l1 1 2-2" /></svg></span>
+          <span class="albl">Findings</span>
+        </button>
+      {/if}
       <!-- Shared is a state, not just an action, so the button says so at rest:
            a link you forgot you made is the failure this feature has to avoid. -->
       <button
@@ -605,8 +643,6 @@
             </div>
           </div>
         {/if}
-
-        {#if chat.errorLine}<div class="err mono">{chat.errorLine}</div>{/if}
 
       </div>
     {/if}
@@ -1001,6 +1037,12 @@
     display: flex;
   }
   /* One hue per action, so the row reads by colour as well as shape. */
+  /* The only NAVIGATION in this row, and it reads as one: white rather than a
+     hue of its own, because it goes back to where you came from rather than
+     doing something to the session. */
+  .abtn.findings .ic {
+    color: var(--text);
+  }
   .abtn.add .ic {
     color: #8698ad;
   }
@@ -1197,11 +1239,6 @@
       opacity: 0;
     }
   }
-  .err {
-    color: var(--alert);
-    font-size: 12.5px;
-  }
-
   .ratebanner {
     max-width: 720px;
     margin: 0 auto;

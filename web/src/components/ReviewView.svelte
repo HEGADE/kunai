@@ -1,11 +1,13 @@
 <script lang="ts">
+  import { tick } from 'svelte'
   import { app } from '../lib/app.svelte'
   import { reviewDraft, postReview, PHASE_LABEL, type ReviewDraft, type ReviewEdit, type Severity } from '../lib/api'
   import { workedFor } from '../lib/sidebar'
   import { severityLabel, SEVERITIES } from '../lib/severity'
-  import { ordered, decide, effectiveSeverity, type Edits, type FindingEdit } from '../lib/review'
+  import { ordered, decide, type Edits, type FindingEdit } from '../lib/review'
   import FindingRow from './review/FindingRow.svelte'
   import PhaseTrail from './review/PhaseTrail.svelte'
+  import { toasts } from '../lib/toast.svelte'
   import RefutedList from './review/RefutedList.svelte'
   import ReviewBar from './review/ReviewBar.svelte'
 
@@ -40,7 +42,6 @@
   let openIndex = $state(-1)
   let opened = false
   let posting = $state(false)
-  let err = $state('')
   let loaded = $state(false)
 
   const base = $derived(app.baseForMachine(machineId))
@@ -91,7 +92,17 @@
 
   $effect(() => {
     void sessionId
+    // Reset per review, or opening a second one leaves it as a list of closed
+    // lines because the first already spent the one-shot.
+    opened = false
     void load()
+  })
+  // Keep the cursor inside the list. Filtering, dropping and overruling a
+  // severity all change what is shown, and a cursor left past the end silently
+  // stops the keyboard working: j, k and d all resolve against shown[cursor],
+  // so they would do nothing at all with no visible reason why.
+  $effect(() => {
+    if (cursor > shown.length - 1) cursor = Math.max(0, shown.length - 1)
   })
   // Re-read when the turn ends, which is when one phase finishes and the next
   // begins. A phased review reports several times, not once.
@@ -146,7 +157,6 @@
   async function post() {
     if (posting || posted) return
     posting = true
-    err = ''
     try {
       const payload: ReviewEdit[] = Object.entries(edits).map(([index, e]) => ({
         index: Number(index),
@@ -162,8 +172,14 @@
         summaryEdit ?? '',
       )
       draft = { ...(draft as ReviewDraft), posted_url: res.url }
+      toasts.done('Review posted.', { label: 'Open on GitHub', run: () => window.open(res.url, '_blank') })
     } catch (e) {
-      err = (e as Error).message
+      // A toast, not a line at the end of the list. Post is a button in the bar
+      // at the BOTTOM of the screen and the findings above it scroll, so the
+      // reason it failed was being rendered somewhere the reader was not looking
+      // and styled like a footnote. It is the most important sentence on the
+      // screen at that moment.
+      toasts.error((e as Error).message)
     } finally {
       posting = false
     }
@@ -171,11 +187,16 @@
 
   // A review is a rhythm: move, judge, move. Ignored while typing, and absent on
   // a phone where scrolling and tapping is the whole interaction.
-  function move(by: number) {
+  async function move(by: number) {
     if (!shown.length) return
     cursor = Math.min(Math.max(cursor + by, 0), shown.length - 1)
-    openIndex = shown[cursor].index
-    document.getElementById(`f-${shown[cursor].index}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    const index = shown[cursor].index
+    openIndex = index
+    // After the DOM has grown the newly-opened row. Scrolling first measures the
+    // collapsed height, so `nearest` decides it is already in view and leaves
+    // most of the finding you just moved to below the fold.
+    await tick()
+    document.getElementById(`f-${index}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }
 
   function onKey(e: KeyboardEvent) {
@@ -340,7 +361,6 @@
       <RefutedList items={refuted} />
     {/if}
 
-    {#if err}<p class="err">{err}</p>{/if}
   </div>
 
   {#if draft && !reviewing && !draft.parse_error}
@@ -596,12 +616,6 @@
     font-size: 13.5px;
     line-height: 1.68;
     color: var(--text-3);
-  }
-  .err {
-    margin: 16px 0 0;
-    font-size: 12.5px;
-    line-height: 1.6;
-    color: var(--alert);
   }
 
   @media (max-width: 560px) {

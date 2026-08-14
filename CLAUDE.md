@@ -676,6 +676,32 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   finished review reopened later has a session reporting `starting` while it resumes.
   The verdict counts the EDITED severity, or overruling the only blocker still
   announces a blocker.
+  **A pull request that moved is re-anchored, not refused** (`reanchor.go`).
+  Posting used to stop dead with "#5 has moved on since this review (now
+  8c802e4d); review it again before posting", throwing away a review that cost
+  minutes and dollars over a commit that in the ordinary case touched no line any
+  finding was about. A finding is about a line of CODE; the line NUMBER is only
+  how GitHub is told where to put the comment, and it is the only part a push
+  invalidates. So `finishReview` records `Finding.Quote`, the text of the lines
+  each finding anchors to, captured from the diff that was READ (the only moment
+  it is still in hand), and posting finds that text again in the current diff and
+  moves the comment onto it. A rebase that shifts everything by twelve lines then
+  costs nothing. Ambiguous text takes the nearest match, since lines shift by a
+  few rather than teleport. Only a finding whose code has genuinely changed is
+  held back (`Finding.Stale`), demoted to the summary saying so rather than
+  posted onto whatever now occupies its old line, which is the one case the
+  refusal was really protecting against and is a property of one finding rather
+  than of the whole review. Permalinks still point at the commit that was read,
+  because that is where the code a finding describes actually is, while
+  `CommitID` becomes the CURRENT head, because that is the diff the line numbers
+  now refer to. A review whose head moved says so in its body (`MovedNote`): the
+  author is entitled to know an older commit was read, since that is the one
+  thing that could make an otherwise correct finding wrong.
+  A second click **joins a review only while it is still working**
+  (`reviewInFlight`). It used to join any review whose SESSION was live, and a
+  finished review's session stays live by design, so asking for a fresh review
+  after a push handed back the old draft at the old commit -- exactly when a new
+  reading is most wanted.
   The surface is a **deck you triage**, not a document you read, and that is a
   rewrite of one that was correct and unusable. It showed every part of every
   finding at full size at once -- a wall of body prose, a block of evidence, a
@@ -1666,6 +1692,22 @@ component behind for ever. The cost is fi/fl in sans prose at 12-13px, which is
 not perceptible; the serif Claude's markdown is set in gets them back, where the
 type is large enough to tell.
 
+- **A failed action is a toast, never a line in the scroll area**
+  (`lib/toast.svelte.ts`, `components/Toast.svelte`, one mounted per entry
+  point beside `<Lightbox />` and for the same reason). Three surfaces were
+  appending errors to the end of a scrolling column: the review (Post is a
+  button in the bar at the BOTTOM, so the reason it failed rendered above it,
+  after however many findings there were, styled like a footnote), the chat
+  (`chat.errorLine`, which was also never cleared, so a refusal stayed at the
+  end of the conversation long after it stopped being true), and the guest page.
+  Toasts sit at the TOP centre, which is chosen for this app rather than copied:
+  kunai's primary actions are all at the bottom, so a sticky error in the usual
+  bottom corner would sit on top of the button you press to try again. An ERROR
+  does not auto-dismiss, because it is the answer to something you asked for and
+  usually names what to do next; anything else does. Identical messages collapse
+  rather than stack, since pressing a failing button three times is one problem.
+  An error next to the FIELD that caused it (a dialog, a form) stays where it is:
+  that is validation, and a toast is worse for it.
 - The composer floats on the canvas with no full-width divider or band; the
   field's own edge defines it. The chat header is the exception: it is short and
   ghost-buttoned (no chrome at rest, a panel fill on hover) and sits on a hairline

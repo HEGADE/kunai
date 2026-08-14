@@ -321,3 +321,36 @@ func TestSummaryEditIsOptional(t *testing.T) {
 		t.Errorf("summary = %q, want the edit", got.Summary)
 	}
 }
+
+// Clicking Review twice in quick succession must join the run in flight rather
+// than start a second one: two sessions, two worktrees, two lots of quota, and
+// two drafts of which only one can ever be posted.
+func TestASecondClickJoinsAReviewStillWorking(t *testing.T) {
+	for _, phase := range []string{"survey", "find", "verify"} {
+		if !reviewInFlight(prReview{Phase: phase}) {
+			t.Errorf("a review in the %s phase was not treated as in flight", phase)
+		}
+	}
+}
+
+// But a review that has ANSWERED must not be joined, and this is the case that
+// was wrong. A finished review's session stays alive on purpose (it is a
+// conversation you can argue with), so testing the session made a completed
+// draft block re-reviewing the same pull request. Asking again after somebody
+// pushes is the one moment a fresh reading is most wanted.
+func TestAFinishedReviewDoesNotBlockAFreshOne(t *testing.T) {
+	cases := []struct {
+		name string
+		rec  prReview
+	}{
+		{"a finished draft", prReview{Phase: "done", Draft: &review.Draft{}}},
+		{"a draft while the phase still says verify", prReview{Phase: "verify", Draft: &review.Draft{}}},
+		{"an unreadable answer", prReview{Phase: "done", ParseError: "the reply contains no review block"}},
+		{"a record from before phases existed", prReview{}},
+	}
+	for _, c := range cases {
+		if reviewInFlight(c.rec) {
+			t.Errorf("%s was treated as still in flight, so a new review would be refused", c.name)
+		}
+	}
+}

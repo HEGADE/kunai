@@ -74,19 +74,24 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 		return nil, err
 	}
 
-	// A review already running for this pull request is handed back rather than
-	// joined by a second one. Clicking Review twice, or clicking it again after a
-	// push moved the head, otherwise started another whole run: two sessions with
-	// the same name in the sidebar, two worktrees, two lots of quota, and two
-	// drafts of which only one can ever be posted. Bounded to a LIVE session, so
-	// a finished review never blocks re-reviewing at a new commit.
+	// A review still WORKING on this pull request is handed back rather than
+	// joined by a second one. Clicking Review twice otherwise started another
+	// whole run: two sessions with the same name in the sidebar, two worktrees,
+	// two lots of quota, and two drafts of which only one can ever be posted.
+	//
+	// Bounded to a review that has not finished, which is narrower than it was
+	// and had to be. It used to reuse any review whose SESSION was live, and a
+	// finished review's session stays live by design (it is an ordinary
+	// conversation you can argue with), so asking for a fresh review after a push
+	// handed back the old draft at the old commit. That is precisely when
+	// somebody wants a new one.
 	if s.prReviews != nil {
 		for _, rec := range s.prReviews.all() {
 			if rec.Number != number || !strings.EqualFold(rec.Owner, repo.Owner) || !strings.EqualFold(rec.Repo, repo.Name) {
 				continue
 			}
-			if rec.Posted() {
-				continue
+			if !reviewInFlight(rec) {
+				continue // it has an answer; a new click means a new reading
 			}
 			if sess, live := s.mgr.Get(rec.SessionID); live {
 				log.Printf("pr review: %s#%d is already being reviewed in session %s; reusing it", repo, number, rec.SessionID)
@@ -222,6 +227,24 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 		return nil, fmt.Errorf("the review session was created but would not start: %w", err)
 	}
 	return sess, nil
+}
+
+// reviewInFlight reports whether a review is still working on its answer, which
+// is the only state in which a second click should join it rather than start a
+// new reading.
+//
+// Deliberately not "is its session alive". A finished review's session stays
+// alive on purpose, because it is a conversation you can argue with, so that
+// test made a completed draft block re-reviewing the same pull request for as
+// long as the tab stayed open. Asking again after a push is exactly when a fresh
+// reading is wanted, and it is the one moment that rule refused it.
+func reviewInFlight(rec prReview) bool {
+	if rec.Draft != nil || rec.ParseError != "" {
+		return false // it produced an answer, good or bad
+	}
+	// An empty phase is a record from before phases existed, which cannot be in
+	// flight: nothing is driving it any more.
+	return rec.Phase != "" && rec.Phase != string(review.PhaseDone)
 }
 
 // tagReviewRepos points a review session at the repository it is reviewing.

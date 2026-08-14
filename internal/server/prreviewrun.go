@@ -128,7 +128,17 @@ func (s *Server) finishReview(sessionID string, holder *reviewRun) {
 	draft := holder.run.Draft()
 	dropped := holder.run.Dropped
 
-	plan := review.Build(draft, review.ParseDiff(toReviewFiles(holder.files)))
+	// What each finding quotes, captured HERE because here is the only place the
+	// diff that was actually read is still in hand. It is what lets the review be
+	// posted after somebody pushes: the comment is re-attached to the code rather
+	// than to the line number, which is the only part a push invalidates. See
+	// internal/review/reanchor.go.
+	files := toReviewFiles(holder.files)
+	for i := range draft.Findings {
+		draft.Findings[i].Quote = review.Quote(files, draft.Findings[i])
+	}
+
+	plan := review.Build(draft, review.ParseDiff(files))
 	total, inline, summary := plan.Counts()
 
 	s.prReviews.update(sessionID, func(rec *prReview) {

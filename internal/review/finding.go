@@ -68,6 +68,19 @@ type Finding struct {
 	// verification phase judges the claim against it, and because a finding whose
 	// reasoning is visible is one a person can overrule quickly.
 	Evidence string `json:"evidence,omitempty"`
+	// Quote is the text of the lines this finding is anchored to, captured from
+	// the diff that was read. Server-side only; it is never sent to a client.
+	//
+	// It exists so a review can still be posted after somebody pushes. A finding
+	// is about a line of CODE, and the line NUMBER is only how GitHub is told
+	// where to put the comment; a push invalidates the number and usually not the
+	// code. With the text remembered, the comment can be re-attached to wherever
+	// that code lives now. See reanchor.go.
+	Quote []string `json:"quote,omitempty"`
+	// Stale is set when the code this finding quotes is no longer in the diff, so
+	// it is demoted to the summary rather than posted onto whatever now occupies
+	// its old line.
+	Stale bool `json:"stale,omitempty"`
 	// Verified is true when an independent pass tried to refute this and failed.
 	//
 	// Its absence is not a black mark: a finding can skip verification by being

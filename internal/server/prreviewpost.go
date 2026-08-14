@@ -14,6 +14,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/hegade/kunai/internal/ghapp"
@@ -75,18 +76,23 @@ func (s *Server) postReview(ctx context.Context, sessionID string, keep []int, e
 			repo, rec.Number, when.Local().Format("15:04"))
 	}
 
-	// 2. Is the draft still about the code on the pull request? A push between
-	// reviewing and posting moves the head, and comments anchored to the old
-	// commit would land on lines nobody wrote.
+	// 2. Has the pull request moved since it was read? Almost always this is
+	// somebody pushing to an unrelated file, and it used to stop the post dead
+	// with "review it again", throwing away minutes of work and dollars of tokens
+	// over a commit that touched no line any finding was about.
+	//
+	// A finding is about a line of CODE; the line NUMBER is only how GitHub is
+	// told where to put the comment, and it is the only part a push invalidates.
+	// So each finding is re-attached to the text it quoted (reanchor.go), which
+	// makes a rebase that shifts everything by twelve lines cost nothing at all.
+	// Only a finding whose code has genuinely changed is held back, and only that
+	// one: it is demoted to the summary saying so, rather than posted onto
+	// whatever now occupies its old line.
 	pr, err := app.PullRequest(ctx, repo, rec.Number)
 	if err != nil {
 		return ghapp.SubmittedReview{}, err
 	}
-	if pr.Head.SHA != "" && !strings.EqualFold(pr.Head.SHA, rec.HeadSHA) {
-		return ghapp.SubmittedReview{}, fmt.Errorf(
-			"%s#%d has moved on since this review (now %s); review it again before posting",
-			repo, rec.Number, shortSHA(pr.Head.SHA))
-	}
+	moved := pr.Head.SHA != "" && !strings.EqualFold(pr.Head.SHA, rec.HeadSHA)
 
 	// 3. Does every comment anchor to a line the diff actually touches? GitHub
 	// rejects the WHOLE review over one bad line, so anything that cannot anchor
@@ -95,11 +101,28 @@ func (s *Server) postReview(ctx context.Context, sessionID string, keep []int, e
 	if err != nil {
 		return ghapp.SubmittedReview{}, err
 	}
-	plan := review.Build(kept(applyEdits(*rec.Draft, edits, summary), keep), review.ParseDiff(toReviewFiles(files)))
+	draft := kept(applyEdits(*rec.Draft, edits, summary), keep)
 
+	var rep review.ReanchorReport
+	if moved {
+		draft, rep = review.Reanchor(draft, toReviewFiles(files))
+		log.Printf("pr review: %s#%d moved from %s to %s; %d comment(s) unchanged, %d re-attached, %d now stale",
+			repo, rec.Number, shortSHA(rec.HeadSHA), shortSHA(pr.Head.SHA), rep.Unchanged, rep.Moved, rep.Stale)
+	}
+	plan := review.Build(draft, review.ParseDiff(toReviewFiles(files)))
+
+	// Permalinks still point at the commit that was READ, because that is where
+	// the code a finding describes actually is. The comments are placed against
+	// the CURRENT head, because that is the diff their line numbers now refer to;
+	// submitting an old commit id with new line numbers is how a review gets
+	// rejected wholesale.
 	meta := review.Meta{Owner: rec.Owner, Repo: rec.Repo, HeadSHA: rec.HeadSHA, Requester: rec.Requester}
+	commit := rec.HeadSHA
+	if moved && pr.Head.SHA != "" {
+		commit = pr.Head.SHA
+	}
 	req := ghapp.ReviewRequest{
-		CommitID: rec.HeadSHA,
+		CommitID: commit,
 		Event:    ghapp.EventComment,
 		Body:     review.Body(plan, meta),
 		Comments: comments(plan),
@@ -108,6 +131,12 @@ func (s *Server) postReview(ctx context.Context, sessionID string, keep []int, e
 		// Finding nothing is a result worth reporting: silence and "I looked, it
 		// is fine" are not the same message to the person waiting on a review.
 		req.Body = review.EmptyBody(meta)
+	}
+	if moved && rep.Any() {
+		// Said out loud. The author is entitled to know the reviewer read an
+		// older commit, because that is the one thing that could make an
+		// otherwise correct finding wrong.
+		req.Body = review.MovedNote(rec.HeadSHA, rep) + "\n\n" + req.Body
 	}
 
 	posted, err := app.SubmitReview(ctx, repo, rec.Number, req)
