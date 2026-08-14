@@ -205,6 +205,11 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 			Requester: requester, CreatedAt: time.Now(),
 			Phase:    string(run.Phase),
 			Surveyed: run.Phase == review.PhaseSurvey,
+			// What is under review, so the screen somebody watches while it runs
+			// can say so. It costs a few hundred bytes on the record and it is the
+			// difference between a progress line and a page.
+			Files:    diff.Files,
+			Timeline: []phaseStart{{Phase: string(run.Phase), At: time.Now()}},
 		})
 	}
 	s.reviewRuns.put(sess.ID, &reviewRun{

@@ -308,6 +308,13 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request) {
 		// progress display cannot work that out for itself once the review has
 		// moved on.
 		"surveyed": rec.Surveyed,
+		// What the reviewer decided to look at, what it is looking at, and when
+		// each phase began. None of this is needed to POST a review; all of it is
+		// what makes the minutes it runs for legible rather than a blank screen
+		// with a spinner on it.
+		"survey":   rec.Survey,
+		"files":    rec.Files,
+		"timeline": rec.Timeline,
 		// What verification refuted, with its reasons. Shown so the filtering can
 		// be audited: three findings from a reviewer that dropped four is a
 		// different thing from three findings from a reviewer that found three,

@@ -28,6 +28,7 @@ import (
 	"context"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/hegade/kunai/internal/ghapp"
 	"github.com/hegade/kunai/internal/review"
@@ -129,8 +130,19 @@ func (s *Server) advanceReview(sessionID, text string) {
 	}
 
 	prompt, brief, more := holder.run.Next()
+	now := time.Now()
 	s.prReviews.update(holder.owner, func(rec *prReview) {
 		rec.Phase = string(holder.run.Phase)
+		rec.beganPhase(rec.Phase, now)
+		// The survey, saved the moment it exists. It used to be built into the
+		// find prompt and dropped, which threw away the only account of what the
+		// reviewer decided to look at: the thing worth reading during the several
+		// minutes finding takes, and the thing to argue with when a review comes
+		// back having looked in the wrong place.
+		if holder.run.Survey.Intent != "" || len(holder.run.Survey.Areas) > 0 {
+			survey := holder.run.Survey
+			rec.Survey = &survey
+		}
 	})
 
 	if !more {

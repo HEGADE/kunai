@@ -777,13 +777,36 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   deciding must never require opening anything. The pure arithmetic is
   `web/src/lib/review.ts` (`ordered`, `decide`, `postLabel`), unit-tested in
   `web/tests/units.mjs`, and the pieces are `components/review/`:
-  `FindingRow`, `FindingEditor`, `Hunk`, `PhaseTrail`, `RefutedList`, `ReviewBar`.
+  `FindingRow`, `FindingEditor`, `Hunk`, `RunningReview`, `RefutedList`,
+  `ReviewBar`.
   `Hunk` trims to a few lines either side of the lines the claim is about and
   caps its height in px, since the anchor is generously sized and its context is
-  exactly what a reader skips. `PhaseTrail` exists because a phased review runs
-  for minutes with nothing else on the page: a spinner and a clock cannot tell
-  working from hung, so three named steps say what is happening, that there are
-  stages, and how many are left. It is drawn from the recorded phase, and
+  exactly what a reader skips.
+  `RunningReview` is the screen for the MINUTES a review takes, and it is a page
+  rather than a progress line. It used to be a phase name, a clock and eight
+  hundred pixels of nothing, which says less than a progress bar does: not what
+  is under review, not where the reviewer decided to look, not what it is reading
+  now, not whether any of it is going anywhere. **Every number on it already
+  existed and none of it was being shown.** A review is an ORDINARY SESSION whose
+  socket is already open, so every file it opens and every pattern it greps for
+  arrives as a tool call that nothing was reading: `web/src/lib/reviewlive.ts`
+  turns `chat.items` into what it is doing now, what it has opened, and how much
+  of the change it has been through. Coverage is matched by SUFFIX, because a
+  tool call carries an absolute worktree path while the pull request lists
+  repo-relative ones, and comparing them directly reports zero every time, which
+  is the sort of quietly-wrong number that is worse than none.
+  Three things are recorded that were not. `prReview.Survey` keeps what the first
+  phase concluded, which used to be built into the find prompt and dropped: it is
+  the only account of where the reviewer thought the risk was, the best thing to
+  read while finding takes its minutes, and the thing to argue with when a review
+  comes back having looked in the wrong place. `prReview.Files` is the change
+  under review. `prReview.Timeline` is when each phase began, because "how long
+  has it been reading" is a different question from "how long has it been going"
+  and the running turn's clock restarts at every phase, so it could answer
+  neither; `beganPhase` ignores a repeat so a repair does not draw the same step
+  twice. Files opened OUTSIDE the change get their own list, since following a
+  caller is exactly the work that makes a review here better than one done
+  against the diff alone.
   `prReview.Surveyed` is stored precisely because once a review is in `find`
   nothing else can say whether a survey ran, so the trail would have to either
   invent a step that never lights or claim one ran that did not.

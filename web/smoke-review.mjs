@@ -395,6 +395,22 @@ await page.route('**/api/sessions/*/review', (route) =>
     body: JSON.stringify({
       owner: 'lyzr', repo: 'kunai', number: 128, title: 'Snooze the sidebar rows',
       head_sha: 'abc123', from_fork: false, phase: 'verify', surveyed: true, findings: [],
+      // Everything the running screen is made of, and every bit of it already
+      // existed before it was shown: the change under review, when each phase
+      // began, and what the reviewer decided to look at.
+      files: [
+        { path: 'internal/session/loop.go', additions: 120, deletions: 8 },
+        { path: 'internal/server/history.go', additions: 40, deletions: 12 },
+      ],
+      timeline: [
+        { phase: 'survey', at: new Date(Date.now() - 300000).toISOString() },
+        { phase: 'find', at: new Date(Date.now() - 200000).toISOString() },
+        { phase: 'verify', at: new Date(Date.now() - 40000).toISOString() },
+      ],
+      survey: {
+        intent: 'Snoozes a sidebar row until it asks for attention again.',
+        areas: [{ what: 'The loop record lifetime', files: ['internal/session/loop.go'], why: 'stopLoopLocked may not run.' }],
+      },
     }),
   }),
 )
@@ -414,8 +430,22 @@ await page.waitForTimeout(1500)
 
 const trail = page.locator('.trail')
 if (!(await trail.count())) fail('a running review shows no sense of where it has got to')
-const trailText = (await trail.innerText()).toLowerCase()
-if (!trailText.includes('refute')) fail(`the trail does not say what the verify phase is doing: ${trailText}`)
+const runText = (await page.locator('.run').innerText()).toLowerCase()
+if (!runText.includes('refute')) fail(`the running screen does not say what the phase is doing: ${runText}`)
+
+// It is a PAGE, not a progress line. A review runs for minutes and the screen
+// for those minutes used to say less than a progress bar would: not what is
+// under review, not where the reviewer decided to look, not how far in it was.
+// Every number here already existed and none of it was being shown.
+if (!runText.includes('the loop record lifetime')) {
+  fail('the running screen does not show what the reviewer decided to look at')
+}
+if (!runText.includes('loop.go')) fail('the running screen does not show the change under review')
+if (!/files opened/.test(runText)) fail('the running screen does not report progress through the change')
+// Each phase carries its own elapsed time: "how long has it been reading" is a
+// different question from "how long has it been going", and the running turn's
+// clock restarts at every phase so it could answer neither.
+if (!/\d+m/.test(await trail.innerText())) fail('the trail does not say how long each phase took')
 // Every step is named, so the wait has a length as well as a position.
 if ((await trail.locator('li').count()) !== 3) {
   fail(`the trail drew ${await trail.locator('li').count()} steps, want 3`)

@@ -60,6 +60,24 @@ type prReview struct {
 	// the view can say what is happening rather than showing an unexplained
 	// several-minute wait, which on a phased review is longer than it was.
 	Phase string `json:"phase,omitempty"`
+	// Survey is what the first phase concluded: what the change is FOR and where
+	// the risk sits.
+	//
+	// Recorded, where it used to be computed and thrown away as soon as the find
+	// prompt had been built from it. It is the only account of what the reviewer
+	// decided to look at, which makes it both the most interesting thing to read
+	// during the several minutes finding takes and the thing to argue with when a
+	// review comes back having looked in the wrong place.
+	Survey *review.Survey `json:"survey,omitempty"`
+	// Files is the change being reviewed, so a screen somebody watches for
+	// minutes can say what is under review rather than nothing at all.
+	Files []review.FileSummary `json:"files,omitempty"`
+	// Timeline is when each phase began, appended as they start.
+	//
+	// A phased review is minutes of silence, and "how long has it been reading"
+	// is a different question from "how long has it been going". Without this the
+	// only clock available is the running turn's, which restarts at every phase.
+	Timeline []phaseStart `json:"timeline,omitempty"`
 	// Surveyed records whether this review has a survey phase at all, which a
 	// small change skips.
 	//
@@ -85,8 +103,26 @@ type prReview struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// phaseStart is one entry in a review's timeline.
+type phaseStart struct {
+	Phase string    `json:"phase"`
+	At    time.Time `json:"at"`
+}
+
 // Posted reports that this draft has already been sent.
 func (p prReview) Posted() bool { return p.PostedURL != "" }
+
+// beganPhase appends a phase to the timeline, ignoring a repeat.
+//
+// A repair keeps the review in the same phase and asks again, so without this a
+// review that stumbled once would show the same step twice and the elapsed time
+// for it would restart.
+func (p *prReview) beganPhase(phase string, at time.Time) {
+	if n := len(p.Timeline); n > 0 && p.Timeline[n-1].Phase == phase {
+		return
+	}
+	p.Timeline = append(p.Timeline, phaseStart{Phase: phase, At: at})
+}
 
 type prReviewStore struct {
 	mu   sync.Mutex

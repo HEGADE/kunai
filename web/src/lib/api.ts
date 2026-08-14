@@ -740,12 +740,34 @@ export interface ReviewDraft {
   // Whether this review has a survey step. A small change skips it, and the
   // progress display must not draw a step that will never light.
   surveyed?: boolean
+  // What the reviewer decided to look at, before it looked. The only account of
+  // where it thought the risk was, and the thing to read during the minutes the
+  // find phase takes.
+  survey?: ReviewSurvey
+  // The change under review.
+  files?: ReviewFile[]
+  // When each phase began, so a wait has a shape rather than just a length.
+  timeline?: { phase: ReviewPhase; at: string }[]
   summary?: string
   findings?: ReviewFinding[]
   dropped?: DroppedFinding[]
   total?: number
   inline?: number
   summary_count?: number
+}
+
+// What the reviewer decided to look at, before it looked.
+export interface ReviewSurvey {
+  intent?: string
+  areas?: { what: string; files?: string[]; why?: string }[]
+}
+
+// One changed file, as the running screen lists the change.
+export interface ReviewFile {
+  path: string
+  status?: string
+  additions?: number
+  deletions?: number
 }
 
 // What each phase is called on screen, and what it is actually doing. A phased

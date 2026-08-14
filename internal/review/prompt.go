@@ -57,14 +57,19 @@ type Request struct {
 }
 
 // FileSummary is one changed file, as the orientation list shows it.
+//
+// Tagged because this is recorded on the review and sent to the client: the
+// screen somebody watches for the minutes a review takes should be able to say
+// what is being reviewed, and untagged fields would reach it shouting in Go's
+// capitalised field names.
 type FileSummary struct {
-	Path      string
-	Status    string
-	Additions int
-	Deletions int
+	Path      string `json:"path"`
+	Status    string `json:"status,omitempty"`
+	Additions int    `json:"additions,omitempty"`
+	Deletions int    `json:"deletions,omitempty"`
 	// Diff is where this one file's patch was written, relative to the worktree.
 	// Empty for a binary file, which has no patch to read.
-	Diff string
+	Diff string `json:"-"`
 }
 
 // Every phase's prompt is wrapped in a <kunai-review> tag, which is load-bearing

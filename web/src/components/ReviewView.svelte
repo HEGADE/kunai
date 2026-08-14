@@ -6,7 +6,7 @@
   import { severityLabel, SEVERITIES } from '../lib/severity'
   import { ordered, decide, type Edits, type FindingEdit } from '../lib/review'
   import FindingRow from './review/FindingRow.svelte'
-  import PhaseTrail from './review/PhaseTrail.svelte'
+  import RunningReview from './review/RunningReview.svelte'
   import { toasts } from '../lib/toast.svelte'
   import RefutedList from './review/RefutedList.svelte'
   import ReviewBar from './review/ReviewBar.svelte'
@@ -271,17 +271,12 @@
         This review is waiting for an answer before it can carry on.
         <button class="inline" onclick={() => (app.reviewChat = true)}>Answer it &rarr;</button>
       </div>
-    {:else if reviewing}
-      {@const elapsed = workedFor(app.liveTurnStart(meta ?? ({} as never)), now)}
-      <PhaseTrail phase={draft?.phase ?? 'find'} skippedSurvey={draft ? !draft.surveyed : false} />
-      <p class="elapsed">
-        {#if elapsed}<span class="mono">{elapsed}</span>{/if}
-        {#if findings.length}
-          {elapsed ? '· ' : ''}{findings.length} finding{findings.length === 1 ? '' : 's'} so far
-        {:else}
-          {elapsed ? '· ' : ''}Findings appear here as they are found, and are checked before you see the verdict.
-        {/if}
-      </p>
+    {:else if reviewing && draft}
+      <!-- A review runs for minutes, so this is a page rather than a progress
+           line: what is being reviewed, where it decided to look, what it is
+           reading now, and how far through the change it has got. All of it
+           already existed and none of it was being shown. -->
+      <RunningReview {draft} chat={app.chat} {now} />
     {/if}
 
     {#if draft?.parse_error}
