@@ -84,7 +84,10 @@ await page.route('**/api/sessions/*/review', (route) =>
       findings: [
         {
           index: 0, file: 'internal/session/loop.go', line: 212, side: 'RIGHT',
-          title: 'Interrupt leaves the loop record on disk', body: 'The file outlives the run.',
+          title: 'Interrupt leaves the loop record on disk',
+          // Written the way a reviewer actually writes: dense with the
+          // identifiers and locations a reader is hunting for.
+          body: 'Session.Interrupt returns before stopLoopLocked runs (internal/session/loop.go:212), so loops/<id>.json outlives the run and resumeLoops resurrects it at the next boot.',
           severity: 'blocker', confidence: 'high', category: 'correctness', verified: true,
           evidence: 'Followed Interrupt: it returns before stopLoopLocked runs.',
           inline: true, suggestion: 'stopLoopLocked()',
@@ -173,8 +176,8 @@ if (sevOrder.join(',').toLowerCase() !== 'blocker,major,minor') {
   fail(`findings are not sorted most serious first: ${sevOrder.join(',')}`)
 }
 const first = (await rows.first().innerText()).toLowerCase()
-if (!first.includes('inline')) fail('the first finding is not badged inline')
-if (!(await rows.nth(1).innerText()).toLowerCase().includes('summary')) {
+if (!first.includes('on the line')) fail('the first finding does not say where it will land')
+if (!(await rows.nth(1).innerText()).toLowerCase().includes('in the summary')) {
   fail('the unanchorable finding is not badged as going to the summary')
 }
 
@@ -187,9 +190,26 @@ if ((await view.locator('.row.open').count()) !== 1) {
 if (!(await rows.first().getAttribute('class')).includes('open')) {
   fail('the review did not open on its worst finding')
 }
-// The open one carries the code it is about, and its evidence.
+// The open one carries the code it is about, at full size.
 if (!first.includes('stoplooplocked')) fail('the open finding does not carry the code it is about')
-if (!first.includes('followed interrupt')) fail('a verified finding does not show its evidence')
+
+// The verifier's working is NAMED and folded away rather than printed under
+// every claim. It runs to a dozen lines of dense prose now that verification
+// actually happens, and that is the wall this card exists to avoid: the reader
+// who doubts a finding knows exactly which control to open, and the reader who
+// does not is never made to scroll past it.
+if (first.includes('followed interrupt')) fail('the verifier’s working is printed under the claim by default')
+await rows.first().locator('.ex:has-text("What checked it")').click()
+await page.waitForTimeout(250)
+if (!(await rows.first().innerText()).toLowerCase().includes('followed interrupt')) {
+  fail('a verified finding will not show what checked it')
+}
+
+// The identifiers in the argument are set as code, because they are what a
+// reader is hunting for and flat text hides them.
+if (!(await rows.first().locator('.why code').count())) {
+  fail('the argument renders its identifiers as flat prose')
+}
 
 // Deciding must never require opening anything: Drop is on every row at every
 // state, which is what lets a twelve-finding review be triaged at all.
@@ -255,7 +275,7 @@ await page.locator('.editor .save').click()
 await page.waitForTimeout(350)
 const edited = (await view.innerText()).toLowerCase()
 if (!edited.includes('leaves the loop file behind')) fail('an edited finding did not keep the new wording')
-if (!edited.includes('yours')) fail('an edited finding is not marked as the reader’s own words')
+if (!edited.includes('your wording')) fail('an edited finding is not marked as the reader’s own words')
 // Lowering its severity has to move the row, or the sort is a lie.
 const afterEdit = await rows.locator('.sev').allInnerTexts()
 if (afterEdit[0].toLowerCase() === 'blocker') fail('an edited severity did not re-sort the list')

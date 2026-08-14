@@ -16,6 +16,7 @@ import {
   chosenCli, isProvider, providerModelChoices, providerModelToSend, showEffort,
 } from '../src/lib/spawnoptions.ts'
 import { ordered, decide, postLabel, asPosted } from '../src/lib/review.ts'
+import { proseHtml } from '../src/lib/prose.ts'
 import { clampTTL, splitDuration, expiryWords, MIN_TTL, MAX_TTL } from '../src/lib/duration.ts'
 import {
   byAgent, byModel, compact, dailyCost, money, percent, pricedShare, totals,
@@ -225,9 +226,6 @@ eq("and nothing is nothing", percent(0), "0%")
 
 eq("total tokens count every tier", totalTokens(tok({ in: 1, w5: 2, w1: 3, r: 4, out: 5 })), 15)
 
-console.log(`${pass}/${pass + fails.length} passed`)
-for (const f of fails) console.log(`FAIL ${f}`)
-process.exit(fails.length ? 1 : 0)
 
 // --- how many folders the sidebar shows -------------------------------------
 // A quiet folder is one holding nothing but past work. Those are capped; a
@@ -285,10 +283,12 @@ eq(
   ordered(FS, {}, 'all').map((f) => f.index),
   [1, 2, 0, 3],
 )
+// The sort is STABLE, so an overruled finding drops to its new severity and
+// keeps its original position among its new equals rather than going last.
 eq(
   'an overruled severity moves the finding immediately',
   ordered(FS, { 1: { title: 't', body: 'b', severity: 'minor' } }, 'all').map((f) => f.index),
-  [2, 0, 3, 1],
+  [2, 0, 1, 3],
 )
 eq(
   'a filter is applied at the overruled severity, not the model’s',
@@ -335,3 +335,50 @@ eq(
   asPosted(F(0, 'minor'), { 0: { title: 'mine', body: 'why', severity: 'blocker' } }).line,
   1,
 )
+
+// --- prose ------------------------------------------------------------------
+// A finding's argument is dense with the things a reader is hunting for, and
+// rendering them flat throws away structure the sentence already has. These
+// rules are guesses about how a model writes; over-matching is the failure that
+// matters, because prose peppered with false code spans reads worse than prose
+// with none.
+
+const P = (s) => proseHtml(s)
+
+eq('a camelCase identifier is code', P('advanceReview cannot tell'), '<code class="code">advanceReview</code> cannot tell')
+eq('a dotted identifier is code', P('calls session.Close now'), 'calls <code class="code">session.Close</code> now')
+eq(
+  'a file and line is a location',
+  P('(internal/session/answer.go:23)'),
+  '(<code class="loc">internal/session/answer.go:23</code>)',
+)
+eq('a line range too', P('at shareupload.go:196-203 it'), 'at <code class="loc">shareupload.go:196-203</code> it')
+eq('a call is code', P('does safeName(a.Name) first'), 'does <code class="code">safeName(a.Name)</code> first')
+// Backticks are the model saying so, and must beat every heuristic.
+eq('backticks win', P('sets `a plain phrase` here'), 'sets <code class="code">a plain phrase</code> here')
+// The failure that matters: ordinary English must come through untouched.
+eq(
+  'plain prose is left alone',
+  P('The file outlives the run and nobody deletes it.'),
+  'The file outlives the run and nobody deletes it.',
+)
+eq('a sentence-initial capital is not an identifier', P('This is fine.'), 'This is fine.')
+// Escaping happens on the way out, after tokenising the raw text: escaping first
+// would run the patterns over &lt; and friends.
+eq('html in prose is escaped', P('the <script> tag'), 'the &lt;script&gt; tag')
+eq(
+  'html inside a code span is escaped too',
+  P('`<img onerror=x>`'),
+  '<code class="code">&lt;img onerror=x&gt;</code>',
+)
+// A /g pattern carries lastIndex between calls, which silently skips matches in
+// every run after the first.
+eq(
+  'every identifier in a sentence is marked, not just the first',
+  P('buildContent calls safeName'),
+  '<code class="code">buildContent</code> calls <code class="code">safeName</code>',
+)
+
+console.log(`${pass}/${pass + fails.length} passed`)
+for (const f of fails) console.log(`FAIL ${f}`)
+process.exit(fails.length ? 1 : 0)

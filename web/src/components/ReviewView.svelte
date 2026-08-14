@@ -66,6 +66,24 @@
   // shows nothing for.
   const all = $derived(decide(findings, new Set<number>(), edits))
 
+  // The masthead sentence. Written out rather than shown as three numbers,
+  // because "two things that would block a merge" is read at a glance and
+  // "2 / 0 / 1" is a puzzle. Counted at the EDITED severity, so overruling the
+  // only blocker changes the headline it is the summary of.
+  const headline = $derived.by(() => {
+    if (!findings.length) return 'Nothing worth reporting'
+    const c = all.counts
+    if (c.blocker) return c.blocker === 1 ? 'One thing should block this merge' : `${word(c.blocker)} things should block this merge`
+    if (c.major) return c.major === 1 ? 'One thing worth fixing' : `${word(c.major)} things worth fixing`
+    return c.minor === 1 ? 'One small thing' : `${word(c.minor)} small things`
+  })
+
+  // Small numbers read better as words in a sentence; past a handful the digit
+  // is what carries.
+  function word(n: number): string {
+    return ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'][n] ?? String(n)
+  }
+
   // The clock behind "Looking for problems 2m".
   let now = $state(Date.now())
   $effect(() => {
@@ -289,14 +307,20 @@
 
     {#if draft && (findings.length || draft.summary) && !reviewing}
       <section class="verdict">
+        <!-- The masthead. A review that found three majors should say so at a
+             size you read, not whisper it in an 11px row of pips: this is the
+             one line worth reading before any of the findings, and it decides
+             whether you read them now or after lunch. -->
+        <h2 class="headline" class:bad={all.counts.blocker > 0}>
+          {headline}
+        </h2>
         <div class="tally">
           {#each SEVERITIES as s (s)}
             {#if all.counts[s] > 0}
-              <span class="pip sev-{s}">{all.counts[s]} {severityLabel(s).toLowerCase()}</span>
+              <span class="pip sev-{s}"><b>{all.counts[s]}</b> {severityLabel(s).toLowerCase()}</span>
             {/if}
           {/each}
-          {#if !findings.length}<span class="pip clean">Nothing worth reporting</span>{/if}
-          {#if refuted.length}<span class="pip quiet">{refuted.length} refuted</span>{/if}
+          {#if refuted.length}<span class="pip quiet">{refuted.length} checked and refuted</span>{/if}
         </div>
 
         {#if draft.summary}
@@ -347,6 +371,8 @@
             open={openIndex === f.index}
             dropped={dropped.has(f.index)}
             cursor={i === cursor}
+            position={i + 1}
+            total={shown.length}
             edit={edits[f.index]}
             ontoggle={() => toggleOpen(f.index)}
             ondrop={() => toggleDrop(f.index)}
@@ -458,20 +484,39 @@
 
   /* The verdict: the shape of the review before any of it is read. */
   .verdict {
-    margin-bottom: 20px;
+    margin-bottom: 26px;
+  }
+  /* Serif, because it is a judgement in words rather than a count. The same
+     split the findings use: prose is somebody's opinion, mono is a fact. */
+  .headline {
+    margin: 0 0 10px;
+    font-family: var(--serif);
+    font-size: 30px;
+    font-weight: 500;
+    line-height: 1.16;
+    letter-spacing: -0.015em;
+    color: var(--text);
+    font-variant-ligatures: common-ligatures;
+  }
+  .headline.bad {
+    color: #f0a49c;
   }
   .tally {
     display: flex;
     align-items: baseline;
     flex-wrap: wrap;
-    gap: 14px;
+    gap: 16px;
   }
   .pip {
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 500;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: var(--text-3);
+    color: var(--text-4);
+  }
+  .pip b {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
   }
   .pip.sev-blocker {
     color: var(--alert);

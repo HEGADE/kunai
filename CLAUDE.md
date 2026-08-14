@@ -740,6 +740,30 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   somebody's GitHub rate limit -- the same trap the usage meters hit, with the
   same fix. Measured after: 1 App call and 1 listing per repo at first paint, 0
   over the next 20 idle seconds.
+  The look rests on one split, and it is the exception this app's monochrome
+  rule is worth spending: **the claim is prose somebody wrote, everything else is
+  machinery.** So a finding's claim and the review's headline are set in the
+  SERIF at a size you read (19-30px), while the location, the counts, the
+  position in the deck and the code are mono, and the argument is sans between
+  them. A reader can tell at a glance which part of a card is an opinion and
+  which is a fact about the repository, which is the distinction the whole screen
+  is about and which one sans ramp cannot make. The headline is a sentence
+  ("Three things worth fixing"), not three numbers, because "2 / 0 / 1" is a
+  puzzle; it is counted at the EDITED severity like everything else.
+  Severity, position (`2/3`) and whether anything checked the claim live in a
+  fixed **gutter** left of a rule, the way a diff puts its line numbers. They
+  were inline before, small grey words among other small grey words, which is why
+  a twelve-finding review had no shape.
+  `web/src/lib/prose.ts` is the other half and it is information rather than
+  decoration. A reviewer's argument is dense with the things a reader is hunting
+  for -- `advanceReview`, `internal/session/answer.go:23`, `g.files.has(token,
+  a.ID)` -- and rendering them flat hides the structure the sentence already has.
+  It marks backtick spans (the model saying so beats every heuristic), file:line
+  locations, simple calls, and camelCase/dotted identifiers, which English almost
+  never produces. Over-matching is the failure that matters, so nested calls stay
+  prose. The RAW text is tokenised and each token escaped ON THE WAY OUT:
+  escaping first would run the patterns over `&lt;` and put a marker inside an
+  entity. Unit-tested, including that ordinary English comes through untouched.
   The surface is a **deck you triage**, not a document you read, and that is a
   rewrite of one that was correct and unusable. It showed every part of every
   finding at full size at once -- a wall of body prose, a block of evidence, a

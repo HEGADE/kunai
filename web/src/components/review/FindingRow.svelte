@@ -2,32 +2,38 @@
   import type { ReviewFinding, Severity } from '../../lib/api'
   import type { FindingEdit } from '../../lib/review'
   import { langFor } from '../../lib/outputShape'
+  import { proseHtml } from '../../lib/prose'
   import { severityLabel } from '../../lib/severity'
   import Hunk from './Hunk.svelte'
   import FindingEditor from './FindingEditor.svelte'
 
-  // One finding, as a row you triage rather than a document you read.
+  // One finding, as a written judgement with exhibits under it.
   //
-  // The card this replaced gave every part of a finding the same weight and
-  // showed all of it at once: a six-line wall of body prose, a four-line block
-  // of evidence, and a thirteen-line hunk that was mostly comment, so ONE
-  // finding filled a laptop screen and the Drop button sat below the fold. You
-  // could not see how many findings there were, which was the worst one, or how
-  // far through you had got.
+  // The design rests on one split, and everything else follows from it: the
+  // CLAIM is prose a reviewer wrote about your code, and everything supporting
+  // it is machinery. So the claim is set in a serif at a size you read rather
+  // than scan, and the location, the counts and the code are mono. A reader can
+  // tell in one glance which part of the card is somebody's opinion and which
+  // part is a fact about the repository, which is the distinction the whole
+  // screen is about and which a single sans ramp cannot make.
   //
-  // The parts of a finding are needed in a strict order, so they are ranked that
-  // way. The claim decides most judgements on its own and is the only thing
-  // always at full size. Where it is comes next, at a glance. The argument, the
-  // code and what checked it are the reader's recourse when the claim is not
-  // enough, and they are one click away rather than in the way.
+  // The gutter is the second half. Severity, position in the deck and whether
+  // anything checked the claim all live in a fixed column to the left of a rule,
+  // the way a diff puts its line numbers or a document puts its margin notes.
+  // They were inline before, as small grey words in a row of other small grey
+  // words, which is why a review of a dozen findings had no shape at all.
   //
-  // Drop stays on the header at every state, because deciding is the job and it
-  // must never require opening anything.
+  // And the argument is CLAMPED. A verified finding now carries the verifier's
+  // full working, which runs to a dozen lines of dense technical prose, and
+  // printing all of it under every claim is the wall this card exists to avoid.
+  // Four lines is enough to decide most findings; the rest is one click away.
   let {
     f,
     open,
     dropped,
     cursor,
+    position,
+    total,
     edit,
     ontoggle,
     ondrop,
@@ -38,8 +44,10 @@
     open: boolean
     dropped: boolean
     cursor: boolean
-    // The reader's rewrite, or undefined when they have not touched it. Owned by
-    // the view so it survives the draft being re-read while the review runs.
+    // Where this sits in the deck, 1-based. A reader working through a review
+    // needs to know how much is left, and nothing else on the card says.
+    position: number
+    total: number
     edit?: FindingEdit
     ontoggle: () => void
     ondrop: () => void
@@ -48,6 +56,9 @@
   } = $props()
 
   let editing = $state(false)
+  let full = $state(false)
+  let showCode = $state(true)
+  let showChecked = $state(false)
 
   const title = $derived(edit?.title ?? f.title)
   const body = $derived(edit?.body ?? f.body)
@@ -58,38 +69,45 @@
   const location = $derived(
     !f.file ? '' : !f.line ? f.file : f.end_line ? `${f.file}:${f.line}-${f.end_line}` : `${f.file}:${f.line}`,
   )
+  // Long enough that clamping it is worth a control. Below this the "more"
+  // button is more furniture than the two lines it hides.
+  const longBody = $derived(body.length > 400)
 
-  // How sure the reviewer is, said only when it is worth saying. Verification
-  // now runs on everything postable, so "checked" is the ordinary case and its
-  // absence is the exception worth marking.
   const doubt = $derived(
     f.confidence === 'low'
       ? 'a suspicion, not a demonstrated bug'
       : f.confidence === 'medium'
-        ? 'rests on an assumption that was not confirmed'
+        ? 'it rests on an assumption that was not confirmed'
         : '',
   )
 </script>
 
 <article class="row sev-{severity}" class:open class:dropped class:cursor>
-  <div class="head">
-    <button class="disc" onclick={ontoggle} aria-expanded={open}>
-      <h3 class="claim">{title}</h3>
-      <div class="meta">
-        <span class="sev">{severityLabel(severity)}</span>
-        {#if location}<span class="loc mono">{location}</span>{/if}
-        <span class="tag" class:sum={!f.inline}>{f.inline ? 'inline' : 'summary'}</span>
-        {#if !f.verified}<span class="tag warn">unchecked</span>{/if}
-        {#if rewritten}<span class="tag">yours</span>{/if}
-      </div>
-    </button>
-    <button class="drop" class:on={dropped} onclick={ondrop}>
-      {dropped ? 'Keep' : 'Drop'}
-    </button>
+  <!-- The gutter: what this is, where it is in the deck, and whether anything
+       checked it. Fixed width, so every row's claim starts on the same line and
+       the column reads down the page. -->
+  <div class="gutter">
+    <span class="mark" aria-hidden="true"></span>
+    <span class="sev">{severityLabel(severity)}</span>
+    <span class="pos mono">{position}<span class="of">/{total}</span></span>
+    {#if f.verified}
+      <span class="checked" title="An independent pass tried to refute this and failed">checked</span>
+    {:else}
+      <span class="checked un" title="Nothing independently checked this claim">unchecked</span>
+    {/if}
   </div>
 
-  {#if open}
-    <div class="detail">
+  <div class="main" class:closed={!open}>
+    <button class="disc" onclick={ontoggle} aria-expanded={open}>
+      <h3 class="claim">{title}</h3>
+      <div class="where">
+        <span class="loc mono">{location}</span>
+        <span class="tag" class:sum={!f.inline}>{f.inline ? 'on the line' : 'in the summary'}</span>
+        {#if rewritten}<span class="tag yours">your wording</span>{/if}
+      </div>
+    </button>
+
+    {#if open}
       {#if editing}
         <FindingEditor
           initial={{ title, body, severity }}
@@ -102,213 +120,315 @@
           onrevert={rewritten ? () => (onedit(undefined), (editing = false)) : undefined}
         />
       {:else}
-        {#if body}<p class="why">{body}</p>{/if}
-
-        {#if !f.inline && f.why}
-          <p class="aside">Goes in the summary rather than on the line: {f.why}</p>
+        {#if body}
+          <!-- The identifiers and file references in the argument are set as
+               code, because they are what a reader is hunting for and flat text
+               hides them. See lib/prose.ts. -->
+          <div class="why" class:clamped={longBody && !full}>{@html proseHtml(body)}</div>
+          {#if longBody}
+            <button class="more" onclick={() => (full = !full)}>{full ? 'Less' : 'The rest of the argument'}</button>
+          {/if}
         {/if}
 
-        {#if f.hunk?.length}
+        {#if !f.inline && f.why}
+          <p class="aside">In the summary rather than on the line: {f.why}</p>
+        {/if}
+
+        <div class="exhibits">
+          {#if f.hunk?.length}
+            <button class="ex" class:on={showCode} onclick={() => (showCode = !showCode)}>
+              <span class="chev" class:o={showCode} aria-hidden="true">›</span> The code
+            </button>
+          {/if}
+          {#if f.evidence || !f.verified || doubt}
+            <button class="ex" class:on={showChecked} onclick={() => (showChecked = !showChecked)}>
+              <span class="chev" class:o={showChecked} aria-hidden="true">›</span>
+              {f.verified ? 'What checked it' : 'What it rests on'}
+            </button>
+          {/if}
+        </div>
+
+        {#if showCode && f.hunk?.length}
           <Hunk lines={f.hunk} {lang} side={f.side} />
         {/if}
 
         {#if f.suggestion}
           <div class="sug">
-            <span class="slbl">Suggested change</span>
+            <span class="slbl mono">suggested change</span>
             <pre class="mono">{f.suggestion}</pre>
           </div>
         {/if}
 
-        <!-- What the claim rests on and whether anything independently tried to
-             refute it. Last, and quiet: this is the recourse when a reader
-             doubts a finding, not the finding. -->
-        {#if f.evidence || !f.verified || doubt}
+        {#if showChecked}
           <div class="ground">
-            {#if f.evidence}<p><span class="gk">{f.verified ? 'Checked' : 'Rests on'}:</span> {f.evidence}</p>{/if}
+            {#if f.evidence}<p>{@html proseHtml(f.evidence)}</p>{/if}
             {#if !f.verified}
               <p class="warn">Nothing independently checked this claim.</p>
             {:else if doubt}
-              <p>Held after an independent check, but {doubt}.</p>
+              <p>It held under an independent check, but {doubt}.</p>
             {/if}
           </div>
         {/if}
 
         <div class="acts">
+          <button class="drop" class:on={dropped} onclick={ondrop}>{dropped ? 'Put it back' : 'Drop'}</button>
           <button class="quiet" onclick={() => (editing = true)}>Edit the wording</button>
           <button class="quiet ask" onclick={onask}>Ask about this &rarr;</button>
         </div>
       {/if}
-    </div>
-  {/if}
+    {:else}
+      <!-- Closed, the decision still has to be reachable: triage must never
+           require opening anything. -->
+      <button class="drop tight" class:on={dropped} onclick={ondrop}>{dropped ? 'Put it back' : 'Drop'}</button>
+    {/if}
+  </div>
 </article>
 
 <style>
-  /* Severity is carried by a rule down the left edge rather than by a tinted
-     box. The finding's own words have to stay the brightest thing in it. */
   .row {
-    position: relative;
-    padding: 13px 0 13px 15px;
+    display: grid;
+    grid-template-columns: 92px 1fr;
+    gap: 0 18px;
+    padding: 14px 0;
     border-bottom: 1px solid var(--border);
     transition: background 0.14s, opacity 0.14s;
   }
-  .row::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 12px;
-    bottom: 12px;
-    width: 2px;
-    border-radius: 2px;
-    background: var(--sev-ink);
-  }
   .sev-blocker {
-    --sev-ink: var(--alert);
+    --ink: var(--alert);
   }
   .sev-major {
-    --sev-ink: var(--busy);
+    --ink: var(--busy);
   }
   .sev-minor {
-    --sev-ink: var(--text-4);
+    --ink: #7b8794;
   }
 
-  /* Open lifts off the page. Closed rows are bare lines, not stacked boxes, so
-     a twelve-finding review reads as a list of twelve claims. */
+  /* Open lifts onto a warmer, slightly raised surface. The one place in this app
+     where a panel is worth having: it marks the difference between the row you
+     are reading and the rows you are scanning past, and reading is what this
+     screen is for. */
   .open {
-    background: var(--panel);
-    border-radius: var(--r);
-    border-bottom-color: transparent;
-    padding-right: 15px;
-    margin: 4px 0;
-  }
-  .open::before {
-    top: 14px;
-    bottom: 14px;
+    background: linear-gradient(180deg, #17171b 0%, #141416 100%);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    padding: 18px 20px 16px;
+    margin: 10px 0;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
   }
   .row:not(.open):hover {
-    background: color-mix(in srgb, var(--panel) 55%, transparent);
+    background: color-mix(in srgb, var(--panel) 50%, transparent);
     border-radius: var(--r-sm);
   }
-  /* The keyboard cursor, which is not the same thing as being open: you can move
-     past a row you have already read. */
-  .cursor::before {
-    box-shadow: 0 0 0 1px var(--sev-ink);
-  }
-  /* Dropped recedes rather than vanishing, so undoing is one click and the
-     counts stay honest about what changed. */
   .dropped {
-    opacity: 0.4;
+    opacity: 0.36;
   }
 
-  .head {
+  /* The gutter, read down the page like a margin. */
+  .gutter {
     display: flex;
+    flex-direction: column;
     align-items: flex-start;
-    gap: 12px;
+    gap: 4px;
+    padding-top: 3px;
+    border-right: 1px solid transparent;
+  }
+  .open .gutter {
+    border-right-color: var(--border);
+    padding-right: 16px;
+    margin-right: -2px;
+  }
+  .mark {
+    width: 100%;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--ink);
+    margin-bottom: 4px;
+  }
+  .sev {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink);
+  }
+  .pos {
+    font-size: 11px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .of {
+    color: var(--text-4);
+  }
+  .checked {
+    font-size: 10px;
+    letter-spacing: 0.03em;
+    color: var(--text-4);
+  }
+  .checked.un {
+    color: var(--busy);
+  }
+  .cursor .mark {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ink) 35%, transparent);
+  }
+
+  .main {
+    min-width: 0;
   }
   .disc {
-    flex: 1;
-    min-width: 0;
     display: block;
+    width: 100%;
     text-align: left;
     padding: 0;
   }
+  /* The claim, in a serif. It is the one thing on this card that is a sentence
+     somebody wrote rather than a fact about the repository, and setting it apart
+     that way is what makes a card readable at a glance instead of a stack of
+     grey rows in the same voice. */
   .claim {
     margin: 0;
-    font-size: 15px;
-    font-weight: 550;
-    line-height: 1.42;
-    color: var(--text);
+    font-family: var(--serif);
+    font-size: 19px;
+    font-weight: 500;
+    line-height: 1.34;
     letter-spacing: -0.005em;
+    color: var(--text);
+    /* Ligatures are off globally for code; prose at this size wants them. */
+    font-variant-ligatures: common-ligatures;
+  }
+  .open .claim {
+    font-size: 21px;
   }
   .dropped .claim {
     text-decoration: line-through;
     text-decoration-color: var(--text-4);
   }
-  .meta {
+  .where {
     display: flex;
     align-items: baseline;
     flex-wrap: wrap;
-    gap: 9px;
-    margin-top: 5px;
-  }
-  .sev {
-    flex: none;
-    font-size: 10px;
-    font-weight: 650;
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
-    color: var(--sev-ink);
+    gap: 10px;
+    margin-top: 7px;
   }
   .loc {
-    min-width: 0;
     font-size: 11.5px;
-    color: var(--text-4);
+    color: var(--text-3);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    /* A clipped path keeps its leading slash where it belongs. */
     unicode-bidi: plaintext;
   }
   .tag {
-    flex: none;
     font-size: 10.5px;
-    letter-spacing: 0.02em;
     color: var(--text-4);
   }
   .tag.sum {
-    color: var(--text-3);
-  }
-  .tag.warn {
     color: var(--busy);
   }
-
-  .drop {
-    flex: none;
-    padding: 4px 12px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
+  .tag.yours {
     color: var(--text-3);
-    font-size: 11.5px;
-    font-weight: 550;
-  }
-  .drop:hover {
-    color: var(--text);
-    border-color: var(--border-2);
-  }
-  .drop.on {
-    color: var(--text-2);
-    border-color: var(--border-2);
-    background: var(--panel-2);
   }
 
-  .detail {
-    padding-top: 2px;
-  }
-  /* A measure, because the claim's justification is prose and prose set to 800px
-     is not read. Paragraph breaks the model wrote are preserved. */
   .why {
-    margin: 11px 0 0;
-    max-width: 68ch;
-    font-size: 13.5px;
-    line-height: 1.7;
+    margin: 14px 0 0;
+    max-width: 74ch;
+    font-size: 14px;
+    line-height: 1.66;
     color: var(--text-2);
     white-space: pre-wrap;
   }
-  .aside {
-    margin: 9px 0 0;
-    max-width: 68ch;
+  /* Four lines is enough to judge most findings. A verified one now carries the
+     verifier's whole working underneath, and printing all of it under every
+     claim is the wall this card exists to avoid. */
+  .clamped {
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  /* The identifiers a reader is hunting for. Mono and a step brighter than the
+     prose around them, so the eye lands on them without the paragraph turning
+     into a ransom note. */
+  .why :global(code),
+  .ground :global(code) {
+    font-family: var(--mono);
+    font-size: 0.9em;
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.045);
+    padding: 0.05em 0.32em;
+    border-radius: 4px;
+  }
+  .why :global(code.loc),
+  .ground :global(code.loc) {
+    color: #9fb2c4;
+    background: rgba(120, 160, 200, 0.09);
+  }
+  .more {
+    margin-top: 7px;
     font-size: 12px;
+    color: var(--text-3);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-color: var(--border-2);
+  }
+  .more:hover {
+    color: var(--text);
+  }
+  .aside {
+    margin: 10px 0 0;
+    max-width: 74ch;
+    font-size: 12.5px;
     line-height: 1.6;
     color: var(--text-4);
   }
 
+  /* The exhibits, named rather than dumped. A reader who trusts the claim never
+     opens either; a reader who doubts it knows exactly which one to open. */
+  .exhibits {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+  }
+  .ex {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 11px 4px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    font-size: 11.5px;
+  }
+  .ex:hover {
+    color: var(--text);
+    border-color: var(--border-2);
+  }
+  .ex.on {
+    color: var(--text-2);
+    background: rgba(255, 255, 255, 0.035);
+  }
+  .chev {
+    display: inline-block;
+    font-size: 13px;
+    line-height: 1;
+    transition: transform 0.15s;
+  }
+  .chev.o {
+    transform: rotate(90deg);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .chev {
+      transition: none;
+    }
+  }
+
   .sug {
-    margin-top: 12px;
+    margin-top: 14px;
   }
   .slbl {
     display: block;
     margin-bottom: 5px;
-    font-size: 10.5px;
-    letter-spacing: 0.04em;
+    font-size: 10px;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text-4);
   }
@@ -321,26 +441,23 @@
     line-height: 1.6;
     color: var(--text-2);
     overflow-x: auto;
-    white-space: pre;
   }
 
   .ground {
-    margin-top: 13px;
-    padding-top: 10px;
-    border-top: 1px solid var(--border);
+    margin-top: 12px;
+    padding: 12px 14px;
+    border-radius: var(--r-sm);
+    background: rgba(255, 255, 255, 0.022);
   }
   .ground p {
-    margin: 0 0 4px;
-    max-width: 72ch;
-    font-size: 11.5px;
-    line-height: 1.6;
-    color: var(--text-4);
+    margin: 0 0 6px;
+    max-width: 78ch;
+    font-size: 12.5px;
+    line-height: 1.62;
+    color: var(--text-3);
   }
   .ground p:last-child {
     margin-bottom: 0;
-  }
-  .gk {
-    color: var(--text-3);
   }
   .ground .warn {
     color: var(--busy);
@@ -350,10 +467,49 @@
     display: flex;
     align-items: center;
     gap: 14px;
-    margin-top: 14px;
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .drop {
+    flex: none;
+    padding: 5px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    font-size: 12px;
+    font-weight: 550;
+  }
+  .drop:hover {
+    color: var(--text);
+    border-color: var(--border-2);
+  }
+  .drop.on {
+    color: var(--text);
+    border-color: var(--border-2);
+    background: var(--panel-2);
+  }
+  /* Closed, the claim and the decision share a line: the row stays as short as
+     its title and the control sits where the eye ends up. Laid out rather than
+     floated, so a one-line title and a three-line one both put it in the right
+     place instead of wherever a negative margin happened to suit. */
+  .main.closed {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .main.closed .disc {
+    flex: 1;
+    min-width: 0;
+  }
+  .drop.tight {
+    flex: none;
+    margin-top: 2px;
+    padding: 3px 12px;
+    font-size: 11.5px;
   }
   .quiet {
-    font-size: 11.5px;
+    font-size: 12px;
     color: var(--text-4);
   }
   .quiet:hover {
@@ -363,12 +519,43 @@
     margin-left: auto;
   }
 
-  @media (max-width: 560px) {
-    .drop {
-      padding: 7px 14px;
+  /* Narrow: the gutter turns into a row above the claim, because 92px of margin
+     on a 360px screen is a third of the width spent on four small words. */
+  @media (max-width: 620px) {
+    .row {
+      grid-template-columns: 1fr;
+      gap: 8px;
     }
-    .claim {
-      font-size: 14.5px;
+    .open {
+      padding: 14px 14px 12px;
+    }
+    .gutter {
+      flex-direction: row;
+      align-items: center;
+      gap: 10px;
+    }
+    .open .gutter {
+      border-right: none;
+      padding-right: 0;
+      margin-right: 0;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 8px;
+    }
+    .mark {
+      width: 22px;
+      height: 3px;
+      margin-bottom: 0;
+    }
+    .claim,
+    .open .claim {
+      font-size: 18px;
+    }
+    .drop.tight {
+      padding: 6px 14px;
+    }
+    .acts {
+      flex-wrap: wrap;
+      row-gap: 10px;
     }
   }
 </style>
