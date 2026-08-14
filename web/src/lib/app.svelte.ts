@@ -215,10 +215,18 @@ class AppStore {
   // for seconds at a time. That was fine while it only drove a small dot; it is
   // not fine now that a folder announces "1 needs you" from it. An open tab's
   // socket knows immediately, so prefer it and fall back to the polled value.
+  // The socket is preferred only once it has actually HEARD the state. Its seed
+  // is `idle`, which is a real value and a plausible one, so a tab that has just
+  // opened (or whose socket never connected) was answering "idle" with total
+  // confidence for a session that was mid-turn. That is not a blink: it lasts
+  // until hello lands, and for ever on a machine that has gone away. It made the
+  // review view announce "this review stopped and never finished" over a running
+  // review, and it drops the sidebar's "Working 17s" for the same reason.
   liveState(m: { machineId: string; id: string; state?: string }): string {
     void this.connsVersion
     const conn = this.conns.get(tabKey(m.machineId, m.id))
-    return conn?.sessionState ?? m.state ?? ''
+    if (conn?.heard) return conn.sessionState
+    return m.state ?? conn?.sessionState ?? ''
   }
 
   // liveTurnStart is when the running turn began (unix ms), 0 when none is. The

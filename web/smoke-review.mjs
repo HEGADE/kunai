@@ -159,54 +159,79 @@ const head = (await page.locator('.top').innerText()).toLowerCase()
 if (!head.includes('lyzr/kunai#128')) fail(`the header does not name the pull request: ${head}`)
 if (!head.includes('conversation')) fail('there is no way through to the conversation')
 
-// Three findings, each a self-contained card, badged with where it will land.
-const cards = view.locator('.card')
-if ((await cards.count()) !== 3) fail(`rendered ${await cards.count()} cards, want 3`)
-const first = (await cards.first().innerText()).toLowerCase()
-if (!first.includes('inline')) fail('the first finding is not badged inline')
-if (!first.includes('stoplooplocked')) fail('the finding does not carry the code it is about')
-if (!(await cards.nth(1).innerText()).toLowerCase().includes('summary')) {
-  fail('the unanchorable finding is not badged as going to the summary')
-}
+// Three findings. Rows now, not cards: one finding used to fill a laptop screen
+// with its body, its evidence and a thirteen-line hunk, so the review could not
+// be seen at all. Collapsed rows are what make it a list you work through.
+const rows = view.locator('.row')
+if ((await rows.count()) !== 3) fail(`rendered ${await rows.count()} rows, want 3`)
 
-// 5. The review has a SHAPE. This is the fix for the thing that made it
-// unreadable: a wall of identical cards in emission order, with nothing saying
-// which one was the data-loss bug.
-//
-// Most serious first, regardless of the order they arrived in, and every card
-// names its severity as text beside the colour: a reader who cannot separate
-// red from amber must still be able to read the review.
-const sevOrder = await cards.locator('.sev').allInnerTexts()
+// The review has a SHAPE. Most serious first, regardless of the order they
+// arrived in, and every row names its severity as text beside the colour: a
+// reader who cannot separate red from amber must still be able to read it.
+const sevOrder = await rows.locator('.sev').allInnerTexts()
 if (sevOrder.join(',').toLowerCase() !== 'blocker,major,minor') {
   fail(`findings are not sorted most serious first: ${sevOrder.join(',')}`)
 }
+const first = (await rows.first().innerText()).toLowerCase()
+if (!first.includes('inline')) fail('the first finding is not badged inline')
+if (!(await rows.nth(1).innerText()).toLowerCase().includes('summary')) {
+  fail('the unanchorable finding is not badged as going to the summary')
+}
 
-// The verdict line is the one thing worth reading before any of the findings.
+// Exactly one finding is open, and it is the worst one: the review opens
+// already reading rather than as a list of closed lines. The rest are single
+// lines, which is the whole point of the rewrite.
+if ((await view.locator('.row.open').count()) !== 1) {
+  fail(`${await view.locator('.row.open').count()} findings are open at once, want exactly 1`)
+}
+if (!(await rows.first().getAttribute('class')).includes('open')) {
+  fail('the review did not open on its worst finding')
+}
+// The open one carries the code it is about, and its evidence.
+if (!first.includes('stoplooplocked')) fail('the open finding does not carry the code it is about')
+if (!first.includes('followed interrupt')) fail('a verified finding does not show its evidence')
+
+// Deciding must never require opening anything: Drop is on every row at every
+// state, which is what lets a twelve-finding review be triaged at all.
+for (let i = 0; i < 3; i++) {
+  if (!(await rows.nth(i).locator('.drop').count())) fail(`row ${i} has no reachable decision`)
+}
+
+// An unchecked claim says so, on the row itself. Verification runs on
+// everything postable now, so this is the exception rather than the norm it
+// used to be when the phase never ran at all.
+if (!(await rows.nth(2).innerText()).toLowerCase().includes('unchecked')) {
+  fail('an unverified finding does not say so where it can be seen')
+}
+
+// Opening another closes the first. A deck, not a pile: a list where everything
+// can be open is a screen and a half tall again by the third click.
+await rows.nth(2).locator('.disc').click()
+await page.waitForTimeout(250)
+if ((await view.locator('.row.open').count()) !== 1) {
+  fail('opening a second finding left the first one open')
+}
+
+// 5. The verdict is the shape of the review before any of it is read.
 const verdict = (await page.locator('.verdict').innerText()).toLowerCase()
 if (!/1 blocker/.test(verdict)) fail(`the verdict does not lead with the blocker: ${verdict}`)
 if (!/refuted/.test(verdict)) fail(`the verdict does not mention what was refuted: ${verdict}`)
-
-// An unchecked claim says so. A reviewer that hedges when it is unsure is what
-// earns belief when it is not.
-if (!(await cards.nth(2).innerText()).toLowerCase().includes('not independently checked')) {
-  fail('an unverified finding does not say that it is unverified')
-}
-if (!first.includes('followed interrupt')) fail('a verified finding does not show its evidence')
+if (!verdict.includes('sound overall')) fail('the review summary is not shown with the verdict')
 
 // 6. What the review considered and threw away, with the reason. A reviewer you
 // can audit is one you will trust: three findings from a reviewer that refuted
 // four is a different thing from three findings from one that found three.
-await page.locator('.rhead').click()
-await page.waitForTimeout(200)
+await page.locator('.refuted .head').click()
+await page.waitForTimeout(250)
 const audit = (await page.locator('.refuted').innerText()).toLowerCase()
 if (!audit.includes('create races with close')) fail('the refuted finding is not listed')
 if (!audit.includes('both take mu')) fail('the refuted finding does not say why it was dropped')
 
-// 7. Filtering, because a twelve-finding review judged one card at a time is why
+// 7. Filtering, because a twelve-finding review judged one at a time is why
 // people stop reading at the fourth.
 await page.locator('.chip.sev-minor').click()
 await page.waitForTimeout(250)
-if ((await cards.count()) !== 1) fail(`filtering to minor showed ${await cards.count()} cards, want 1`)
+if ((await rows.count()) !== 1) fail(`filtering to minor showed ${await rows.count()} rows, want 1`)
 
 // Bulk is scoped to what is SHOWN, so "drop all" under a filter cannot silently
 // drop the blockers that were filtered away.
@@ -220,17 +245,19 @@ if (!(await page.locator('.post').innerText()).includes('2')) {
 
 // 8. Editing, so a finding whose point is right and whose wording is wrong does
 // not have to be thrown away to get rid of the sentence.
-await cards.first().locator('button:has-text("Edit")').click()
-await page.waitForTimeout(200)
-await page.locator('.ed-title').fill('Interrupt leaves the loop file behind')
-await page.locator('.sevpick:has-text("Minor")').click()
-await page.locator('.ed-save').click()
-await page.waitForTimeout(300)
+await rows.first().locator('.disc').click()
+await page.waitForTimeout(250)
+await rows.first().locator('button:has-text("Edit the wording")').click()
+await page.waitForTimeout(250)
+await page.locator('.editor .t').fill('Interrupt leaves the loop file behind')
+await page.locator('.pick:has-text("Minor")').click()
+await page.locator('.editor .save').click()
+await page.waitForTimeout(350)
 const edited = (await view.innerText()).toLowerCase()
 if (!edited.includes('leaves the loop file behind')) fail('an edited finding did not keep the new wording')
-if (!edited.includes('rewritten by you')) fail('an edited finding does not say it was rewritten')
-// Lowering its severity has to move the card, or the sort is a lie.
-const afterEdit = await cards.locator('.sev').allInnerTexts()
+if (!edited.includes('yours')) fail('an edited finding is not marked as the reader’s own words')
+// Lowering its severity has to move the row, or the sort is a lie.
+const afterEdit = await rows.locator('.sev').allInnerTexts()
 if (afterEdit[0].toLowerCase() === 'blocker') fail('an edited severity did not re-sort the list')
 
 // And it has to move the HEADLINE. Overruling the only blocker down to a minor
@@ -249,14 +276,17 @@ if (await page.locator('.chip.sev-blocker').count()) {
 
 await page.screenshot({ path: '/tmp/review-draft.png', fullPage: true })
 
-// Post names what it will send, and dropping one changes that number: the
-// header is a promise about what lands on the pull request.
+// The action bar names what it will send, and dropping one changes that number:
+// it is a promise about what lands on the pull request.
 await page.locator('.bact:has-text("Keep all")').click()
 await page.waitForTimeout(250)
 if (!(await page.locator('.post').innerText()).includes('3')) {
   fail(`Post does not say how many findings it will send: ${await page.locator('.post').innerText()}`)
 }
-await cards.first().locator('button:has-text("Drop")').click()
+if (!(await page.locator('.bar').innerText()).toLowerCase().includes('on the line')) {
+  fail('the bar does not say how the review will be delivered')
+}
+await rows.first().locator('.drop').click()
 await page.waitForTimeout(300)
 if (!(await page.locator('.post').innerText()).includes('2')) {
   fail('dropping a finding did not change what Post promises')
@@ -269,6 +299,59 @@ await page.waitForTimeout(300)
 if (!(await page.locator('.post').innerText()).toLowerCase().includes('summary')) {
   fail('with every finding dropped, Post does not say it will send the summary alone')
 }
+
+// 9. The phone. kunai is used from one, and the review is the surface where a
+// split layout would have been easiest and most wrong.
+await page.setViewportSize({ width: 390, height: 844 })
+await page.waitForTimeout(400)
+await page.locator('.bact:has-text("Keep all")').click()
+await page.waitForTimeout(300)
+const barBox = await page.locator('.bar').boundingBox()
+if (!barBox || barBox.width > 390) fail('the action bar overflows a phone')
+await page.screenshot({ path: '/tmp/review-phone.png', fullPage: true })
+
+// 10. A review IN PROGRESS, which is the screen somebody actually stares at:
+// the phases run for minutes and there is nothing else on the page. A spinner
+// and a clock cannot tell working from hung, so the wait reads as a hang.
+await page.setViewportSize({ width: 1280, height: 900 })
+await page.route('**/api/sessions/*/review', (route) =>
+  route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      owner: 'lyzr', repo: 'kunai', number: 128, title: 'Snooze the sidebar rows',
+      head_sha: 'abc123', from_fork: false, phase: 'verify', surveyed: true, findings: [],
+    }),
+  }),
+)
+await page.route((u) => new URL(u).pathname === '/api/sessions', (route) =>
+  route.request().method() === 'GET'
+    ? route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ ...sessionRow, state: 'running', turn_started_at: Date.now() - 92000 }]),
+      })
+    : route.continue(),
+)
+await page.goto(url)
+await page.waitForTimeout(1200)
+await page.locator(".row:has(.node:not([data-state='past']))").first().click()
+await page.waitForTimeout(1500)
+
+const trail = page.locator('.trail')
+if (!(await trail.count())) fail('a running review shows no sense of where it has got to')
+const trailText = (await trail.innerText()).toLowerCase()
+if (!trailText.includes('refute')) fail(`the trail does not say what the verify phase is doing: ${trailText}`)
+// Every step is named, so the wait has a length as well as a position.
+if ((await trail.locator('li').count()) !== 3) {
+  fail(`the trail drew ${await trail.locator('li').count()} steps, want 3`)
+}
+if ((await trail.locator('li.on').count()) !== 1) fail('the trail does not light exactly one step')
+if ((await trail.locator('li.done').count()) !== 2) fail('the trail does not show the finished steps as done')
+// And no action bar, because there is nothing yet to decide about.
+if (await page.locator('.bar').count()) fail('a running review offered a Post button')
+await page.screenshot({ path: '/tmp/review-running.png', fullPage: true })
+
 if (crashes.length) fail('uncaught page exception: ' + crashes.join(' | '))
-console.log('PASS: no App is invisible, a bad key is refused, and a review opens on its findings')
+console.log('PASS: no App is invisible, a bad key is refused, and a review reads as a deck you triage')
 await browser.close()

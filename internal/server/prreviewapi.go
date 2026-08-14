@@ -246,6 +246,10 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request) {
 		// single-shot one did, so "Reviewing 4m" with nothing else to say reads
 		// as a hang; naming the phase is what makes the wait legible.
 		"phase": rec.Phase,
+		// Whether there is a survey step at all. A small change skips it, and a
+		// progress display cannot work that out for itself once the review has
+		// moved on.
+		"surveyed": rec.Surveyed,
 		// What verification refuted, with its reasons. Shown so the filtering can
 		// be audited: three findings from a reviewer that dropped four is a
 		// different thing from three findings from a reviewer that found three,

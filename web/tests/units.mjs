@@ -15,6 +15,7 @@ import { summarise, isAwaiting, isWorking } from '../src/lib/sidebar.ts'
 import {
   chosenCli, isProvider, providerModelChoices, providerModelToSend, showEffort,
 } from '../src/lib/spawnoptions.ts'
+import { ordered, decide, postLabel, asPosted } from '../src/lib/review.ts'
 import { clampTTL, splitDuration, expiryWords, MIN_TTL, MAX_TTL } from '../src/lib/duration.ts'
 import {
   byAgent, byModel, compact, dailyCost, money, percent, pricedShare, totals,
@@ -218,7 +219,9 @@ eq("a tiny share does not round to nothing", percent(0.0004), "<0.1%")
 // the cost-quality panel it claims exactly the completeness being audited.
 eq("an almost-whole share does not round to all", percent(0.9993), ">99.9%")
 eq("a genuinely whole share is whole", percent(1), "100%")
-eq("and nothing is nothing", percent(0), "0.0%")
+// Exactly "0%", not "0.0%": the decimal implies a rounding that did not happen,
+// and this panel's whole job is to be honest about what it could not price.
+eq("and nothing is nothing", percent(0), "0%")
 
 eq("total tokens count every tier", totalTokens(tok({ in: 1, w5: 2, w1: 3, r: 4, out: 5 })), 15)
 
@@ -264,3 +267,71 @@ eq(
   ['a', 'b', 'c', 'mixed'],
 )
 eq('nothing hidden when the list is short', visibleGroups([quiet('a')], isLive, 3).hidden, 0)
+
+// --- review triage ----------------------------------------------------------
+// The numbers a reviewer decides on must be the numbers that get posted, and the
+// way that goes wrong is silent: the headline once counted the severity the
+// model wrote rather than the one the reader overruled it to, so demoting the
+// only blocker to a minor still announced "1 blocker".
+
+const F = (index, severity, extra = {}) => ({
+  index, severity, file: 'a.go', line: 1, side: 'RIGHT', title: 't', body: 'b',
+  confidence: 'high', inline: true, ...extra,
+})
+const FS = [F(0, 'minor'), F(1, 'blocker'), F(2, 'major'), F(3, 'minor', { inline: false })]
+
+eq(
+  'findings are ordered worst first',
+  ordered(FS, {}, 'all').map((f) => f.index),
+  [1, 2, 0, 3],
+)
+eq(
+  'an overruled severity moves the finding immediately',
+  ordered(FS, { 1: { title: 't', body: 'b', severity: 'minor' } }, 'all').map((f) => f.index),
+  [2, 0, 3, 1],
+)
+eq(
+  'a filter is applied at the overruled severity, not the model’s',
+  ordered(FS, { 1: { title: 't', body: 'b', severity: 'minor' } }, 'blocker').map((f) => f.index),
+  [],
+)
+
+eq('nothing dropped means everything posts', decide(FS, new Set(), {}).keep, 4)
+eq('dropping is counted', decide(FS, new Set([1, 2]), {}).drop, 2)
+// The delivery split is a promise about what lands where on the pull request.
+eq('the inline/summary split counts only what is kept', 
+  [decide(FS, new Set([0]), {}).inline, decide(FS, new Set([0]), {}).summary], [2, 1])
+
+// The bug a screenshot caught and every selector assertion walked past.
+eq(
+  'overruling the only blocker removes it from the headline',
+  decide(FS, new Set(), { 1: { title: 't', body: 'b', severity: 'minor' } }).blockers,
+  0,
+)
+eq(
+  'a dropped blocker is not counted either, because it is not being sent',
+  decide(FS, new Set([1]), {}).blockers,
+  0,
+)
+// An unrecognised severity must not vanish from the counts: it still gets
+// posted, so it is counted as the mildest thing rather than as nothing.
+eq('an unknown severity still counts', decide([F(0, 'critical')], new Set(), {}).counts.minor, 1)
+
+// Dropping every finding is a decision, not a dead end: "I looked, there is
+// nothing worth flagging" is a review worth sending.
+eq('the button says what it will send', postLabel(decide(FS, new Set(), {}), false), 'Post 4 findings')
+eq('one finding is not pluralised', postLabel(decide([F(0, 'minor')], new Set(), {}), false), 'Post 1 finding')
+eq('dropping everything offers the summary', postLabel(decide(FS, new Set([0, 1, 2, 3]), {}), false), 'Post summary')
+eq('a review that found nothing still posts', postLabel(decide([], new Set(), {}), false), 'Post summary')
+
+// A rewrite is what gets posted, anchor untouched.
+eq(
+  'asPosted uses the reader’s words',
+  asPosted(F(0, 'minor'), { 0: { title: 'mine', body: 'why', severity: 'blocker' } }).title,
+  'mine',
+)
+eq(
+  'asPosted never moves the anchor',
+  asPosted(F(0, 'minor'), { 0: { title: 'mine', body: 'why', severity: 'blocker' } }).line,
+  1,
+)

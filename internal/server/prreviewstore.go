@@ -59,6 +59,15 @@ type prReview struct {
 	// the view can say what is happening rather than showing an unexplained
 	// several-minute wait, which on a phased review is longer than it was.
 	Phase string `json:"phase,omitempty"`
+	// Surveyed records whether this review has a survey phase at all, which a
+	// small change skips.
+	//
+	// Recorded rather than inferred, because it cannot be inferred: once a review
+	// is in `find` there is nothing in the record that says whether a survey ran
+	// before it, so a progress display had to either invent a step that will
+	// never light or claim a step ran that never did. One bool is cheaper than
+	// either lie.
+	Surveyed bool `json:"surveyed,omitempty"`
 	// Dropped are the candidates the verification pass refuted, with its reason.
 	//
 	// Kept deliberately. A reviewer you can audit is one you will trust: showing

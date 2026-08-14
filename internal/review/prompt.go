@@ -28,7 +28,9 @@ type Request struct {
 	BaseRef  string
 	HeadSHA  string
 	FromFork bool
-	// DiffPath is where the unified diff was written, inside the worktree.
+	// DiffPath is the combined diff, when the change was small enough for one to
+	// be worth writing. Empty on a large pull request, where the per-file diffs
+	// are the only sensible way in.
 	//
 	// A path rather than the diff itself, and that is the difference between a
 	// review that costs a few thousand tokens and one that costs a hundred and
@@ -38,6 +40,16 @@ type Request struct {
 	// parts it cares about, greps for callers, and skips the lockfile. Read works
 	// on a fork's review too, which Bash does not.
 	DiffPath string
+	// DiffDir is where the per-file diffs live, one per changed file at a path
+	// mirroring the file's own.
+	//
+	// A single combined file can only be read from the top, so a reviewer looking
+	// for one file in a large pull request reads the whole thing in chunks and
+	// carries every chunk in its context for the rest of the run. Addressable
+	// per-file diffs are what let it read the two files that matter and never see
+	// the lockfile at all. Measured: one review of a 9,800-line change spent
+	// 18.25M cache-read tokens hunting through the combined file at offsets.
+	DiffDir string
 	// Files is the changed paths with their sizes, which is small enough to be
 	// worth stating outright: it is how the model decides what to open first.
 	Files      []FileSummary
@@ -50,6 +62,9 @@ type FileSummary struct {
 	Status    string
 	Additions int
 	Deletions int
+	// Diff is where this one file's patch was written, relative to the worktree.
+	// Empty for a binary file, which has no patch to read.
+	Diff string
 }
 
 // Every phase's prompt is wrapped in a <kunai-review> tag, which is load-bearing
@@ -161,11 +176,12 @@ question from how much it matters. Three values:
 - "medium": probable, but it rests on an assumption you did not verify.
 - "low": a suspicion worth checking.
 
-Be honest here rather than confident. A finding you mark "high" is posted without
-further checking; anything lower is independently re-examined before it can be
-posted, and marking a guess "high" to get it through is how a wrong claim ends up
-on somebody's pull request. "medium" on a real bug costs nothing. "high" on a
-wrong one costs the credibility of every review after it.
+This is a report to the reader, not a gate. EVERY finding is independently
+re-examined before anything is posted, whatever you mark it, so inflating this
+buys you nothing and costs something real: a claim marked "high" that the check
+then refutes teaches the reader that the labels mean nothing, and then the label
+on the next true finding is worth nothing either. "medium" on a real bug costs
+you nothing at all. Be accurate rather than confident.
 
 "evidence" is what you read that supports the claim, in one or two lines: the
 call site, the invariant, the case that fails. It is what the re-examination is

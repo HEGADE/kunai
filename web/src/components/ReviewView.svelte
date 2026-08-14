@@ -1,45 +1,44 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
-  import {
-    reviewDraft,
-    postReview,
-    severityRank,
-    PHASE_LABEL,
-    type ReviewDraft,
-    type ReviewEdit,
-    type Severity,
-  } from '../lib/api'
+  import { reviewDraft, postReview, PHASE_LABEL, type ReviewDraft, type ReviewEdit, type Severity } from '../lib/api'
   import { workedFor } from '../lib/sidebar'
-  import { severityLabel, verdictLine, tally, SEVERITIES } from '../lib/severity'
-  import FindingCard from './FindingCard.svelte'
+  import { severityLabel, SEVERITIES } from '../lib/severity'
+  import { ordered, decide, effectiveSeverity, type Edits, type FindingEdit } from '../lib/review'
+  import FindingRow from './review/FindingRow.svelte'
+  import PhaseTrail from './review/PhaseTrail.svelte'
+  import RefutedList from './review/RefutedList.svelte'
+  import ReviewBar from './review/ReviewBar.svelte'
 
-  // A review, as a review rather than as a conversation.
+  // A review, as a deck you work through.
   //
-  // This replaced showing a review inside the chat, and the tell that the chat
-  // was wrong was that every improvement to it was an attempt to HIDE the chat:
-  // the brief sent silently, the findings pinned above the transcript, the tool
-  // calls collapsed, the prompt wrapped so a reopened session would not replay
-  // it. When every change suppresses the surface, the surface is wrong. A chat is
-  // for open-ended conversation; a review is a fixed set of judgements, each with
-  // evidence, that you accept, rewrite or drop and then send.
+  // This is a rewrite of a surface that was correct and unusable. It showed
+  // every part of every finding at full size at once, so one finding filled a
+  // laptop screen: a wall of body prose, a block of evidence, a thirteen-line
+  // hunk, and the decision buttons below the fold. Nothing said how many
+  // findings there were, which was the worst, or how far through you were. The
+  // fix is not more controls, it is rank: the claim is what you judge, and
+  // everything supporting it is recourse for when the claim is not enough.
   //
-  // One column of self-contained cards rather than a list beside a detail pane,
-  // because kunai is used from a phone and a split does not survive a narrow
-  // screen. Same layout at both sizes, so there is one design to get right.
+  // So exactly one finding is open at a time and the rest are single lines. That
+  // is a deliberate constraint rather than a limitation: a review is worked
+  // through in order, and a list where everything can be open is a list that is
+  // a screen and a half tall again by the third click.
   //
-  // The conversation is still there, one click away: a review you cannot argue
-  // with is the thing CI already does.
+  // The conversation is still one click away. A review you cannot argue with is
+  // the thing CI already does.
   let { sessionId, machineId }: { sessionId: string; machineId: string } = $props()
 
   let draft = $state<ReviewDraft | null>(null)
   let dropped = $state<Set<number>>(new Set())
-  // The user's rewrites, by finding index. Held here rather than in the cards so
-  // they survive the draft being re-read while the review is still running.
-  let edits = $state<Record<number, { title: string; body: string; severity: Severity }>>({})
+  // Held here rather than in the rows so a rewrite survives the draft being
+  // re-read while the review is still running.
+  let edits = $state<Edits>({})
   let summaryEdit = $state<string | null>(null)
   let filter = $state<Severity | 'all'>('all')
-  let showDropped = $state(false)
   let cursor = $state(0)
+  // Which finding is open, by its index. -1 is nothing open.
+  let openIndex = $state(-1)
+  let opened = false
   let posting = $state(false)
   let err = $state('')
   let loaded = $state(false)
@@ -49,24 +48,24 @@
   // Named sessionState, not state: a variable called `state` shadows the $state
   // rune for the whole component.
   const sessionState = $derived(meta ? app.liveState(meta) : '')
-  // Blocked on a permission answer. Its own state, not folded into "running",
-  // because it is the one the empty case got wrong: awaiting_permission is
-  // neither running nor finished, so a review parked on a question fell through
-  // to "nothing worth reporting" and claimed a clean bill of health for a review
-  // that had not started looking. Reviews no longer ask (the toolset makes that
-  // impossible), but a UI that lies when it happens is worth fixing anyway.
   const blocked = $derived(sessionState === 'awaiting_permission')
   const running = $derived(sessionState === 'running' || sessionState === 'starting' || blocked)
-  // Whether the REVIEW is still going, which is not the same question as whether
-  // the session is busy, and the review's own phase is the better answer. A
-  // finished review reopened later has a session that reports `starting` while it
-  // resumes, and reading that literally put a spinner and "Done" over a review
-  // that had been finished for a week, hiding the verdict behind a progress line
-  // for a job nobody was doing. The phase is recorded precisely because it
-  // outlives the process that produced it.
+  // Whether the REVIEW is going, which is not the same question as whether the
+  // session is busy. A finished review reopened later has a session reporting
+  // `starting` while it resumes, and reading that literally put a spinner over a
+  // review that had been done for a week. The phase outlives the process.
   const reviewing = $derived(running && draft?.phase !== 'done')
 
-  // The clock behind "Reviewing 2m".
+  const findings = $derived(draft?.findings ?? [])
+  const refuted = $derived(draft?.dropped ?? [])
+  const posted = $derived(!!draft?.posted_url)
+  const shown = $derived(ordered(findings, edits, filter))
+  const d = $derived(decide(findings, dropped, edits))
+  // Counted over everything, so a chip never offers a count its own filter then
+  // shows nothing for.
+  const all = $derived(decide(findings, new Set<number>(), edits))
+
+  // The clock behind "Looking for problems 2m".
   let now = $state(Date.now())
   $effect(() => {
     if (!running) return
@@ -81,60 +80,39 @@
       draft = null
     }
     loaded = true
+    // Open the worst finding the first time there is one, so the review opens
+    // already reading rather than as a list of closed lines.
+    if (!opened && draft?.findings?.length) {
+      opened = true
+      const first = ordered(draft.findings, {}, 'all')[0]
+      if (first) openIndex = first.index
+    }
   }
 
   $effect(() => {
     void sessionId
     void load()
   })
-  // Re-read when the turn ends, which is when a phase finishes and the next one
-  // starts. A phased review reports several times, not once.
+  // Re-read when the turn ends, which is when one phase finishes and the next
+  // begins. A phased review reports several times, not once.
   $effect(() => {
     if (!running && loaded) void load()
   })
 
-  const findings = $derived(draft?.findings ?? [])
-  const kept = $derived(findings.filter((f) => !dropped.has(f.index)))
-  const keptInline = $derived(kept.filter((f) => f.inline).length)
-  const posted = $derived(!!draft?.posted_url)
-  const refuted = $derived(draft?.dropped ?? [])
-
-  // The headline. Counted over what will actually be POSTED rather than over
-  // everything found, because the number a person is deciding about is the one
-  // they are about to send.
-  //
-  // Counted at the EDITED severity, which is not a detail: overruling a blocker
-  // down to a minor and still being told "1 blocker" is the headline lying about
-  // the thing it exists to summarise. The same applies to the filter chips, or
-  // a chip would offer a count that its own filter then shows nothing for.
-  const effective = $derived(findings.map((f) => ({ ...f, severity: sevOf(f.index, f.severity) })))
-  const counts = $derived(tally(effective.filter((f) => !dropped.has(f.index))))
-  const headline = $derived(verdictLine(counts))
-  const allCounts = $derived(tally(effective))
-
-  // Sorted most serious first and then filtered. Sorting client-side as well as
-  // server-side is not redundant: an edited severity has to move the card, and
-  // the server will not hear about that until Post.
-  const shown = $derived(
-    [...findings]
-      .sort((a, b) => severityRank(sevOf(a.index, a.severity)) - severityRank(sevOf(b.index, b.severity)))
-      .filter((f) => filter === 'all' || sevOf(f.index, f.severity) === filter),
-  )
-
-  function sevOf(index: number, fallback: Severity): Severity {
-    return edits[index]?.severity ?? fallback
+  function toggleOpen(index: number) {
+    openIndex = openIndex === index ? -1 : index
+    cursor = Math.max(0, shown.findIndex((f) => f.index === index))
   }
 
-  function toggle(i: number) {
+  function toggleDrop(index: number) {
     const next = new Set(dropped)
-    if (next.has(i)) next.delete(i)
-    else next.add(i)
+    if (next.has(index)) next.delete(index)
+    else next.add(index)
     dropped = next
   }
 
-  // Bulk, because judging a dozen findings one at a time is the friction. Scoped
-  // to what is currently SHOWN, so "drop all" under a filter drops that severity
-  // and not the blockers you filtered away.
+  // Bulk, scoped to what is SHOWN, so "drop all" under a filter drops that
+  // severity and not the blockers you filtered away.
   function keepAll() {
     const next = new Set(dropped)
     for (const f of shown) next.delete(f.index)
@@ -146,22 +124,22 @@
     dropped = next
   }
 
-  function setEdit(index: number, next: { title: string; body: string; severity: Severity } | undefined) {
+  function setEdit(index: number, next: FindingEdit | undefined) {
     if (!next) {
-      const { [index]: _drop, ...rest } = edits
+      const { [index]: _gone, ...rest } = edits
       edits = rest
       return
     }
     edits = { ...edits, [index]: next }
   }
 
-  function ask(i: number) {
-    // The finding becomes the subject of a message, and the chat opens with it.
-    // This is the one thing kunai has that a CI reviewer does not, so it is one
+  function ask(index: number) {
+    // The finding becomes the subject of a message and the chat opens with it.
+    // This is the one thing kunai has that a CI reviewer does not, so it is a
     // click rather than a mode you have to find.
-    const f = findings.find((x) => x.index === i)
+    const f = findings.find((x) => x.index === index)
     if (!f) return
-    app.reviewAsk = `About your finding on ${f.file}:${f.line} ("${f.title}") — `
+    app.reviewAsk = `About your finding on ${f.file}:${f.line} ("${f.title}") - `
     app.reviewChat = true
   }
 
@@ -179,7 +157,7 @@
       const res = await postReview(
         base,
         sessionId,
-        kept.map((f) => f.index),
+        findings.filter((f) => !dropped.has(f.index)).map((f) => f.index),
         payload,
         summaryEdit ?? '',
       )
@@ -191,9 +169,15 @@
     }
   }
 
-  // Keyboard, because a review is a rhythm: move, judge, move. Ignored while
-  // typing, and absent on a phone where scrolling and tapping is the whole
-  // interaction anyway.
+  // A review is a rhythm: move, judge, move. Ignored while typing, and absent on
+  // a phone where scrolling and tapping is the whole interaction.
+  function move(by: number) {
+    if (!shown.length) return
+    cursor = Math.min(Math.max(cursor + by, 0), shown.length - 1)
+    openIndex = shown[cursor].index
+    document.getElementById(`f-${shown[cursor].index}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }
+
   function onKey(e: KeyboardEvent) {
     const el = e.target as HTMLElement | null
     if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
@@ -205,20 +189,22 @@
     if (e.metaKey || e.ctrlKey || e.altKey) return
     switch (e.key) {
       case 'j':
-        cursor = Math.min(cursor + 1, shown.length - 1)
+        move(1)
         break
       case 'k':
-        cursor = Math.max(cursor - 1, 0)
+        move(-1)
+        break
+      case 'o':
+        if (shown[cursor]) toggleOpen(shown[cursor].index)
         break
       case 'd':
       case 'x':
-        if (shown[cursor]) toggle(shown[cursor].index)
+        if (shown[cursor]) toggleDrop(shown[cursor].index)
         break
       default:
         return
     }
     e.preventDefault()
-    document.getElementById(`f-${cursor}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }
 </script>
 
@@ -228,116 +214,99 @@
   <header class="top">
     <div class="ident">
       {#if draft}
-        <span class="pr mono">{draft.owner}/{draft.repo}#{draft.number}</span>
-        <span class="title">{draft.title}</span>
+        <span class="repo mono">{draft.owner}/{draft.repo}#{draft.number}</span>
+        <h1 class="title">{draft.title}</h1>
       {:else}
-        <span class="pr mono">Review</span>
+        <span class="repo mono">Review</span>
       {/if}
     </div>
-    <div class="acts">
-      <button class="chat" onclick={() => (app.reviewChat = true)}>Conversation</button>
-      {#if posted}
-        <a class="done" href={draft?.posted_url} target="_blank" rel="noreferrer">Posted &rarr;</a>
-      {:else if findings.length || draft?.summary}
-        <!-- Dropping every finding is a decision, not a dead end: the summary is
-             still a review, and "I looked, nothing worth flagging" is worth
-             sending. So the button changes what it promises rather than going
-             grey. -->
-        <button class="post" onclick={post} disabled={posting}>
-          {posting ? 'Posting…' : kept.length ? `Post ${kept.length}` : 'Post summary'}
-        </button>
-      {/if}
-    </div>
+    <button class="conv" onclick={() => (app.reviewChat = true)}>Conversation</button>
   </header>
 
-  <!-- Honest progress: what the session is actually doing, not a phase invented
-       to fill a bar. A phased review takes longer than the single-shot one did,
-       so a bare elapsed clock reads as a hang; the phase is what makes the wait
-       legible. -->
-  {#if blocked}
-    <!-- Stopped on a question. Said plainly, with the way to answer it, because
-         a review that is waiting and a review that found nothing look identical
-         from here otherwise. -->
-    <div class="prog needs">
-      This review is waiting for an answer before it can carry on.
-      <button class="inline" onclick={() => (app.reviewChat = true)}>Answer it &rarr;</button>
-    </div>
-  {:else if reviewing}
-    <div class="prog">
-      <span class="spin" aria-hidden="true"></span>
-      {draft?.phase ? PHASE_LABEL[draft.phase] : 'Reviewing'}
-      <span class="mono">{workedFor(app.liveTurnStart(meta ?? ({} as never)), now)}</span>
-      {#if findings.length}<span class="sofar">· {findings.length} so far</span>{/if}
-    </div>
-  {:else if draft && findings.length}
-    <!-- The verdict, which is the one line worth reading before any of the
-         findings: two blockers and five minor is a different pull request from
-         seven minor, and that has to be readable without reading all twelve. -->
-    <div class="verdict">
-      <span class="vhead" class:bad={counts.blocker > 0}>{headline}</span>
-      <span class="vsub">
-        {keptInline} inline · {kept.length - keptInline} in the summary
-        {#if refuted.length}· {refuted.length} refuted{/if}
-      </span>
-    </div>
-  {/if}
-
   <div class="body">
-    {#if draft?.summary}
-      <!-- Editable, because the summary is the first thing the author reads and
-           the reviewer's phrasing is not always the one you want to sign. -->
-      {#if summaryEdit === null}
-        <p class="sum">
-          {draft.summary}
-          {#if !posted}<button class="sedit" onclick={() => (summaryEdit = draft?.summary ?? '')}>Edit</button>{/if}
-        </p>
-      {:else}
-        <div class="sumed">
-          <textarea bind:value={summaryEdit} rows="4"></textarea>
-          <button class="sdone" onclick={() => (summaryEdit = summaryEdit?.trim() ? summaryEdit : null)}>Done</button>
-          <button class="scancel" onclick={() => (summaryEdit = null)}>Restore original</button>
-        </div>
-      {/if}
+    <!-- Honest progress: what the session is actually doing. A phased review
+         takes minutes, so a bare elapsed clock reads as a hang; naming the phase
+         is what makes the wait legible. -->
+    {#if blocked}
+      <div class="prog needs">
+        This review is waiting for an answer before it can carry on.
+        <button class="inline" onclick={() => (app.reviewChat = true)}>Answer it &rarr;</button>
+      </div>
+    {:else if reviewing}
+      {@const elapsed = workedFor(app.liveTurnStart(meta ?? ({} as never)), now)}
+      <PhaseTrail phase={draft?.phase ?? 'find'} skippedSurvey={draft ? !draft.surveyed : false} />
+      <p class="elapsed">
+        {#if elapsed}<span class="mono">{elapsed}</span>{/if}
+        {#if findings.length}
+          {elapsed ? '· ' : ''}{findings.length} finding{findings.length === 1 ? '' : 's'} so far
+        {:else}
+          {elapsed ? '· ' : ''}Findings appear here as they are found, and are checked before you see the verdict.
+        {/if}
+      </p>
     {/if}
 
     {#if draft?.parse_error}
       <p class="empty">
-        This review finished but did not produce findings kunai could read. Open the
-        conversation and ask it to answer again in the required format.
+        This review finished but did not produce findings kunai could read, twice over. Open
+        the conversation and ask it to answer again in the required format.
       </p>
     {:else if !loaded}
-      <p class="empty">Loading…</p>
+      <p class="empty">Loading&hellip;</p>
     {:else if !draft}
       <p class="empty">This session is not a pull-request review.</p>
     {:else if !findings.length && !running && draft.phase && draft.phase !== 'done'}
       <!-- Stopped before it finished. This MUST NOT fall through to "nothing
-           worth reporting", which is the same lie this view has told once
-           before: a review parked on a permission question claimed a clean bill
-           of health for code it had not started reading. The cause is different
-           now (the run ends part-way, in one of the phases) and the rule is the
-           same, so the recorded phase is what tells them apart. -->
+           worth reporting", which is the same lie this view told once before:
+           a review parked on a question claimed a clean bill of health for code
+           it had not started reading. The recorded phase is what tells them
+           apart. -->
       <p class="empty">
-        This review stopped while {PHASE_LABEL[draft.phase].toLowerCase()} and never
-        finished, so nothing has been looked at yet. Start it again from the
-        dashboard.
+        This review stopped while {PHASE_LABEL[draft.phase].toLowerCase()} and never finished,
+        so nothing has been looked at yet. Start it again from the dashboard.
       </p>
-    {:else if !findings.length && !running}
-      <p class="empty">Nothing worth reporting. Posting sends that as the review.</p>
+    {/if}
+
+    {#if draft && (findings.length || draft.summary) && !reviewing}
+      <section class="verdict">
+        <div class="tally">
+          {#each SEVERITIES as s (s)}
+            {#if all.counts[s] > 0}
+              <span class="pip sev-{s}">{all.counts[s]} {severityLabel(s).toLowerCase()}</span>
+            {/if}
+          {/each}
+          {#if !findings.length}<span class="pip clean">Nothing worth reporting</span>{/if}
+          {#if refuted.length}<span class="pip quiet">{refuted.length} refuted</span>{/if}
+        </div>
+
+        {#if draft.summary}
+          {#if summaryEdit === null}
+            <p class="sum">
+              {draft.summary}
+              {#if !posted}<button class="sedit" onclick={() => (summaryEdit = draft?.summary ?? '')}>Edit</button>{/if}
+            </p>
+          {:else}
+            <div class="sumed">
+              <textarea bind:value={summaryEdit} rows="5"></textarea>
+              <div class="sumacts">
+                <button class="sdone" onclick={() => (summaryEdit = summaryEdit?.trim() ? summaryEdit : null)}>
+                  Save
+                </button>
+                <button class="quiet" onclick={() => (summaryEdit = null)}>Restore the original</button>
+              </div>
+            </div>
+          {/if}
+        {/if}
+      </section>
     {/if}
 
     {#if findings.length > 1 && !posted}
-      <!-- Filtering and bulk judgement. The friction this removes is real: a
-           twelve-finding review judged one card at a time is why people stop
-           reading at the fourth. -->
       <div class="tools">
-        <div class="filters">
-          <button class="chip" class:on={filter === 'all'} onclick={() => (filter = 'all')}>
-            All {findings.length}
-          </button>
+        <div class="chips">
+          <button class="chip" class:on={filter === 'all'} onclick={() => (filter = 'all')}>All {findings.length}</button>
           {#each SEVERITIES as s (s)}
-            {#if allCounts[s] > 0}
+            {#if all.counts[s] > 0}
               <button class="chip sev-{s}" class:on={filter === s} onclick={() => (filter = s)}>
-                {severityLabel(s)} {allCounts[s]}
+                {severityLabel(s)} {all.counts[s]}
               </button>
             {/if}
           {/each}
@@ -349,47 +318,34 @@
       </div>
     {/if}
 
-    {#each shown as f, i (f.index)}
-      <div id="f-{i}">
-        <FindingCard
-          {f}
-          dropped={dropped.has(f.index)}
-          selected={i === cursor}
-          edit={edits[f.index]}
-          onToggle={() => toggle(f.index)}
-          onAsk={() => ask(f.index)}
-          onEdit={(next) => setEdit(f.index, next)}
-        />
-      </div>
-    {/each}
+    <div class="list">
+      {#each shown as f, i (f.index)}
+        <div id="f-{f.index}">
+          <FindingRow
+            {f}
+            open={openIndex === f.index}
+            dropped={dropped.has(f.index)}
+            cursor={i === cursor}
+            edit={edits[f.index]}
+            ontoggle={() => toggleOpen(f.index)}
+            ondrop={() => toggleDrop(f.index)}
+            onedit={(next) => setEdit(f.index, next)}
+            onask={() => ask(f.index)}
+          />
+        </div>
+      {/each}
+    </div>
 
     {#if refuted.length}
-      <!-- What the review considered and threw away, with the reason. A reviewer
-           you can audit is one you will trust: three findings from a reviewer
-           that refuted four is a different thing from three findings from one
-           that only found three, and nothing else can tell them apart. -->
-      <div class="refuted">
-        <button class="rhead" onclick={() => (showDropped = !showDropped)}>
-          {showDropped ? '−' : '+'} {refuted.length} considered and dropped
-        </button>
-        {#if showDropped}
-          {#each refuted as d, i (i)}
-            <div class="rrow">
-              <span class="rloc mono">{d.file}{d.line ? ':' + d.line : ''}</span>
-              <span class="rtitle">{d.title}</span>
-              <span class="rwhy">{d.why}</span>
-            </div>
-          {/each}
-        {/if}
-      </div>
+      <RefutedList items={refuted} />
     {/if}
 
     {#if err}<p class="err">{err}</p>{/if}
-
-    {#if shown.length > 1}
-      <p class="keys mono">j / k move · d drop · ⌘↵ post</p>
-    {/if}
   </div>
+
+  {#if draft && !reviewing && !draft.parse_error}
+    <ReviewBar {d} {posting} {posted} postedUrl={draft.posted_url} onpost={post} />
+  {/if}
 </div>
 
 <style>
@@ -400,205 +356,191 @@
     min-height: 0;
     background: var(--bg);
   }
-  /* Sticky, because Post has to be reachable from anywhere in a long list. */
+
   .top {
     flex: none;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
-    gap: 12px;
-    padding: calc(var(--safe-top) + 14px) 18px 12px;
+    gap: 14px;
+    padding: calc(var(--safe-top) + 14px) 18px 13px;
     border-bottom: 1px solid var(--border);
   }
   .ident {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
     min-width: 0;
   }
-  .pr {
-    flex: none;
-    font-size: 12px;
-    color: var(--text-3);
+  .repo {
+    display: block;
+    font-size: 11px;
+    letter-spacing: 0.01em;
+    color: var(--text-4);
   }
   .title {
-    font-size: 13.5px;
+    margin: 3px 0 0;
+    font-size: 15px;
+    font-weight: 550;
+    letter-spacing: -0.01em;
     color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .acts {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+  .conv {
     flex: none;
-  }
-  .chat {
-    padding: 5px 11px;
+    padding: 6px 13px;
     border-radius: var(--r-sm);
     color: var(--text-3);
     font-size: 12.5px;
   }
-  .chat:hover {
+  .conv:hover {
     color: var(--text);
     background: var(--panel);
-  }
-  /* The one filled control, because it is the one irreversible action here. */
-  .post {
-    padding: 5px 14px;
-    border-radius: var(--r-sm);
-    background: var(--white);
-    color: #0b0b0c;
-    font-size: 12.5px;
-    font-weight: 550;
-  }
-  .post:disabled {
-    opacity: 0.5;
-  }
-  .done {
-    font-size: 12.5px;
-    color: var(--live);
-    text-decoration: none;
-  }
-
-  .prog {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 9px 18px;
-    border-bottom: 1px solid var(--border);
-    font-size: 12px;
-    color: var(--live);
-    font-variant-numeric: tabular-nums;
-  }
-  /* Amber, the colour this app already reserves for "blocked on you". */
-  .prog.needs {
-    color: var(--busy);
-  }
-  .inline {
-    color: var(--busy);
-    font-size: 12px;
-    font-weight: 550;
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  }
-  .sofar {
-    color: var(--text-4);
-  }
-  /* The same duty-cycled dashed ring the sidebar uses for a working session. */
-  .spin {
-    width: 9px;
-    height: 9px;
-    border: 1.5px dashed currentColor;
-    border-radius: 50%;
-    animation: rspin 2.4s steps(12) infinite;
-  }
-  @keyframes rspin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .spin {
-      animation: none;
-    }
-  }
-
-  /* The verdict line: the review's headline, in the place the progress bar was. */
-  .verdict {
-    flex: none;
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    flex-wrap: wrap;
-    padding: 9px 18px;
-    border-bottom: 1px solid var(--border);
-  }
-  .vhead {
-    font-size: 12.5px;
-    font-weight: 550;
-    color: var(--text-2);
-  }
-  .vhead.bad {
-    color: var(--alert);
-  }
-  .vsub {
-    font-size: 11.5px;
-    color: var(--text-4);
-    font-variant-numeric: tabular-nums;
   }
 
   .body {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 16px 18px calc(var(--safe-bottom) + 28px);
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+    padding: 18px 18px 32px;
     max-width: 860px;
     width: 100%;
     margin: 0 auto;
   }
+
+  .prog {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 18px;
+    font-size: 12.5px;
+    color: var(--live);
+    font-variant-numeric: tabular-nums;
+  }
+  /* Amber, which this app already reserves for "blocked on you". */
+  .prog.needs {
+    color: var(--busy);
+  }
+  .inline {
+    color: var(--busy);
+    font-size: 12.5px;
+    font-weight: 550;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  /* How long it has been going, under the trail rather than beside it: the
+     phase answers "is it stuck", the clock only answers "how long". */
+  .elapsed {
+    margin: -12px 0 22px;
+    font-size: 11.5px;
+    color: var(--text-4);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The verdict: the shape of the review before any of it is read. */
+  .verdict {
+    margin-bottom: 20px;
+  }
+  .tally {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+  .pip {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .pip.sev-blocker {
+    color: var(--alert);
+  }
+  .pip.sev-major {
+    color: var(--busy);
+  }
+  .pip.sev-minor {
+    color: var(--text-3);
+  }
+  .pip.clean {
+    color: var(--live);
+  }
+  .pip.quiet {
+    color: var(--text-4);
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    text-transform: none;
+  }
+  /* The review's own words, given the size they are worth: this is the first
+     thing the author will read and it was a small grey paragraph. */
   .sum {
-    margin: 0;
-    font-size: 13.5px;
-    line-height: 1.65;
+    margin: 12px 0 0;
+    max-width: 70ch;
+    font-size: 14.5px;
+    line-height: 1.68;
     color: var(--text-2);
   }
   .sedit {
-    margin-left: 8px;
+    margin-left: 9px;
     font-size: 11px;
     color: var(--text-4);
+    vertical-align: baseline;
   }
   .sedit:hover {
     color: var(--text-2);
   }
   .sumed {
+    margin-top: 12px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    align-items: flex-start;
+    gap: 9px;
   }
   .sumed textarea {
     width: 100%;
-    padding: 9px 11px;
+    padding: 10px 12px;
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: var(--r-sm);
     color: var(--text);
     font-family: inherit;
-    font-size: 13px;
-    line-height: 1.6;
+    font-size: 13.5px;
+    line-height: 1.65;
     outline: none;
     resize: vertical;
   }
   .sumed textarea:focus {
     border-color: var(--border-2);
   }
+  .sumacts {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
   .sdone {
-    padding: 4px 12px;
+    padding: 5px 14px;
     border-radius: var(--r-sm);
     background: var(--panel-2);
-    color: var(--text-2);
+    color: var(--text);
     font-size: 12px;
+    font-weight: 550;
   }
-  .scancel {
+  .quiet {
     font-size: 11.5px;
     color: var(--text-4);
   }
+  .quiet:hover {
+    color: var(--text-2);
+  }
 
-  /* Filters and bulk actions. */
   .tools {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 10px;
     flex-wrap: wrap;
+    margin-bottom: 6px;
   }
-  .filters,
+  .chips,
   .bulk {
     display: flex;
     align-items: center;
@@ -606,10 +548,9 @@
     flex-wrap: wrap;
   }
   .chip {
-    padding: 3px 10px;
+    padding: 4px 11px;
     border-radius: 999px;
-    border: 1px solid var(--border);
-    background: none;
+    border: 1px solid transparent;
     color: var(--text-4);
     font-size: 11.5px;
     font-variant-numeric: tabular-nums;
@@ -620,10 +561,7 @@
   .chip.on {
     color: var(--text);
     border-color: var(--border-2);
-    background: var(--panel);
   }
-  /* Severity reuses the tokens that already mean these things; see
-     lib/severity.ts. The chip carries its name too, never colour alone. */
   .chip.sev-blocker.on {
     color: var(--alert);
     border-color: var(--alert);
@@ -633,7 +571,7 @@
     border-color: var(--busy);
   }
   .bact {
-    padding: 3px 10px;
+    padding: 4px 10px;
     border-radius: var(--r-sm);
     color: var(--text-4);
     font-size: 11.5px;
@@ -643,79 +581,35 @@
     background: var(--panel);
   }
 
-  /* The audit trail. */
-  .refuted {
-    margin-top: 4px;
-    border-top: 1px solid var(--border);
-    padding-top: 10px;
+  .list {
+    margin-top: 8px;
   }
-  .rhead {
-    font-size: 11.5px;
-    color: var(--text-4);
-    font-variant-numeric: tabular-nums;
-  }
-  .rhead:hover {
-    color: var(--text-2);
-  }
-  .rrow {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 8px 0 0;
-  }
-  .rloc {
-    font-size: 11px;
-    color: var(--text-4);
-    unicode-bidi: plaintext;
-  }
-  .rtitle {
-    font-size: 12.5px;
-    color: var(--text-3);
-    text-decoration: line-through;
-    text-decoration-color: var(--text-4);
-  }
-  .rwhy {
-    font-size: 11.5px;
-    line-height: 1.55;
-    color: var(--text-4);
+  /* The last row's rule would otherwise draw a line under the list with nothing
+     below it. */
+  .list > div:last-child :global(.row:not(.open)) {
+    border-bottom-color: transparent;
   }
 
   .empty {
-    margin: 12px 0;
-    font-size: 13px;
-    line-height: 1.6;
+    margin: 8px 0 20px;
+    max-width: 66ch;
+    font-size: 13.5px;
+    line-height: 1.68;
     color: var(--text-3);
   }
   .err {
-    margin: 0;
+    margin: 16px 0 0;
     font-size: 12.5px;
+    line-height: 1.6;
     color: var(--alert);
   }
-  .keys {
-    margin: 6px 0 0;
-    font-size: 11px;
-    color: var(--text-4);
-  }
-  /* No hover-to-discover on touch, and no keyboard either. */
-  @media (pointer: coarse) {
-    .keys {
-      display: none;
-    }
-  }
 
-  /* Phone. The header wraps rather than squeezing the title to nothing, and the
-     controls take a real tap target. */
   @media (max-width: 560px) {
-    .top {
-      flex-wrap: wrap;
-      gap: 8px;
-    }
     .body {
-      padding: 14px 12px calc(var(--safe-bottom) + 28px);
+      padding: 14px 12px 24px;
     }
-    .post,
-    .chat {
-      padding: 8px 14px;
+    .top {
+      padding: calc(var(--safe-top) + 12px) 12px 11px;
     }
     .bact,
     .chip {

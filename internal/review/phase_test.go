@@ -45,19 +45,72 @@ func TestUnreadableSurveyIsSurvived(t *testing.T) {
 	}
 }
 
-// A Find that cannot be read IS the review failing, so it must be an error
-// rather than an empty review reported as a clean bill of health.
-func TestUnreadableFindIsAnError(t *testing.T) {
+// An unreadable Find is asked for again before it is given up on. A whole
+// review is minutes of work and dollars of tokens, and the reading survives in
+// the context: only the wrapper was wrong.
+func TestUnreadableFindIsAskedForAgain(t *testing.T) {
 	r := &Run{Phase: PhaseFind}
-	if err := r.Accept("no block here"); err == nil {
-		t.Fatal("Accept() returned nil for an unreadable find phase, want an error")
+	if err := r.Accept("no block here"); err != nil {
+		t.Fatalf("Accept() = %v, want the first unreadable answer to be repaired", err)
+	}
+	if r.Phase != PhaseFind {
+		t.Fatalf("phase = %q, want to stay on %q while repairing", r.Phase, PhaseFind)
+	}
+	// And what it asks for is the block, not the review over again.
+	prompt, _, ok := r.Next()
+	if !ok {
+		t.Fatal("Next() = !ok, want a repair prompt")
+	}
+	if strings.Contains(prompt, "## What to look for") {
+		t.Error("the repair prompt repeats the whole review question, so the reading is paid for twice")
+	}
+	if !strings.Contains(prompt, FenceTag) {
+		t.Error("the repair prompt does not say which block it wants")
 	}
 }
 
-// The verification phase is skipped when every candidate was already
-// demonstrated: re-checking those is the whole cost of the phase for none of
-// its value.
-func TestVerifyIsSkippedWhenEverythingIsAlreadyDemonstrated(t *testing.T) {
+// Asked twice and still unreadable IS the review failing, and must be an error
+// rather than an empty review reported as a clean bill of health.
+func TestFindUnreadableTwiceIsAnError(t *testing.T) {
+	r := &Run{Phase: PhaseFind}
+	if err := r.Accept("no block here"); err != nil {
+		t.Fatalf("first Accept() = %v, want a repair", err)
+	}
+	if err := r.Accept("still no block"); err == nil {
+		t.Fatal("second Accept() returned nil, want an error")
+	}
+}
+
+// A phase that recovers gets its full allowance back, or a review that stumbled
+// once early would have no slack left where it mattered.
+func TestRepairAllowanceIsPerPhase(t *testing.T) {
+	r := &Run{Phase: PhaseFind}
+	if err := r.Accept("no block here"); err != nil {
+		t.Fatalf("Accept() = %v", err)
+	}
+	if err := r.Accept(findBlock(`{"file":"a.go","line":1,"title":"x","body":"y","severity":"major","confidence":"high"}`)); err != nil {
+		t.Fatalf("Accept() = %v", err)
+	}
+	if r.Phase != PhaseVerify {
+		t.Fatalf("phase = %q, want %q", r.Phase, PhaseVerify)
+	}
+	if err := r.Accept("no verdicts here"); err != nil {
+		t.Fatalf("Accept() = %v, want verify to have its own repair", err)
+	}
+	if r.Phase != PhaseVerify {
+		t.Fatalf("phase = %q, want verify to stay open for its repair", r.Phase)
+	}
+}
+
+// The rule the whole engine rests on: verification runs on everything that could
+// be posted, whatever the finder said about itself.
+//
+// This is the inverse of what it used to assert. Skipping the pass for findings
+// marked "high" asks the finder whether the finder needs checking, and the
+// finder answered yes to itself every single time: across every review completed
+// under the old rule, 5 findings out of 5 came back "high" and the verification
+// phase never ran once.
+func TestVerificationRunsEvenOnDemonstratedFindings(t *testing.T) {
 	r := &Run{Phase: PhaseFind}
 	if err := r.Accept(findBlock(`
       {"file":"a.go","line":1,"title":"x","body":"y","severity":"major","confidence":"high"},
@@ -65,8 +118,8 @@ func TestVerifyIsSkippedWhenEverythingIsAlreadyDemonstrated(t *testing.T) {
     `)); err != nil {
 		t.Fatalf("Accept() = %v", err)
 	}
-	if r.Phase != PhaseDone {
-		t.Fatalf("phase = %q, want %q", r.Phase, PhaseDone)
+	if r.Phase != PhaseVerify {
+		t.Fatalf("phase = %q, want %q: a finder's own confidence must not skip the check", r.Phase, PhaseVerify)
 	}
 }
 
@@ -201,7 +254,11 @@ func TestAnUnjudgedCandidateSurvivesUnverified(t *testing.T) {
 // comment is what keeps that honest.
 func TestUnreadableVerdictsLeaveFindingsUnverified(t *testing.T) {
 	r := runAtVerify(t, `{"file":"a.go","line":1,"title":"x","body":"y","severity":"major","confidence":"medium"}`)
+	// Asked once more first, then given up on: the same allowance every phase has.
 	if err := r.Accept("the checker crashed"); err != nil {
+		t.Fatalf("Accept() = %v", err)
+	}
+	if err := r.Accept("the checker crashed again"); err != nil {
 		t.Fatalf("Accept() = %v", err)
 	}
 	if r.Phase != PhaseDone {

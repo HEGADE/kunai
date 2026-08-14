@@ -19,8 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -139,11 +137,10 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 	repoRoot := wt.Repo
 
 	fromFork := pr.FromFork(repo)
-	// Written into the worktree rather than pasted into the prompt. A large pull
-	// request inlined costs its entire diff in tokens before the model has decided
-	// anything is worth reading; on disk it reads the parts that matter and skips
-	// the lockfile. Read reaches it on a fork's review too, where Bash does not.
-	diffPath, err := writeDiff(wt.Path, number, files)
+	// Written into the worktree rather than pasted into the prompt, and written
+	// one file at a time so the parts worth reading are addressable. See
+	// prreviewdiff.go for what that is worth in tokens.
+	diff, err := writeDiff(wt.Path, number, files)
 	if err != nil {
 		_ = worktree.RemoveReview(wt)
 		return nil, err
@@ -153,8 +150,9 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 	run := review.NewRun(review.Request{
 		Repo: repo.String(), Number: number, Title: pr.Title, Author: pr.User.Login,
 		BaseRef: pr.Base.Ref, HeadSHA: sha, FromFork: fromFork,
-		DiffPath:   diffPath,
-		Files:      fileSummaries(files),
+		DiffPath:   diff.Whole,
+		DiffDir:    diff.Dir,
+		Files:      diff.Files,
 		PriorNotes: priorNotes(ctx, app, repo, number),
 	})
 
@@ -196,7 +194,8 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 			Title: pr.Title, HeadSHA: sha, FromFork: fromFork,
 			RepoDir: repoRoot, Worktree: wt.Path,
 			Requester: requester, CreatedAt: time.Now(),
-			Phase: string(run.Phase),
+			Phase:    string(run.Phase),
+			Surveyed: run.Phase == review.PhaseSurvey,
 		})
 	}
 	s.reviewRuns.put(sess.ID, &reviewRun{run: run, files: files})
@@ -320,52 +319,6 @@ func collapse(s string) string {
 		return s[:400] + "..."
 	}
 	return s
-}
-
-// reviewDiffDir is where a review's diff is written inside its worktree. Dotted
-// and namespaced so it is obviously kunai's and obviously not part of the change
-// being reviewed; the whole checkout is thrown away afterwards regardless.
-const reviewDiffDir = ".kunai-review"
-
-// writeDiff stitches the per-file patches into one diff on disk and returns its
-// path, relative to the worktree so the prompt can name it the way the agent
-// will type it.
-func writeDiff(worktreePath string, number int, files []ghapp.FileDiff) (string, error) {
-	dir := filepath.Join(worktreePath, reviewDiffDir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("could not prepare the review diff: %w", err)
-	}
-	name := fmt.Sprintf("pr-%d.diff", number)
-
-	var b strings.Builder
-	for _, f := range files {
-		fmt.Fprintf(&b, "--- a/%s\n+++ b/%s\n", f.Filename, f.Filename)
-		if f.Patch == "" {
-			// Binary, or too large for GitHub to render. Said plainly so the model
-			// knows the file changed and that there is nothing here to read.
-			fmt.Fprintf(&b, "(%s, no textual diff available)\n", f.Status)
-			continue
-		}
-		b.WriteString(f.Patch)
-		b.WriteString("\n")
-	}
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(b.String()), 0o644); err != nil {
-		return "", fmt.Errorf("could not write the review diff: %w", err)
-	}
-	return filepath.Join(reviewDiffDir, name), nil
-}
-
-// fileSummaries is the orientation list: what changed and how much, which is how
-// the model decides what to open first.
-func fileSummaries(files []ghapp.FileDiff) []review.FileSummary {
-	out := make([]review.FileSummary, 0, len(files))
-	for _, f := range files {
-		out = append(out, review.FileSummary{
-			Path: f.Filename, Status: f.Status,
-			Additions: f.Additions, Deletions: f.Deletions,
-		})
-	}
-	return out
 }
 
 // toReviewFiles converts the wire shape to the logic package's. The duplication

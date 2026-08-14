@@ -97,6 +97,18 @@ export class ChatConnection {
   // Resolvers waiting on the initial backlog (see whenReady).
   private readyWaiters: (() => void)[] = []
   sessionState = $state<SessionState>('idle')
+  // Whether this socket has actually heard the session's state, as opposed to
+  // sitting on the seed above.
+  //
+  // Load-bearing, because `idle` is a real value and a plausible one: anything
+  // preferring this socket over the polled list gets a confident "idle" for a
+  // session that is mid-turn, from the moment the tab opens until hello lands,
+  // and for ever if the socket never connects. The review view read that and
+  // announced "this review stopped and never finished" over a review that was
+  // running; the sidebar drops its "Working 17s" badge for the same reason.
+  // The seed is still worth having (it stops the composer flashing), so what
+  // changes is that callers can now tell a seed from an answer.
+  heard = $state(false)
   // When the running turn began (unix ms), 0 when nothing is running. Set from
   // the state frames rather than from Meta, because this socket is the fastest
   // thing that knows. Not cleared on awaiting_permission: that is the same turn
@@ -306,7 +318,10 @@ export class ChatConnection {
         this.cwd = ev.cwd ?? this.cwd
         this.model = ev.model || this.model
         this.title = ev.title ?? this.title
-        if (ev.state) this.sessionState = ev.state
+        if (ev.state) {
+          this.sessionState = ev.state
+          this.heard = true
+        }
         if (ev.mode) this.mode = ev.mode as PermissionMode
         if (ev.effort) this.effort = ev.effort
         if (ev.cli) this.cli = ev.cli
@@ -477,6 +492,7 @@ export class ChatConnection {
             this.turnStartedAt = 0
           }
           this.sessionState = ev.state
+          this.heard = true
         }
         break
       case 'mode':

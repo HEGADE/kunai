@@ -463,6 +463,11 @@
   }
   .msg.reply {
     font-family: var(--serif);
+    /* Ligatures are off globally so code renders as the characters it is made
+       of; serif prose at 15.5px is the one place they are large enough to see,
+       so they come back here. Code inside this block sets .mono and turns them
+       off again. */
+    font-variant-ligatures: common-ligatures;
     font-size: 15.5px;
     line-height: 1.62;
   }

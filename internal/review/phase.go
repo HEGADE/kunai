@@ -86,7 +86,27 @@ type Run struct {
 	// says the filtering is real, where silently showing three findings looks
 	// identical to a reviewer that only found three.
 	Dropped []Dropped
+
+	// repairing is the complaint to put to the agent when its last answer could
+	// not be read, and repairs counts how often that has happened in this phase.
+	//
+	// A review is minutes of work and several dollars of tokens, and it was being
+	// thrown away whole over a missing fence. One real run ended on "the reply
+	// contains no review block" after 32 model calls, having read the code, found
+	// whatever it found, and written it up in a shape the parser did not accept.
+	// Everything in that reply still existed; only the wrapper was wrong. Asking
+	// once for the block alone recovers all of it for the price of one turn.
+	repairing string
+	repairs   int
 }
+
+// maxRepairs is how many times one phase may be asked again for an answer that
+// could not be read.
+//
+// One. A model that has now been shown the exact format twice and produced
+// something unreadable both times is not going to get there on the third ask, and
+// each attempt costs another turn against a context that is already large.
+const maxRepairs = 1
 
 // Survey is the first phase's answer: what this change is for, and where to look.
 type Survey struct {
@@ -138,6 +158,12 @@ func worthSurveying(files []FileSummary) bool {
 // Next is the prompt to send for the current phase, with the one-line brief that
 // stands in for it in the transcript. ok is false when the review is finished.
 func (r *Run) Next() (prompt, brief string, ok bool) {
+	// An answer that could not be read is asked for again before the phase's own
+	// question is repeated. Repeating the question would make it do the work
+	// twice; what went wrong was the wrapper, not the reading.
+	if r.repairing != "" {
+		return RepairPrompt(r.Phase, r.repairing), "Ask again for the answer block", true
+	}
 	switch r.Phase {
 	case PhaseSurvey:
 		return SurveyPrompt(r.Req), fmt.Sprintf("Survey %s#%d", r.Req.Repo, r.Req.Number), true
@@ -149,6 +175,21 @@ func (r *Run) Next() (prompt, brief string, ok bool) {
 		return "", "", false
 	}
 }
+
+// repair records that this phase's answer was unreadable and asks for it again,
+// reporting whether there is another attempt left.
+func (r *Run) repair(err error) bool {
+	if r.repairs >= maxRepairs {
+		return false
+	}
+	r.repairs++
+	r.repairing = err.Error()
+	return true
+}
+
+// settle clears the repair state as a phase completes, so the next phase starts
+// with its own full allowance.
+func (r *Run) settle() { r.repairing, r.repairs = "", 0 }
 
 // Accept reads the agent's reply for the current phase and advances.
 //
@@ -165,14 +206,21 @@ func (r *Run) Accept(text string) error {
 		if s, err := ParseSurvey(text); err == nil {
 			r.Survey = s
 		}
+		r.settle()
 		r.Phase = PhaseFind
 		return nil
 
 	case PhaseFind:
 		draft, err := Parse(text)
 		if err != nil {
+			// Asked again before being given up on: the reading was done, only the
+			// wrapper was wrong, and a whole review is too much to lose to a fence.
+			if r.repair(err) {
+				return nil
+			}
 			return err
 		}
+		r.settle()
 		r.Summary = draft.Summary
 		r.Candidates = draft.Findings
 		r.Phase = PhaseVerify
@@ -183,11 +231,17 @@ func (r *Run) Accept(text string) error {
 
 	case PhaseVerify:
 		verdicts, err := ParseVerdicts(text)
-		r.Phase = PhaseDone
 		if err != nil {
+			if r.repair(err) {
+				return nil
+			}
 			// Left unverified rather than dropped or promoted. See above.
+			r.settle()
+			r.Phase = PhaseDone
 			return nil
 		}
+		r.settle()
+		r.Phase = PhaseDone
 		r.applyVerdicts(verdicts)
 		return nil
 
@@ -196,20 +250,29 @@ func (r *Run) Accept(text string) error {
 	}
 }
 
-// needsVerification reports whether any candidate is worth a second pass.
+// needsVerification reports whether there is anything for the second pass to do,
+// which is now simply whether anything was found.
 //
-// A finding the finder marked high has, by the schema's own definition, been
-// demonstrated from code that was read. Re-checking those would be the whole
-// cost of the phase for none of its value, so the phase is skipped when every
-// candidate is one of them, and skipped entirely when there is nothing to check.
-func needsVerification(candidates []Finding) bool {
-	for _, f := range candidates {
-		if f.Confidence != ConfidenceHigh {
-			return true
-		}
-	}
-	return false
-}
+// It used to skip the phase when every candidate came back marked "high", on the
+// reasoning that a finding the finder called demonstrated has by definition been
+// demonstrated. That was circular, and measurably so: it asks the finder whether
+// the finder needs checking, which is the same question the single-shot prompt
+// asked and the same one this whole engine was built to stop asking. The prompt
+// then made it worse by SAYING so ("a finding you mark high is posted without
+// further checking"), which is a straightforward invitation to mark everything
+// high.
+//
+// It was taken. Across every review this engine completed before the rule
+// changed, 5 findings out of 5 came back "high" and the verification phase never
+// ran once; every card in the UI carried "Not independently checked" and nobody
+// could tell that from a reviewer that simply had not been asked to check.
+//
+// So confidence is now a report to the reader and nothing else, and the pass runs
+// on everything that could be posted. The cost is real and it is the right trade:
+// verification fans out to one subagent per claim, each with a small fresh
+// context, which is a fraction of what the find phase spends and is the only
+// thing standing between a plausible wrong claim and somebody's pull request.
+func needsVerification(candidates []Finding) bool { return len(candidates) > 0 }
 
 // applyVerdicts folds the verification pass back into the candidates.
 //

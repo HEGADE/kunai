@@ -690,21 +690,10 @@ export interface ReviewFinding {
   why?: string
 }
 
-// severityRank orders findings most serious first. Unknown values sort last:
-// a severity nobody recognises must not be able to push itself to the top of a
-// review. Mirrors Severity.Rank in internal/review/severity.go.
-export function severityRank(s: Severity | string): number {
-  switch (s) {
-    case 'blocker':
-      return 0
-    case 'major':
-      return 1
-    case 'minor':
-      return 2
-    default:
-      return 3
-  }
-}
+// severityRank moved to lib/severity.ts, which is where the rest of the severity
+// vocabulary lives. It is also what makes lib/review.ts testable under plain
+// node: this module imports fetch and a value imported from here would drag the
+// whole API surface into the unit suite.
 
 // A candidate the verification pass refuted, kept with its reason. Shown so the
 // filtering can be audited: three findings from a reviewer that dropped four is
@@ -731,6 +720,9 @@ export interface ReviewDraft {
   posted_url?: string
   parse_error?: string
   phase?: ReviewPhase
+  // Whether this review has a survey step. A small change skips it, and the
+  // progress display must not draw a step that will never light.
+  surveyed?: boolean
   summary?: string
   findings?: ReviewFinding[]
   dropped?: DroppedFinding[]

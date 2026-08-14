@@ -614,9 +614,36 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   is the state machine and is pure: it takes the text an agent replied with and says
   what to ask next, so the whole progression is testable against fixtures rather than
   a live CLI. `prreviewrun.go` turns the handle.
-  Both skips answer the cost objection: a small change (`worthSurveying`) goes
-  straight to Find, and a Find whose every candidate came back `high` confidence has
-  nothing for Verify to do. The answer hook fires at the end of EVERY turn including
+  Only ONE skip answers the cost objection now: a small change (`worthSurveying`)
+  goes straight to Find. There used to be a second, and removing it is the most
+  important fix this engine has had. Verify was skipped when every candidate came
+  back marked `high` confidence, which asks the finder whether the finder needs
+  checking -- the same circularity the single-shot prompt was replaced FOR -- and
+  `severityRules` then said the quiet part out loud ("a finding you mark high is
+  posted without further checking"), which is an instruction on how to skip it.
+  The finder took it: across every review completed under that rule, **5 findings
+  out of 5 came back `high` and the verify phase never ran once**, so every card
+  in the UI read "Not independently checked" and no reader could tell that from a
+  reviewer nobody had asked to check. Confidence is now a report to the reader and
+  nothing else, and `needsVerification` is just "is there anything to verify".
+  An answer that cannot be PARSED is asked for again once (`Run.repair`,
+  `RepairPrompt`, `maxRepairs`) before the review is given up on, because it was
+  being thrown away whole over a missing fence: one real run died on "the reply
+  contains no review block" after 32 model calls, with the reading done and the
+  findings written up in a shape the parser would not take. The repair asks for
+  the block ALONE and explicitly does not invite a reconsideration, or the model
+  revises its conclusions to satisfy a formatting complaint.
+  The diff is written **one file per changed file** at a path mirroring the
+  file's own (`prreviewdiff.go`), plus the combined file only when the change is
+  under `smallDiffLines`. A single blob can only be read from the top, so on a
+  41-file, 9,800-line pull request the reviewer read it four times at byte
+  offsets 2020, 3019, 7623 and 9836, and every chunk then sat in context and was
+  re-billed on all eighty-odd later model calls: **18.25M cache-read tokens for
+  two findings**. Addressable per-file diffs let it read the two files that
+  matter and never see the lockfile. The rule for constructing the path is stated
+  once in the prompt rather than repeated per row, and `findMethod` now says
+  plainly that everything opened is paid for again at every later step.
+  The answer hook fires at the end of EVERY turn including
   ones a person typed, so the driver **stops consuming answers once the phases are
   done**, or asking the reviewer a follow-up would be read as a malformed phase reply
   and replace a good draft with a parse error.
@@ -649,6 +676,29 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   finished review reopened later has a session reporting `starting` while it resumes.
   The verdict counts the EDITED severity, or overruling the only blocker still
   announces a blocker.
+  The surface is a **deck you triage**, not a document you read, and that is a
+  rewrite of one that was correct and unusable. It showed every part of every
+  finding at full size at once -- a wall of body prose, a block of evidence, a
+  thirteen-line hunk mostly of comment -- so ONE finding filled a laptop screen
+  with the Drop button below the fold, and nothing said how many findings there
+  were or which was the worst. The parts of a finding are needed in a strict
+  order, so they are ranked that way: the claim decides most judgements alone and
+  is the only thing always at full size, and the argument, the code and what
+  checked it sit behind the disclosure. **Exactly one row is open at a time**
+  (the rest are single lines) and Drop is on every row at every state, because
+  deciding must never require opening anything. The pure arithmetic is
+  `web/src/lib/review.ts` (`ordered`, `decide`, `postLabel`), unit-tested in
+  `web/tests/units.mjs`, and the pieces are `components/review/`:
+  `FindingRow`, `FindingEditor`, `Hunk`, `PhaseTrail`, `RefutedList`, `ReviewBar`.
+  `Hunk` trims to a few lines either side of the lines the claim is about and
+  caps its height in px, since the anchor is generously sized and its context is
+  exactly what a reader skips. `PhaseTrail` exists because a phased review runs
+  for minutes with nothing else on the page: a spinner and a clock cannot tell
+  working from hung, so three named steps say what is happening, that there are
+  stages, and how many are left. It is drawn from the recorded phase, and
+  `prReview.Surveyed` is stored precisely because once a review is in `find`
+  nothing else can say whether a survey ran, so the trail would have to either
+  invent a step that never lights or claim one ran that did not.
   **Setup is verified against GitHub before anything is written** (`githubverify.go`).
   Checking only that the PEM parses passes for a key from a different App, for the
   right key with the wrong id, and for an App installed nowhere, so all three reported
@@ -1605,6 +1655,16 @@ kunai's own furniture stays on the gray ramp. Fonts: Geist (UI), Geist Mono
 (paths and code), Source Serif 4 (Claude's rendered markdown only). Paths use the
 rtl-ellipsis trick and need `unicode-bidi: plaintext` to keep the leading slash from
 jumping to the end.
+**Ligatures are off** (`font-variant-ligatures: none` on `:root`, restated on
+`code`/`pre`/`.mono`), because the code shown must BE the code. Geist Mono ships
+coding ligatures on by default, so `!=` painted as one glyph and `args[1:]...)`
+painted as `args[1:].)`: a reader judging a pull-request finding against its hunk
+was reading characters the file does not contain, with no way to know. Set on the
+root rather than per surface because the property inherits and the font is
+switched in thirty-odd scoped stylesheets, so any list of selectors would be one
+component behind for ever. The cost is fi/fl in sans prose at 12-13px, which is
+not perceptible; the serif Claude's markdown is set in gets them back, where the
+type is large enough to tell.
 
 - The composer floats on the canvas with no full-width divider or band; the
   field's own edge defines it. The chat header is the exception: it is short and
@@ -1693,7 +1753,14 @@ jumping to the end.
   no duration, which is the honest answer rather than a clock started at reopen.
   The client prefers an open tab's socket over the polled list for both the
   state and the start time (`liveState`, `liveTurnStart`), because the poll is a
-  cycle behind by design.
+  cycle behind by design -- but ONLY once that socket has actually heard the
+  state (`ChatConnection.heard`). Its seed is `idle`, which is a real value and a
+  plausible one, so before the fix a tab that had just opened answered "idle"
+  with total confidence for a session that was mid-turn, and a socket that never
+  connected answered it for ever. That is not a blink: opening a running review
+  made the review view announce "this review stopped and never finished", and it
+  drops the sidebar's own `Working 17s` for the same reason. Caught by giving the
+  review smoke test a running fixture, which is the state nothing had covered.
 - Open sessions live in a tab strip (`Tabs.svelte`), terminal-style, rendered as
   the **left of the header's top row** so the session actions ride the same line
   to its right (Chat.svelte's `.toprow`); the path sits on a quieter second row

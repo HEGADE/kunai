@@ -19,6 +19,22 @@ import type { Severity } from './api'
 
 export const SEVERITIES: Severity[] = ['blocker', 'major', 'minor']
 
+// severityRank orders findings most serious first. Unknown values sort last: a
+// severity nobody recognises must not be able to push itself to the top of a
+// review. Mirrors Severity.Rank in internal/review/severity.go.
+export function severityRank(s: Severity | string): number {
+  switch (s) {
+    case 'blocker':
+      return 0
+    case 'major':
+      return 1
+    case 'minor':
+      return 2
+    default:
+      return 3
+  }
+}
+
 export function severityLabel(s: Severity | string): string {
   switch (s) {
     case 'blocker':

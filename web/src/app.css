@@ -178,6 +178,34 @@ textarea {
   color: inherit;
 }
 
+/* The code shown must BE the code.
+
+   Geist Mono ships coding ligatures and they are on by default, so `!=` painted
+   as a single glyph, `->` as an arrow, and `args[1:]...)` as `args[1:].)`. In a
+   pull-request review the hunk is the evidence a person is judging a claim
+   against, so they were reading characters the file does not contain and had no
+   way to know it. It is wrong everywhere kunai shows code, and a review is only
+   where it does real damage.
+
+   Set here rather than on each mono surface because the property inherits and
+   the font is switched in thirty-odd scoped stylesheets, so any list of
+   selectors would be one component behind for ever. The cost is fi/fl in sans
+   prose at 12-13px, which is not perceptible; the serif that Claude's markdown
+   is set in gets them back below, where the type is large enough to tell. */
+:root {
+  font-variant-ligatures: none;
+}
+
+/* Re-stated on the code elements themselves, because the serif prose surface
+   turns ligatures back on for itself and a fenced block sits INSIDE it. */
+code,
+pre,
+kbd,
+samp,
+.mono {
+  font-variant-ligatures: none;
+}
+
 .mono {
   font-family: var(--mono);
   letter-spacing: 0;

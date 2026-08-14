@@ -54,8 +54,11 @@ type Finding struct {
 	// dozen identical cards in whatever order the model happened to emit them,
 	// with no way to tell the data-loss bug from the observation.
 	Severity Severity `json:"severity,omitempty"`
-	// Confidence drives the verification phase as well as the display: anything
-	// below high is handed back to be refuted before it may be posted.
+	// Confidence is how likely the claim is to be true, reported to the reader.
+	//
+	// It deliberately does NOT decide whether the finding is checked. It used to,
+	// and the finder simply marked everything "high" to skip the check; see
+	// needsVerification. Everything postable is verified now, whatever this says.
 	Confidence Confidence `json:"confidence,omitempty"`
 	// Category is what the finding is about, for grouping and filtering. It never
 	// affects ranking.
