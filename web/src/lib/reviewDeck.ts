@@ -216,6 +216,23 @@ export function checkRows(f: ReviewFinding): CheckRow[] {
   return rows
 }
 
+/**
+ * What to call a review that is posting no findings.
+ *
+ * "Nothing worth reporting" is only true when there was nothing to report. A
+ * review that found three things and had all three refuted by the check has
+ * reported something quite different, and saying it found nothing reads as "I
+ * looked and it is fine" -- which is the one conclusion a reader must not reach
+ * by accident. Seen on a real run: three candidates, three dropped, and a screen
+ * that mentioned neither.
+ */
+export function emptyHeadline(dropped: number): string {
+  if (dropped <= 0) return 'Nothing worth reporting'
+  const word = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'][dropped]
+  if (dropped === 1) return 'One thing was considered, and it did not hold up'
+  return `${word ?? dropped} things were considered, and none held up`
+}
+
 /** Two-digit row numbers, so the queue's gutter never reflows at ten. */
 export function pad(n: number): string {
   return String(n).padStart(2, '0')

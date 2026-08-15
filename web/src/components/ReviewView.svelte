@@ -14,6 +14,7 @@
     tally,
     sendLabel,
     headline as headlineOf,
+    emptyHeadline,
     step,
     type Edits,
     type Verdicts,
@@ -23,6 +24,8 @@
   import FindingPane from './review/FindingPane.svelte'
   import DetailRail from './review/DetailRail.svelte'
   import RunningReview from './review/RunningReview.svelte'
+  import DroppedList from './review/DroppedList.svelte'
+  import { proseHtml } from '../lib/prose'
 
   // The review workspace.
   //
@@ -437,9 +440,26 @@
           conversation and ask it to answer again in the required format.
         </p>
       {:else if !findings.length}
+        <!-- A review that found nothing is still a review, and this state used to
+             throw away everything it produced: the summary it wrote (which on a
+             real run named the one thing it would fix before merging) and the
+             candidates verification refuted, with the reasons they did not
+             survive. What was left was a headline and one line, on a reading of
+             127 files that took ten minutes.
+             The headline itself was a lie in the case that matters most.
+             "Nothing worth reporting" reads as "I looked and it is fine"; what
+             had happened was "I found three things and talked myself out of all
+             three", and only the second tells you whether to trust it. -->
         <div class="empty">
-          <h1 class="head">Nothing worth reporting</h1>
-          <p class="msg flush">Posting sends that as the review, which is worth saying out loud.</p>
+          <h1 class="head">{emptyHeadline(draft.dropped?.length ?? 0)}</h1>
+          {#if draft.summary}
+            <p class="lede">{@html proseHtml(draft.summary)}</p>
+          {:else}
+            <p class="msg flush">Posting sends that as the review, which is worth saying out loud.</p>
+          {/if}
+          <div class="afterword">
+            <DroppedList dropped={draft.dropped ?? []} open />
+          </div>
         </div>
       {:else}
         <FindingPane
@@ -688,6 +708,26 @@
   }
   .empty {
     padding: 40px 34px;
+    overflow-y: auto;
+    min-height: 0;
+  }
+  /* The summary a review with no findings wrote, which is the whole of what it
+     has to say and used to be dropped on the floor. */
+  .lede {
+    margin: 10px 0 0;
+    max-width: 78ch;
+    font-size: 14.5px;
+    line-height: 1.75;
+    color: var(--x-body);
+  }
+  .lede :global(code) {
+    font-family: var(--x-mono);
+    font-size: 0.88em;
+    color: var(--x-ink-4);
+  }
+  .afterword {
+    margin-top: 36px;
+    max-width: 78ch;
   }
   .msg {
     margin: 0;

@@ -3,6 +3,7 @@
   import { effectiveSeverity, pad, type Edits, type Verdicts } from '../../lib/reviewDeck'
   import { proseHtml } from '../../lib/prose'
   import DiffPanel from './DiffPanel.svelte'
+  import DroppedList from './DroppedList.svelte'
 
   // Every finding, stacked, with the summary above them.
   //
@@ -118,6 +119,13 @@
       {/if}
     </section>
   {/each}
+
+  <!-- What the check refuted, at the end of the reading and collapsed. Three
+       findings from a reviewer that dropped four is a different thing from three
+       from one that only found three, and nothing else can tell them apart. -->
+  {#if draft.dropped?.length}
+    <div class="dropwrap"><DroppedList dropped={draft.dropped} /></div>
+  {/if}
 
   <!-- The last finding has to be able to reach the reading line, or the queue
        can never make it active and the rail's last row is unreachable. -->
@@ -282,6 +290,9 @@
     color: var(--x-dim);
   }
 
+  .dropwrap {
+    padding: 8px 34px 0;
+  }
   .tail {
     height: 40vh;
   }

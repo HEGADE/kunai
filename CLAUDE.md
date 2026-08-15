@@ -733,9 +733,18 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   applied BEFORE the keep-filter, since filtering first shifts every edit onto its
   neighbour. Editing may change only the words and the severity: the anchor decides
   which line of somebody's pull request a comment lands on and stays server-side.
-  What verification refuted is **kept and shown**, collapsed, with reasons. Three
-  findings from a reviewer that dropped four is a different thing from three findings
-  from one that only found three, and nothing else can tell them apart.
+  What verification refuted is **kept and shown**, collapsed, with reasons
+  (`DroppedList.svelte`). Three findings from a reviewer that dropped four is a
+  different thing from three findings from one that only found three, and nothing
+  else can tell them apart. This was lost when the surface was rebuilt as the
+  three-column workspace -- `ReviewDraft.svelte` had rendered it and nothing took
+  it over -- and the case where it matters most is the one with NO findings: a
+  real run over 127 files found three things, the check refuted all three, and
+  the screen said "Nothing worth reporting" and dropped the summary too. Ten
+  minutes of reading, a summary that named the one thing it would fix before
+  merging, and three refutations, reduced to two lines that read as a clean bill
+  of health. So the empty state now carries the summary and the dropped list, and
+  `emptyHeadline` refuses to call three refuted candidates "nothing".
   `ReviewView.svelte` is the only review surface (`ReviewDraft.svelte` is gone: two
   implementations of one thing is how they drift, and these had). **The server
   says whether a review is running**, on the draft (`running`, `stopped`), and

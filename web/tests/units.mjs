@@ -15,7 +15,17 @@ import { summarise, isAwaiting, isWorking } from '../src/lib/sidebar.ts'
 import {
   chosenCli, isProvider, providerModelChoices, providerModelToSend, showEffort,
 } from '../src/lib/spawnoptions.ts'
-import { ordered, tally, sendLabel, headline, pad, step, fixOf, checkRows } from '../src/lib/reviewDeck.ts'
+import {
+  ordered,
+  tally,
+  sendLabel,
+  headline,
+  pad,
+  step,
+  fixOf,
+  checkRows,
+  emptyHeadline,
+} from '../src/lib/reviewDeck.ts'
 import { proseHtml } from '../src/lib/prose.ts'
 import { clampTTL, splitDuration, expiryWords, MIN_TTL, MAX_TTL } from '../src/lib/duration.ts'
 import {
@@ -431,6 +441,15 @@ eq(
   // A row with nothing in it is not a row.
   eq('an empty ground is dropped', checkRows(F({ grounds: [{ key: 'TESTS', value: '' }] })).length, 2)
 }
+
+// A review that posts no findings is not the same as one that found nothing.
+// Seen on a real run over 127 files: three candidates, all three refuted by the
+// check, and a screen that said "Nothing worth reporting" -- which reads as "I
+// looked and it is fine" when what happened was the opposite of that.
+eq('nothing found says so', emptyHeadline(0), 'Nothing worth reporting')
+eq('one refuted is not nothing', emptyHeadline(1), 'One thing was considered, and it did not hold up')
+eq('three refuted is not nothing', emptyHeadline(3), 'Three things were considered, and none held up')
+eq('and it counts past the words', emptyHeadline(12).startsWith('12 things'), true)
 
 console.log(`${pass}/${pass + fails.length} passed`)
 for (const f of fails) console.log(`FAIL ${f}`)

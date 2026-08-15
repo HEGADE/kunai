@@ -2,21 +2,30 @@
   import type { ReviewDraft, ReviewPhase } from '../../lib/api'
   import type { ChatConnection } from '../../lib/chat.svelte'
   import { acts, opened, latest, coverage, changeSize, baseName, phaseSpans } from '../../lib/reviewlive'
-  import { proseHtml } from '../../lib/prose'
 
-  // A review while it is running.
+  // A review while it is running, built from the design's "Review Running".
   //
-  // This replaced a phase name, a clock and eight hundred pixels of nothing. A
-  // review takes minutes, and for those minutes the screen said less than a
-  // progress bar would: not what is being reviewed, not what the reviewer
-  // decided to look at, not what it is reading right now, and not whether any of
-  // it was going anywhere.
+  // One column, read top to bottom, and the shape is the argument: somebody
+  // looking at this is WAITING, so the thing they came for is the largest thing
+  // on the page (what it is doing, in words), the thing they might want next is
+  // one line under it, and everything that is a record rather than a question is
+  // behind a disclosure. The two-column dashboard this replaced put a stat strip
+  // across the top and a file list down the side, which is a lot of furniture
+  // around the one sentence anybody reads.
   //
   // Every number here already existed. The review is an ordinary session whose
   // socket is already open, so every file it opens arrives as a tool call and
-  // nothing had to be sent to show it. The survey was being computed and thrown
-  // away. The change's size was known at creation. What was missing was the
+  // nothing had to be sent to show it; the survey was being computed and thrown
+  // away; the change's size was known at creation. What was missing was the
   // decision to look.
+  //
+  // Two things in the design are deliberately NOT here, and both for the same
+  // reason: they are answers this screen does not have. The steps are not
+  // buttons (there is nothing to switch to -- a phase that has not happened has
+  // nothing to show, and one that has is not re-runnable), and a lead carries no
+  // CHASING / HELD UP / DROPPED chip, because nothing records which area the
+  // reviewer is on. Inventing either would make the screen more convincing and
+  // less true, which is the trade this whole surface exists to refuse.
   let {
     draft,
     chat,
@@ -38,18 +47,48 @@
   const cover = $derived(coverage(files.map((f) => f.path), read))
   const searches = $derived(list.filter((a) => a.kind === 'search').length)
 
-  const spans = $derived(phaseSpans(draft.timeline ?? [], now))
-  const STEPS: { key: ReviewPhase; label: string; doing: string }[] = [
-    { key: 'survey', label: 'Read', doing: 'Reading the change' },
-    { key: 'find', label: 'Find', doing: 'Looking for problems' },
-    { key: 'verify', label: 'Check', doing: 'Trying to refute what it found' },
+  // What each step is called and what it is for. The headline is the phase in
+  // the reviewer's own terms; the line under it is what that actually means,
+  // because "verify" is a word this screen should not make anybody guess at.
+  const STEPS: { key: ReviewPhase; label: string; head: string; lede: string }[] = [
+    {
+      key: 'survey',
+      label: 'Read',
+      head: 'Reading the change',
+      lede: 'Opening every diff to work out what this change is for, and where the risk is likely to sit.',
+    },
+    {
+      key: 'find',
+      label: 'Find',
+      head: 'Looking for problems',
+      lede: 'Following the questions it decided are worth asking, and reading past the diff wherever one needs it.',
+    },
+    {
+      key: 'verify',
+      label: 'Check',
+      head: 'Checking what it found',
+      lede: 'Every claim goes to a separate reader whose job is to refute it. Anything that cannot be demonstrated is dropped rather than reported.',
+    },
   ]
   const steps = $derived(draft.surveyed ? STEPS : STEPS.slice(1))
   const at = $derived(steps.findIndex((s) => s.key === phase))
-  const nowDoing = $derived(steps[at]?.doing ?? 'Reviewing')
+  const step = $derived(steps[at] ?? steps[0])
 
+  const spans = $derived(phaseSpans(draft.timeline ?? [], now))
   const spanFor = (key: string) => spans.find((s) => s.phase === key)
-  const total = $derived(spans.reduce((n, s) => n + s.ms, 0))
+
+  const areas = $derived(draft.survey?.areas ?? [])
+  let open = $state<Record<number, boolean>>({ 0: true })
+  let traceOpen = $state(false)
+  let filesOpen = $state(false)
+
+  // Newest first: this is a record of what has happened, and the interesting end
+  // of it is the end nearest now.
+  const trace = $derived([...list].reverse())
+  const biggest = $derived(
+    [...files].sort((a, b) => (b.additions ?? 0) + (b.deletions ?? 0) - ((a.additions ?? 0) + (a.deletions ?? 0))),
+  )
+  const shown = $derived(biggest.slice(0, 14))
 
   function clock(ms: number): string {
     if (!ms || ms < 0) return ''
@@ -58,501 +97,480 @@
     const m = Math.floor(s / 60)
     return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`
   }
-
-  // The biggest files in the change, which is where a reader's own suspicion
-  // goes first and therefore what makes this list worth showing at all.
-  const biggest = $derived(
-    [...files]
-      .sort((a, b) => (b.additions ?? 0) + (b.deletions ?? 0) - ((a.additions ?? 0) + (a.deletions ?? 0)))
-      .slice(0, 14),
-  )
-  const wasRead = (p: string) => read.some((r) => r === p || r.endsWith('/' + p))
-  // Files it opened that are not in the pull request: the callers it went to
-  // check, which is exactly the work that makes a review here better than one
-  // done against the diff alone.
-  const elsewhere = $derived(
-    [...read].reverse().filter((p) => !files.some((f) => p === f.path || p.endsWith('/' + f.path))),
-  )
+  const n = (x: number) => x.toLocaleString()
 </script>
 
 <div class="run">
-  <header class="head">
-    <div>
-      <p class="doing">{nowDoing}</p>
-      <p class="sub mono">
-        {clock(total)} in
-        {#if size.files}· {size.files} files, <span class="add">+{size.additions.toLocaleString()}</span>
-          <span class="del">-{size.deletions.toLocaleString()}</span>{/if}
-      </p>
-    </div>
-    <div class="counts">
-      <div class="stat">
-        <span class="n">{cover.seen}<span class="of">/{cover.total}</span></span>
-        <span class="k">files opened</span>
-      </div>
-      <div class="stat">
-        <span class="n">{searches}</span>
-        <span class="k">searches</span>
-      </div>
-      <div class="stat">
-        <span class="n" class:found={(draft.findings?.length ?? 0) > 0}>{draft.findings?.length ?? 0}</span>
-        <span class="k">found so far</span>
-      </div>
-    </div>
-  </header>
+  <div class="eyebrow x-mono">
+    <span class="pulse" aria-hidden="true"></span>
+    <span class="lit">Step {at + 1} of {steps.length}</span>
+    <span class="sep">·</span>
+    <span>{step.label}</span>
+  </div>
 
-  <!-- The phases, each carrying how long it took. "How long has it been
-       reading" is a different question from "how long has it been going", and
-       the running turn's clock restarts at every phase so it could answer
-       neither. -->
-  <ol class="trail">
+  <h1 class="head">{step.head}</h1>
+  <p class="lede">{step.lede}</p>
+
+  <!-- Where it is. Not buttons: there is nothing to switch to, and a control
+       that does nothing when pressed is worse than no control. Each carries the
+       time that step took, which the timeline already records and which is the
+       one thing a waiting reader can do arithmetic with. -->
+  <div class="steps">
     {#each steps as s, i (s.key)}
       {@const span = spanFor(s.key)}
-      <li class:done={at > i} class:on={at === i}>
-        <span class="dot" aria-hidden="true"></span>
-        <span class="lbl">{s.label}</span>
-        <span class="took mono">{span ? clock(span.ms) : ''}</span>
-      </li>
+      <div class="stp" data-state={i < at ? 'done' : i === at ? 'on' : 'todo'}>
+        <span class="bar"></span>
+        <span class="lbl x-mono">
+          {s.label}
+          <span class="num">{i + 1}</span>
+          {#if span}<span class="took">{clock(span.ms)}</span>{/if}
+        </span>
+      </div>
     {/each}
-  </ol>
+  </div>
 
-  <div class="cols">
-    <section class="col">
-      <h3 class="ttl">Doing now</h3>
-      {#if doing}
-        <div class="live">
-          <span class="pulse" aria-hidden="true"></span>
-          <span class="what mono">
-            {#if doing.kind === 'read'}Reading {baseName(doing.what)}
-            {:else if doing.kind === 'search'}Searching for {doing.what}
-            {:else}{doing.tool}{/if}
-          </span>
-        </div>
-        {#if doing.kind === 'read' && doing.what.includes('/')}
-          <p class="path mono">{doing.what}</p>
-        {/if}
-      {:else if draft.phase === 'verify'}
-        <!-- Nothing is streaming here and that is by design: the check runs in a
-             session of its own, so it cannot be seen from this one. Said out
-             loud, because "Starting up." on a review six minutes in reads as a
-             hang, and the reason it is quiet is the reason the check is worth
-             anything. -->
-        <p class="quiet">Each claim is being handed to a separate reader to argue against, in its own session.</p>
-      {:else}
-        <p class="quiet">Starting up.</p>
-      {/if}
+  <section class="rn">
+    <div class="cap x-mono">Right now</div>
+    {#if phase === 'verify'}
+      <!-- Nothing streams here during the check and that is by design: it runs
+           in a session of its own, which is the whole reason its verdict is
+           worth anything. Said out loud, or a quiet screen reads as a hang. -->
+      <div class="line">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="what x-mono">Handing each claim to a separate reader</span>
+      </div>
+      <div class="count">In its own session, with none of the reasoning that produced the claim.</div>
+    {:else if doing}
+      <div class="line">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="what x-mono">
+          {doing.kind === 'read' ? 'Reading' : doing.kind === 'search' ? 'Searching for' : doing.tool}
+          <span class="lit">{doing.kind === 'read' ? baseName(doing.what) : doing.what}</span>
+        </span>
+      </div>
+      <div class="count">
+        {cover.seen} of {cover.total} files opened{searches ? ` · ${searches} search${searches === 1 ? '' : 'es'}` : ''}
+      </div>
+    {:else}
+      <div class="line">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="what x-mono">Starting up</span>
+      </div>
+    {/if}
+  </section>
 
-      <!-- Progress against the change itself: which files it has been into and
-           which are still untouched. This is the question somebody waiting
-           actually has, and it is the one a spinner can never answer. -->
-      {#if biggest.length}
-        <h3 class="ttl sp">The change<span class="cnt mono">{cover.seen}/{cover.total} opened</span></h3>
-        <ul class="files">
-          {#each biggest as f (f.path)}
-            <li class:seen={wasRead(f.path)}>
-              <span class="tick" aria-hidden="true">{wasRead(f.path) ? '✓' : ''}</span>
-              <span class="fp mono">{f.path}</span>
-              <span class="fs mono"
-                ><span class="add">+{f.additions ?? 0}</span> <span class="del">-{f.deletions ?? 0}</span></span
-              >
-            </li>
-          {/each}
-          {#if files.length > biggest.length}
-            <li class="rest">and {files.length - biggest.length} smaller</li>
+  {#if areas.length}
+    <div class="cap x-mono">What it decided to look at</div>
+    <p class="note">
+      The questions it thinks are worth asking of this change, written before it went looking. Open
+      one to see why.
+    </p>
+    <div class="leads">
+      {#each areas as a, i (i)}
+        <div class="lead">
+          <button class="lhead" onclick={() => (open = { ...open, [i]: !open[i] })}>
+            <span class="ldot" aria-hidden="true"></span>
+            <span class="ltitle">{a.what}</span>
+            <span class="lcaret x-mono">{open[i] ? '−' : '+'}</span>
+          </button>
+          {#if open[i]}
+            <div class="lbody">
+              {#if a.why}<p class="lwhy">{a.why}</p>{/if}
+              {#if a.files?.length}
+                <div class="chips">
+                  {#each a.files as f (f)}<span class="chip x-mono">{baseName(f)}</span>{/each}
+                </div>
+              {/if}
+            </div>
           {/if}
-        </ul>
-      {/if}
+        </div>
+      {/each}
+    </div>
+  {/if}
 
-      <!-- Files it opened that are NOT in the pull request: the callers it went
-           to check. Worth its own list, because following a caller is exactly
-           the work that makes this better than reading the diff. -->
-      {#if elsewhere.length}
-        <h3 class="ttl sp">Also read, outside the change</h3>
-        <ul class="opened">
-          {#each elsewhere.slice(0, 8) as p (p)}
-            <li><span class="mono">{baseName(p)}</span></li>
-          {/each}
-        </ul>
-      {/if}
-    </section>
+  <div class="rows">
+    <button class="row" onclick={() => (traceOpen = !traceOpen)}>
+      <span class="caret x-mono">{traceOpen ? '−' : '+'}</span>
+      What it has done so far
+      <span class="sp"></span>
+      <span class="meta x-mono">{list.length} step{list.length === 1 ? '' : 's'}</span>
+    </button>
+    {#if traceOpen}
+      <div class="drop">
+        {#each trace as a, i (i)}
+          <div class="tr">
+            <span class="tk x-mono">{a.kind === 'read' ? 'read' : a.kind === 'search' ? 'grep' : a.tool.toLowerCase()}</span>
+            <span class="tt">{a.kind === 'read' ? baseName(a.what) : a.what || a.tool}</span>
+          </div>
+        {/each}
+        {#if !trace.length}<div class="tr empty">Nothing yet.</div>{/if}
+      </div>
+    {/if}
 
-    <section class="col wide">
-      {#if draft.survey?.areas?.length}
-        <!-- What it decided to look at, before it looked. The only account of
-             where the reviewer thought the risk was, and the thing to argue
-             with when a review comes back having looked in the wrong place. -->
-        <h3 class="ttl">Where it decided to look</h3>
-        {#if draft.survey.intent}
-          <p class="intent">{draft.survey.intent}</p>
+    <button class="row" onclick={() => (filesOpen = !filesOpen)}>
+      <span class="caret x-mono">{filesOpen ? '−' : '+'}</span>
+      The {size.files} changed file{size.files === 1 ? '' : 's'}
+      <span class="sp"></span>
+      <span class="meta x-mono"><span class="add">+{n(size.additions)}</span> <span class="del">−{n(size.deletions)}</span></span>
+    </button>
+    {#if filesOpen}
+      <div class="drop">
+        {#each shown as f (f.path)}
+          <div class="fl" class:seen={read.some((p) => p === f.path || p.endsWith('/' + f.path))}>
+            <span class="fn x-mono">{f.path}</span>
+            <span class="add x-mono">+{f.additions ?? 0}</span>
+            <span class="del x-mono">−{f.deletions ?? 0}</span>
+          </div>
+        {/each}
+        {#if biggest.length > shown.length}
+          <div class="more">and {biggest.length - shown.length} smaller</div>
         {/if}
-        <ul class="areas">
-          {#each draft.survey.areas as a, i (i)}
-            <li>
-              <span class="num mono">{String(i + 1).padStart(2, '0')}</span>
-              <div>
-                <p class="what">{a.what}</p>
-                {#if a.why}<p class="why">{@html proseHtml(a.why)}</p>{/if}
-                {#if a.files?.length}
-                  <p class="in mono">
-                    {#each a.files as f, j (f)}<span class="fl" class:seen={wasRead(f)}
-                        >{baseName(f)}</span
-                      >{j < (a.files?.length ?? 0) - 1 ? ' ' : ''}{/each}
-                  </p>
-                {/if}
-              </div>
-            </li>
-          {/each}
-        </ul>
-      {:else}
-        <!-- No survey yet. Said rather than left blank: this phase produces the
-             plan, so "there is nothing here yet" is the honest state and it has
-             a reason worth giving. -->
-        <h3 class="ttl">Where it decides to look</h3>
-        <p class="waiting">
-          {phase === 'survey'
-            ? 'It is reading the change to work out what it is for and where the risk sits. That plan appears here, and the next phase is pointed at it.'
-            : 'This change was small enough to read straight through, so there is no plan to show.'}
-        </p>
-      {/if}
-    </section>
+      </div>
+    {/if}
   </div>
 </div>
 
 <style>
+  /* One column, 720px, centred. The design's measure: long enough for a
+     sentence to be read and short enough that the eye does not have to travel
+     back across the screen to find the next line. */
   .run {
-    display: flex;
-    flex-direction: column;
-    gap: 22px;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 8px 0 80px;
   }
 
-  .head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 24px;
-    flex-wrap: wrap;
-  }
-  .doing {
-    margin: 0;
-    font-family: var(--serif);
-    font-size: 28px;
-    font-weight: 500;
-    line-height: 1.15;
-    letter-spacing: -0.015em;
-    color: var(--text);
-    font-variant-ligatures: common-ligatures;
-  }
-  .sub {
-    margin: 7px 0 0;
-    font-size: 12px;
-    color: var(--text-4);
-    font-variant-numeric: tabular-nums;
-  }
-  .add {
-    color: var(--live);
-  }
-  .del {
-    color: var(--alert);
-  }
-
-  /* The numbers, at a size worth reading. A review that has opened 12 of 41
-     files and run 9 searches is going somewhere; one that has opened none in
-     four minutes is not, and both used to look identical. */
-  .counts {
-    display: flex;
-    gap: 30px;
-    flex: none;
-  }
-  .stat {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-  .n {
-    font-family: var(--mono);
-    font-size: 26px;
-    line-height: 1;
-    color: var(--text);
-    font-variant-numeric: tabular-nums;
-  }
-  .n.found {
-    color: var(--busy);
-  }
-  .of {
-    font-size: 15px;
-    color: var(--text-4);
-  }
-  .k {
-    font-size: 10px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--text-4);
-  }
-
-  .trail {
-    display: flex;
-    align-items: stretch;
-    gap: 0;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-  }
-  .trail li {
+  .eyebrow {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 11px 20px 11px 0;
-    margin-right: 20px;
+    gap: 10px;
     font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.09em;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: var(--text-4);
-    border-right: 1px solid var(--border);
+    color: var(--x-body);
+    margin-bottom: 18px;
   }
-  .trail li:last-child {
-    border-right: none;
+  .eyebrow .lit {
+    color: var(--x-accent-lit);
   }
-  .dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    border: 1px solid currentColor;
-  }
-  .trail li.done {
-    color: var(--text-3);
-  }
-  .trail li.done .dot {
-    background: currentColor;
-  }
-  .trail li.on {
-    color: var(--live);
-  }
-  .trail li.on .dot {
-    background: currentColor;
-    animation: pulse 1.8s ease-in-out infinite;
-  }
-  .took {
-    font-size: 11px;
-    letter-spacing: 0;
-    text-transform: none;
-    color: var(--text-4);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .cols {
-    display: grid;
-    grid-template-columns: minmax(210px, 1fr) 2fr;
-    gap: 34px;
-    align-items: start;
-  }
-  .ttl {
-    margin: 0 0 10px;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text-4);
-  }
-  .ttl.sp {
-    margin-top: 24px;
-  }
-
-  .live {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-  }
-  .what {
-    font-size: 13px;
-    color: var(--text);
+  .eyebrow .sep {
+    color: var(--x-faint);
   }
   .pulse {
-    flex: none;
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: var(--live);
-    animation: pulse 1.4s ease-in-out infinite;
+    background: var(--x-accent);
+    animation: kpulse 1.4s ease-in-out infinite;
   }
-  @keyframes pulse {
+  @keyframes kpulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
     50% {
       opacity: 0.25;
     }
   }
   @media (prefers-reduced-motion: reduce) {
     .pulse,
-    .trail li.on .dot {
+    .dot {
       animation: none;
     }
   }
-  .path {
-    margin: 5px 0 0 16px;
-    font-size: 11px;
-    color: var(--text-4);
-    word-break: break-all;
-    unicode-bidi: plaintext;
-  }
-  .quiet {
-    margin: 0;
-    font-size: 13px;
-    color: var(--text-4);
-  }
 
-  .opened {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-  }
-  .opened li {
-    font-size: 12px;
-    color: var(--text-4);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .intent {
+  .head {
     margin: 0 0 14px;
-    max-width: 70ch;
-    font-size: 13.5px;
-    line-height: 1.6;
-    color: var(--text-3);
+    font-size: 40px;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    color: var(--x-ink);
   }
-  .areas {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  .areas li {
-    display: grid;
-    grid-template-columns: 30px 1fr;
-    gap: 12px;
-  }
-  .num {
-    font-size: 11px;
-    color: var(--text-4);
-    padding-top: 3px;
-  }
-  .areas .what {
-    margin: 0;
-    font-family: var(--serif);
+  .lede {
+    margin: 0 0 40px;
+    max-width: 56ch;
     font-size: 16px;
-    font-weight: 500;
-    line-height: 1.35;
-    color: var(--text);
-    font-variant-ligatures: common-ligatures;
-  }
-  .areas .why {
-    margin: 4px 0 0;
-    max-width: 72ch;
-    font-size: 12.5px;
-    line-height: 1.6;
-    color: var(--text-4);
-  }
-  .areas .why :global(code) {
-    font-family: var(--mono);
-    font-size: 0.92em;
-    color: var(--text-3);
-  }
-  .in {
-    margin: 6px 0 0;
-    font-size: 11px;
-    color: var(--text-4);
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  /* A file the reviewer has actually opened. The area list stops being a plan
-     and becomes progress against it. */
-  .fl.seen {
-    color: var(--live);
+    line-height: 1.7;
+    color: var(--x-body);
   }
 
-  .files {
-    margin: 0;
-    padding: 0;
-    list-style: none;
+  .steps {
     display: flex;
-    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 52px;
   }
-  .files li {
+  .stp {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 9px;
+    padding-bottom: 8px;
+  }
+  .bar {
+    display: block;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--x-line-panel);
+  }
+  .stp[data-state='done'] .bar {
+    background: var(--x-accent-edge);
+  }
+  .stp[data-state='on'] .bar {
+    background: var(--x-accent);
+  }
+  .lbl {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--x-dim);
+  }
+  .stp[data-state='done'] .lbl {
+    color: var(--x-mute);
+  }
+  .stp[data-state='on'] .lbl {
+    color: var(--x-accent-lit);
+  }
+  .num,
+  .took {
+    color: var(--x-dim);
+    letter-spacing: 0.06em;
+  }
+  .took {
+    margin-left: auto;
+    text-transform: none;
+  }
+
+  /* The one line somebody is actually here for, bounded top and bottom so it
+     reads as its own thing rather than as another paragraph. */
+  .rn {
+    padding: 20px 0 22px;
+    border-top: 1px solid var(--x-line-panel);
+    border-bottom: 1px solid var(--x-line-panel);
+    margin-bottom: 44px;
+  }
+  .cap {
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--x-body);
+    margin-bottom: 12px;
+  }
+  .line {
     display: flex;
     align-items: baseline;
-    gap: 8px;
-    padding: 5px 0;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+    gap: 10px;
   }
-  .tick {
+  .dot {
+    width: 6px;
+    height: 6px;
     flex: none;
-    width: 10px;
-    font-size: 10px;
-    color: var(--live);
+    border-radius: 50%;
+    background: var(--x-accent);
+    animation: kpulse 1.2s ease-in-out infinite;
   }
-  .files .fp {
+  .what {
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--x-ink);
+    word-break: break-word;
+  }
+  .what .lit {
+    color: var(--x-accent-lit);
+  }
+  .count {
+    margin-top: 12px;
+    padding-left: 16px;
+    font-size: 13.5px;
+    color: var(--x-body);
+  }
+
+  .note {
+    margin: 0 0 12px;
+    max-width: 56ch;
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--x-body);
+  }
+  .leads {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 44px;
+  }
+  .lead {
+    border: 1px solid var(--x-line-panel);
+    border-radius: 12px;
+    background: var(--x-panel);
+    overflow: hidden;
+  }
+  .lhead {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    padding: 18px 20px;
+    border: 0;
+    background: none;
+    text-align: left;
+  }
+  .ldot {
+    width: 7px;
+    height: 7px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--x-accent);
+  }
+  .ltitle {
+    flex: 1;
+    min-width: 0;
+    font-size: 16px;
+    line-height: 1.4;
+    color: var(--x-ink);
+  }
+  .lcaret {
+    flex: none;
+    font-size: 12px;
+    color: var(--x-dim);
+  }
+  .lbody {
+    padding: 0 20px 20px 41px;
+  }
+  .lwhy {
+    margin: 0 0 14px;
+    font-size: 14.5px;
+    line-height: 1.75;
+    color: var(--x-body);
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .chip {
+    padding: 4px 9px;
+    border: 1px solid var(--x-line-panel);
+    border-radius: 5px;
+    font-size: 10.5px;
+    color: var(--x-mute);
+  }
+
+  /* The record, folded away. Two rows, each saying how much is behind it, so
+     opening one is a decision rather than a gamble. */
+  .rows {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--x-line-panel);
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 16px 0;
+    border: 0;
+    border-bottom: 1px solid var(--x-line-panel);
+    background: none;
+    text-align: left;
+    font-size: 13.5px;
+    color: var(--x-body);
+  }
+  .row:hover {
+    color: var(--x-ink-2);
+  }
+  .caret {
+    font-size: 12px;
+    color: var(--x-body);
+  }
+  .sp {
     flex: 1;
   }
-  .cnt {
-    margin-left: 9px;
-    letter-spacing: 0;
-    text-transform: none;
-    color: var(--text-4);
-    font-variant-numeric: tabular-nums;
+  .meta {
+    font-size: 11px;
+    color: var(--x-body);
   }
-  .waiting {
-    margin: 0;
-    max-width: 62ch;
+
+  .drop {
+    display: flex;
+    flex-direction: column;
+    padding: 12px 0 20px;
+    max-height: 340px;
+    overflow-y: auto;
+  }
+  .tr {
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr);
+    gap: 14px;
+    padding: 7px 0;
+  }
+  .tk {
+    font-size: 11px;
+    color: var(--x-dim);
+    text-align: right;
+  }
+  .tt {
     font-size: 13.5px;
-    line-height: 1.65;
-    color: var(--text-4);
+    line-height: 1.5;
+    color: var(--x-mute);
+    overflow-wrap: anywhere;
   }
-  .fp {
-    font-size: 11.5px;
-    color: var(--text-4);
+  .tr.empty {
+    color: var(--x-dim);
+    font-size: 13px;
+  }
+
+  .fl {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 7px 0;
+  }
+  .fn {
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-size: 11.5px;
+    color: var(--x-dim);
     unicode-bidi: plaintext;
   }
-  .files li.seen .fp {
-    color: var(--text-2);
+  /* A file it has been into reads brighter: the list doubles as progress. */
+  .fl.seen .fn {
+    color: var(--x-mute);
   }
-  .fs {
+  .add {
     flex: none;
     font-size: 11px;
-    font-variant-numeric: tabular-nums;
+    color: var(--x-add);
   }
-  .rest {
-    border-bottom: none;
-    padding-top: 8px;
-    font-size: 11.5px;
-    color: var(--text-4);
+  .del {
+    flex: none;
+    font-size: 11px;
+    color: var(--x-accent-dim);
+  }
+  .more {
+    padding-top: 10px;
+    font-size: 13px;
+    color: var(--x-body);
   }
 
-  @media (max-width: 820px) {
-    .cols {
-      grid-template-columns: 1fr;
-      gap: 26px;
+  @media (max-width: 700px) {
+    .head {
+      font-size: 30px;
     }
-    .counts {
-      gap: 22px;
+    .lede {
+      font-size: 15px;
+      margin-bottom: 30px;
     }
-    .n {
-      font-size: 21px;
+    .steps {
+      margin-bottom: 36px;
     }
-    .doing {
-      font-size: 23px;
-    }
-    .trail {
-      overflow-x: auto;
+    .took {
+      display: none;
     }
   }
 </style>
