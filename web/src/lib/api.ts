@@ -784,6 +784,11 @@ export interface ReviewDraft {
   // reporting" and offer to post it. See handleReviewDraft.
   running?: boolean
   stopped?: boolean
+  // The session holding a permission question, when one is. It may not be this
+  // review's own: a phase can run in a session of its own, and that is where the
+  // ask lands, so a review can be stuck on something its own session knows
+  // nothing about.
+  blocked_session?: string
   // What the reviewer decided to look at, before it looked. The only account of
   // where it thought the risk was, and the thing to read during the minutes the
   // find phase takes.

@@ -81,6 +81,9 @@ type Session struct {
 	// appendPrompt, and carried by spawnSpec for the same reason with a much
 	// sharper edge: losing it hands a guest the tools the share exists to withhold.
 	disallowedTools []string
+	// unattended, when non-empty, is the toolset this session may use with nobody
+	// to ask. See CreateOptions.Unattended.
+	unattended []string
 	// toolsOwner names the feature that withheld them, and exists because more
 	// than one now does. A share reconciles restrictions against its own store and
 	// gives back the toolset of any session whose share has ended; with no owner to
@@ -548,6 +551,19 @@ func (s *Session) onPermission(ask *claude.PermissionAsk) {
 			Message:   v.reason,
 			ToolUseID: ask.ToolUseID,
 		})
+		return
+	} else if allow, reason, unattended := s.answerUnattended(ask); unattended {
+		// Nobody is going to be asked, so the session answers itself rather than
+		// parking on a question for ever. See CreateOptions.Unattended: this is
+		// what stopped a pull-request review sitting on a `Monitor` call it was
+		// never meant to have, with the screen reporting no findings because none
+		// had arrived. Deliberately after the guard, which is a boundary rather
+		// than a policy and must still be able to refuse first.
+		r := claude.PermissionResult{Behavior: "deny", Message: reason, ToolUseID: ask.ToolUseID}
+		if allow {
+			r = claude.PermissionResult{Behavior: "allow", UpdatedInput: ask.Input, ToolUseID: ask.ToolUseID}
+		}
+		_ = s.drv.Resolve(ask.RequestID, r)
 		return
 	} else if s.Mode() == BypassPermissionMode {
 		// Yolo, answered here rather than by the CLI, and that is what makes it a

@@ -689,6 +689,22 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   toolset as Agent, Glob, Grep, Read, Skill, ToolSearch, with no permission denials.
   Bash IS withheld even on your own team's code (a permission mode that runs safe work
   still stops to ask about a risky command, and nobody watches a review by design).
+  The withheld list is belt; `reviewReadable` is braces, and the braces are what
+  hold. `session.CreateOptions.Unattended` names what a review may use and makes
+  the session **answer its own permission asks** -- allow if listed, refuse with a
+  reason if not -- so it can never park on a question nobody is there to answer.
+  That was not theoretical: `reviewToolset` named the command-running tools of
+  the CLI of the day, the CLI grew `Monitor` (which also runs a shell), and a
+  review reached for it, was stopped at kunai's gate and sat there for the life
+  of the process while the screen reported no findings, because none had
+  arrived. **A denylist protecting something unattended goes stale in silence**
+  every time somebody else ships a tool, so the rule is stated from the other
+  side and the withheld list is now only a way to keep the offer out of the
+  model's toolset. Carried by `spawnSpec` like the withheld list, or an effort
+  change would drop it. And when something still does block -- a phase runs in a
+  session of its OWN, so the ask lands where this screen is not attached -- the
+  draft names the session holding it (`blocked_session`) and the view offers to
+  go there, rather than showing a review that looks like it is working.
   A finding carries **severity and confidence as two fields**, because they answer
   different questions -- how bad if true, how likely to be true -- and one score can
   only lie about one of them. Severity is what gives the review a shape; without it a

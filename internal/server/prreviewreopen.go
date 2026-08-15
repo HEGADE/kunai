@@ -83,7 +83,10 @@ func (s *Server) handleReopenReview(w http.ResponseWriter, r *http.Request) {
 		CLIName: cli.Name, Bin: cli.Bin, Env: cli.effectiveEnv(),
 		Mode:            session.LoopPermissionMode,
 		DisallowedTools: reviewToolset,
-		ToolsOwner:      reviewToolsOwner,
+		// Nobody is watching a review, so it answers its own asks rather than
+		// stopping on one. See CreateOptions.Unattended.
+		Unattended: reviewReadable,
+		ToolsOwner: reviewToolsOwner,
 	}
 	cfg := cli.configDir()
 	opts.Seed, opts.HistBefore = loadTranscriptSeed(cfg, id)

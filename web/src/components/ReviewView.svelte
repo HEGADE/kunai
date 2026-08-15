@@ -63,7 +63,11 @@
   const meta = $derived(app.sessions.find((s) => s.machineId === machineId && s.id === sessionId))
   // Named sessionState: a variable called `state` shadows the $state rune.
   const sessionState = $derived(meta ? app.liveState(meta) : '')
-  const blocked = $derived(sessionState === 'awaiting_permission')
+  // Waiting on somebody, in this session or in one a phase borrowed. The
+  // borrowed case is the one that hurts: the ask lands somewhere this screen is
+  // not attached, so the review looks like it is working while it is stuck.
+  const blockedIn = $derived(draft?.blocked_session ?? '')
+  const blocked = $derived(sessionState === 'awaiting_permission' || !!blockedIn)
   const running = $derived(sessionState === 'running' || sessionState === 'starting' || blocked)
   // Whether the REVIEW is going, which is not whether this SESSION is busy, in
   // either direction. A finished review reopened later reports `starting` while
@@ -118,6 +122,16 @@
     const timer = setInterval(() => (now = Date.now()), 1000)
     return () => clearInterval(timer)
   })
+
+  // Take me to the question. Usually this review's own conversation; when a
+  // phase borrowed a session, the ask is over there and that is where to go.
+  function answerIt() {
+    if (blockedIn && blockedIn !== sessionId) {
+      app.open(machineId, blockedIn)
+      return
+    }
+    app.reviewChat = true
+  }
 
   // What the review was doing when it stopped, in the same words the running
   // screen uses for that step.
@@ -291,9 +305,16 @@
          kunai is a 24-box inline SVG at stroke 1.7, and the shape is the one the
          sidebar's own collapse button already uses, so the gesture is learned in
          one place and recognised in the other. -->
-    <button class="ic" class:on={leftOpen} title="Queue  [" aria-label="Queue" onclick={() => (leftOpen = !leftOpen)}>
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M9.5 4v16" /></svg>
-    </button>
+    <!-- Only while there are panels to toggle. A review with nothing to triage
+         (still running, or nothing found) has no queue and no detail rail, so
+         these collapsed nothing: a control that does nothing when pressed reads
+         as broken, and this one read as a stray "close the sidebar" button on a
+         screen that has no sidebar. -->
+    {#if showRails}
+      <button class="ic" class:on={leftOpen} title="Queue  [" aria-label="Queue" onclick={() => (leftOpen = !leftOpen)}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M9.5 4v16" /></svg>
+      </button>
+    {/if}
     <span class="brand x-mono"><span class="dot"></span>KUNAI</span>
     <span class="div"></span>
     {#if draft}
@@ -330,9 +351,11 @@
     {:else if posted}
       <button class="cta done" onclick={finish} disabled={finishing}>Done</button>
     {/if}
-    <button class="ic" class:on={rightOpen} title="Detail  ]" aria-label="Detail" onclick={() => (rightOpen = !rightOpen)}>
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M14.5 4v16" /></svg>
-    </button>
+    {#if showRails}
+      <button class="ic" class:on={rightOpen} title="Detail  ]" aria-label="Detail" onclick={() => (rightOpen = !rightOpen)}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M14.5 4v16" /></svg>
+      </button>
+    {/if}
   </header>
 
   <div class="cols" style="grid-template-columns: {cols}">
@@ -355,10 +378,14 @@
       {:else if !draft}
         <p class="msg">{res.error || 'This session is not a pull-request review.'}</p>
       {:else if blocked}
-        <p class="msg">
-          This review is waiting for an answer before it can carry on.
-          <button class="link" onclick={() => (app.reviewChat = true)}>Answer it →</button>
-        </p>
+        <div class="empty">
+          <h1 class="head">This review is waiting for an answer</h1>
+          <p class="msg flush">
+            It stopped to ask permission for something, and it cannot carry on until somebody says
+            yes or no. {blockedIn ? 'The question is in the session it borrowed to check its findings, not this one.' : ''}
+            <button class="link" onclick={answerIt}>Answer it →</button>
+          </p>
+        </div>
       {:else if reviewing}
         <div class="runwrap"><RunningReview {draft} chat={app.chat} {now} /></div>
       {:else if stopped}

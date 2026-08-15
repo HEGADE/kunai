@@ -82,6 +82,16 @@ func (r *reviewRunners) get(sessionID string) (*reviewRun, bool) {
 // ownerOf is the review a session belongs to, which for a session a phase
 // borrowed is not the same as the session itself. Empty when this session is
 // not part of any review.
+// runVerifySession is the session a run borrowed to verify in, if any. A
+// function rather than a field read because the run is shared and its fields are
+// under the runners' lock everywhere else.
+func runVerifySession(run *reviewRun) string {
+	if run == nil {
+		return ""
+	}
+	return run.verify
+}
+
 func (r *reviewRunners) ownerOf(sessionID string) string {
 	if r == nil {
 		return ""

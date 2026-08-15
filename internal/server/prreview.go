@@ -57,7 +57,30 @@ import (
 // instead would mean asking the model that just wrote the findings whether the
 // findings are right, which is the failure the phase was added to fix. A
 // subagent inherits these same restrictions, so it can read and nothing else.
-var reviewToolset = []string{"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"}
+// The withheld list is BELT, and reviewReadable below is BRACES. Keeping both
+// is the lesson from a real hang: this list named the tools that ran commands in
+// the CLI of the day, the CLI then grew `Monitor` (which also runs a shell), and
+// a review reached for it, was stopped at kunai's gate, and sat on that question
+// for the life of the process while the screen said no findings had arrived. A
+// denylist protecting something unattended goes stale in silence, every time
+// somebody else ships a tool.
+var reviewToolset = []string{
+	"Bash", "BashOutput", "KillShell", "KillBash", "Monitor",
+	"Write", "Edit", "MultiEdit", "NotebookEdit",
+}
+
+// reviewReadable is what a review may actually use, and it is the rule that
+// holds: everything else is refused by kunai itself the moment it is asked for,
+// so an unattended review can never park on a permission prompt no matter what
+// the CLI learns to do next. See session.CreateOptions.Unattended.
+//
+// Task is here and it is what makes verification worth having: a subagent starts
+// with a fresh context, sees the claim and none of the reasoning that produced
+// it, and inherits these same restrictions.
+var reviewReadable = []string{
+	"Read", "Grep", "Glob", "Task", "Agent", "TodoWrite",
+	"NotebookRead", "WebSearch", "WebFetch", "Skill", "ToolSearch",
+}
 
 // reviewToolsOwner marks a review's restriction as the review's own, so nothing
 // else lifts it. See session.CreateOptions.ToolsOwner.
@@ -184,6 +207,9 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 		// to ask would strand a review nobody is watching.
 		Mode:            session.LoopPermissionMode,
 		DisallowedTools: reviewToolset,
+		// Nobody is watching a review, so it answers its own asks rather than
+		// stopping on one. See CreateOptions.Unattended.
+		Unattended: reviewReadable,
 		// Claimed, so the share reconciler leaves it alone. Without this it read a
 		// review's withheld tools as an expired share and respawned the session
 		// about a minute in, which ended the running turn and looked from the

@@ -297,8 +297,29 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request) {
 	}
 
 	inFlight := reviewInFlight(rec)
-	_, driving := s.reviewRuns.get(rec.SessionID)
+	run, driving := s.reviewRuns.get(rec.SessionID)
 	running := inFlight && driving
+	// Which session is waiting on somebody, if either is.
+	//
+	// A phase can run in a session of its own, and that borrowed session is where
+	// an ask lands, so a review can be blocked on a question this screen's own
+	// session knows nothing about. It happened for real: a verify session asked to
+	// run a tool the review was never meant to have and sat there, with the
+	// review's own session idle and the screen showing a running review that was
+	// not going anywhere. A review should not ask at all now (see Unattended), so
+	// this is the report for the case where something still does.
+	blocked := ""
+	if running {
+		for _, id := range []string{rec.SessionID, runVerifySession(run)} {
+			if id == "" {
+				continue
+			}
+			if sess, live := s.mgr.Get(id); live && sess.Meta().State == "awaiting_permission" {
+				blocked = id
+				break
+			}
+		}
+	}
 
 	out := map[string]any{
 		"owner": rec.Owner, "repo": rec.Repo, "number": rec.Number, "title": rec.Title,
@@ -325,6 +346,9 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request) {
 		// running nor a review of anything.
 		"running": running,
 		"stopped": inFlight && !running,
+		// The session holding a question, when one is. Named rather than a bool,
+		// because the useful thing to do about it is open that session and answer.
+		"blocked_session": blocked,
 		// Whether there is a survey step at all. A small change skips it, and a
 		// progress display cannot work that out for itself once the review has
 		// moved on.

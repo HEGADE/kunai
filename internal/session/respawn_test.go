@@ -245,3 +245,22 @@ func TestExplicitModeBeatsTheProviderDefault(t *testing.T) {
 		t.Errorf("mode = %q with no override, want the provider default %q", untouched.mode, ProviderPermissionMode)
 	}
 }
+
+// An unattended session must come back unattended. A restriction an effort
+// change silently dropped would let a review park on a question again, which is
+// the same regression spawnSpec exists to prevent for the withheld toolset.
+func TestARespawnKeepsTheUnattendedToolset(t *testing.T) {
+	s := &Session{
+		unattended:      []string{"Read", "Grep"},
+		disallowedTools: []string{"Bash", "Monitor"},
+		toolsOwner:      "pr-review",
+	}
+	var opts CreateOptions
+	specOf(s).withOverrides(restartOverride{}).apply(&opts)
+	if len(opts.Unattended) != 2 || opts.Unattended[0] != "Read" {
+		t.Errorf("Unattended = %v, want it carried across the respawn", opts.Unattended)
+	}
+	if len(opts.DisallowedTools) != 2 || opts.ToolsOwner != "pr-review" {
+		t.Errorf("the withheld toolset did not survive: %v %q", opts.DisallowedTools, opts.ToolsOwner)
+	}
+}
