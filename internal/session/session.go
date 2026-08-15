@@ -1366,3 +1366,16 @@ func shortDuration(ms int64) string {
 // Exposed so a listening port can be attributed to the session responsible for
 // it: whatever the agent started is a descendant of this process.
 func (s *Session) PID() int { return s.drv.PID() }
+
+// SpentUSD is what this session has cost so far, as the CLI reports it.
+//
+// The running total rather than a per-turn number, so a caller that samples it
+// at two moments gets what happened between them by subtracting. That is how a
+// review prices its own phases: nothing has to be threaded through the phase
+// machine, which stays pure, and the arithmetic is the same one the loop already
+// does against its own starting total.
+func (s *Session) SpentUSD() float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastCostUSD
+}

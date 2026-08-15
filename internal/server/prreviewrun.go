@@ -54,6 +54,10 @@ type reviewRun struct {
 	// the checkout to read and the account to run on.
 	worktree string
 	spawn    session.CreateOptions
+	// spentAt is what the sessions driving this review had cost when the current
+	// phase began, so the phase can be priced when it ends. Keyed by session,
+	// because a phase can run in one of its own.
+	spentAt map[string]float64
 	// cancelled is set when somebody stopped this review, and it is checked at
 	// the one place that decides whether to ask for another phase.
 	//
@@ -155,9 +159,15 @@ func (s *Server) advanceReview(sessionID, text string) {
 		return
 	}
 
+	// What the phase that just answered cost, taken as the difference against the
+	// driving session's running total. Sampled here because this is the moment a
+	// phase is over, and nothing in the phase machine has to know about money.
+	spent := s.phaseSpend(holder, sessionID)
+
 	prompt, brief, more := holder.run.Next()
 	now := time.Now()
 	s.prReviews.update(holder.owner, func(rec *prReview) {
+		rec.priceLastPhase(spent)
 		rec.Phase = string(holder.run.Phase)
 		rec.beganPhase(rec.Phase, now)
 		// What this phase produced, written down as it is produced rather than at
@@ -303,7 +313,13 @@ func (s *Server) finishReview(holder *reviewRun) {
 	plan := review.Build(draft, review.ParseDiff(files))
 	total, inline, summary := plan.Counts()
 
+	// The last phase is priced here, since nothing comes after it to do so.
+	last := s.phaseSpend(holder, sessionID)
+	if holder.verify != "" {
+		last += s.phaseSpend(holder, holder.verify)
+	}
 	s.prReviews.update(sessionID, func(rec *prReview) {
+		rec.priceLastPhase(last)
 		rec.Draft, rec.ParseError = &draft, ""
 		rec.Dropped = dropped
 		rec.Phase = string(review.PhaseDone)
@@ -313,4 +329,37 @@ func (s *Server) finishReview(holder *reviewRun) {
 	blocker, major, minor := draft.Counts()
 	log.Printf("pr review: session %s drafted %d finding(s) (%d blocker, %d major, %d minor), %d inline and %d in the summary; %d refuted",
 		sessionID, total, blocker, major, minor, inline, summary, len(dropped))
+}
+
+// phaseSpend is what the phase that just answered cost, and it re-arms the
+// sampler for the next one.
+//
+// The difference between a session's running total now and when this phase
+// began. Per session, because a phase can run in one of its own: verify's cost
+// belongs to verify, and it accrues on a session the review's own has never
+// heard of. A session whose cost the CLI does not report contributes nothing
+// rather than a wrong number.
+func (s *Server) phaseSpend(holder *reviewRun, sessionID string) float64 {
+	if s.mgr == nil {
+		return 0
+	}
+	sess, live := s.mgr.Get(sessionID)
+	if !live {
+		return 0
+	}
+	now := sess.SpentUSD()
+	if holder.spentAt == nil {
+		holder.spentAt = map[string]float64{}
+	}
+	was, seen := holder.spentAt[sessionID]
+	holder.spentAt[sessionID] = now
+	if !seen {
+		// First sample on this session: everything it has spent so far belongs to
+		// the phase that has just finished, since that is all it has done.
+		return now
+	}
+	if now < was {
+		return 0 // the total went backwards (a respawn); do not invent a negative
+	}
+	return now - was
 }

@@ -98,6 +98,20 @@
     return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`
   }
   const n = (x: number) => x.toLocaleString()
+
+  // What a phase cost, once it is over. The whole tension in this feature is
+  // quality against money, and the money half was answerable only by reading
+  // transcripts with a script. Shown per step, where the time already is.
+  const priced = $derived(
+    Object.fromEntries((draft.timeline ?? []).map((t) => [t.phase, t.spent_usd ?? 0])),
+  )
+  const priceOf = (key: string) => {
+    const v = priced[key] ?? 0
+    return v > 0 ? '$' + (v < 1 ? v.toFixed(2) : v.toFixed(1)) : ''
+  }
+  const spentSoFar = $derived(
+    (draft.timeline ?? []).reduce((sum, t) => sum + (t.spent_usd ?? 0), 0),
+  )
 </script>
 
 <div class="run">
@@ -106,6 +120,10 @@
     <span class="lit">Step {at + 1} of {steps.length}</span>
     <span class="sep">·</span>
     <span>{step.label}</span>
+    {#if spentSoFar > 0}
+      <span class="sep">·</span>
+      <span class="spent">${spentSoFar.toFixed(2)} so far</span>
+    {/if}
   </div>
 
   <h1 class="head">{step.head}</h1>
@@ -124,6 +142,7 @@
           {s.label}
           <span class="num">{i + 1}</span>
           {#if span}<span class="took">{clock(span.ms)}</span>{/if}
+          {#if priceOf(s.key)}<span class="spend">{priceOf(s.key)}</span>{/if}
         </span>
       </div>
     {/each}
@@ -341,6 +360,17 @@
   }
   .took {
     margin-left: auto;
+    text-transform: none;
+  }
+  /* What it cost, beside how long it took. Deliberately quiet: it is a fact to
+     have, not the thing being watched. */
+  .spend {
+    color: var(--x-faint);
+    text-transform: none;
+    letter-spacing: 0.04em;
+  }
+  .spent {
+    color: var(--x-dim);
     text-transform: none;
   }
 

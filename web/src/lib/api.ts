@@ -807,7 +807,9 @@ export interface ReviewDraft {
   // The change under review.
   files?: ReviewFile[]
   // When each phase began, so a wait has a shape rather than just a length.
-  timeline?: { phase: ReviewPhase; at: string }[]
+  // When each phase began and what it cost, so a wait has a shape and a price.
+  // The cost is the CLI's own accounting, differenced across the phase.
+  timeline?: { phase: ReviewPhase; at: string; spent_usd?: number }[]
   // What the survey said to check that produced nothing. The other half of a
   // review: a reviewer that only ever lists problems is one you cannot tell
   // from a reviewer that stopped looking.

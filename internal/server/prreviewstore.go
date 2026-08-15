@@ -128,9 +128,28 @@ type prReview struct {
 }
 
 // phaseStart is one entry in a review's timeline.
+//
+// SpentUSD is what the phase cost, filled in when the NEXT phase begins (or when
+// the review ends), because a phase's cost is only known once it is over. It is
+// the difference between the driving session's running total at the two moments,
+// which is the same arithmetic a loop does against its own start.
+//
+// Recorded because the question "what did that cost" was answerable only by
+// reading the transcripts with a script, which is no way to run a feature whose
+// whole tension is quality against money. A review that prices its own phases
+// makes the next optimisation measurable by anybody, not just by whoever wrote
+// the script.
 type phaseStart struct {
-	Phase string    `json:"phase"`
-	At    time.Time `json:"at"`
+	Phase    string    `json:"phase"`
+	At       time.Time `json:"at"`
+	SpentUSD float64   `json:"spent_usd,omitempty"`
+}
+
+// priceLastPhase closes off the phase now ending with what it cost.
+func (p *prReview) priceLastPhase(spent float64) {
+	if n := len(p.Timeline); n > 0 && spent > 0 {
+		p.Timeline[n-1].SpentUSD += spent
+	}
 }
 
 // Posted reports that this draft has already been sent.
