@@ -740,101 +740,56 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   somebody's GitHub rate limit -- the same trap the usage meters hit, with the
   same fix. Measured after: 1 App call and 1 listing per repo at first paint, 0
   over the next 20 idle seconds.
-  The look rests on one split, and it is the exception this app's monochrome
-  rule is worth spending: **the claim is prose somebody wrote, everything else is
-  machinery.** So a finding's claim and the review's headline are set in the
-  SERIF at a size you read (19-30px), while the location, the counts, the
-  position in the deck and the code are mono, and the argument is sans between
-  them. A reader can tell at a glance which part of a card is an opinion and
-  which is a fact about the repository, which is the distinction the whole screen
-  is about and which one sans ramp cannot make. The headline is a sentence
-  ("Three things worth fixing"), not three numbers, because "2 / 0 / 1" is a
-  puzzle; it is counted at the EDITED severity like everything else.
-  Severity, position (`2/3`) and whether anything checked the claim live in a
-  fixed **gutter** left of a rule, the way a diff puts its line numbers. They
-  were inline before, small grey words among other small grey words, which is why
-  a twelve-finding review had no shape.
-  `web/src/lib/prose.ts` is the other half and it is information rather than
-  decoration. A reviewer's argument is dense with the things a reader is hunting
-  for -- `advanceReview`, `internal/session/answer.go:23`, `g.files.has(token,
-  a.ID)` -- and rendering them flat hides the structure the sentence already has.
-  It marks backtick spans (the model saying so beats every heuristic), file:line
-  locations, simple calls, and camelCase/dotted identifiers, which English almost
-  never produces. Over-matching is the failure that matters, so nested calls stay
-  prose. The RAW text is tokenised and each token escaped ON THE WAY OUT:
-  escaping first would run the patterns over `&lt;` and put a marker inside an
-  entity. Unit-tested, including that ordinary English comes through untouched.
-  **A review takes the whole window** (`App.svelte`'s `reviewFull`). It is a
-  reading surface with two columns and a decision at the end; the session list
-  beside it is a list of things you are deliberately not doing, and nothing in it
-  is reachable from inside a review anyway. That makes the review header the only
-  navigation on screen, which is why it grew one: back to the sessions, and a
-  LABELLED close. Not a bare X, because an X says "make this go away" and says
-  nothing about what goes with it -- here the draft is on disk and survives, and
-  what ends is a CLI process sitting idle in a throwaway checkout. The control
-  turns over to a tick and reads "Done" once the review is posted.
-  **Posting changes the whole screen, so nothing floats over it.** The bar stops
-  being a decision and becomes a receipt (who it went out as, and a link), the
-  keyboard hints go, and every Drop and Edit goes with them: offering to change a
-  finding that is already public is offering to change something that has left
-  the building. There is deliberately no success toast -- a toast is for
-  something that happened where you are NOT looking, and this is the opposite.
-  Opening a finished review is fast now because `planFor` goes through
-  `diffCache` (`prreviewfiles.go`): it used to call GitHub for the pull
-  request's files on EVERY read of the draft, and a phased review re-reads it at
-  the end of every phase, so a reader waited on a round trip for a diff that
-  cannot have changed. The key is the COMMIT, which is what makes it cacheable
-  without a staleness question; posting asks for the current head and gets its
-  own entry, so re-anchoring is unaffected. A failure is not cached.
-  The load state is a **skeleton in the shape of the review**, not the word
-  "Loading": the wait is a fraction of a second now, and a skeleton keeps that
-  moment from being a flash of text and stops the page jumping when it lands.
-  The surface is a **deck you triage**, not a document you read, and that is a
-  rewrite of one that was correct and unusable. It showed every part of every
-  finding at full size at once -- a wall of body prose, a block of evidence, a
-  thirteen-line hunk mostly of comment -- so ONE finding filled a laptop screen
-  with the Drop button below the fold, and nothing said how many findings there
-  were or which was the worst. The parts of a finding are needed in a strict
-  order, so they are ranked that way: the claim decides most judgements alone and
-  is the only thing always at full size, and the argument, the code and what
-  checked it sit behind the disclosure. **Exactly one row is open at a time**
-  (the rest are single lines) and Drop is on every row at every state, because
-  deciding must never require opening anything. The pure arithmetic is
-  `web/src/lib/review.ts` (`ordered`, `decide`, `postLabel`), unit-tested in
-  `web/tests/units.mjs`, and the pieces are `components/review/`:
-  `FindingRow`, `FindingEditor`, `Hunk`, `RunningReview`, `RefutedList`,
-  `ReviewBar`.
-  `Hunk` trims to a few lines either side of the lines the claim is about and
-  caps its height in px, since the anchor is generously sized and its context is
-  exactly what a reader skips.
-  `RunningReview` is the screen for the MINUTES a review takes, and it is a page
-  rather than a progress line. It used to be a phase name, a clock and eight
-  hundred pixels of nothing, which says less than a progress bar does: not what
-  is under review, not where the reviewer decided to look, not what it is reading
-  now, not whether any of it is going anywhere. **Every number on it already
-  existed and none of it was being shown.** A review is an ORDINARY SESSION whose
-  socket is already open, so every file it opens and every pattern it greps for
-  arrives as a tool call that nothing was reading: `web/src/lib/reviewlive.ts`
-  turns `chat.items` into what it is doing now, what it has opened, and how much
-  of the change it has been through. Coverage is matched by SUFFIX, because a
-  tool call carries an absolute worktree path while the pull request lists
-  repo-relative ones, and comparing them directly reports zero every time, which
-  is the sort of quietly-wrong number that is worse than none.
-  Three things are recorded that were not. `prReview.Survey` keeps what the first
-  phase concluded, which used to be built into the find prompt and dropped: it is
-  the only account of where the reviewer thought the risk was, the best thing to
-  read while finding takes its minutes, and the thing to argue with when a review
-  comes back having looked in the wrong place. `prReview.Files` is the change
-  under review. `prReview.Timeline` is when each phase began, because "how long
-  has it been reading" is a different question from "how long has it been going"
-  and the running turn's clock restarts at every phase, so it could answer
-  neither; `beganPhase` ignores a repeat so a repair does not draw the same step
-  twice. Files opened OUTSIDE the change get their own list, since following a
-  caller is exactly the work that makes a review here better than one done
-  against the diff alone.
-  `prReview.Surveyed` is stored precisely because once a review is in `find`
-  nothing else can say whether a survey ran, so the trail would have to either
-  invent a step that never lights or claim one ran that did not.
+  The surface is a **three-column workspace**, implemented from a design in the
+  owner's Claude Design project rather than invented here, and it is the one
+  screen in kunai with a register of its own. Its tokens live in
+  `web/src/review.css` scoped to `.rvx`, NOT in the app palette: the review
+  earns an accent (`#ff6a3d`) because it is a workspace rather than a
+  conversation, and scoping is what keeps that accent out of the sidebar and the
+  composer. The accent is spent narrowly -- the mark, the active queue edge, the
+  lines a claim is anchored to, the severity chip -- and blue (`#6e9bff`) means
+  ACCEPTED and means a patch, which are the same idea: something you are going to
+  do. Type is Inter + JetBrains Mono (the design asks for Inter Tight; the
+  condensed cut is not vendored and -0.02em of tracking buys most of it).
+  Each column answers a different question. `QueueRail` says where you are in a
+  fixed list and collapses to numbered STUBS rather than to nothing, because
+  losing your place costs more than the 272px; it also carries **checked and
+  clean** (`review.CleanAreas`: survey areas that produced no finding), which is
+  the half of a review that normally goes unsaid and the only thing that tells a
+  thorough reviewer from one that stopped. `FindingPane` is the reading, stacked
+  rather than one-at-a-time, with the active finding chosen by SCROLL POSITION
+  (topmost past a reading line -- nearest-to-centre flickers on a finding taller
+  than the window). `DetailRail` answers the four questions a reader has once
+  they believe a claim, in order: what would I change, what checked it, who can
+  reach it, what do I do.
+  Three of those four are new on the wire. `Finding.Grounds` is labelled rows
+  (TRACE / CALLERS / TESTS) rather than a paragraph, because two findings can
+  only be compared when both answer in the same shape; `Finding.Impact` is who
+  can reach it, what it reaches and what fixing it costs, which is what turns a
+  list of true statements into an order to work in; `Finding.Short` is the claim
+  in a handful of words, ASKED FOR rather than truncated, since a title cut at 40
+  characters loses its verb as often as not. The **patch is computed, not asked
+  for** (`review.PatchFor`): the lines a finding is anchored to are the before
+  and the suggestion it already produced is the after, so only `FixTitle` is a
+  new ask. Asking a model for a diff it could derive pays twice for one fact and
+  gives it a second chance to disagree with itself.
+  The patch is **copied, never applied.** The design offers "Apply as a commit";
+  a review runs with Write, Edit and Bash withheld, and that is the property that
+  lets it run unattended on somebody else's branch. A button that writes to the
+  tree would undo it, so the decision to apply stays somewhere a person can see.
+  Verdicts are **accept / dismiss / undecided**, and the load-bearing rule is that
+  an UNDECIDED finding is SENT. Silence is not a dismissal: a reviewer that
+  quietly dropped everything you had not got to would be worse than one that
+  posted too much, because you would never learn what it found. Dismissing is the
+  deliberate act and the only thing that removes a finding. All of that
+  arithmetic is `web/src/lib/reviewDeck.ts`, pure and unit-tested, because these
+  numbers choose what lands publicly under a shared bot identity.
+  Fetching goes through `DraftResource` (`lib/reviewQuery.svelte.ts`) on the
+  shared cache: deduped in flight (the view re-reads when the session goes idle,
+  which is exactly when the session poll fires), kept across a visit, and able to
+  tell `pending` from `stale` -- a skeleton belongs on "nothing yet" and never on
+  "refreshing behind what you can already see", which is what makes a poll
+  flicker.
   **Setup is verified against GitHub before anything is written** (`githubverify.go`).
   Checking only that the PEM parses passes for a key from a different App, for the
   right key with the wrong id, and for an App installed nowhere, so all three reported

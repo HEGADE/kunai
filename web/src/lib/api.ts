@@ -682,9 +682,43 @@ export type Confidence = 'high' | 'medium' | 'low'
 // ReviewFinding is one row of the draft. `inline` is the promise the card makes:
 // whether this lands on the line itself or in the summary, and `why` explains a
 // demotion in words meant for a person.
+// One row of what checked a claim. Labelled rather than prose, because the
+// labels are the same three questions every time and a reader comparing two
+// findings can only do that when both answer in the same shape.
+export interface Ground {
+  key: string
+  value: string
+}
+
+// Who can reach a finding, what it reaches, and what fixing it costs. Together
+// they are what turns a list of true statements into an order to work in.
+export interface Impact {
+  who?: string
+  radius?: string
+  size?: string
+}
+
+export interface PatchLine {
+  sign: string
+  text: string
+}
+
+// The fix as a diff. Built server-side from the lines the finding is anchored
+// to and the suggestion it produced, so it is never a second opinion about
+// itself; only the title is the model's.
+export interface Patch {
+  title: string
+  lines: PatchLine[]
+}
+
 export interface ReviewFinding {
   hunk?: HunkLine[]
   index: number
+  // The claim in a handful of words, for the queue rail.
+  short?: string
+  patch?: Patch | null
+  grounds?: Ground[]
+  impact?: Impact | null
   file: string
   line: number
   end_line?: number
@@ -732,6 +766,7 @@ export interface ReviewDraft {
   number: number
   title: string
   head_sha: string
+  base_ref?: string
   from_fork: boolean
   requester?: string
   posted_url?: string
@@ -748,6 +783,10 @@ export interface ReviewDraft {
   files?: ReviewFile[]
   // When each phase began, so a wait has a shape rather than just a length.
   timeline?: { phase: ReviewPhase; at: string }[]
+  // What the survey said to check that produced nothing. The other half of a
+  // review: a reviewer that only ever lists problems is one you cannot tell
+  // from a reviewer that stopped looking.
+  clean?: string[]
   summary?: string
   findings?: ReviewFinding[]
   dropped?: DroppedFinding[]

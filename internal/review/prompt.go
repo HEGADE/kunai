@@ -135,8 +135,19 @@ func answerFormat() string {
       "confidence": "high",
       "category": "correctness",
       "title": "One line: what is wrong",
+      "short": "Six or seven words, for a narrow list",
       "body": "Why it is wrong and what it breaks. Be specific about the case that fails.",
-      "evidence": "What you read that shows it: the caller you followed, the invariant you checked.",
+      "grounds": [
+        {"key": "TRACE", "value": "the path you followed, as A -> B -> C"},
+        {"key": "CALLERS", "value": "who else reaches this, and whether they are affected"},
+        {"key": "TESTS", "value": "what covers this today, or that nothing does"}
+      ],
+      "impact": {
+        "who": "who can trigger it: any paired guest, an admin, only CI",
+        "radius": "what it reaches when it goes wrong",
+        "size": "roughly what fixing it costs: 3 lines, a rewrite of X"
+      },
+      "fix_title": "One line naming what the suggested change does",
       "suggestion": "the exact replacement for lines 42 to 45"
     }
   ]
@@ -154,6 +165,19 @@ func answerFormat() string {
   most valuable kind. Give the file and line anyway; it will be reported separately.
 - If you found nothing worth saying, return an empty "findings" list and say so in
   the summary. Do not invent something to fill it.
+- "grounds" replaces a paragraph of reasoning with the three questions a reader
+  actually has, and they are worth more answered in the same shape every time: a
+  reader comparing two findings cannot do that against two different paragraphs.
+  Three rows is right. Leave one out rather than padding it, and never write "N/A".
+- "impact" is what turns a list of true statements into an order to work in. A
+  two-line fix anyone can reach outranks a rewrite only an admin can, and severity
+  by itself cannot say that.
+- "fix_title" names what the change DOES ("read the media type from the issued
+  record, not the frame"). The diff is built from your "suggestion" and the lines
+  you anchored to, so do not write one out; write the reason it is the right one.
+- Every field above except "file", "line", "title" and "body" is optional. An
+  honest omission is fine and a guess is not: leave out an impact you would be
+  making up rather than filling the row.
 
 ` + severityRules
 }

@@ -15,7 +15,7 @@ import { summarise, isAwaiting, isWorking } from '../src/lib/sidebar.ts'
 import {
   chosenCli, isProvider, providerModelChoices, providerModelToSend, showEffort,
 } from '../src/lib/spawnoptions.ts'
-import { ordered, decide, postLabel, asPosted } from '../src/lib/review.ts'
+import { ordered, tally, sendLabel, headline, pad, step } from '../src/lib/reviewDeck.ts'
 import { proseHtml } from '../src/lib/prose.ts'
 import { clampTTL, splitDuration, expiryWords, MIN_TTL, MAX_TTL } from '../src/lib/duration.ts'
 import {
@@ -266,75 +266,67 @@ eq(
 )
 eq('nothing hidden when the list is short', visibleGroups([quiet('a')], isLive, 3).hidden, 0)
 
-// --- review triage ----------------------------------------------------------
-// The numbers a reviewer decides on must be the numbers that get posted, and the
-// way that goes wrong is silent: the headline once counted the severity the
-// model wrote rather than the one the reader overruled it to, so demoting the
-// only blocker to a minor still announced "1 blocker".
+// --- review deck --------------------------------------------------------------
+// What lands publicly on somebody's pull request, under a shared bot identity.
+// The rule that most needs pinning: an UNDECIDED finding is SENT. Silence is not
+// a dismissal, and a reviewer that quietly dropped everything you had not got to
+// would be worse than one that posted too much, because you would never learn
+// what it had found.
 
 const F = (index, severity, extra = {}) => ({
   index, severity, file: 'a.go', line: 1, side: 'RIGHT', title: 't', body: 'b',
   confidence: 'high', inline: true, ...extra,
 })
 const FS = [F(0, 'minor'), F(1, 'blocker'), F(2, 'major'), F(3, 'minor', { inline: false })]
+const NONE = {}
 
-eq(
-  'findings are ordered worst first',
-  ordered(FS, {}, 'all').map((f) => f.index),
-  [1, 2, 0, 3],
-)
-// The sort is STABLE, so an overruled finding drops to its new severity and
-// keeps its original position among its new equals rather than going last.
+eq('findings are ordered worst first', ordered(FS, NONE).map((f) => f.index), [1, 2, 0, 3])
+// The sort is stable, so an overruled finding keeps its place among its new
+// equals rather than going last.
 eq(
   'an overruled severity moves the finding immediately',
-  ordered(FS, { 1: { title: 't', body: 'b', severity: 'minor' } }, 'all').map((f) => f.index),
+  ordered(FS, { 1: { title: 't', body: 'b', severity: 'minor' } }).map((f) => f.index),
   [2, 0, 1, 3],
 )
-eq(
-  'a filter is applied at the overruled severity, not the model’s',
-  ordered(FS, { 1: { title: 't', body: 'b', severity: 'minor' } }, 'blocker').map((f) => f.index),
-  [],
-)
 
-eq('nothing dropped means everything posts', decide(FS, new Set(), {}).keep, 4)
-eq('dropping is counted', decide(FS, new Set([1, 2]), {}).drop, 2)
-// The delivery split is a promise about what lands where on the pull request.
-eq('the inline/summary split counts only what is kept', 
-  [decide(FS, new Set([0]), {}).inline, decide(FS, new Set([0]), {}).summary], [2, 1])
+eq('nothing decided still sends everything', tally(FS, NONE, NONE).sending, 4)
+eq('and counts none of it resolved', tally(FS, NONE, NONE).resolved, 0)
+eq('accepting resolves without changing what is sent', tally(FS, { 0: 'accept' }, NONE).sending, 4)
+eq('dismissing is the only thing that holds one back', tally(FS, { 1: 'dismiss' }, NONE).sending, 3)
+eq('both count as resolved', tally(FS, { 0: 'accept', 1: 'dismiss' }, NONE).resolved, 2)
+eq('undecided is what is left', tally(FS, { 0: 'accept' }, NONE).undecided, 3)
 
-// The bug a screenshot caught and every selector assertion walked past.
+// The headline is counted at the EDITED severity, or overruling the only blocker
+// still announces one.
+eq('a dismissed blocker leaves the headline', tally(FS, { 1: 'dismiss' }, NONE).blockers, 0)
 eq(
-  'overruling the only blocker removes it from the headline',
-  decide(FS, new Set(), { 1: { title: 't', body: 'b', severity: 'minor' } }).blockers,
+  'an overruled blocker leaves it too',
+  tally(FS, NONE, { 1: { title: 't', body: 'b', severity: 'minor' } }).blockers,
   0,
 )
-eq(
-  'a dropped blocker is not counted either, because it is not being sent',
-  decide(FS, new Set([1]), {}).blockers,
-  0,
-)
-// An unrecognised severity must not vanish from the counts: it still gets
-// posted, so it is counted as the mildest thing rather than as nothing.
-eq('an unknown severity still counts', decide([F(0, 'critical')], new Set(), {}).counts.minor, 1)
+// An accepted blocker is still a blocker: accepting means you will fix it, not
+// that it stopped being one.
+eq('an accepted blocker is still counted', tally(FS, { 1: 'accept' }, NONE).blockers, 1)
+eq('an unknown severity still counts as something', tally([F(0, 'critical')], NONE, NONE).counts.minor, 1)
 
-// Dropping every finding is a decision, not a dead end: "I looked, there is
-// nothing worth flagging" is a review worth sending.
-eq('the button says what it will send', postLabel(decide(FS, new Set(), {}), false), 'Post 4 findings')
-eq('one finding is not pluralised', postLabel(decide([F(0, 'minor')], new Set(), {}), false), 'Post 1 finding')
-eq('dropping everything offers the summary', postLabel(decide(FS, new Set([0, 1, 2, 3]), {}), false), 'Post summary')
-eq('a review that found nothing still posts', postLabel(decide([], new Set(), {}), false), 'Post summary')
+eq('the headline is a sentence', headline(tally(FS, NONE, NONE)), 'One thing should block this merge')
+eq('and plural when it should be', headline(tally([F(0,'major'),F(1,'major')], NONE, NONE)), 'Two things worth fixing')
+eq('nothing found says so', headline(tally([], NONE, NONE)), 'Nothing worth reporting')
 
-// A rewrite is what gets posted, anchor untouched.
+eq('the send control says what it will send', sendLabel(tally(FS, NONE, NONE), false), 'Post 4 findings')
+eq('one is not pluralised', sendLabel(tally([F(0,'minor')], NONE, NONE), false), 'Post 1 finding')
 eq(
-  'asPosted uses the reader’s words',
-  asPosted(F(0, 'minor'), { 0: { title: 'mine', body: 'why', severity: 'blocker' } }).title,
-  'mine',
+  'dismissing everything offers the summary',
+  sendLabel(tally(FS, { 0: 'dismiss', 1: 'dismiss', 2: 'dismiss', 3: 'dismiss' }, NONE), false),
+  'Post the summary',
 )
-eq(
-  'asPosted never moves the anchor',
-  asPosted(F(0, 'minor'), { 0: { title: 'mine', body: 'why', severity: 'blocker' } }).line,
-  1,
-)
+
+// The queue's gutter must not reflow at ten.
+eq('row numbers are padded', [pad(1), pad(9), pad(10)], ['01', '09', '10'])
+// And the cursor cannot fall off either end.
+eq('step clamps at the top', step(0, -1, 3), 0)
+eq('step clamps at the bottom', step(2, 1, 3), 2)
+eq('step on an empty deck is harmless', step(0, 1, 0), 0)
 
 // --- prose ------------------------------------------------------------------
 // A finding's argument is dense with the things a reader is hunting for, and

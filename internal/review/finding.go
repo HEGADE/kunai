@@ -39,6 +39,22 @@ type Finding struct {
 	Side string `json:"side,omitempty"`
 	// Title is the claim in one line: what is wrong, not what to do.
 	Title string `json:"title"`
+	// Short is the same claim in a handful of words, for the queue rail where
+	// the full one cannot fit.
+	//
+	// Asked for rather than truncated. A title cut at 40 characters loses its
+	// verb as often as not ("A guest can write an arbitrary file into the..."),
+	// and a list of sentences that all stop mid-clause is unreadable in a way a
+	// list of short ones is not.
+	Short string `json:"short,omitempty"`
+	// FixTitle names what the suggested change does, in one line. The patch
+	// itself is derived (see PatchFor); this is the only part of it worth asking
+	// a model for, because a diff cannot say why it is the right diff.
+	FixTitle string `json:"fix_title,omitempty"`
+	// Grounds is what checked the claim, as labelled rows. See detail.go.
+	Grounds []Ground `json:"grounds,omitempty"`
+	// Impact is who can reach it, what it reaches, and what fixing it costs.
+	Impact *Impact `json:"impact,omitempty"`
 	// Body is the explanation, including why it matters.
 	Body string `json:"body"`
 	// Suggestion, when set, is the literal replacement for the anchored lines.
@@ -102,6 +118,13 @@ func (f Finding) Normalise() Finding {
 	f.Title = strings.TrimSpace(f.Title)
 	f.Body = strings.TrimSpace(f.Body)
 	f.Evidence = strings.TrimSpace(f.Evidence)
+	f.FixTitle = strings.TrimSpace(f.FixTitle)
+	f.Grounds = normaliseGrounds(f.Grounds)
+	// Falls back to the full claim rather than to a truncation: a queue row that
+	// wraps to two lines is better than one that stops mid-clause.
+	if f.Short = strings.TrimSpace(f.Short); f.Short == "" {
+		f.Short = f.Title
+	}
 	// Repaired rather than rejected, for the reason given in severity.go: a real
 	// blocker that arrived labelled "critical" must not be lost to vocabulary.
 	f.Severity = normaliseSeverity(f.Severity)

@@ -1,0 +1,111 @@
+/* The review workspace's own tokens.
+   ---------------------------------------------------------------------------
+   Taken verbatim from the design rather than approximated, and scoped to this
+   screen rather than added to the app's palette. That scoping is the point: the
+   review is the one place in kunai that is a workspace rather than a
+   conversation, and it earns a register of its own without dragging an orange
+   accent through the sidebar and the composer.
+
+   The orange is load-bearing and used narrowly: the product mark, the active
+   row's edge, the lines a finding is anchored to, and the severity chip. Blue
+   means ACCEPTED and means a patch; those are the same idea (something you are
+   going to do) and they share a hue on purpose. Everything else is the gray
+   ramp, at the exact steps the design specifies. */
+
+.rvx {
+  --x-bg: #08090a;
+  --x-chrome: #0b0c0e;
+  --x-rail: #0a0b0d;
+  --x-panel: #0b0c0e;
+  --x-panel-2: #0d0e11;
+  --x-row: #101216;
+
+  --x-line: #17181c;
+  --x-line-soft: #15161a;
+  --x-line-panel: #1b1d22;
+  --x-edge: #26282e;
+  --x-edge-lit: #3a3d45;
+
+  --x-ink: #f1f1f4;
+  --x-ink-2: #e9e9ec;
+  --x-ink-3: #d3d3d8;
+  --x-ink-4: #c9c9d0;
+  --x-body: #8a8b94;
+  --x-mute: #9a9ba4;
+  --x-dim: #6c6d77;
+  --x-faint: #4e4f58;
+  --x-fainter: #3e4149;
+
+  /* The accent. Narrow on purpose: mark, active edge, anchored lines, chip. */
+  --x-accent: #ff6a3d;
+  --x-accent-lit: #ff8a62;
+  --x-accent-dim: #b0714f;
+  --x-accent-wash: rgba(255, 106, 61, 0.07);
+  --x-accent-chip: rgba(255, 106, 61, 0.12);
+  --x-accent-edge: #5a3324;
+
+  /* Accepted, and patches. The same idea twice: something you will do. */
+  --x-go: #6e9bff;
+  --x-go-lit: #8faeff;
+  --x-go-ink: #9db8ff;
+  --x-go-edge: #2f4463;
+  --x-go-wash: rgba(110, 155, 255, 0.1);
+  --x-go-wash-lit: rgba(110, 155, 255, 0.22);
+
+  --x-add: #4e8f6a;
+
+  /* The design calls for Inter Tight; what is vendored here is Inter, which is
+     the same family without the condensed cut. The titles carry -0.02em of
+     tracking (as the design specifies), which is most of what Tight buys, and
+     adding a font for one width axis is not worth a third family in the bundle.
+     JetBrains Mono is exact. */
+  --x-sans: 'Inter Variable', Inter, 'Geist Variable', system-ui, sans-serif;
+  --x-mono: 'JetBrains Mono Variable', 'JetBrains Mono', 'Geist Mono Variable', ui-monospace, monospace;
+
+  background: var(--x-bg);
+  color: var(--x-ink-2);
+  font-family: var(--x-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Mono is the data voice here and it carries every label, so ligatures have to
+   be off for the same reason they are off app-wide: the code shown must be the
+   code. JetBrains Mono ships coding ligatures on. */
+.rvx .x-mono {
+  font-family: var(--x-mono);
+  font-variant-ligatures: none;
+}
+
+/* A section label. Ten pixels, wide tracking, mono: the design uses this one
+   shape for every heading in the rails, which is what lets the rails hold four
+   different kinds of content without four different headings. */
+.rvx .x-cap {
+  font-family: var(--x-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--x-dim);
+}
+
+.rvx button {
+  font-family: inherit;
+  cursor: pointer;
+}
+.rvx ::selection {
+  background: rgba(255, 106, 61, 0.28);
+}
+
+/* Scrollbars, because this screen is three independently scrolling columns and
+   the platform default draws a bright slab down the middle of a dark page. */
+.rvx *::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+.rvx *::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  border: 2px solid var(--x-bg);
+}
+.rvx *::-webkit-scrollbar-track {
+  background: transparent;
+}

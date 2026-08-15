@@ -44,6 +44,9 @@ type prReview struct {
 	// the dashboard listed the same pull requests twice: once under "kunai" and
 	// once under a phantom repo called "4".
 	RepoDir string `json:"repo_dir,omitempty"`
+	// BaseRef is the branch this merges into, so the header can say nightly->main
+	// rather than just naming the pull request.
+	BaseRef string `json:"base_ref,omitempty"`
 	// HeadSHA is the commit that was read. Findings are only ever posted against
 	// this, never against whatever the head has become.
 	HeadSHA string `json:"head_sha"`

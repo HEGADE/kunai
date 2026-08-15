@@ -200,7 +200,7 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 	if s.prReviews != nil {
 		s.prReviews.put(prReview{
 			SessionID: sess.ID, Owner: repo.Owner, Repo: repo.Name, Number: number,
-			Title: pr.Title, HeadSHA: sha, FromFork: fromFork,
+			Title: pr.Title, HeadSHA: sha, BaseRef: pr.Base.Ref, FromFork: fromFork,
 			RepoDir: repoRoot, Worktree: wt.Path,
 			Requester: requester, CreatedAt: time.Now(),
 			Phase:    string(run.Phase),

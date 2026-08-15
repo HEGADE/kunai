@@ -298,7 +298,7 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request) {
 
 	out := map[string]any{
 		"owner": rec.Owner, "repo": rec.Repo, "number": rec.Number, "title": rec.Title,
-		"head_sha": rec.HeadSHA, "from_fork": rec.FromFork, "requester": rec.Requester,
+		"head_sha": rec.HeadSHA, "base_ref": rec.BaseRef, "from_fork": rec.FromFork, "requester": rec.Requester,
 		"posted_url": rec.PostedURL, "parse_error": rec.ParseError,
 		// How far the review has got. A phased review takes longer than the
 		// single-shot one did, so "Reviewing 4m" with nothing else to say reads
@@ -319,6 +319,11 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request) {
 		// be audited: three findings from a reviewer that dropped four is a
 		// different thing from three findings from a reviewer that found three,
 		// and only this can tell them apart.
+		// What the survey said to look at that produced nothing. The other half of
+		// a review: "I checked the index contract and it is fine" is information,
+		// and a reviewer that only ever lists problems is one you cannot tell from
+		// a reviewer that stopped looking.
+		"clean": cleanAreas(rec),
 		"dropped": droppedRows(rec.Dropped),
 	}
 	// Placement is recomputed here rather than stored, because it depends on the
@@ -394,13 +399,24 @@ func (s *Server) planFor(ctx context.Context, rec prReview) (review.Plan, []revi
 func placements(plan review.Plan, files []review.FileDiff) []map[string]any {
 	out := make([]map[string]any, 0, len(plan.Placements))
 	for i, pl := range plan.Placements {
+		hunk := review.HunkFor(files, pl.Finding)
 		out = append(out, map[string]any{
 			"index": i,
+			// The claim in a handful of words, for the queue rail. Falls back to
+			// the full title in Normalise rather than being truncated here.
+			"short": pl.Finding.Short,
+			// The fix as a diff, BUILT here from the anchored lines and the
+			// suggestion rather than asked of the model: both halves are already
+			// on the record, and asking again would pay twice for one fact.
+			"patch": review.PatchFor(pl.Finding, hunk),
+			// What checked the claim, as labelled rows, and what it costs.
+			"grounds": pl.Finding.Grounds,
+			"impact":  pl.Finding.Impact,
 			// The diff lines this finding is about, so a card carries its own
 			// evidence. A claim with a file and a number attached is not something
 			// anybody can judge without going to look it up, and sending them
 			// elsewhere to look is how a review becomes a chore.
-			"hunk":       review.HunkFor(files, pl.Finding),
+			"hunk":       hunk,
 			"file":     pl.Finding.File,
 			"line":     pl.Finding.Line,
 			"end_line": pl.Finding.EndLine,
@@ -421,4 +437,12 @@ func placements(plan review.Plan, files []review.FileDiff) []map[string]any {
 		})
 	}
 	return out
+}
+
+// cleanAreas is what the survey said to check that produced no finding.
+func cleanAreas(rec prReview) []string {
+	if rec.Survey == nil || rec.Draft == nil {
+		return nil
+	}
+	return review.CleanAreas(*rec.Survey, rec.Draft.Findings)
 }
