@@ -1949,6 +1949,20 @@ as portable as the font behind it, and the fonts here are chosen for text.
   does not auto-dismiss, because it is the answer to something you asked for and
   usually names what to do next; anything else does. Identical messages collapse
   rather than stack, since pressing a failing button three times is one problem.
+  Four things the first version got wrong, all of them the same mistake -- a
+  toast is an ANSWER, and an answer has to be readable without being read.
+  It sat 12px from the top, which on every screen with a header put a floating
+  panel across the row holding the title and the actions, so it read as
+  something having gone wrong rather than as a reply; it clears the chrome now.
+  The kind was a 2px inset shadow down the left edge, invisible at a glance and
+  indistinguishable between the three; it is an ICON in the colour that already
+  means that thing here. The text was a paragraph -- "Applied to
+  internal/server/shareupload.go:196 (-1 +2). Not committed." is two sentences
+  in a 560px box -- so a toast is now a title plus an optional quieter `detail`
+  line, and the copy was rewritten to fit. And an auto-dismissing toast shows
+  its own dwell as a hairline that burns down, because a message that vanishes
+  with no warning reads as a glitch the first time it happens; the close button
+  is only on the errors, which are the only ones that wait.
   An error next to the FIELD that caused it (a dialog, a form) stays where it is:
   that is validation, and a toast is worse for it.
 - The composer floats on the canvas with no full-width divider or band; the

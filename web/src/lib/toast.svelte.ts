@@ -31,6 +31,11 @@ export interface Toast {
   id: number
   kind: ToastKind
   text: string
+  // The second line, quieter. What happened goes in text; what it means for you
+  // goes here. Two sentences in one line is how a toast becomes a paragraph
+  // floating over somebody's work, which is what these had turned into
+  // ("Applied to internal/server/shareupload.go:196 (-1 +2). Not committed.").
+  detail?: string
   // What to do about it, when there is something. A failure that names its own
   // remedy is worth far more than one that only names itself.
   action?: { label: string; run: () => void }
@@ -46,17 +51,17 @@ class Toasts {
   private timers = new Map<number, ReturnType<typeof setTimeout>>()
 
   /** Something failed. Stays until dismissed. */
-  error(text: string, action?: Toast['action']) {
-    return this.push('error', text, action)
+  error(text: string, detail?: string, action?: Toast['action']) {
+    return this.push('error', text, detail, action)
   }
 
   /** Something worked. Goes away by itself. */
-  done(text: string, action?: Toast['action']) {
-    return this.push('done', text, action)
+  done(text: string, detail?: string, action?: Toast['action']) {
+    return this.push('done', text, detail, action)
   }
 
-  info(text: string, action?: Toast['action']) {
-    return this.push('info', text, action)
+  info(text: string, detail?: string, action?: Toast['action']) {
+    return this.push('info', text, detail, action)
   }
 
   dismiss(id: number) {
@@ -72,7 +77,7 @@ class Toasts {
     this.items = []
   }
 
-  private push(kind: ToastKind, text: string, action?: Toast['action']): number {
+  private push(kind: ToastKind, text: string, detail?: string, action?: Toast['action']): number {
     text = text.trim()
     if (!text) return 0
     // The same message twice is the same problem twice. Replaced rather than
@@ -83,7 +88,7 @@ class Toasts {
       return same.id
     }
 
-    const t: Toast = { id: this.next++, kind, text, action }
+    const t: Toast = { id: this.next++, kind, text, detail, action }
     this.items = [...this.items, t]
     this.rearm(t)
     return t.id

@@ -138,7 +138,7 @@
     try {
       await stopReview(base, sessionId)
       await res.read(base, sessionId, { force: true })
-      toasts.done('Review stopped. Nothing was posted, and the conversation is still here to read.')
+      toasts.done('Review stopped', 'Nothing was posted. The conversation is still there to read.')
     } catch (e) {
       toasts.error((e as Error).message)
     } finally {
@@ -201,7 +201,7 @@
       // machine does not have the endpoint at all, so refusing to open the
       // conversation over it would break Ask everywhere it used to work.
       if (app.chat?.status === 'gone') {
-        toasts.error(`Could not reopen the reviewer: ${(e as Error).message}`)
+        toasts.error('Could not reopen the reviewer', (e as Error).message)
         return
       }
     } finally {
@@ -224,8 +224,7 @@
     try {
       const r = await applyReviewFix(base, sessionId, f.index, f.file)
       appliedAt = { ...appliedAt, [f.index]: true }
-      const n = r.added === r.removed ? `${r.added} line${r.added === 1 ? '' : 's'}` : `-${r.removed} +${r.added}`
-      toasts.done(`Applied to ${r.file}:${r.line} (${n}). Not committed.`)
+      toasts.done(`Applied to ${r.file.split('/').pop()}:${r.line}`, `\u2212${r.removed} +${r.added}, not committed \u2014 git diff has it.`)
     } catch (e) {
       toasts.error((e as Error).message)
     } finally {
