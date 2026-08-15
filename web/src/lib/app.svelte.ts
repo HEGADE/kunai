@@ -229,6 +229,21 @@ class AppStore {
     return m.state ?? conn?.sessionState ?? ''
   }
 
+  // Whether a session is a pull-request review, when anything on hand knows.
+  //
+  // undefined means "not on hand", which is a third answer and has to stay one:
+  // this decides which whole screen renders, and defaulting an unknown to `false`
+  // is what made opening a review show a dead transcript first and the review a
+  // round trip later. Both lists carry the flag (the server tags them from the
+  // same map), so the common case is answered before anything is fetched.
+  isReviewSession(machineId: string, id: string): boolean | undefined {
+    const live = this.sessions.find((s) => s.machineId === machineId && s.id === id)
+    if (live) return live.review === true
+    const past = this.history.find((h) => h.machineId === machineId && h.id === id)
+    if (past) return past.review === true
+    return undefined
+  }
+
   // liveTurnStart is when the running turn began (unix ms), 0 when none is. The
   // same preference as liveState and for the same reason: an open tab's socket
   // stamps it immediately while the polled list is up to a cycle behind, and a

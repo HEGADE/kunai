@@ -15,7 +15,7 @@ import { summarise, isAwaiting, isWorking } from '../src/lib/sidebar.ts'
 import {
   chosenCli, isProvider, providerModelChoices, providerModelToSend, showEffort,
 } from '../src/lib/spawnoptions.ts'
-import { ordered, tally, sendLabel, headline, pad, step } from '../src/lib/reviewDeck.ts'
+import { ordered, tally, sendLabel, headline, pad, step, fixOf, checkRows } from '../src/lib/reviewDeck.ts'
 import { proseHtml } from '../src/lib/prose.ts'
 import { clampTTL, splitDuration, expiryWords, MIN_TTL, MAX_TTL } from '../src/lib/duration.ts'
 import {
@@ -370,6 +370,67 @@ eq(
   P('buildContent calls safeName'),
   '<code class="code">buildContent</code> calls <code class="code">safeName</code>',
 )
+
+// --- the detail rail ----------------------------------------------------------
+//
+// Every panel answers from whatever the record holds, and none of them may
+// report the absence of a FIELD as the absence of an ANSWER. That was a real
+// bug and a loud one: the rail printed "no suggested change, nothing recorded
+// about what checked it" onto a finding that had been independently verified,
+// carried a thousand words of evidence, and had a confidence the rail showed
+// nowhere at all.
+{
+  const F = (over = {}) => ({
+    index: 0, file: 'a.go', line: 1, side: 'RIGHT', title: 't', body: 'b',
+    severity: 'major', confidence: 'high', inline: true, ...over,
+  })
+
+  // The patch is the best rendering of a fix, and it wins when there is one.
+  eq('a patch is the fix', fixOf(F({ patch: { title: 'x', lines: [{ sign: '+', text: 'a' }] } })).kind, 'patch')
+  // But a suggestion the server could not turn into a diff is still a fix, and
+  // showing nothing was throwing away the answer to the panel's own question.
+  eq('a suggestion with no patch is still a fix', fixOf(F({ suggestion: 'do it this way' })).kind, 'text')
+  eq('and it carries the text', fixOf(F({ suggestion: ' do it this way ' })).text, 'do it this way')
+  // The margin the whole suggestion shares is spent on nothing in a 344px
+  // column, and the relative indentation inside it has to survive exactly. The
+  // same rule the server applies to a patch; see stripCommonIndent.
+  eq(
+    'the shared margin goes and the shape stays',
+    fixOf(F({ suggestion: '\t\tif !ok {\n\t\t\treturn err\n\t\t}' })).text,
+    'if !ok {\n\treturn err\n}',
+  )
+  eq(
+    'mixed indentation is left alone rather than sliced',
+    fixOf(F({ suggestion: '\tif ok {\n  deep()' })).text,
+    '\tif ok {\n  deep()',
+  )
+  // An empty patch is not a patch: a diff with no lines renders as a frame
+  // around nothing, which reads as a rendering fault.
+  eq('an empty patch falls through', fixOf(F({ patch: { title: 'x', lines: [] }, suggestion: 's' })).kind, 'text')
+  eq('nothing at all says so', fixOf(F()).kind, 'none')
+
+  // What checked it is never empty, because two rows are always available.
+  const rows = checkRows(F({ verified: true }))
+  eq('verification is always reported', rows.some((r) => r.key === 'CHECKED'), true)
+  eq(
+    'and it says the refutation failed',
+    rows.find((r) => r.key === 'CHECKED').value.includes('refute'),
+    true,
+  )
+  eq('confidence has somewhere to be at last', rows.some((r) => r.key === 'CONFIDENCE'), true)
+  // An unverified finding is not silently the same as a verified one.
+  eq(
+    'an unchecked claim says it is unchecked',
+    checkRows(F()).find((r) => r.key === 'CHECKED').value.includes('not independently checked'),
+    true,
+  )
+  // The reviewer's own grounds come first, and are uppercased for the label column.
+  const withGrounds = checkRows(F({ grounds: [{ key: 'trace', value: 'a -> b' }] }))
+  eq('grounds lead', withGrounds[0].key, 'TRACE')
+  eq('and the standing rows follow', withGrounds.length, 3)
+  // A row with nothing in it is not a row.
+  eq('an empty ground is dropped', checkRows(F({ grounds: [{ key: 'TESTS', value: '' }] })).length, 2)
+}
 
 console.log(`${pass}/${pass + fails.length} passed`)
 for (const f of fails) console.log(`FAIL ${f}`)

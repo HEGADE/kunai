@@ -696,6 +696,18 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   finished review reopened later has a session reporting `starting` while it resumes.
   The verdict counts the EDITED severity, or overruling the only blocker still
   announces a blocker.
+  Whether a session IS a review rides on the session list (`Meta.Review`,
+  `HistoryEntry.Review`, both tagged in `tagReviewRepos`/`handleHistory` off the
+  map those loops already walk), because it decides which whole SCREEN renders
+  and a question the client has to ask over the network is one it cannot answer
+  at first paint. It used to probe `/review` per session and default to "not a
+  review" while it waited, so opening a finished one showed a dead transcript --
+  "this session has ended", offering a Reopen that cannot work, since the
+  checkout a review reads is swept when it finishes -- and became the review a
+  round trip later. The probe stays as the fallback for a session neither list
+  has yet, and while NOTHING knows, nothing renders: a blank moment is honest
+  and the wrong screen is not. Pinned by a smoke test that answers `/review`
+  slowly, which is the only way this bug is visible at all.
   **A pull request that moved is re-anchored, not refused** (`reanchor.go`).
   Posting used to stop dead with "#5 has moved on since this review (now
   8c802e4d); review it again before posting", throwing away a review that cost
@@ -786,7 +798,29 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   not a paragraph -- a 400-word value in a 344px panel with a 70px label column
   is a forty-line ribbon that makes the rows beside it unfindable, and long
   prose belongs in the pane behind the disclosure, which is gated on the prose
-  existing and NOT on the rail having rows.
+  existing and NOT on the rail having rows. And the margin the whole patch
+  shares is stripped (`stripCommonIndent`, mirrored client-side in
+  `reviewDeck.dedent` for a suggestion shown as text): code four levels deep
+  spends a quarter of a 344px line on indentation before it says anything, and
+  the relative indentation inside the patch is the only part carrying meaning,
+  so the longest common WHITESPACE prefix goes, compared character by character
+  so a tab is never taken for a space.
+  Every panel answers from **whatever the record holds, and none of them may
+  report a missing FIELD as a missing ANSWER**. The rail used to give up when a
+  finding had no patch, no grounds and no impact, and print "no suggested
+  change, nothing recorded about what checked it" into an otherwise empty
+  column -- about a finding an independent pass had tried to refute and failed
+  to, carrying a thousand words of evidence and a confidence the rail showed
+  nowhere at all. Three of the four questions had answers under other names. So
+  `checkRows` always reports whether verification ran (the single most useful
+  thing about a claim, and the one thing prose cannot say) and the finding's own
+  confidence, which is half its judgement and had no home on screen; a
+  suggestion the server could not turn into a diff is shown AS TEXT (`fixOf`)
+  rather than vanishing, since it is the answer to the panel's own question; and
+  only a finding that genuinely offers no fix says so, in one line. **Ask is on
+  every finding**, in the decision area rather than inside the patch panel,
+  because a finding with no suggested fix is if anything the one most worth
+  arguing with, and those were exactly the ones that had no way to.
     The patch is **copied, never applied.** The design offers "Apply as a commit";
   a review runs with Write, Edit and Bash withheld, and that is the property that
   lets it run unattended on somebody else's branch. A button that writes to the

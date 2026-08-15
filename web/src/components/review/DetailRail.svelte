@@ -1,17 +1,26 @@
 <script lang="ts">
   import type { ReviewFinding } from '../../lib/api'
   import type { Verdict } from '../../lib/reviewDeck'
-  import { pad } from '../../lib/reviewDeck'
+  import { pad, fixOf, checkRows } from '../../lib/reviewDeck'
   import { copyText } from '../../lib/clipboard'
   import { effectiveSeverity, type Edits } from '../../lib/reviewDeck'
 
   // The active finding, answered in the order a reader asks.
   //
   // Once you believe a claim there are four questions and they come in a fixed
-  // order: what would I change, what checked this, who can reach it, and what do
-  // I do about it. As prose that is a paragraph nobody reads. As four named
-  // panels it is three seconds of scanning, and two findings can be compared
-  // because both answer in the same shape.
+  // order: what would I change, what checked this, who can reach it, and where
+  // is it. As prose that is a paragraph nobody reads. As four named panels it is
+  // three seconds of scanning, and two findings can be compared because both
+  // answer in the same shape.
+  //
+  // Every panel answers from whatever the record holds, and NONE of them is
+  // allowed to report the absence of a field as the absence of an answer. The
+  // rail used to give up whenever a finding carried no patch, no grounds and no
+  // impact, and print one apologetic paragraph into an otherwise empty column --
+  // on a finding that had been independently verified, carried a thousand words
+  // of evidence, and had a confidence the rail had never shown anywhere. Three
+  // of the four questions had answers; the panel had simply looked for them
+  // under the wrong names.
   //
   // The rail is where the DECISION lives, at the bottom, because it is what you
   // do after reading everything above it.
@@ -21,6 +30,7 @@
     verdict,
     edits,
     sent,
+    href,
     onaccept,
     ondismiss,
     onundo,
@@ -32,33 +42,36 @@
     edits: Edits
     // Posted already: every decision above is spent.
     sent: boolean
+    // The code on GitHub at the commit that was READ, which is where the code a
+    // finding describes actually is. Empty when the review has no head to point at.
+    href: string
     onaccept: () => void
     ondismiss: () => void
     onundo: () => void
     onask: () => void
   } = $props()
 
+  const fix = $derived(fixOf(f))
+  const rows = $derived(checkRows(f))
+  const impact = $derived(f.impact ?? null)
+  const span = $derived(f.end_line && f.end_line > f.line ? `${f.line}-${f.end_line}` : `${f.line}`)
+
   let copied = $state(false)
   let copyTimer: ReturnType<typeof setTimeout> | undefined
 
-  async function copyPatch() {
-    if (!f.patch) return
-    const text = f.patch.lines.map((l) => `${l.sign} ${l.text}`).join('\n')
+  async function copyFix() {
+    const text =
+      fix.kind === 'patch'
+        ? (f.patch?.lines ?? []).map((l) => `${l.sign} ${l.text}`).join('\n')
+        : fix.kind === 'text'
+          ? fix.text
+          : ''
+    if (!text) return
     await copyText(text)
     copied = true
     clearTimeout(copyTimer)
     copyTimer = setTimeout(() => (copied = false), 1400)
   }
-
-  const impact = $derived(f.impact ?? null)
-  // Structured rows only.
-  //
-  // A review from before this shape existed carries one long paragraph, and
-  // wrapping that in a labelled row was the wrong fix: at 344px with a 70px
-  // label column, a 400-word value became a forty-line ribbon and the panel it
-  // sat in stopped being scannable, which is the one thing this panel is for.
-  // The paragraph belongs in the pane, and it is there, behind the disclosure.
-  const grounds = $derived(f.grounds ?? [])
 </script>
 
 <aside class="rail">
@@ -70,8 +83,8 @@
   </div>
 
   <div class="body">
-    {#if f.patch}
-      <div class="x-cap">Suggested patch</div>
+    <div class="x-cap">Suggested change</div>
+    {#if fix.kind === 'patch' && f.patch}
       <div class="patch">
         <div class="ptitle">{f.patch.title}</div>
         <div class="plines x-mono">
@@ -83,30 +96,41 @@
           {/each}
         </div>
       </div>
-      <div class="pacts">
-        <!-- Copy, not apply.
-             The design offers "Apply as a commit", and a review deliberately
-             runs with Write, Edit and Bash withheld: that is the property that
-             lets it run unattended on somebody else's branch. Handing this
-             screen a button that writes to the tree would undo it, so the patch
-             goes to the clipboard and the decision to apply it stays a thing a
-             person does somewhere they can see it. -->
-        <button class="apply" onclick={copyPatch}>{copied ? 'Copied ✓' : 'Copy the patch'}</button>
-        <button class="ask" onclick={onask}>Ask</button>
+    {:else if fix.kind === 'text'}
+      <!-- The suggestion as written.
+           A finding can carry one the server could not turn into a diff, and
+           showing nothing then loses the answer entirely: the fix is here, it
+           just does not line up line for line with the code it points at. -->
+      <div class="patch">
+        <div class="ptitle">Replacement for {f.file.split('/').pop()}:{span}</div>
+        <pre class="sugg x-mono">{fix.text}</pre>
       </div>
+    {:else}
+      <p class="none">
+        None offered. The reviewer suggests a change only when the fix is small, local and
+        unambiguous, and explains instead when it is not.
+      </p>
+    {/if}
+    {#if fix.kind !== 'none'}
+      <!-- Copy, not apply.
+           The design offers "Apply as a commit", and a review deliberately runs
+           with Write, Edit and Bash withheld: that is the property that lets it
+           run unattended on somebody else's branch. Handing this screen a button
+           that writes to the tree would undo it, so the change goes to the
+           clipboard and applying it stays a thing a person does where they can
+           see it. -->
+      <button class="apply" onclick={copyFix}>{copied ? 'Copied ✓' : 'Copy the change'}</button>
     {/if}
 
-    {#if grounds.length}
-      <div class="x-cap sp">What checked it</div>
-      <div class="grounds">
-        {#each grounds as g (g.key)}
-          <div class="grow">
-            <span class="gk x-mono">{g.key}</span>
-            <span class="gv">{g.value}</span>
-          </div>
-        {/each}
-      </div>
-    {/if}
+    <div class="x-cap sp">What checked it</div>
+    <div class="grounds">
+      {#each rows as g (g.key)}
+        <div class="grow">
+          <span class="gk x-mono">{g.key}</span>
+          <span class="gv">{g.value}</span>
+        </div>
+      {/each}
+    </div>
 
     {#if impact && (impact.who || impact.radius || impact.size)}
       <div class="x-cap sp">Impact</div>
@@ -123,11 +147,12 @@
       </div>
     {/if}
 
-    {#if !f.patch && !grounds.length && !impact}
-      <p class="bare">
-        This finding came with the claim alone: no suggested change, nothing recorded about what
-        checked it, and no reach. The argument in the pane is all there is.
-      </p>
+    {#if href}
+      <div class="foot">
+        <a class="where x-mono" {href} target="_blank" rel="noreferrer">
+          <span class="wpath">{f.file}</span><span class="wline">:{span}</span><span class="warr">↗</span>
+        </a>
+      </div>
     {/if}
   </div>
 
@@ -149,6 +174,12 @@
         <button class="dismiss" onclick={ondismiss}>Dismiss <span class="k">X</span></button>
       </div>
     {/if}
+    <!-- Always, including after posting, and never behind a patch.
+         Arguing with the reviewer is the thing kunai has that a CI reviewer does
+         not, and it applies to every finding: the ones with no suggested fix are
+         if anything the ones most worth asking about. It used to be rendered
+         inside the patch panel, so exactly those findings had no way to ask. -->
+    <button class="ask" onclick={onask}>Ask the reviewer about this →</button>
   </div>
 </aside>
 
@@ -172,15 +203,21 @@
     color: var(--x-accent-lit);
   }
   .body {
+    display: flex;
+    flex-direction: column;
     flex: 1;
     overflow-y: auto;
     padding: 16px;
+  }
+  /* A column that scrolls must not squeeze its own children to avoid it. */
+  .body > :global(*) {
+    flex: none;
   }
   .sp {
     margin-top: 20px;
   }
 
-  /* The patch. Blue, because blue means "something you are going to do" here and
+  /* The change. Blue, because blue means "something you are going to do" here and
      that is the same idea as an accepted finding. */
   .patch {
     border: 1px solid #23303f;
@@ -198,8 +235,11 @@
   }
   .plines {
     font-size: 11.5px;
-    line-height: 1.8;
+    line-height: 1.7;
     padding: 8px 0;
+    /* Real code in a 344px column. A tab is eight characters wide by default,
+       which at this width is a quarter of the line spent on nothing. */
+    tab-size: 2;
   }
   .pl {
     display: flex;
@@ -224,10 +264,11 @@
     color: #b0634a;
   }
   /* A wrapped line has to read as one line.
-     Go code at four levels of indentation in a 344px rail wraps three or four
-     times, and with every continuation starting at the left edge the block
-     stops looking like code and starts looking like prose with symbols in it.
-     A hanging indent puts the continuations under the line they belong to. */
+     Code four levels deep in a 344px rail wraps three or four times, and with
+     every continuation starting at the left edge the block stops looking like
+     code and starts looking like prose with symbols in it. A hanging indent puts
+     the continuations under the line they belong to. (The shared margin itself
+     is stripped server-side; see stripCommonIndent.) */
   .ptext {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
@@ -238,12 +279,26 @@
   .pl.del .ptext {
     color: #8e8a92;
   }
-  .pacts {
-    display: flex;
-    gap: 6px;
+  .sugg {
+    margin: 0;
+    padding: 8px 12px;
+    max-height: 220px;
+    overflow: auto;
+    font-size: 11.5px;
+    line-height: 1.7;
+    tab-size: 2;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--x-ink-4);
+  }
+  .none {
+    margin: 10px 0 0;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--x-dim);
   }
   .apply {
-    flex: 1;
+    width: 100%;
     height: 30px;
     border: 1px solid var(--x-go-edge);
     border-radius: 6px;
@@ -253,19 +308,6 @@
   }
   .apply:hover {
     background: var(--x-go-wash-lit);
-  }
-  .ask {
-    height: 30px;
-    padding: 0 12px;
-    border: 1px solid var(--x-edge);
-    border-radius: 6px;
-    background: none;
-    color: var(--x-body);
-    font-size: 12px;
-  }
-  .ask:hover {
-    color: var(--x-ink-2);
-    border-color: var(--x-edge-lit);
   }
 
   .grounds {
@@ -279,6 +321,11 @@
     gap: 10px;
     padding: 9px 0;
     border-bottom: 1px solid var(--x-line-soft);
+  }
+  /* The last row's rule and the footer's would otherwise sit a few pixels apart
+     and read as a line drawn by mistake. */
+  .grow:last-child {
+    border-bottom: 0;
   }
   .gk {
     font-size: 10px;
@@ -324,11 +371,44 @@
     color: var(--x-accent-lit);
   }
 
-  .bare {
-    margin: 0;
-    font-size: 12.5px;
-    line-height: 1.6;
+  /* Where the code is, at the commit that was read. The pane names the file
+     too; what this adds is the one click to go and look at it.
+     Pinned to the bottom of the panel rather than left hanging under whatever
+     the last block happened to be: on a short finding it read as a stray line
+     in the middle of a void, and it is a footer. */
+  .foot {
+    margin-top: auto;
+    padding-top: 24px;
+  }
+  .where {
+    display: flex;
+    align-items: baseline;
+    gap: 2px;
+    padding-top: 12px;
+    border-top: 1px solid var(--x-line-soft);
+    font-size: 11px;
     color: var(--x-dim);
+    text-decoration: none;
+    unicode-bidi: plaintext;
+  }
+  .where:hover {
+    color: var(--x-ink-3);
+  }
+  .wpath {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: left;
+  }
+  .wline {
+    flex: none;
+    color: var(--x-accent);
+  }
+  .warr {
+    flex: none;
+    margin-left: 6px;
   }
 
   .decide {
@@ -369,6 +449,19 @@
   }
   .dismiss .k {
     color: var(--x-dim);
+  }
+  .ask {
+    width: 100%;
+    margin-top: 8px;
+    padding: 6px 0;
+    border: 0;
+    background: none;
+    color: var(--x-dim);
+    font-size: 11.5px;
+    text-align: left;
+  }
+  .ask:hover {
+    color: var(--x-ink-3);
   }
 
   .verdict {

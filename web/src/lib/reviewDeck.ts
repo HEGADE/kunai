@@ -118,6 +118,104 @@ export function headline(t: Tally): string {
   return c.minor === 1 ? 'One small thing' : `${word(c.minor)} small things`
 }
 
+/**
+ * What to change, in whatever form the record can support.
+ *
+ * Three outcomes rather than two, because a finding can carry a suggestion the
+ * server could not turn into a diff: the replacement did not line up with the
+ * lines it was anchored to, or it was too big to be the small local fix the
+ * prompt asks for. The patch is then withheld and the SUGGESTION is still there,
+ * and a panel that shows neither is throwing away the answer to its own
+ * question. It was also saying so out loud: "no suggested change" is a claim
+ * about the review, and it was false every time this happened.
+ */
+export type Fix =
+  | { kind: 'patch' }
+  | { kind: 'text'; text: string }
+  | { kind: 'none' }
+
+export function fixOf(f: ReviewFinding): Fix {
+  if (f.patch && f.patch.lines?.length) return { kind: 'patch' }
+  const text = dedent(f.suggestion ?? '')
+  if (text) return { kind: 'text', text }
+  return { kind: 'none' }
+}
+
+/**
+ * Drop the indentation every line shares.
+ *
+ * The same rule the server applies to a patch (stripCommonIndent), for the same
+ * reason and in the same panel: real code is three or four levels deep before it
+ * says anything, and at 344px that margin takes a quarter of every line and
+ * wraps the rest. The longest common WHITESPACE prefix character by character,
+ * so a tab is never taken for a space, and a blank line has no indentation to
+ * speak of and must not veto everyone else's.
+ */
+function dedent(s: string): string {
+  const body = s.replace(/\s+$/, '')
+  if (!body.trim()) return ''
+  const lines = body.split('\n')
+  let prefix: string | null = null
+  for (const l of lines) {
+    if (!l.trim()) continue
+    const lead = l.slice(0, l.length - l.trimStart().length)
+    if (prefix === null) {
+      prefix = lead
+      continue
+    }
+    let n = 0
+    while (n < prefix.length && n < lead.length && prefix[n] === lead[n]) n++
+    prefix = prefix.slice(0, n)
+    if (!prefix) break
+  }
+  if (!prefix) return body
+  const cut = prefix
+  return lines.map((l) => (l.startsWith(cut) ? l.slice(cut.length) : l)).join('\n')
+}
+
+/** One labelled row of what checked a claim. */
+export interface CheckRow {
+  key: string
+  value: string
+}
+
+/**
+ * What checked this claim, as labelled rows, and never an empty panel.
+ *
+ * The reviewer's own grounds come first when it recorded any, but two rows are
+ * always available and were not being shown at all. Whether an independent pass
+ * tried to REFUTE the finding and failed is the single most useful thing about
+ * it, and it is the one thing the reader cannot infer from the prose; a review
+ * that predates the grounds field still has it. And confidence is half the
+ * finding's own judgement (severity is how bad if true, confidence is how likely
+ * it is true) and had nowhere on screen to be, so the two answers to two
+ * different questions were being collapsed into one on the reader's behalf.
+ */
+export function checkRows(f: ReviewFinding): CheckRow[] {
+  const rows: CheckRow[] = (f.grounds ?? [])
+    .filter((g) => g.key && g.value)
+    .map((g) => ({ key: g.key.toUpperCase(), value: g.value }))
+  rows.push({
+    key: 'CHECKED',
+    value: f.verified
+      ? 'A separate pass tried to refute this and could not'
+      : 'Claimed by the finder, not independently checked',
+  })
+  const conf = f.confidence
+  if (conf) {
+    rows.push({
+      key: 'CONFIDENCE',
+      value:
+        conf === 'high'
+          ? 'High: the reviewer says it can demonstrate this'
+          : conf === 'low'
+            ? 'Low: the reviewer is unsure and says so'
+            : 'Medium: plausible, worth your own look',
+    })
+  }
+  return rows
+}
+
 /** Two-digit row numbers, so the queue's gutter never reflows at ten. */
 export function pad(n: number): string {
   return String(n).padStart(2, '0')

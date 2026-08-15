@@ -103,6 +103,7 @@ func PatchFor(f Finding, hunk []HunkLine) *Patch {
 	if len(before)+len(after) > maxPatchLines {
 		return nil // see maxPatchLines
 	}
+	before, after = stripCommonIndent(before, after)
 
 	lines := make([]PatchLine, 0, len(before)+len(after))
 	for _, t := range before {
@@ -147,6 +148,53 @@ func trimCommon(before, after []string) ([]string, []string) {
 		tail++
 	}
 	return before[:len(before)-tail], after[:len(after)-tail]
+}
+
+// stripCommonIndent removes the indentation every line of the patch shares.
+//
+// The panel is 344px wide and the code in it is real: a method body inside a
+// type inside a package is three or four levels deep before it says anything,
+// and at that width the indentation alone takes half the column and pushes every
+// line into two or three wrapped ones. What the reader is being shown is a
+// handful of lines to compare, not their position in the file, so the shared
+// margin is spent on nothing.
+//
+// The longest common WHITESPACE prefix, character by character, so tabs and
+// spaces are never confused for one another and the relative indentation inside
+// the patch survives exactly. A blank line has no indentation to speak of and
+// must not veto everyone else's.
+func stripCommonIndent(before, after []string) ([]string, []string) {
+	prefix := ""
+	first := true
+	for _, l := range append(append([]string{}, before...), after...) {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		lead := l[:len(l)-len(strings.TrimLeft(l, " \t"))]
+		if first {
+			prefix, first = lead, false
+			continue
+		}
+		n := 0
+		for n < len(prefix) && n < len(lead) && prefix[n] == lead[n] {
+			n++
+		}
+		prefix = prefix[:n]
+		if prefix == "" {
+			return before, after
+		}
+	}
+	if prefix == "" {
+		return before, after
+	}
+	cut := func(in []string) []string {
+		out := make([]string, len(in))
+		for i, l := range in {
+			out[i] = strings.TrimPrefix(l, prefix)
+		}
+		return out
+	}
+	return cut(before), cut(after)
 }
 
 // maxGroundValue is how long a labelled row may be.

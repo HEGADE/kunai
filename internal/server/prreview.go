@@ -273,6 +273,18 @@ func (s *Server) tagReviewRepos(metas []session.Meta) {
 		return
 	}
 	for i := range metas {
+		// Whether this session IS a review, which the client needs to know before
+		// it can render anything. It used to have to ask, one request per session,
+		// and until that answer came back the app showed the ordinary transcript:
+		// so opening a finished review flashed a dead conversation ("this session
+		// has ended") for as long as the round trip took, and only then became the
+		// review. The answer was already here, on a map this loop was walking
+		// anyway.
+		//
+		// Only a session with a record of its OWN. A session a phase borrowed is
+		// part of a review but is not one, and has no draft to open on.
+		metas[i].Review = s.prReviews.isReview(metas[i].ID)
+
 		if metas[i].Repo != "" {
 			continue // already known to be a worktree of something
 		}

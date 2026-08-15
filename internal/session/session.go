@@ -1201,6 +1201,14 @@ type Meta struct {
 	// directory alone (a live process is running in it), so the directory goes
 	// stale and the branch is the identity.
 	Branch string `json:"branch,omitempty"`
+	// Review marks a session that is a pull-request review, so the client can
+	// open it on its findings straight away. Merged in by the server like Repo:
+	// the session itself has no idea what it was started for.
+	//
+	// It exists because "is this a review" decides which whole screen renders,
+	// and a question the client had to ask over the network is a question it
+	// cannot answer at first paint. See tagReviewRepos.
+	Review bool `json:"review,omitempty"`
 }
 
 func (s *Session) Meta() Meta {

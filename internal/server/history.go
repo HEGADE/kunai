@@ -44,6 +44,11 @@ type HistoryEntry struct {
 	Project string `json:"project,omitempty"`
 	// Branch is that worktree's branch, which outlives its directory name.
 	Branch string `json:"branch,omitempty"`
+	// Review marks a past pull-request review, so reopening one lands on its
+	// findings rather than on a transcript of the reviewer talking to itself.
+	// The draft outlives the session, which is the whole reason a finished review
+	// is worth reopening. See Meta.Review.
+	Review bool `json:"review,omitempty"`
 	// SnoozedUntil and SnoozedAt (unix ms) park this session on the snoozed
 	// shelf, merged from the metadata store the same way Pinned is: a snooze set
 	// while the session ran must still hold once it is a transcript.
@@ -85,6 +90,17 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		// A past session in a worktree still groups under its repository, so long
 		// as the worktree is still there to say so.
 		entries[i].Repo, entries[i].Branch = s.worktrees.identify(entries[i].Cwd)
+		// A review is one the worktree store can never identify: the checkout it
+		// read is swept when the review ends, so by the time it is history there
+		// is nothing on disk left to ask. The record knows, and it also knows this
+		// is a review at all, which is what makes reopening it land on the
+		// findings instead of on a dead conversation. See tagReviewRepos.
+		if s.prReviews.isReview(entries[i].ID) {
+			entries[i].Review = true
+			if entries[i].Repo == "" {
+				entries[i].Repo = s.prReviews.repoOf(entries[i].ID)
+			}
+		}
 		if o, ok := over[entries[i].ID]; ok {
 			if o.Name != "" {
 				entries[i].Title = o.Name

@@ -144,6 +144,24 @@ func newPRReviewStore(path string) *prReviewStore {
 	return s
 }
 
+// isReview reports whether this session is a pull-request review.
+//
+// Asked separately from repoOf rather than inferred from it, because the two
+// are not the same question and the earliest records answer them differently: a
+// review made before RepoDir was recorded has an empty one, so "it has a
+// repository" says nothing about whether it is a review. The same in-memory
+// lookup, so it costs what repoOf costs and can be asked of every session on
+// every listing.
+func (s *prReviewStore) isReview(sessionID string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.data[sessionID]
+	return ok
+}
+
 // repoOf returns the local repository a review session belongs to, or "".
 // Cheap by design: an in-memory lookup, because it is consulted for every
 // session on every listing.

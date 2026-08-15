@@ -30,10 +30,13 @@ func TestAPatchShowsOnlyWhatChanged(t *testing.T) {
 	if len(p.Lines) != 2 {
 		t.Fatalf("patch has %d lines, want the one changed line each way:\n%+v", len(p.Lines), p.Lines)
 	}
-	if p.Lines[0].Sign != "-" || p.Lines[0].Text != "\tuse(a)" {
+	// Unindented, because once the surrounding lines are trimmed away the tab
+	// they all shared is a margin in front of a two-line patch. See
+	// stripCommonIndent.
+	if p.Lines[0].Sign != "-" || p.Lines[0].Text != "use(a)" {
 		t.Errorf("removal = %+v, want the line that actually went", p.Lines[0])
 	}
-	if p.Lines[1].Sign != "+" || p.Lines[1].Text != "\tsafe := resolve(a)" {
+	if p.Lines[1].Sign != "+" || p.Lines[1].Text != "safe := resolve(a)" {
 		t.Errorf("addition = %+v, want the line that actually arrived", p.Lines[1])
 	}
 }
@@ -85,5 +88,49 @@ func TestALongGroundIsCutToTheShapeOfItsPanel(t *testing.T) {
 	}
 	if got[0].Key != "TRACE" {
 		t.Errorf("key = %q, want it uppercased", got[0].Key)
+	}
+}
+
+// The margin the whole patch shares is spent on nothing.
+//
+// Real code is three or four levels deep before it says anything, and in a 344px
+// rail that indentation takes a quarter of every line and pushes each one into
+// two or three wrapped ones. The relative indentation inside the patch is the
+// part that carries meaning, and it has to survive exactly.
+func TestThePatchDropsTheIndentationItAllShares(t *testing.T) {
+	f := Finding{File: "a.go", Suggestion: "\t\t\tif !ok {\n\t\t\t\treturn errGuestFiles\n\t\t\t}"}
+	p := PatchFor(f, hunkOf("\t\t\tif bad {", "\t\t\t\treturn nil", "\t\t\t}"))
+	if p == nil {
+		t.Fatal("PatchFor() = nil, want a patch")
+	}
+	for _, l := range p.Lines {
+		if strings.HasPrefix(l.Text, "\t\t\t") {
+			t.Fatalf("line %q kept the shared margin", l.Text)
+		}
+	}
+	var nested string
+	for _, l := range p.Lines {
+		if l.Sign == "+" && strings.Contains(l.Text, "errGuestFiles") {
+			nested = l.Text
+		}
+	}
+	if nested != "\treturn errGuestFiles" {
+		t.Errorf("nested line = %q, want one tab of relative indentation kept", nested)
+	}
+}
+
+// Mixed indentation must not be sliced through the middle of a character run: a
+// tab and a space are not the same amount of anything, so the common prefix is
+// compared character by character and stops at the first difference.
+func TestMixedIndentationIsLeftAlone(t *testing.T) {
+	f := Finding{File: "a.go", Suggestion: "\tif ok {\n  deep()\n\t}"}
+	p := PatchFor(f, hunkOf("\tif bad {", "  shallow()", "\t}"))
+	if p == nil {
+		t.Fatal("PatchFor() = nil, want a patch")
+	}
+	for _, l := range p.Lines {
+		if l.Text == "" {
+			t.Fatalf("a line was emptied out by the dedent: %+v", p.Lines)
+		}
 	}
 }

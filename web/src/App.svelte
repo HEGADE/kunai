@@ -36,18 +36,33 @@
     return () => document.removeEventListener('visibilitychange', onVis)
   })
 
-  // Whether the open session is a pull-request review. Asked of the server once
-  // per session rather than guessed from the title, which a rename would break.
+  // Whether the open session is a pull-request review, which decides which whole
+  // screen renders. Never guessed from the title, which a rename would break.
+  //
+  // Answered from the session list first, because the list is already in hand
+  // when the session opens and the server tags it. Asking the server per session
+  // was the only source, and until that round trip came back the app rendered
+  // the ordinary transcript: opening a finished review therefore showed a dead
+  // conversation ("this session has ended", with a Reopen button that cannot
+  // work, since the checkout it read was swept when it finished) and only then
+  // became the review. The probe stays as the fallback for a session neither
+  // list has yet, and while nothing knows, NOTHING renders: a blank moment is
+  // honest, and the wrong screen is not.
   let reviewOf = $state<Record<string, boolean>>({})
   const key = $derived(app.chat ? `${app.activeMachineId}:${app.chat.sessionId}` : '')
-  const isReview = $derived(!!key && reviewOf[key] === true)
+  const listed = $derived(
+    app.chat ? app.isReviewSession(app.activeMachineId ?? '', app.chat.sessionId) : undefined,
+  )
+  const probed = $derived(key ? reviewOf[key] : undefined)
+  const isReview = $derived(listed ?? probed ?? false)
+  const settled = $derived(listed !== undefined || probed !== undefined)
   // The review takes the window. Not while you are arguing with it in the chat:
   // that is an ordinary conversation and wants the ordinary shell around it.
   const reviewFull = $derived(isReview && !app.reviewChat)
   $effect(() => {
     const k = key
     const chat = app.chat
-    if (!k || !chat || k in reviewOf) return
+    if (!k || !chat || k in reviewOf || listed !== undefined) return
     reviewDraft(app.baseForMachine(app.activeMachineId ?? ''), chat.sessionId)
       .then(() => (reviewOf = { ...reviewOf, [k]: true }))
       .catch(() => (reviewOf = { ...reviewOf, [k]: false }))
@@ -109,8 +124,12 @@
         <div class="pane">
           <ReviewView sessionId={app.chat.sessionId} machineId={app.activeMachineId ?? ''} />
         </div>
-      {:else}
+      {:else if settled || app.reviewChat}
         <div class="pane"><Chat chat={app.chat} /></div>
+      {:else}
+        <!-- Nothing yet knows which of the two this is. Holding for one round
+             trip beats a transcript that turns into a review under the reader. -->
+        <div class="pane"></div>
       {/if}
     {:else}
       {#if !app.sidebarOpen}

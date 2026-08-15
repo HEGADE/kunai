@@ -64,6 +64,15 @@
   const t = $derived(tally(findings, verdicts, edits))
   const headline = $derived(headlineOf(t))
   const current = $derived(findings[active] ?? null)
+  // The code on GitHub, at the commit that was READ rather than at the head.
+  // That is where the code a finding describes actually is: a push since then
+  // may have moved or removed the very line the claim is about, and pointing at
+  // the branch would quietly show the reader something else.
+  const permalink = $derived(
+    draft && current && draft.head_sha
+      ? `https://github.com/${draft.owner}/${draft.repo}/blob/${draft.head_sha}/${current.file}#L${current.line}`
+      : '',
+  )
 
   // Read on open. Re-read whenever the session stops working: a phase ending is
   // what produces new findings, and it is the only moment the draft changes
@@ -296,6 +305,7 @@
         verdict={verdicts[current.index]}
         {edits}
         sent={posted}
+        href={permalink}
         onaccept={() => decide('accept')}
         ondismiss={() => decide('dismiss')}
         onundo={() => decide(undefined)}
