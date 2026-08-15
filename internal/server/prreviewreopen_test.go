@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hegade/kunai/internal/ghapp"
 	"github.com/hegade/kunai/internal/review"
 	"github.com/hegade/kunai/internal/session"
 	"github.com/hegade/kunai/internal/worktree"
@@ -333,5 +334,33 @@ func TestStoppingAReviewCancelsTheRunRatherThanATurn(t *testing.T) {
 	// And pressing it twice is not an error: the button and the review can race.
 	if code := stop(); code != 200 {
 		t.Errorf("stopping an already-stopped review = %d, want 200", code)
+	}
+}
+
+// The dashboard row asks the same two questions the review's own screen does.
+//
+// It asked only whether the record had produced an answer, which stays false for
+// ever once a review is stopped, so the row said "Reviewing" against a review
+// that had been stopped minutes earlier -- while the review's own screen, which
+// asks both, correctly said it had stopped. Fixing one surface and not the other
+// is what makes a bug look like it came back.
+func TestTheDashboardRowKnowsAStoppedReviewIsNotRunning(t *testing.T) {
+	dir := t.TempDir()
+	s := &Server{
+		prReviews:  newPRReviewStore(filepath.Join(dir, "p.json")),
+		reviewRuns: newReviewRunners(),
+		mgr:        session.NewManager(),
+	}
+	s.prReviews.put(prReview{SessionID: "s1", Owner: "o", Repo: "r", Number: 7, Phase: "survey"})
+	repo := ghapp.Repo{Owner: "o", Name: "r"}
+
+	s.reviewRuns.put("s1", &reviewRun{owner: "s1"})
+	if ref := s.reviewRefFor(repo, 7, ""); ref == nil || !ref.Running || ref.Stopped {
+		t.Errorf("while driving: running=%v stopped=%v, want running", ref.Running, ref.Stopped)
+	}
+	s.reviewRuns.drop("s1")
+	ref := s.reviewRefFor(repo, 7, "")
+	if ref.Running || !ref.Stopped {
+		t.Errorf("after stopping: running=%v stopped=%v, want stopped", ref.Running, ref.Stopped)
 	}
 }

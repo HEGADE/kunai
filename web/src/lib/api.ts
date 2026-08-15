@@ -663,6 +663,11 @@ export interface PullRequestReview {
   session_id: string
   phase?: ReviewPhase
   running: boolean
+  // Never produced an answer, and nothing is working on it any more: stopped by
+  // hand, or a restart caught it mid-phase. Distinct from running, which the
+  // record alone cannot tell it from -- reading it as running left the row
+  // saying "Reviewing" against a review stopped minutes earlier.
+  stopped?: boolean
   findings: number
   posted: boolean
   failed: boolean

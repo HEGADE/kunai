@@ -213,6 +213,7 @@
     | { kind: 'running'; sessionId: string; startedAt: number }
     | { kind: 'ready'; sessionId: string; findings: number }
     | { kind: 'failed'; sessionId: string }
+    | { kind: 'stopped'; sessionId: string }
     | { kind: 'posted'; sessionId: string }
 
   function shownFor(row: Row): Shown {
@@ -230,6 +231,9 @@
       const meta = app.sessions.find((s) => s.id === rev.session_id && s.machineId === row.machineId)
       return { kind: 'running', sessionId: rev.session_id, startedAt: meta ? app.liveTurnStart(meta) : 0 }
     }
+    // Stopped, or caught by a restart mid-phase. Not running and not an answer:
+    // the row offers a fresh reading and says why one is needed.
+    if (rev.stopped) return { kind: 'stopped', sessionId: rev.session_id }
     if (rev.failed) return { kind: 'failed', sessionId: rev.session_id }
     return { kind: 'ready', sessionId: rev.session_id, findings: rev.findings }
   }
@@ -336,6 +340,13 @@
             <button class="open ready" onclick={() => app.open(pr.machineId, shown.sessionId)}>
               {shown.findings ? `${shown.findings} finding${shown.findings === 1 ? '' : 's'}` : 'Nothing found'}
               &rarr;
+            </button>
+          {:else if shown.kind === 'stopped'}
+            <!-- It never reached a verdict, so this is not a review of anything.
+                 Reviewing again is the useful action; reading how far it got is
+                 behind the label. -->
+            <button class="again" onclick={() => review(pr)} disabled={!!starting}>
+              {starting === key(pr) ? 'Starting…' : 'stopped · review again'}
             </button>
           {:else if shown.kind === 'failed'}
             <button class="open failed" onclick={() => app.open(pr.machineId, shown.sessionId)}>

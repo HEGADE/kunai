@@ -46,9 +46,14 @@ type prSummary struct {
 type prReviewRef struct {
 	SessionID string `json:"session_id"`
 	Phase     string `json:"phase"`
-	// Running is true while the review is still working on its answer, which is
-	// the same question startReview asks before joining one.
+	// Running is true while the review is still working on its answer AND
+	// something is actually driving it. Stopped is the other half: it never
+	// produced an answer and nothing is working on it any more, which is a review
+	// somebody stopped or one kunai was restarted in the middle of. The record
+	// alone cannot tell those apart, and reading it as "running" left the row
+	// saying Reviewing for ever.
 	Running  bool `json:"running"`
+	Stopped  bool `json:"stopped"`
 	Findings int  `json:"findings"`
 	Posted   bool `json:"posted"`
 	Failed   bool `json:"failed"`
@@ -187,10 +192,19 @@ func (s *Server) reviewRefFor(repo ghapp.Repo, number int, head string) *prRevie
 	if !ok {
 		return nil
 	}
+	// The same two facts the draft reports, and for the same reason: the record
+	// alone says only that this review never produced an answer, which stays true
+	// for ever once one is stopped or its process dies. The row said "Reviewing"
+	// against a review that had been stopped minutes earlier, with the review's
+	// own screen (which asks both questions) correctly saying it had stopped.
+	// Fixing one and not the other is what made the bug look like it came back.
+	inFlight := reviewInFlight(rec)
+	_, driving := s.reviewRuns.get(rec.SessionID)
 	ref := &prReviewRef{
 		SessionID: rec.SessionID,
 		Phase:     rec.Phase,
-		Running:   reviewInFlight(rec),
+		Running:   inFlight && driving,
+		Stopped:   inFlight && !driving,
 		Posted:    rec.Posted(),
 		Failed:    rec.ParseError != "",
 		Stale:     head != "" && rec.HeadSHA != "" && !strings.EqualFold(head, rec.HeadSHA),
