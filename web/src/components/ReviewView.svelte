@@ -65,9 +65,19 @@
   const sessionState = $derived(meta ? app.liveState(meta) : '')
   const blocked = $derived(sessionState === 'awaiting_permission')
   const running = $derived(sessionState === 'running' || sessionState === 'starting' || blocked)
-  // Whether the REVIEW is going, which is not whether the session is busy: a
-  // finished review reopened later reports `starting` while it resumes.
-  const reviewing = $derived(running && draft?.phase !== 'done')
+  // Whether the REVIEW is going, which is not whether this SESSION is busy, in
+  // either direction. A finished review reopened later reports `starting` while
+  // it resumes; and the verification phase runs in a session of its own, so the
+  // session this screen is attached to is idle for the whole of it. Reading the
+  // session made a review three minutes into verifying render the empty state:
+  // "Nothing worth reporting", with a button offering to post that to GitHub as
+  // the review. The server answers both questions now (see handleReviewDraft);
+  // the session is only the fallback for a machine on an older build.
+  const reviewing = $derived(draft?.running ?? (running && draft?.phase !== 'done'))
+  // Started, never finished, and nothing is driving it: kunai was restarted in
+  // the middle of it. Not a review of anything, and above all not a clean bill
+  // of health.
+  const stopped = $derived(draft?.stopped === true)
 
   const raw = $derived<ReviewFinding[]>(draft?.findings ?? [])
   const findings = $derived(ordered(raw, edits))
@@ -108,6 +118,12 @@
     const timer = setInterval(() => (now = Date.now()), 1000)
     return () => clearInterval(timer)
   })
+
+  // What the review was doing when it stopped, in the same words the running
+  // screen uses for that step.
+  function phaseWord(phase: string): string {
+    return phase === 'survey' ? 'reading the change' : phase === 'verify' ? 'checking what it found' : 'looking'
+  }
 
   function go(i: number) {
     active = step(i, 0, findings.length)
@@ -304,7 +320,10 @@
     {#if posted && draft?.posted_url}
       <a class="btn" href={draft.posted_url} target="_blank" rel="noreferrer">Read on GitHub ↗</a>
     {/if}
-    {#if draft && !reviewing && !posted}
+    <!-- Never offered on a review that stopped part-way: its emptiness is a
+         review that never happened, and posting it would tell the author their
+         change was read and found clean. -->
+    {#if draft && !reviewing && !stopped && !posted}
       <button class="cta" class:ready={t.total > 0 && t.resolved === t.total} onclick={post} disabled={posting}>
         {sendLabel(t, posting)}
       </button>
@@ -342,6 +361,20 @@
         </p>
       {:else if reviewing}
         <div class="runwrap"><RunningReview {draft} chat={app.chat} {now} /></div>
+      {:else if stopped}
+        <!-- Said plainly, because the alternative is the worst thing this screen
+             can do: a review that stopped part-way has found nothing YET, and
+             rendering that as "nothing worth reporting" is a clean bill of
+             health nobody gave. -->
+        <div class="empty">
+          <h1 class="head">This review stopped before it finished</h1>
+          <p class="msg flush">
+            It was {draft.phase ? `still ${phaseWord(draft.phase)}` : 'still working'} when it ended, so it
+            never reached a verdict. Nothing here is a finding, and nothing here says the change is
+            fine. Read the conversation to see how far it got, or review the pull request again from
+            the dashboard.
+          </p>
+        </div>
       {:else if draft.parse_error}
         <p class="msg">
           This review finished but did not produce findings kunai could read, twice over. Open the
@@ -396,6 +429,8 @@
       {#if t.dismissed}<span class="pipe">|</span><span>{t.dismissed} dismissed</span>{/if}
     {:else if reviewing}
       <span>reviewing</span>
+    {:else if stopped}
+      <span>stopped before it finished</span>
     {/if}
     <div class="sp"></div>
     <span class="keys">J next</span><span class="keys">K prev</span><span class="keys">A accept</span>

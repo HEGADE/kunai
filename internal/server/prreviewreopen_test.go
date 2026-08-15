@@ -9,6 +9,7 @@ package server
 // matches what was assumed.
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -217,5 +218,62 @@ func TestApplyRefusesAPathOutsideTheRepository(t *testing.T) {
 	b, _ := os.ReadFile(outside)
 	if string(b) != "untouched\n" {
 		t.Fatalf("the outside file was changed: %q", b)
+	}
+}
+
+// A review still working must never look finished, and a review that stopped
+// must never look clean.
+//
+// This is the worst failure this screen has: the verification phase runs in a
+// session of its OWN, so the session the view is attached to is idle for the
+// whole of it. The client read that idle session as "the review is over", found
+// no findings, and rendered "Nothing worth reporting" with a button offering to
+// post it to GitHub -- on a review three minutes into checking a 122-file pull
+// request. A clean bill of health is the one answer a reviewer must never give
+// by accident, so the server answers both questions instead of the client
+// guessing from a session that is deliberately quiet.
+func TestADraftSaysWhetherItIsStillWorking(t *testing.T) {
+	dir := t.TempDir()
+	s := &Server{
+		prReviews:  newPRReviewStore(filepath.Join(dir, "p.json")),
+		reviewRuns: newReviewRunners(),
+	}
+	s.prReviews.put(prReview{SessionID: "s1", Owner: "o", Repo: "r", Number: 7, Phase: "verify"})
+
+	read := func() map[string]any {
+		r := httptest.NewRequest("GET", "/api/sessions/s1/review", nil)
+		r.SetPathValue("id", "s1")
+		w := httptest.NewRecorder()
+		s.handleReviewDraft(w, r)
+		var out map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatalf("body: %v", err)
+		}
+		return out
+	}
+
+	// Mid-verify, with a runner driving it: still working, whatever the owner
+	// session happens to be doing.
+	s.reviewRuns.put("s1", &reviewRun{owner: "s1"})
+	if out := read(); out["running"] != true || out["stopped"] != false {
+		t.Errorf("running review reported running=%v stopped=%v", out["running"], out["stopped"])
+	}
+
+	// The same record with nothing driving it: kunai was restarted in the middle.
+	// Neither running nor a review of anything.
+	s.reviewRuns.drop("s1")
+	out := read()
+	if out["running"] != false || out["stopped"] != true {
+		t.Errorf("stopped review reported running=%v stopped=%v", out["running"], out["stopped"])
+	}
+
+	// And a review that reached an answer is neither, so its findings (or its
+	// honest emptiness) are what the screen shows.
+	s.prReviews.update("s1", func(p *prReview) {
+		p.Phase = "done"
+		p.Draft = &review.Draft{Summary: "nothing found"}
+	})
+	if out := read(); out["running"] != false || out["stopped"] != false {
+		t.Errorf("finished review reported running=%v stopped=%v", out["running"], out["stopped"])
 	}
 }

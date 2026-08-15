@@ -708,9 +708,21 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   findings from a reviewer that dropped four is a different thing from three findings
   from one that only found three, and nothing else can tell them apart.
   `ReviewView.svelte` is the only review surface (`ReviewDraft.svelte` is gone: two
-  implementations of one thing is how they drift, and these had). It decides "is the
-  review over" from the recorded **phase**, not the session's state, because a
-  finished review reopened later has a session reporting `starting` while it resumes.
+  implementations of one thing is how they drift, and these had). **The server
+  says whether a review is running**, on the draft (`running`, `stopped`), and
+  the client must never infer it from the session, in either direction: a
+  finished review reopened later reports `starting` while it resumes, and the
+  verification phase runs in a session of its OWN, so the session this screen is
+  attached to is IDLE for the whole of it. Reading that idle session made a
+  review three minutes into checking a 122-file pull request render the empty
+  state -- "Nothing worth reporting", with a button offering to post that to
+  GitHub as the review. A clean bill of health is the one answer a reviewer must
+  never give by accident, so there are three states and not two: `reviewInFlight`
+  says the record never produced an answer, the runner registry says something is
+  actually driving it, and a review with the first and not the second (kunai
+  restarted mid-phase) is neither running nor a review of anything. It says so,
+  and it cannot be posted. The running screen also explains its own quiet during
+  the check, since nothing streams from a session that is not doing the work.
   The verdict counts the EDITED severity, or overruling the only blocker still
   announces a blocker.
   Whether a session IS a review rides on the session list (`Meta.Review`,

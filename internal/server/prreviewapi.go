@@ -296,6 +296,10 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	inFlight := reviewInFlight(rec)
+	_, driving := s.reviewRuns.get(rec.SessionID)
+	running := inFlight && driving
+
 	out := map[string]any{
 		"owner": rec.Owner, "repo": rec.Repo, "number": rec.Number, "title": rec.Title,
 		"head_sha": rec.HeadSHA, "base_ref": rec.BaseRef, "from_fork": rec.FromFork, "requester": rec.Requester,
@@ -304,6 +308,23 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request) {
 		// single-shot one did, so "Reviewing 4m" with nothing else to say reads
 		// as a hang; naming the phase is what makes the wait legible.
 		"phase": rec.Phase,
+		// Whether it is still working, and whether it stopped without finishing.
+		//
+		// Answered HERE because the client cannot work it out. It used to infer
+		// "still reviewing" from the session's own state, and the verification
+		// phase runs in a session of its OWN, so the session this screen is
+		// attached to is idle for the whole of it: a review three minutes into
+		// verifying reported "Nothing worth reporting" and offered to post that
+		// to GitHub as the review. A clean bill of health is the one answer a
+		// reviewer must never give by accident.
+		//
+		// Two facts, because they are different questions. reviewInFlight says
+		// the record never produced an answer; the runner registry says
+		// something is actually driving it now. A review kunai was restarted in
+		// the middle of has the first and not the second, and it is neither
+		// running nor a review of anything.
+		"running": running,
+		"stopped": inFlight && !running,
 		// Whether there is a survey step at all. A small change skips it, and a
 		// progress display cannot work that out for itself once the review has
 		// moved on.

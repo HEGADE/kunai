@@ -775,6 +775,15 @@ export interface ReviewDraft {
   // Whether this review has a survey step. A small change skips it, and the
   // progress display must not draw a step that will never light.
   surveyed?: boolean
+  // Whether it is still working, and whether it stopped without finishing.
+  //
+  // Both answered by the server, because neither can be inferred here. The
+  // verification phase runs in a session of its own, so the session this screen
+  // is attached to is idle throughout it: reading "still reviewing" off that
+  // made a review three minutes into verifying announce "Nothing worth
+  // reporting" and offer to post it. See handleReviewDraft.
+  running?: boolean
+  stopped?: boolean
   // What the reviewer decided to look at, before it looked. The only account of
   // where it thought the risk was, and the thing to read during the minutes the
   // find phase takes.

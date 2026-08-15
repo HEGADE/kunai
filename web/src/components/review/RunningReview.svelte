@@ -131,6 +131,13 @@
         {#if doing.kind === 'read' && doing.what.includes('/')}
           <p class="path mono">{doing.what}</p>
         {/if}
+      {:else if draft.phase === 'verify'}
+        <!-- Nothing is streaming here and that is by design: the check runs in a
+             session of its own, so it cannot be seen from this one. Said out
+             loud, because "Starting up." on a review six minutes in reads as a
+             hang, and the reason it is quiet is the reason the check is worth
+             anything. -->
+        <p class="quiet">Each claim is being handed to a separate reader to argue against, in its own session.</p>
       {:else}
         <p class="quiet">Starting up.</p>
       {/if}
