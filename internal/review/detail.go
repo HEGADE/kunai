@@ -14,7 +14,10 @@ package review
 // Only the fix's TITLE, the impact, and the grounds are new asks, and each is
 // one short line.
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // Ground is one row of what checked a claim: a label and what was found.
 //
@@ -65,40 +68,114 @@ type Patch struct {
 //
 // nil when there is no suggestion, which is the common case and correct: the
 // prompt asks for one only when the fix is small, local and unambiguous.
+// maxPatchLines is where a patch stops being a patch.
+//
+// Not a display cap: a suggestion this large is not a small, local, unambiguous
+// fix, which is the only kind the prompt asks for, and rendering it in a 344px
+// rail produces a wall of wrapped code nobody reads. Better to show nothing and
+// leave the argument in the pane to make the case.
+const maxPatchLines = 14
+
 func PatchFor(f Finding, hunk []HunkLine) *Patch {
 	if strings.TrimSpace(f.Suggestion) == "" {
 		return nil
 	}
-	var lines []PatchLine
-	// The anchored lines come out as removals, in the order they appear.
+	before := make([]string, 0, len(hunk))
 	for _, l := range hunk {
-		if !l.Focus {
-			continue
+		if l.Focus {
+			before = append(before, l.Text)
 		}
-		lines = append(lines, PatchLine{Sign: "-", Text: l.Text})
 	}
-	for _, t := range strings.Split(strings.TrimRight(f.Suggestion, "\n"), "\n") {
+	after := strings.Split(strings.TrimRight(f.Suggestion, "\n"), "\n")
+
+	// Only what CHANGED.
+	//
+	// This is the whole difference between a patch and a restatement. A model
+	// asked to replace lines 196 to 203 hands back all eight of them with two
+	// words different, so the naive version printed eight removals and eight
+	// near-identical additions: thirty wrapped lines in a narrow rail, and the
+	// reader left to spot the difference themselves. That is precisely the job a
+	// diff exists to do.
+	before, after = trimCommon(before, after)
+	if len(before) == 0 && len(after) == 0 {
+		return nil // the suggestion is the code that is already there
+	}
+	if len(before)+len(after) > maxPatchLines {
+		return nil // see maxPatchLines
+	}
+
+	lines := make([]PatchLine, 0, len(before)+len(after))
+	for _, t := range before {
+		lines = append(lines, PatchLine{Sign: "-", Text: t})
+	}
+	for _, t := range after {
 		lines = append(lines, PatchLine{Sign: "+", Text: t})
 	}
-	if len(lines) == 0 {
-		return nil
-	}
+
 	title := strings.TrimSpace(f.FixTitle)
 	if title == "" {
-		// A patch with no name still beats no patch, and the anchor is the most
-		// useful thing to fall back to.
-		title = "Suggested change"
+		// Named from the anchor rather than "Suggested change", which is what the
+		// panel heading already says and so tells a reader nothing at all.
+		title = "Replace " + f.File
+		if f.Line > 0 {
+			title = fmt.Sprintf("Replace %s:%d", f.File, f.Line)
+			if f.EndLine > f.Line {
+				title = fmt.Sprintf("Replace %s:%d-%d", f.File, f.Line, f.EndLine)
+			}
+		}
 	}
 	return &Patch{Title: title, Lines: lines}
 }
 
+// trimCommon drops the lines the two sides already agree on, at both ends.
+//
+// Whitespace-insensitive at the edges, because a suggestion is frequently the
+// same code re-indented by the model's own formatting, and a diff that reports
+// eight changed lines when only the indentation moved is worse than no diff:
+// it sends a reader looking for a difference that is not there.
+func trimCommon(before, after []string) ([]string, []string) {
+	same := func(a, b string) bool { return strings.TrimSpace(a) == strings.TrimSpace(b) }
+
+	head := 0
+	for head < len(before) && head < len(after) && same(before[head], after[head]) {
+		head++
+	}
+	before, after = before[head:], after[head:]
+
+	tail := 0
+	for tail < len(before) && tail < len(after) && same(before[len(before)-1-tail], after[len(after)-1-tail]) {
+		tail++
+	}
+	return before[:len(before)-tail], after[:len(after)-tail]
+}
+
+// maxGroundValue is how long a labelled row may be.
+//
+// A row in that panel is a phrase, not a paragraph. The panel is 344px wide with
+// a 70px label column, so a 400-word value is a forty-line ribbon of text and the
+// three rows it sits among become unfindable. Anything longer than this belongs
+// in the argument, in the pane, where there is a measure to read it at.
+const maxGroundValue = 240
+
 // normaliseGrounds tidies what the model returned: labels uppercased and short,
-// empty rows dropped, and the list capped so one verbose finding cannot push a
-// panel past the height of the screen.
+// empty rows dropped, over-long values cut back to the shape the panel is, and
+// the list capped so one verbose finding cannot push a panel past the screen.
 func normaliseGrounds(in []Ground) []Ground {
 	const maxGrounds = 4
 	out := make([]Ground, 0, len(in))
 	for _, g := range in {
+		if len(g.Value) > maxGroundValue {
+			// Cut at a sentence where there is one, so the row ends somewhere a
+			// person would have stopped rather than mid-word.
+			cut := strings.LastIndex(g.Value[:maxGroundValue], ". ")
+			if cut < maxGroundValue/2 {
+				cut = strings.LastIndex(g.Value[:maxGroundValue], " ")
+			}
+			if cut <= 0 {
+				cut = maxGroundValue
+			}
+			g.Value = strings.TrimRight(g.Value[:cut], " .,;") + "…"
+		}
 		key := strings.ToUpper(strings.TrimSpace(g.Key))
 		val := strings.TrimSpace(g.Value)
 		if key == "" || val == "" {

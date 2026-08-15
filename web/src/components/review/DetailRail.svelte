@@ -51,16 +51,14 @@
   }
 
   const impact = $derived(f.impact ?? null)
-  const grounds = $derived(
-    f.grounds?.length
-      ? f.grounds
-      : // Older reviews carry one paragraph rather than rows. Shown under a
-        // label rather than dropped, so a review from before this shape existed
-        // still says what it rests on.
-        f.evidence
-        ? [{ key: 'CHECKED', value: f.evidence }]
-        : [],
-  )
+  // Structured rows only.
+  //
+  // A review from before this shape existed carries one long paragraph, and
+  // wrapping that in a labelled row was the wrong fix: at 344px with a 70px
+  // label column, a 400-word value became a forty-line ribbon and the panel it
+  // sat in stopped being scannable, which is the one thing this panel is for.
+  // The paragraph belongs in the pane, and it is there, behind the disclosure.
+  const grounds = $derived(f.grounds ?? [])
 </script>
 
 <aside class="rail">
@@ -225,9 +223,16 @@
   .pl.del .psign {
     color: #b0634a;
   }
+  /* A wrapped line has to read as one line.
+     Go code at four levels of indentation in a 344px rail wraps three or four
+     times, and with every continuation starting at the left edge the block
+     stops looking like code and starts looking like prose with symbols in it.
+     A hanging indent puts the continuations under the line they belong to. */
   .ptext {
     white-space: pre-wrap;
-    word-break: break-word;
+    overflow-wrap: anywhere;
+    padding-left: 1.4em;
+    text-indent: -1.4em;
     color: var(--x-ink-4);
   }
   .pl.del .ptext {
@@ -285,6 +290,13 @@
     font-size: 12.5px;
     line-height: 1.55;
     color: var(--x-body);
+    /* Belt and braces on top of the server's cut: a row is a phrase, and five
+       lines is where one stops being one. */
+    display: -webkit-box;
+    -webkit-line-clamp: 5;
+    line-clamp: 5;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .impact {

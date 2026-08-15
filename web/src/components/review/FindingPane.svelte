@@ -95,9 +95,12 @@
         <p class="body">{@html proseHtml(f.body)}</p>
       {/if}
 
-      <!-- The verifier's full working is behind this, because it runs to a dozen
-           lines on every finding now that verification actually happens. -->
-      {#if f.evidence && f.grounds?.length}
+      <!-- The verifier's full working, behind a disclosure because it runs to a
+           dozen lines on every finding now that verification actually happens.
+           Gated on the prose existing and NOT on the rail having rows: a review
+           with no rows is exactly the one whose paragraph has nowhere else to
+           go, and gating it the other way round left that text unreachable. -->
+      {#if f.evidence}
         {#if open[f.index]}
           <p class="body more">{@html proseHtml(f.evidence)}</p>
         {/if}

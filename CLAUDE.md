@@ -773,7 +773,21 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   and the suggestion it already produced is the after, so only `FixTitle` is a
   new ask. Asking a model for a diff it could derive pays twice for one fact and
   gives it a second chance to disagree with itself.
-  The patch is **copied, never applied.** The design offers "Apply as a commit";
+  A patch shows only what CHANGED (`trimCommon`), and that is the difference
+  between a patch and a restatement: a model asked to replace lines 196 to 202
+  hands back all seven with one line different, so the naive version printed
+  seven removals and seven near-identical additions, thirty wrapped lines in a
+  344px rail with the reader left to spot the difference a diff exists to point
+  at. The trim is whitespace-insensitive at the edges, because a suggestion is
+  often the same code re-indented and a diff reporting eight changed lines when
+  only the tabs moved is worse than none. Past `maxPatchLines` there is no
+  patch at all: a suggestion that large is not the small, local, unambiguous fix
+  the prompt asks for. Likewise a grounds row is a PHRASE (`maxGroundValue`),
+  not a paragraph -- a 400-word value in a 344px panel with a 70px label column
+  is a forty-line ribbon that makes the rows beside it unfindable, and long
+  prose belongs in the pane behind the disclosure, which is gated on the prose
+  existing and NOT on the rail having rows.
+    The patch is **copied, never applied.** The design offers "Apply as a commit";
   a review runs with Write, Edit and Bash withheld, and that is the property that
   lets it run unattended on somebody else's branch. A button that writes to the
   tree would undo it, so the decision to apply stays somewhere a person can see.
