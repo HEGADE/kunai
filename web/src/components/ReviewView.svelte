@@ -1,6 +1,12 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
-  import { postReview, closeSession, type ReviewEdit, type ReviewFinding } from '../lib/api'
+  import {
+    postReview,
+    applyReviewFix,
+    closeSession,
+    type ReviewEdit,
+    type ReviewFinding,
+  } from '../lib/api'
   import { DraftResource } from '../lib/reviewQuery.svelte'
   import {
     ordered,
@@ -48,6 +54,10 @@
   let posting = $state(false)
   let finishing = $state(false)
   let waking = $state(false)
+  // Which findings have been written, by index, so moving away and back does not
+  // offer to apply the same edit a second time.
+  let appliedAt = $state<Record<number, boolean>>({})
+  let applying = $state(-1)
   let pane = $state<HTMLElement | undefined>()
 
   const meta = $derived(app.sessions.find((s) => s.machineId === machineId && s.id === sessionId))
@@ -133,13 +143,41 @@
     try {
       await app.wakeReview(machineId, sessionId)
     } catch (e) {
-      toasts.error(`Could not reopen the reviewer: ${(e as Error).message}`)
-      return
+      // A wake that fails is only fatal when there was nothing there anyway. A
+      // session still running does not need one, and an older server on another
+      // machine does not have the endpoint at all, so refusing to open the
+      // conversation over it would break Ask everywhere it used to work.
+      if (app.chat?.status === 'gone') {
+        toasts.error(`Could not reopen the reviewer: ${(e as Error).message}`)
+        return
+      }
     } finally {
       waking = false
     }
     app.reviewAsk = `About your finding on ${f.file}:${f.line} ("${f.title}") - `
     app.reviewChat = true
+  }
+
+  // Writing one finding's suggestion into the checkout the review read.
+  //
+  // The server does the matching: the change lands where the code the finding
+  // quoted still is, or nowhere at all, so a file that has moved on since the
+  // review is refused rather than written at a stale line number. It does not
+  // commit, so `git diff` is the whole record of what this did.
+  async function apply() {
+    const f = findings[active]
+    if (!f || applying >= 0 || appliedAt[f.index]) return
+    applying = f.index
+    try {
+      const r = await applyReviewFix(base, sessionId, f.index, f.file)
+      appliedAt = { ...appliedAt, [f.index]: true }
+      const n = r.added === r.removed ? `${r.added} line${r.added === 1 ? '' : 's'}` : `-${r.removed} +${r.added}`
+      toasts.done(`Applied to ${r.file}:${r.line} (${n}). Not committed.`)
+    } catch (e) {
+      toasts.error((e as Error).message)
+    } finally {
+      applying = -1
+    }
   }
 
   async function post() {
@@ -230,7 +268,16 @@
 
 <div class="rvx shell">
   <header class="bar">
-    <button class="ic" class:on={leftOpen} title="Queue  [" onclick={() => (leftOpen = !leftOpen)}>⌷</button>
+    <!-- Drawn, not typed.
+         These were the APL quad characters, which JetBrains Mono does not carry:
+         the browser fell back and rendered an empty box, so the two controls in
+         the top corners of the workspace were literally tofu. Everything else in
+         kunai is a 24-box inline SVG at stroke 1.7, and the shape is the one the
+         sidebar's own collapse button already uses, so the gesture is learned in
+         one place and recognised in the other. -->
+    <button class="ic" class:on={leftOpen} title="Queue  [" aria-label="Queue" onclick={() => (leftOpen = !leftOpen)}>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M9.5 4v16" /></svg>
+    </button>
     <span class="brand x-mono"><span class="dot"></span>KUNAI</span>
     <span class="div"></span>
     {#if draft}
@@ -264,7 +311,9 @@
     {:else if posted}
       <button class="cta done" onclick={finish} disabled={finishing}>Done</button>
     {/if}
-    <button class="ic" class:on={rightOpen} title="Detail  ]" onclick={() => (rightOpen = !rightOpen)}>⌸</button>
+    <button class="ic" class:on={rightOpen} title="Detail  ]" aria-label="Detail" onclick={() => (rightOpen = !rightOpen)}>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M14.5 4v16" /></svg>
+    </button>
   </header>
 
   <div class="cols" style="grid-template-columns: {cols}">
@@ -326,6 +375,9 @@
         sent={posted}
         href={permalink}
         {waking}
+        applying={applying === current.index}
+        applied={!!appliedAt[current.index]}
+        onapply={apply}
         onaccept={() => decide('accept')}
         ondismiss={() => decide('dismiss')}
         onundo={() => decide(undefined)}
@@ -378,8 +430,6 @@
     border-radius: 6px;
     background: none;
     color: var(--x-dim);
-    font-family: var(--x-mono);
-    font-size: 12px;
     transition: all 140ms;
   }
   .ic.on,

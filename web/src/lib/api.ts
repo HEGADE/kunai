@@ -914,6 +914,33 @@ export function postReview(
   }).then((r) => json<{ url: string }>(r))
 }
 
+// What applying a suggested change did, so the report can name the file and the
+// size of the edit rather than saying "done".
+export interface AppliedFix {
+  file: string
+  path: string
+  line: number
+  removed: number
+  added: number
+}
+
+// applyReviewFix writes one finding's suggestion into the checkout the review
+// read. The file is echoed back as a check on the index, because an index is a
+// fragile way to name a finding and the failure it guards against writes to the
+// wrong file in silence.
+export function applyReviewFix(
+  base: string,
+  sessionId: string,
+  index: number,
+  file: string,
+): Promise<AppliedFix> {
+  return fetch(at(base, `/api/sessions/${sessionId}/review/apply`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ index, file }),
+  }).then((r) => json<AppliedFix>(r))
+}
+
 // reopenReview brings a finished review's session back so it can be asked
 // something. Idempotent: a review that is still live answers with its own id and
 // changes nothing, so a caller never has to work out which it is.

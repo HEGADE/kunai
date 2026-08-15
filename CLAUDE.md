@@ -852,10 +852,28 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   every finding**, in the decision area rather than inside the patch panel,
   because a finding with no suggested fix is if anything the one most worth
   arguing with, and those were exactly the ones that had no way to.
-    The patch is **copied, never applied.** The design offers "Apply as a commit";
-  a review runs with Write, Edit and Bash withheld, and that is the property that
-  lets it run unattended on somebody else's branch. A button that writes to the
-  tree would undo it, so the decision to apply stays somewhere a person can see.
+    The patch can be **applied**, with copy beside it (`review.ApplyTo`,
+  `prreviewapply.go`). This replaced a "copied, never applied" rule whose
+  reasoning is worth recording as a mistake: a review runs with Write, Edit and
+  Bash withheld, and a button that writes to the tree looked like a hole in
+  that. Wrong ACTOR. Those tools stop the MODEL editing on its own initiative in
+  a job nobody is watching; this is a person who has read the finding, read the
+  diff and pressed a button, and refusing them on the model's behalf left the
+  one screen whose entire job is deciding what to do about code unable to do
+  anything about it. What does have to hold is that the change lands on the code
+  the finding is about and NOWHERE else, and a line number cannot promise that,
+  because the file has moved on since the commit that was read. So it is matched
+  on TEXT, the same way posting is: `Finding.Quote` is found again in the file
+  (nearest occurrence wins, trailing whitespace ignored) and a file that no
+  longer contains it is refused with that as the reason, rather than written at
+  a stale number. It writes to the working checkout, not the review's throwaway
+  one (which is deleted), and it does **not commit**, so `git diff` is the whole
+  record of what the button did and undoing it is one command somebody already
+  knows. The path goes through `pathguard` and a finding whose file resolves
+  outside the repository is refused, which is what makes writing files from a
+  model's output acceptable at all; the client echoes the finding's file back
+  with its index, so a stale page cannot apply one finding's fix under another's
+  name.
   Verdicts are **accept / dismiss / undecided**, and the load-bearing rule is that
   an UNDECIDED finding is SENT. Silence is not a dismissal: a reviewer that
   quietly dropped everything you had not got to would be worse than one that
@@ -1835,6 +1853,13 @@ switched in thirty-odd scoped stylesheets, so any list of selectors would be one
 component behind for ever. The cost is fi/fl in sans prose at 12-13px, which is
 not perceptible; the serif Claude's markdown is set in gets them back, where the
 type is large enough to tell.
+
+**An icon is drawn, never typed.** Every control in kunai is a 24-box inline SVG
+at stroke 1.7, and the review workspace briefly broke that by using APL quad
+characters for its two panel toggles. JetBrains Mono does not carry them, so the
+browser fell back and the two controls in the top corners of the screen rendered
+as empty boxes: literally tofu, on the newest surface in the app. A glyph is only
+as portable as the font behind it, and the fonts here are chosen for text.
 
 - **A failed action is a toast, never a line in the scroll area**
   (`lib/toast.svelte.ts`, `components/Toast.svelte`, one mounted per entry

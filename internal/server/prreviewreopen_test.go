@@ -9,12 +9,15 @@ package server
 // matches what was assumed.
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/hegade/kunai/internal/review"
 	"github.com/hegade/kunai/internal/worktree"
 )
 
@@ -132,5 +135,87 @@ func TestKunaisOwnWrappersCountAsSomebodyAsking(t *testing.T) {
 	}
 	if ourWrapper("<command-name>/compact</command-name>") {
 		t.Error("a slash-command wrapper was taken for somebody asking")
+	}
+}
+
+// Applying a suggested change, over HTTP, to a real file.
+//
+// The rule that matters is that the change lands on the code the finding is
+// about and NOWHERE else: a path that resolves outside the repository is
+// refused, and an index that does not agree with the file the client named is
+// refused, because both failures are silent and both write to the wrong place.
+func TestApplyWritesTheChangeIntoTheCheckout(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "a.go"), []byte("func f() {\n\tuse(a)\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{prReviews: newPRReviewStore(filepath.Join(t.TempDir(), "p.json"))}
+	s.prReviews.put(prReview{SessionID: "s1", RepoDir: repo, Draft: &review.Draft{
+		Findings: []review.Finding{{
+			File: "a.go", Line: 2, Severity: "major", Confidence: "high",
+			Title: "t", Body: "b",
+			Quote: []string{"\tuse(a)"}, Suggestion: "\tuse(safe)",
+		}},
+	}})
+
+	post := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "/api/sessions/s1/review/apply", strings.NewReader(body))
+		r.SetPathValue("id", "s1")
+		w := httptest.NewRecorder()
+		s.handleApplyReviewFix(w, r)
+		return w
+	}
+
+	if w := post(`{"index":0,"file":"a.go"}`); w.Code != 200 {
+		t.Fatalf("apply = %d %s", w.Code, w.Body)
+	}
+	got, err := os.ReadFile(filepath.Join(repo, "a.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "func f() {\n\tuse(safe)\n}\n" {
+		t.Errorf("file =\n%q\nwant the one line replaced and the trailing newline kept", got)
+	}
+
+	// The same request again now finds code that is no longer what the review
+	// read, and must refuse rather than write a second time.
+	if w := post(`{"index":0,"file":"a.go"}`); w.Code == 200 {
+		t.Error("applying twice wrote the change again")
+	}
+
+	// An index that disagrees with the file the client is looking at is a stale
+	// page, not an instruction.
+	if w := post(`{"index":0,"file":"somewhere/else.go"}`); w.Code != http.StatusConflict {
+		t.Errorf("mismatched index/file = %d, want 409", w.Code)
+	}
+}
+
+// A path that resolves outside the repository is refused, and nothing is
+// written. The finding's file comes from a model, so this is the guard that
+// makes writing files from a review surface acceptable at all.
+func TestApplyRefusesAPathOutsideTheRepository(t *testing.T) {
+	repo := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(outside, []byte("untouched\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{prReviews: newPRReviewStore(filepath.Join(t.TempDir(), "p.json"))}
+	s.prReviews.put(prReview{SessionID: "s1", RepoDir: repo, Draft: &review.Draft{
+		Findings: []review.Finding{{
+			File: "../" + filepath.Base(filepath.Dir(outside)) + "/secret", Line: 1,
+			Severity: "major", Confidence: "high", Title: "t", Body: "b",
+			Quote: []string{"untouched"}, Suggestion: "owned",
+		}},
+	}})
+	r := httptest.NewRequest("POST", "/api/sessions/s1/review/apply", strings.NewReader(`{"index":0}`))
+	r.SetPathValue("id", "s1")
+	w := httptest.NewRecorder()
+	s.handleApplyReviewFix(w, r)
+	if w.Code == 200 {
+		t.Fatal("a file outside the repository was written")
+	}
+	b, _ := os.ReadFile(outside)
+	if string(b) != "untouched\n" {
+		t.Fatalf("the outside file was changed: %q", b)
 	}
 }

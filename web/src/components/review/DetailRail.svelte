@@ -32,6 +32,9 @@
     sent,
     href,
     waking,
+    applying,
+    applied,
+    onapply,
     onaccept,
     ondismiss,
     onundo,
@@ -50,6 +53,12 @@
     // review has to be resumed before it can answer, which takes a moment, and a
     // button that looks untouched for three seconds reads as broken.
     waking: boolean
+    // Whether this finding's change is being written, and whether it already
+    // has been. Applied is remembered per finding by the view, so moving away
+    // and back does not offer to write the same edit twice.
+    applying: boolean
+    applied: boolean
+    onapply: () => void
     onaccept: () => void
     ondismiss: () => void
     onundo: () => void
@@ -117,14 +126,22 @@
       </p>
     {/if}
     {#if fix.kind !== 'none'}
-      <!-- Copy, not apply.
-           The design offers "Apply as a commit", and a review deliberately runs
-           with Write, Edit and Bash withheld: that is the property that lets it
-           run unattended on somebody else's branch. Handing this screen a button
-           that writes to the tree would undo it, so the change goes to the
-           clipboard and applying it stays a thing a person does where they can
-           see it. -->
-      <button class="apply" onclick={copyFix}>{copied ? 'Copied ✓' : 'Copy the change'}</button>
+      <!-- Apply, with copy beside it.
+           This used to be copy alone, on the reasoning that a review runs with
+           Write, Edit and Bash withheld and a button that writes to the tree
+           would undo that. Wrong actor: those tools stop the MODEL editing on
+           its own initiative in a job nobody is watching, and this is a person
+           who has read the finding and pressed a button. It writes to the
+           working checkout and does not commit, so `git diff` is the whole
+           record of what it did. -->
+      <div class="pacts">
+        <button class="apply" onclick={onapply} disabled={applying || applied}>
+          {applied ? 'Applied ✓' : applying ? 'Applying…' : 'Apply the change'}
+        </button>
+        <button class="copy" onclick={copyFix} title="Copy to the clipboard">
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
     {/if}
 
     <div class="x-cap sp">What checked it</div>
@@ -304,8 +321,12 @@
     line-height: 1.6;
     color: var(--x-dim);
   }
+  .pacts {
+    display: flex;
+    gap: 6px;
+  }
   .apply {
-    width: 100%;
+    flex: 1;
     height: 30px;
     border: 1px solid var(--x-go-edge);
     border-radius: 6px;
@@ -313,8 +334,24 @@
     color: var(--x-go-ink);
     font-size: 12px;
   }
-  .apply:hover {
+  .apply:hover:not(:disabled) {
     background: var(--x-go-wash-lit);
+  }
+  .apply:disabled {
+    opacity: 0.75;
+  }
+  .copy {
+    height: 30px;
+    padding: 0 12px;
+    border: 1px solid var(--x-edge);
+    border-radius: 6px;
+    background: none;
+    color: var(--x-body);
+    font-size: 12px;
+  }
+  .copy:hover {
+    color: var(--x-ink-2);
+    border-color: var(--x-edge-lit);
   }
 
   .grounds {

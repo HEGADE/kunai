@@ -371,6 +371,10 @@ func (s *Server) routes() *http.ServeMux {
 	// checkout is swept when it ends, so the ordinary reopen cannot work: see
 	// prreviewreopen.go.
 	mux.HandleFunc("POST /api/sessions/{id}/review/reopen", s.handleReopenReview)
+	// Writing one finding's suggested change into the checkout the review read.
+	// Owner-only like every /api route that is not on the share gate's allowlist,
+	// which is what makes it safe to write files at all: see prreviewapply.go.
+	mux.HandleFunc("POST /api/sessions/{id}/review/apply", s.handleApplyReviewFix)
 
 	mux.HandleFunc("GET /api/failover", s.handleFailover)
 	mux.HandleFunc("POST /api/failover", s.handleFailover)
