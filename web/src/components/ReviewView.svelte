@@ -4,6 +4,7 @@
     postReview,
     applyReviewFix,
     stopReview,
+    resumeReview,
     closeSession,
     type ReviewEdit,
     type ReviewFinding,
@@ -59,6 +60,7 @@
   let finishing = $state(false)
   let waking = $state(false)
   let stopping = $state(false)
+  let resuming = $state(false)
   // Which findings have been written, by index, so moving away and back does not
   // offer to apply the same edit a second time.
   let appliedAt = $state<Record<number, boolean>>({})
@@ -143,6 +145,23 @@
       toasts.error((e as Error).message)
     } finally {
       stopping = false
+    }
+  }
+
+  // Pick it up where it stopped. Not the same as reviewing again: the survey and
+  // the candidates are on the record, so only the phase that never answered is
+  // asked. Measured, that is roughly $11 against $25 for a fresh reading.
+  async function resume() {
+    if (resuming) return
+    resuming = true
+    try {
+      const r = await resumeReview(base, sessionId)
+      await res.read(base, sessionId, { force: true })
+      toasts.done(`Resumed at ${r.phase}`, 'The survey and anything already found were kept.')
+    } catch (e) {
+      toasts.error('Could not resume the review', (e as Error).message)
+    } finally {
+      resuming = false
     }
   }
 
@@ -429,9 +448,24 @@
           <p class="msg flush">
             It was {draft.phase ? `still ${phaseWord(draft.phase)}` : 'still working'} when it ended, so it
             never reached a verdict. Nothing here is a finding, and nothing here says the change is
-            fine. Read the conversation to see how far it got, or review the pull request again from
-            the dashboard.
+            fine.
           </p>
+          {#if draft.resumable}
+            <!-- Picking it up beats starting again, and by a measured margin:
+                 the survey and anything already found are on the record, so what
+                 gets asked is only the phase that never answered. Four attempts
+                 at one pull request in one evening cost $45.72, of which $20.77
+                 bought nothing because every interruption started from the top. -->
+            <div class="pick">
+              <button class="cta ready" onclick={resume} disabled={resuming}>
+                {resuming ? 'Resuming' : `Pick it up at ${phaseWord(draft.phase ?? '')}`}
+              </button>
+              <span class="kept">
+                Keeps {draft.candidates_kept ? `the survey and ${draft.candidates_kept} candidate${draft.candidates_kept === 1 ? '' : 's'}` : 'the reading it already did'}.
+                Reviewing again from the dashboard re-reads everything.
+              </span>
+            </div>
+          {/if}
         </div>
       {:else if draft.parse_error}
         <p class="msg">
@@ -723,6 +757,22 @@
     font-family: var(--x-mono);
     font-size: 0.88em;
     color: var(--x-ink-4);
+  }
+  .pick {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-top: 22px;
+  }
+  .pick .cta {
+    height: 30px;
+  }
+  .kept {
+    max-width: 52ch;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--x-dim);
   }
   .afterword {
     margin-top: 36px;

@@ -160,6 +160,16 @@ func (s *Server) advanceReview(sessionID, text string) {
 	s.prReviews.update(holder.owner, func(rec *prReview) {
 		rec.Phase = string(holder.run.Phase)
 		rec.beganPhase(rec.Phase, now)
+		// What this phase produced, written down as it is produced rather than at
+		// the end. It is what a resume is built from, and it is also why a review
+		// somebody stopped no longer throws its work away: the candidates and the
+		// summary cost minutes and dollars and were being held in memory only.
+		if len(holder.run.Candidates) > 0 {
+			rec.Candidates = holder.run.Candidates
+		}
+		if holder.run.Summary != "" {
+			rec.Summary = holder.run.Summary
+		}
 		// The survey, saved the moment it exists. It used to be built into the
 		// find prompt and dropped, which threw away the only account of what the
 		// reviewer decided to look at: the thing worth reading during the several

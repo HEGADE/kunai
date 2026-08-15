@@ -705,6 +705,27 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   session of its OWN, so the ask lands where this screen is not attached -- the
   draft names the session holding it (`blocked_session`) and the view offers to
   go there, rather than showing a review that looks like it is working.
+  **A review that stopped is picked up, not repeated** (`review.Resumed`,
+  `prreviewresume.go`). The measurement that bought this: one evening, one pull
+  request, four attempts at #7 costing **$45.72, of which $20.77 bought
+  nothing**, because every interruption -- a permission ask nobody answered, a
+  restart, somebody pressing stop -- threw the survey and the whole find phase
+  away with the phase that actually stopped. Nothing about that was necessary.
+  The phase machine is a pure reducer, so a run IS its phase plus what the
+  phases before it produced; the survey was already on the record, and the
+  CANDIDATES are now written at the phase boundary rather than held in the
+  in-memory run (which is the same "unify execution state and business state"
+  the 12-factor agents write-up names, and the reason this was impossible
+  before). A review that stopped in `verify` therefore resumes by asking exactly
+  one question, in a session that never needed the find phase's context anyway:
+  measured against the same pull request, ~$11 instead of ~$25, with the earlier
+  reading kept. Deliberately a BUTTON and never automatic on boot: a resumed
+  review spends real money unattended, and one that stopped may have stopped
+  because it was going wrong. The offer NAMES what it keeps
+  (`candidates_kept`), because "resume" alone asks to be trusted about the one
+  thing somebody is worried about. The diffs are written into the checkout again
+  first, since they are files in a worktree that may have been swept, not state
+  of their own.
   **Stopping a review is a property of the RUN, not of a turn**
   (`prreviewstop.go`). There was no way to stop one at all, and the obvious move
   -- open the conversation and press Stop -- looks like it should work and does

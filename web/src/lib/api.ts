@@ -789,6 +789,12 @@ export interface ReviewDraft {
   // reporting" and offer to post it. See handleReviewDraft.
   running?: boolean
   stopped?: boolean
+  // Whether there is a phase left to ask, so a stopped review can be picked up
+  // where it left off rather than started again. See review.Resumable.
+  resumable?: boolean
+  // How many candidates resuming would keep, so the offer names what it saves
+  // rather than asking for trust.
+  candidates_kept?: number
   // The session holding a permission question, when one is. It may not be this
   // review's own: a phase can run in a session of its own, and that is where the
   // ask lands, so a review can be stuck on something its own session knows
@@ -969,6 +975,18 @@ export function applyReviewFix(
 export function stopReview(base: string, sessionId: string): Promise<{ stopped: boolean }> {
   return fetch(at(base, `/api/sessions/${sessionId}/review/stop`), { method: 'POST' }).then((r) =>
     json<{ stopped: boolean }>(r),
+  )
+}
+
+// resumeReview picks a stopped review up at the phase that did not finish.
+//
+// Not the same as reviewing again. The survey and the candidates are on the
+// record, so what gets asked is only the question that never got an answer: on
+// the measured run that is roughly $11 instead of $25, and the reading already
+// done is kept rather than repeated.
+export function resumeReview(base: string, sessionId: string): Promise<{ id: string; phase: string }> {
+  return fetch(at(base, `/api/sessions/${sessionId}/review/resume`), { method: 'POST' }).then((r) =>
+    json<{ id: string; phase: string }>(r),
   )
 }
 

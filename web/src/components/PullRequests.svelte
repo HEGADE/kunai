@@ -345,8 +345,8 @@
             <!-- It never reached a verdict, so this is not a review of anything.
                  Reviewing again is the useful action; reading how far it got is
                  behind the label. -->
-            <button class="again" onclick={() => review(pr)} disabled={!!starting}>
-              {starting === key(pr) ? 'Starting…' : 'stopped · review again'}
+            <button class="again" onclick={() => app.open(pr.machineId, shown.sessionId)}>
+              stopped &middot; pick it up &rarr;
             </button>
           {:else if shown.kind === 'failed'}
             <button class="open failed" onclick={() => app.open(pr.machineId, shown.sessionId)}>

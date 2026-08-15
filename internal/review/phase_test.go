@@ -373,3 +373,46 @@ func TestVerifyPromptStandsAlone(t *testing.T) {
 		}
 	}
 }
+
+// A run that died can be put back together from what was written down.
+//
+// The reducer is pure, so a run is its phase plus what the phases before it
+// produced. That is what makes resuming possible at all, and it is worth real
+// money: four attempts at one pull request in an evening cost $45.72, of which
+// $20.77 bought nothing because every interruption threw away the survey and the
+// find phase along with the phase that actually stopped.
+func TestAResumedRunAsksOnlyThePhaseThatDidNotFinish(t *testing.T) {
+	req := Request{Repo: "o/r", Number: 7, Files: []FileSummary{{Path: "a.go", Additions: 900}}}
+	cands := []Finding{{File: "a.go", Line: 1, Title: "t", Body: "b"}}
+
+	r := Resumed(req, PhaseVerify, Survey{Intent: "x"}, cands, "sum", nil)
+	if r.Phase != PhaseVerify {
+		t.Fatalf("phase = %q, want the one that did not finish", r.Phase)
+	}
+	_, brief, ok := r.Next()
+	if !ok || !strings.Contains(brief, "Check") {
+		t.Errorf("next = %q ok=%v, want the check phase", brief, ok)
+	}
+	// And what the earlier phases produced is carried, or the check would be
+	// asked to verify nothing.
+	if len(r.Candidates) != 1 || r.Survey.Intent != "x" || r.Summary != "sum" {
+		t.Errorf("resumed run lost its earlier work: %+v", r)
+	}
+}
+
+// A phase cannot be resumed into a state its inputs cannot support: verify with
+// no candidates has nothing to check, so it falls back to finding rather than
+// asking a question with a hole in it.
+func TestResumingVerifyWithNoCandidatesFindsInstead(t *testing.T) {
+	req := Request{Repo: "o/r", Number: 7, Files: []FileSummary{{Path: "a.go", Additions: 900}}}
+	if r := Resumed(req, PhaseVerify, Survey{}, nil, "", nil); r.Phase != PhaseFind {
+		t.Errorf("phase = %q, want find", r.Phase)
+	}
+	// A finished review has nothing to resume.
+	if Resumable(PhaseDone) || Resumable("") {
+		t.Error("a finished or unstarted review was reported resumable")
+	}
+	if !Resumable(PhaseFind) {
+		t.Error("an unfinished phase was not resumable")
+	}
+}

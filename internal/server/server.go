@@ -380,6 +380,10 @@ func (s *Server) routes() *http.ServeMux {
 	// turn, which the engine simply follows with the next phase: see
 	// prreviewstop.go.
 	mux.HandleFunc("POST /api/sessions/{id}/review/stop", s.handleStopReview)
+	// Picking a stopped review up at the phase that did not finish, instead of
+	// paying for the survey and the find phase a second time. See
+	// prreviewresume.go for what that was costing.
+	mux.HandleFunc("POST /api/sessions/{id}/review/resume", s.handleResumeReview)
 	// Writing one finding's suggested change into the checkout the review read.
 	// Owner-only like every /api route that is not on the share gate's allowlist,
 	// which is what makes it safe to write files at all: see prreviewapply.go.

@@ -96,6 +96,21 @@ type prReview struct {
 	// never light or claim a step ran that never did. One bool is cheaper than
 	// either lie.
 	Surveyed bool `json:"surveyed,omitempty"`
+	// Candidates are the findings as the FIND phase produced them, before
+	// verification, and Summary is that phase's overall read.
+	//
+	// Written at the phase boundary rather than at the end, and that is the whole
+	// of what makes a review resumable. They used to live only in the run held in
+	// memory, so every interruption -- a permission ask nobody answered, a
+	// restart, somebody pressing stop -- threw away the survey and the find phase
+	// along with the phase that actually stopped, and the only way forward was to
+	// start again from the first. Measured on one pull request in one evening:
+	// $45.72 across four attempts, $20.77 of it buying nothing.
+	//
+	// This is the review's execution state kept in the same place as its business
+	// state, which is the reason it can now be picked up again. See review.Resumed.
+	Candidates []review.Finding `json:"candidates,omitempty"`
+	Summary    string           `json:"summary,omitempty"`
 	// Dropped are the candidates the verification pass refuted, with its reason.
 	//
 	// Kept deliberately. A reviewer you can audit is one you will trust: showing

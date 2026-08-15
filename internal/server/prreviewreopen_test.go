@@ -364,3 +364,75 @@ func TestTheDashboardRowKnowsAStoppedReviewIsNotRunning(t *testing.T) {
 		t.Errorf("after stopping: running=%v stopped=%v, want stopped", ref.Running, ref.Stopped)
 	}
 }
+
+// A stopped review is picked up, not repeated.
+//
+// The record carries the survey and the candidates, so what a resume asks is
+// only the phase that never answered. This is the whole saving: four attempts at
+// one pull request in one evening cost $45.72, of which $20.77 bought nothing
+// because every interruption started again from the first phase.
+func TestAStoppedReviewReportsWhatResumingWouldKeep(t *testing.T) {
+	dir := t.TempDir()
+	s := &Server{
+		prReviews:  newPRReviewStore(filepath.Join(dir, "p.json")),
+		reviewRuns: newReviewRunners(),
+		mgr:        session.NewManager(),
+	}
+	s.prReviews.put(prReview{
+		SessionID: "s1", Owner: "o", Repo: "r", Number: 7, Phase: "verify",
+		Survey:     &review.Survey{Intent: "merge nightly"},
+		Candidates: []review.Finding{{File: "a.go", Line: 1, Title: "t", Body: "b"}},
+		Summary:    "the find phase's read",
+	})
+
+	r := httptest.NewRequest("GET", "/api/sessions/s1/review", nil)
+	r.SetPathValue("id", "s1")
+	w := httptest.NewRecorder()
+	s.handleReviewDraft(w, r)
+	var out map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["stopped"] != true || out["resumable"] != true {
+		t.Errorf("stopped=%v resumable=%v, want both true", out["stopped"], out["resumable"])
+	}
+	if out["candidates_kept"] != float64(1) {
+		t.Errorf("candidates_kept = %v, want the one on the record", out["candidates_kept"])
+	}
+
+	// A review that reached an answer has nothing to resume: asking again would
+	// be a fresh reading, which is a different (and dearer) thing.
+	s.prReviews.update("s1", func(p *prReview) { p.Phase = "done"; p.Draft = &review.Draft{} })
+	w = httptest.NewRecorder()
+	s.handleReviewDraft(w, r)
+	_ = json.Unmarshal(w.Body.Bytes(), &out)
+	if out["resumable"] == true {
+		t.Error("a finished review was offered as resumable")
+	}
+}
+
+// And the phase machine is handed back everything the earlier phases produced,
+// which is what makes the resumed run cheap: verify runs on the candidates
+// alone, in a session that never needed the find phase's context.
+func TestResumingRebuildsTheRunFromTheRecord(t *testing.T) {
+	rec := prReview{
+		Phase:      "verify",
+		Survey:     &review.Survey{Intent: "x", Areas: []review.Area{{What: "the guard"}}},
+		Candidates: []review.Finding{{File: "a.go", Line: 1, Title: "t", Body: "b"}},
+		Summary:    "s",
+	}
+	run := review.Resumed(
+		review.Request{Repo: "o/r", Number: 7, Files: []review.FileSummary{{Path: "a.go", Additions: 900}}},
+		review.Phase(rec.Phase), surveyOf(rec), rec.Candidates, rec.Summary, nil,
+	)
+	if run.Phase != review.PhaseVerify {
+		t.Fatalf("phase = %q, want the one that stopped", run.Phase)
+	}
+	if len(run.Candidates) != 1 || run.Survey.Intent != "x" || run.Summary != "s" {
+		t.Errorf("the resumed run lost earlier work: %+v", run)
+	}
+	_, brief, ok := run.Next()
+	if !ok || !strings.Contains(brief, "Check 1") {
+		t.Errorf("next asks %q, want the check phase over the kept candidate", brief)
+	}
+}

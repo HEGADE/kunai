@@ -360,6 +360,14 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request) {
 		// running nor a review of anything.
 		"running": running,
 		"stopped": inFlight && !running,
+		// Whether the phase that did not finish can simply be asked again, which
+		// is what makes a stopped review worth keeping rather than redoing: the
+		// survey and the candidates are on the record. See review.Resumed.
+		"resumable": inFlight && !running && review.Resumable(review.Phase(rec.Phase)),
+		// What resuming would keep, so the offer names what it saves rather than
+		// asking to be trusted about the thing somebody is actually worried about,
+		// which is paying for the same reading twice.
+		"candidates_kept": len(rec.Candidates),
 		// The session holding a question, when one is. Named rather than a bool,
 		// because the useful thing to do about it is open that session and answer.
 		"blocked_session": blocked,

@@ -142,6 +142,51 @@ func NewRun(req Request) *Run {
 	return r
 }
 
+// Resumed rebuilds a run that was interrupted, from what was written down.
+//
+// The state machine is a pure reducer -- Accept(text) is (state, event) -> state
+// and nothing else -- which is exactly what makes this possible: a run is its
+// phase plus what the phases before it produced, so a run that died can be put
+// back together from the record and asked the one question it never answered.
+//
+// It exists because the alternative is what kunai did for months, which is start
+// again from the first phase. Measured on one real pull request in a single
+// evening: $45.72 spent across four attempts at #7, of which $20.77 bought
+// nothing at all, because every interruption -- a permission ask nobody was
+// there to answer, a restart, somebody pressing stop -- threw away the survey
+// and the find phase along with it. The survey and the candidates cost minutes
+// and dollars and were already on the record; only the phase that did not finish
+// needs asking again.
+//
+// Verification is the phase this matters most for, and it is also the one that
+// resumes most cleanly: it runs in a session of its own with nothing but the
+// claims, so a verify that never finished can be started again from the
+// candidates alone at no loss of fidelity whatsoever.
+func Resumed(req Request, phase Phase, survey Survey, candidates []Finding, summary string, dropped []Dropped) *Run {
+	if phase == "" || phase == PhaseDone {
+		phase = PhaseFind
+	}
+	// A phase cannot be resumed into a state its inputs cannot support. Verify
+	// with no candidates has nothing to check, and find with no survey is simply
+	// find; both fall back rather than asking a question with a hole in it.
+	if phase == PhaseVerify && len(candidates) == 0 {
+		phase = PhaseFind
+	}
+	if phase == PhaseSurvey && !worthSurveying(req.Files) {
+		phase = PhaseFind
+	}
+	return &Run{
+		Req: req, Phase: phase, Survey: survey,
+		Candidates: candidates, Summary: summary, Dropped: dropped,
+	}
+}
+
+// Resumable reports whether there is anything left to ask, which is the question
+// the UI has to answer before offering to resume at all.
+func Resumable(phase Phase) bool {
+	return phase != "" && phase != PhaseDone
+}
+
 // worthSurveying reports whether a change is big enough that planning how to
 // read it beats simply reading it.
 func worthSurveying(files []FileSummary) bool {
