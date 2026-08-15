@@ -138,6 +138,7 @@ func (s *Server) closePublicPortIfIdle() {
 			logShare("could not close public port %d after the last share ended: %v %s", port, err, strings.TrimSpace(out))
 			return
 		}
+		s.funnelOurs.drop(port)
 		s.forgetFunnel()
 		logShare("nothing is shared any more; public port %d closed", port)
 	}
@@ -223,11 +224,22 @@ func (s *Server) reopenPublicPortIfStale() {
 		return // no tailscale to ask, or already aimed at us
 	}
 	// staleLoopback is what put a served port in Free, so a port that is both
-	// served and free is one of ours that has been left behind. A port that is
-	// free because nothing was ever served on it is not something to claim: the
-	// owner never asked for this machine to be public.
+	// served and free is one that has been left behind. A port that is free
+	// because nothing was ever served on it is not something to claim: the owner
+	// never asked for this machine to be public.
 	stale, ok := st.StaleLoopback()
 	if !ok {
+		return
+	}
+	// And left behind by US. staleLoopback is true of ANY funnel pointing at a
+	// loopback port nothing answers on, which is exactly what an owner's own
+	// funnel to their own app looks like while that app is stopped, restarting
+	// or being rebuilt: adopting it would silently rewrite somebody's public
+	// surface to the share gate, and it would not come back when their service
+	// did. That inference was survivable while a person clicked "make public"
+	// with the port list in front of them; unattended it is not, so it is
+	// replaced by the record of what this machine funnelled itself.
+	if !s.funnelOurs.has(stale) {
 		return
 	}
 	args := funnelOnArgs(stale, port)

@@ -151,6 +151,7 @@ type Server struct {
 	// network address, so you can look at it from the phone. See preview.go.
 	previews   *previewForwarder
 	gate       *shareGate
+	funnelOurs *funnelOurs // the public ports this machine funnelled; see funnelours.go
 	funnelMu   sync.Mutex
 	funnelAt   time.Time // when the funnel port was last read (it shells out)
 	funnelPort int
@@ -236,6 +237,10 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	// never started when there is nothing to serve.
 	s.shares = share.NewStore(shareStorePath(cfg.DataDir))
 	s.gate = newShareGate(s.shares, mgr, s.pwa, gatePortFile(cfg.DataDir), s.images.path(), s)
+	// Which public ports kunai itself opened. Read at boot, because the repoint
+	// it guards runs unattended and a restart must not turn a recorded fact back
+	// into a guess.
+	s.funnelOurs = newFunnelOurs(funnelOursFile(cfg.DataDir))
 	// The lock on the network listener. Constructed always so the owner can set a
 	// PIN before turning -lan on; the listener refuses to start without one.
 	s.lanAuth = lanauth.Open(filepath.Join(cfg.DataDir, "lanauth.json"))

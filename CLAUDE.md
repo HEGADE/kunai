@@ -588,6 +588,23 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   to have somebody else's screenshot inlined and read back. `redactEvent` keeps a
   guest's own attachments and still strips the owner's, or the message they just
   sent comes back without the picture that was the point of it.
+  Two of those rules were enforced on the wrong thing, and a review of the merge
+  caught both. **The frame is read for its ids and nothing else**: what decides
+  whether bytes are inlined or WRITTEN INTO THE PROJECT is the media type
+  `buildContent` branches on, and that one arrives on the prompt frame, which the
+  guest writes -- so checking the upload's `Content-Type` and then trusting the
+  frame meant images-only was enforced on a field nobody consults. Upload as
+  `image/png`, attach as `text/plain`, and the else branch copies the bytes into
+  the owner's repository under a name of the guest's choosing and tells the agent
+  where they are. `guestFiles` therefore records the whole staged `Attachment`
+  and `guestAttachments` rebuilds every one from that record, re-checking the
+  type it will actually be read with. And **the cap is spent before the bytes**:
+  `g.files.add` used to run after `StageUpload` returned, so a refused upload was
+  already on disk with its id recorded nowhere -- nothing referenced it, nothing
+  sweeps `uploadsDir` (unlike generated-images), and a paired guest could post
+  8MB files past the cap for ever, which is the precise thing `maxGuestFiles`
+  exists to prevent. `reserve`/`commit`/`release` take the slot first and give it
+  back if the write fails.
   The directory is swept to `imageKeep` oldest-first, because pictures are ~800KB
   and nothing else would ever delete one. `SetImageSaver` is the whole switch:
   with no saver the tool is never offered, so the capability is gated on being
@@ -1243,12 +1260,19 @@ Behavioral invariants that were bugs before (do not regress):
   the service manager restarts it unattended, which is precisely when nobody is
   watching a link they handed out. `funnelStatus` already RECOGNISED the stale
   mapping (`staleLoopback`) and offered the port back; only a human clicking
-  "make public" ever acted on it. It is narrow on purpose: it repoints only a
-  funnel port already served and pointing at a loopback address with nothing
-  behind it, so a Funnel the owner made for their own app is untouched, the same
-  rule the close path follows. Every caller now reads the config through
-  `askFunnel`, or a new one silently shells out in a test that thought it had
-  stubbed the answer.
+  "make public" ever acted on it. It repoints **only a port this machine
+  recorded funnelling itself** (`funnelOurs`, persisted beside the gate's port
+  file), and that fact replaced an inference that was not safe unattended:
+  `staleLoopback` is true of ANY funnel pointing at a loopback port nothing
+  answers on, which is exactly what the owner's own mapping to their own app
+  looks like while that app is stopped, restarting or being rebuilt. Adopting it
+  would rewrite somebody's public surface to the share gate with nobody
+  watching, and it would not come back when their service did. The guess was
+  survivable while a person clicked "make public" with the port list in front of
+  them; automatic, it is not. Losing the record is safe in the direction that
+  matters, since an unrecorded port is left alone rather than claimed. Every
+  caller reads the config through `askFunnel`, or a new one silently shells out
+  in a test that thought it had stubbed the answer.
 - A **Funnel mapping outlives the process that made it**, and on kunai's own port
   that is fatal rather than untidy. `tailscale funnel --https=<port>` is written
   into tailscaled, so it survives every restart and every reinstall; if it lands
