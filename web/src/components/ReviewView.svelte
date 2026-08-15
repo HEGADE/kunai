@@ -3,6 +3,7 @@
   import {
     postReview,
     applyReviewFix,
+    stopReview,
     closeSession,
     type ReviewEdit,
     type ReviewFinding,
@@ -54,6 +55,7 @@
   let posting = $state(false)
   let finishing = $state(false)
   let waking = $state(false)
+  let stopping = $state(false)
   // Which findings have been written, by index, so moving away and back does not
   // offer to apply the same edit a second time.
   let appliedAt = $state<Record<number, boolean>>({})
@@ -122,6 +124,24 @@
     const timer = setInterval(() => (now = Date.now()), 1000)
     return () => clearInterval(timer)
   })
+
+  // Stop it. Not the same as interrupting the turn, which is what pressing Stop
+  // in the conversation does and why that looked broken: the engine asks for the
+  // next phase at the end of every turn, so a stopped turn is followed by
+  // another one. This cancels the run.
+  async function stop() {
+    if (stopping) return
+    stopping = true
+    try {
+      await stopReview(base, sessionId)
+      await res.read(base, sessionId, { force: true })
+      toasts.done('Review stopped. Nothing was posted, and the conversation is still here to read.')
+    } catch (e) {
+      toasts.error((e as Error).message)
+    } finally {
+      stopping = false
+    }
+  }
 
   // Take me to the question. Usually this review's own conversation; when a
   // phase borrowed a session, the ask is over there and that is where to go.
@@ -340,6 +360,15 @@
     <button class="btn" onclick={() => (app.reviewChat = true)}>Conversation</button>
     {#if posted && draft?.posted_url}
       <a class="btn" href={draft.posted_url} target="_blank" rel="noreferrer">Read on GitHub ↗</a>
+    {/if}
+    <!-- A way out, which there was not one of at all. A review is minutes of
+         work on a large pull request and the only thing that looked like a stop
+         (the conversation's own Stop button) interrupts a TURN, which the engine
+         follows with the next phase. -->
+    {#if reviewing || blocked}
+      <button class="cta halt" onclick={stop} disabled={stopping}>
+        {stopping ? 'Stopping' : 'Stop the review'}
+      </button>
     {/if}
     <!-- Never offered on a review that stopped part-way: its emptiness is a
          review that never happened, and posting it would tell the author their
@@ -612,6 +641,13 @@
   }
   .cta:disabled {
     opacity: 0.5;
+  }
+  /* Stopping is not the accent action and must not look like one: the accent
+     here means "the thing this screen is for". It is a way out, so it reads as
+     one, and takes its colour only on hover. */
+  .cta.halt:hover:not(:disabled) {
+    border-color: var(--x-accent-edge);
+    color: var(--x-accent-lit);
   }
 
   .cols {

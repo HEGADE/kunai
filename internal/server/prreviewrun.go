@@ -54,6 +54,15 @@ type reviewRun struct {
 	// the checkout to read and the account to run on.
 	worktree string
 	spawn    session.CreateOptions
+	// cancelled is set when somebody stopped this review, and it is checked at
+	// the one place that decides whether to ask for another phase.
+	//
+	// Stopping has to be a flag rather than only an interrupt, because the engine
+	// is what keeps this going: the answer hook fires at the end of EVERY turn
+	// and feeds the next phase in, so interrupting a turn just makes the machine
+	// send the next one. That is exactly what made Stop in the conversation look
+	// broken -- it stopped a turn, and the review carried on.
+	cancelled bool
 }
 
 // reviewRunners holds the reviews currently working, by session id.
@@ -125,6 +134,13 @@ func (s *Server) advanceReview(sessionID, text string) {
 
 	holder.mu.Lock()
 	defer holder.mu.Unlock()
+
+	if holder.cancelled {
+		// Somebody stopped it. A turn already in flight still lands here, and
+		// asking for the next phase now is precisely what Stop was pressed to
+		// prevent.
+		return
+	}
 
 	if err := holder.run.Accept(text); err != nil {
 		// Only the find phase reports an error, and it means the review produced

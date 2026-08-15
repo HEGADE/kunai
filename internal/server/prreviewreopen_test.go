@@ -281,3 +281,57 @@ func TestADraftSaysWhetherItIsStillWorking(t *testing.T) {
 		t.Errorf("finished review reported running=%v stopped=%v", out["running"], out["stopped"])
 	}
 }
+
+// Stopping a review has to stop the ENGINE, not a turn.
+//
+// The answer hook fires at the end of every turn and feeds the next phase in, so
+// interrupting a turn is followed by another one: that is why pressing Stop in
+// the conversation looked like it did nothing while the review carried on. The
+// run itself is cancelled, and a turn already in flight lands on a cancelled run
+// and asks for nothing.
+func TestStoppingAReviewCancelsTheRunRatherThanATurn(t *testing.T) {
+	dir := t.TempDir()
+	s := &Server{
+		prReviews:  newPRReviewStore(filepath.Join(dir, "p.json")),
+		reviewRuns: newReviewRunners(),
+		mgr:        session.NewManager(),
+	}
+	s.prReviews.put(prReview{SessionID: "s1", Owner: "o", Repo: "r", Number: 7, Phase: "find"})
+	holder := &reviewRun{owner: "s1", run: review.NewRun(review.Request{Repo: "o/r", Number: 7})}
+	s.reviewRuns.put("s1", holder)
+
+	stop := func() int {
+		r := httptest.NewRequest("POST", "/api/sessions/s1/review/stop", nil)
+		r.SetPathValue("id", "s1")
+		w := httptest.NewRecorder()
+		s.handleStopReview(w, r)
+		return w.Code
+	}
+	if code := stop(); code != 200 {
+		t.Fatalf("stop = %d", code)
+	}
+	holder.mu.Lock()
+	cancelled := holder.cancelled
+	holder.mu.Unlock()
+	if !cancelled {
+		t.Error("the run was not cancelled, so the next phase would still be asked for")
+	}
+	if _, still := s.reviewRuns.get("s1"); still {
+		t.Error("a stopped review is still registered as running")
+	}
+	// The record keeps the phase it was in and grows no draft, so the view says
+	// it stopped before it finished rather than reporting a clean bill of health.
+	rec, _ := s.prReviews.get("s1")
+	if rec.Draft != nil || rec.Phase == "done" {
+		t.Errorf("a stopped review was recorded as an answer: phase=%q draft=%v", rec.Phase, rec.Draft != nil)
+	}
+	// A turn already in flight lands here and must ask for nothing.
+	s.advanceReview("s1", "```kunai-review\n{\"summary\":\"x\",\"findings\":[]}\n```")
+	if rec, _ := s.prReviews.get("s1"); rec.Draft != nil {
+		t.Error("a turn landing after the stop still advanced the review")
+	}
+	// And pressing it twice is not an error: the button and the review can race.
+	if code := stop(); code != 200 {
+		t.Errorf("stopping an already-stopped review = %d, want 200", code)
+	}
+}

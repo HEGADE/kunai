@@ -705,6 +705,19 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   session of its OWN, so the ask lands where this screen is not attached -- the
   draft names the session holding it (`blocked_session`) and the view offers to
   go there, rather than showing a review that looks like it is working.
+  **Stopping a review is a property of the RUN, not of a turn**
+  (`prreviewstop.go`). There was no way to stop one at all, and the obvious move
+  -- open the conversation and press Stop -- looks like it should work and does
+  not: that interrupts the running TURN, and the answer hook fires at the end of
+  every turn and feeds the next phase in, so the review carries on with the Stop
+  button apparently doing nothing. So `reviewRun.cancelled` is set first, under
+  the run's own lock, and checked at the one place that decides whether to ask
+  for another phase; only then is anything interrupted. Both halves are needed:
+  without the flag the next phase starts anyway, and without the interrupt the
+  turn in flight burns quota to the end. What was found so far is deliberately
+  NOT kept, because unverified candidates presented as a review is the exact
+  thing the engine exists to prevent, and the conversation still holds them for
+  a reader who wants them.
   A finding carries **severity and confidence as two fields**, because they answer
   different questions -- how bad if true, how likely to be true -- and one score can
   only lie about one of them. Severity is what gives the review a shape; without it a

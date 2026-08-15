@@ -955,6 +955,18 @@ export function applyReviewFix(
   }).then((r) => json<AppliedFix>(r))
 }
 
+// stopReview ends a review that is still working.
+//
+// Not the same as interrupting its turn, which is what Stop in the conversation
+// does and why that appeared to do nothing: the engine feeds the next phase in
+// at the end of every turn, so a stopped turn is followed by another one. This
+// cancels the run itself.
+export function stopReview(base: string, sessionId: string): Promise<{ stopped: boolean }> {
+  return fetch(at(base, `/api/sessions/${sessionId}/review/stop`), { method: 'POST' }).then((r) =>
+    json<{ stopped: boolean }>(r),
+  )
+}
+
 // reopenReview brings a finished review's session back so it can be asked
 // something. Idempotent: a review that is still live answers with its own id and
 // changes nothing, so a caller never has to work out which it is.
