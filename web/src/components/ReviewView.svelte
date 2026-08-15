@@ -58,6 +58,15 @@
   // finished review reopened later reports `starting` while it resumes.
   const reviewing = $derived(running && draft?.phase !== 'done')
 
+  // Whether the reviewer can still be asked anything. A review's session ends
+  // (Done, or a restart), and the draft outlives it by design: the findings are
+  // on disk and the view reopens on them. But the conversation cannot be
+  // continued, because the throwaway checkout it read is swept when the review
+  // finishes, so there is nowhere to resume it. Offering Ask there was a button
+  // that opened a transcript you cannot type into, which reads as broken.
+  // Unknown counts as live: only a session the history KNOWS is over is over.
+  const canAsk = $derived(app.isLiveSession(machineId, sessionId) !== false)
+
   const raw = $derived<ReviewFinding[]>(draft?.findings ?? [])
   const findings = $derived(ordered(raw, edits))
   const posted = $derived(!!draft?.posted_url)
@@ -306,6 +315,7 @@
         {edits}
         sent={posted}
         href={permalink}
+        {canAsk}
         onaccept={() => decide('accept')}
         ondismiss={() => decide('dismiss')}
         onundo={() => decide(undefined)}

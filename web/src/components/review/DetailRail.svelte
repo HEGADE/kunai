@@ -31,6 +31,7 @@
     edits,
     sent,
     href,
+    canAsk,
     onaccept,
     ondismiss,
     onundo,
@@ -45,6 +46,8 @@
     // The code on GitHub at the commit that was READ, which is where the code a
     // finding describes actually is. Empty when the review has no head to point at.
     href: string
+    // Whether the reviewer is still there to answer. See ReviewView.
+    canAsk: boolean
     onaccept: () => void
     ondismiss: () => void
     onundo: () => void
@@ -179,7 +182,11 @@
          not, and it applies to every finding: the ones with no suggested fix are
          if anything the ones most worth asking about. It used to be rendered
          inside the patch panel, so exactly those findings had no way to ask. -->
-    <button class="ask" onclick={onask}>Ask the reviewer about this →</button>
+    {#if canAsk}
+      <button class="ask" onclick={onask}>Ask the reviewer about this →</button>
+    {:else}
+      <p class="gone">The reviewer's session has ended. Its reasoning is still readable.</p>
+    {/if}
   </div>
 </aside>
 
@@ -462,6 +469,12 @@
   }
   .ask:hover {
     color: var(--x-ink-3);
+  }
+  .gone {
+    margin: 8px 0 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--x-faint);
   }
 
   .verdict {

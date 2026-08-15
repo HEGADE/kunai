@@ -244,6 +244,15 @@ class AppStore {
     return undefined
   }
 
+  // Whether a session is still running, when anything on hand knows. The same
+  // three answers as isReviewSession and for the same reason: "not in the live
+  // list" and "known to be over" are different, and only one of them is a fact.
+  isLiveSession(machineId: string, id: string): boolean | undefined {
+    if (this.sessions.some((s) => s.machineId === machineId && s.id === id)) return true
+    if (this.history.some((h) => h.machineId === machineId && h.id === id)) return false
+    return undefined
+  }
+
   // liveTurnStart is when the running turn began (unix ms), 0 when none is. The
   // same preference as liveState and for the same reason: an open tab's socket
   // stamps it immediately while the polled list is up to a cycle behind, and a
