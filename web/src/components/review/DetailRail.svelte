@@ -31,7 +31,7 @@
     edits,
     sent,
     href,
-    canAsk,
+    waking,
     onaccept,
     ondismiss,
     onundo,
@@ -46,8 +46,10 @@
     // The code on GitHub at the commit that was READ, which is where the code a
     // finding describes actually is. Empty when the review has no head to point at.
     href: string
-    // Whether the reviewer is still there to answer. See ReviewView.
-    canAsk: boolean
+    // Whether the reviewer's session is being brought back right now. A finished
+    // review has to be resumed before it can answer, which takes a moment, and a
+    // button that looks untouched for three seconds reads as broken.
+    waking: boolean
     onaccept: () => void
     ondismiss: () => void
     onundo: () => void
@@ -182,11 +184,9 @@
          not, and it applies to every finding: the ones with no suggested fix are
          if anything the ones most worth asking about. It used to be rendered
          inside the patch panel, so exactly those findings had no way to ask. -->
-    {#if canAsk}
-      <button class="ask" onclick={onask}>Ask the reviewer about this →</button>
-    {:else}
-      <p class="gone">The reviewer's session has ended. Its reasoning is still readable.</p>
-    {/if}
+    <button class="ask" onclick={onask} disabled={waking}>
+      {waking ? 'Waking the reviewer…' : 'Ask the reviewer about this →'}
+    </button>
   </div>
 </aside>
 
@@ -470,10 +470,7 @@
   .ask:hover {
     color: var(--x-ink-3);
   }
-  .gone {
-    margin: 8px 0 0;
-    font-size: 11.5px;
-    line-height: 1.5;
+  .ask:disabled {
     color: var(--x-faint);
   }
 

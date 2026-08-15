@@ -47,6 +47,7 @@
   let rightOpen = $state(true)
   let posting = $state(false)
   let finishing = $state(false)
+  let waking = $state(false)
   let pane = $state<HTMLElement | undefined>()
 
   const meta = $derived(app.sessions.find((s) => s.machineId === machineId && s.id === sessionId))
@@ -57,15 +58,6 @@
   // Whether the REVIEW is going, which is not whether the session is busy: a
   // finished review reopened later reports `starting` while it resumes.
   const reviewing = $derived(running && draft?.phase !== 'done')
-
-  // Whether the reviewer can still be asked anything. A review's session ends
-  // (Done, or a restart), and the draft outlives it by design: the findings are
-  // on disk and the view reopens on them. But the conversation cannot be
-  // continued, because the throwaway checkout it read is swept when the review
-  // finishes, so there is nowhere to resume it. Offering Ask there was a button
-  // that opened a transcript you cannot type into, which reads as broken.
-  // Unknown counts as live: only a session the history KNOWS is over is over.
-  const canAsk = $derived(app.isLiveSession(machineId, sessionId) !== false)
 
   const raw = $derived<ReviewFinding[]>(draft?.findings ?? [])
   const findings = $derived(ordered(raw, edits))
@@ -125,9 +117,27 @@
     verdicts = { ...verdicts, [f.index]: v }
   }
 
-  function ask() {
+  // Asking the reviewer about the finding you are reading.
+  //
+  // The wake goes first and always, because a review's session ends -- you press
+  // Done, kunai restarts -- and the draft outlives it by design. Ask then opened
+  // a transcript with a dead composer and a Reopen that cannot work, since a
+  // review's checkout is swept when it finishes and the transcript's own cwd no
+  // longer exists. The server can put both back from the record; see
+  // prreviewreopen.go. It is idempotent, so a live review pays one round trip
+  // and this code never has to work out which case it is in.
+  async function ask() {
     const f = findings[active]
-    if (!f) return
+    if (!f || waking) return
+    waking = true
+    try {
+      await app.wakeReview(machineId, sessionId)
+    } catch (e) {
+      toasts.error(`Could not reopen the reviewer: ${(e as Error).message}`)
+      return
+    } finally {
+      waking = false
+    }
     app.reviewAsk = `About your finding on ${f.file}:${f.line} ("${f.title}") - `
     app.reviewChat = true
   }
@@ -315,7 +325,7 @@
         {edits}
         sent={posted}
         href={permalink}
-        {canAsk}
+        {waking}
         onaccept={() => decide('accept')}
         ondismiss={() => decide('dismiss')}
         onundo={() => decide(undefined)}

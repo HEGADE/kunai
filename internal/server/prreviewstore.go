@@ -56,6 +56,12 @@ type prReview struct {
 	// Requester is who clicked Review, named in the posted review because one bot
 	// identity is shared across a team.
 	Requester string `json:"requester,omitempty"`
+	// CLI is the account the review ran on. Recorded because its transcript lives
+	// in that account's config dir, so reopening a finished review to ask it
+	// something has to look there: taking the machine's default (or a reviewing
+	// account changed since) resumes an empty conversation rather than the one
+	// being asked about. See handleReopenReview.
+	CLI string `json:"cli,omitempty"`
 	// Draft is the parsed findings, saved when the review turn ends. Absent until
 	// then, which is how the UI tells "still working" from "nothing found".
 	Draft *review.Draft `json:"draft,omitempty"`

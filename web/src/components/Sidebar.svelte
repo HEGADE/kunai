@@ -409,6 +409,17 @@
   }
   async function resume(h: TaggedHistoryEntry) {
     if (resuming) return
+    // A past REVIEW opens on its findings, and opens without starting anything.
+    //
+    // The draft is what somebody comes back for, and it is on disk: resuming the
+    // session first would spend a CLI boot to arrive at the same screen, and it
+    // cannot even do that, since a review's checkout is swept when it ends and
+    // the create fails on a cwd that is no longer there. The reviewer is woken
+    // only if you actually ask it something. See ReviewView.
+    if (h.review) {
+      app.open(h.machineId, h.id)
+      return
+    }
     resuming = h.id
     try {
       const meta = await createSession(app.baseForMachine(h.machineId), {

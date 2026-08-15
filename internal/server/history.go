@@ -95,11 +95,14 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		// is nothing on disk left to ask. The record knows, and it also knows this
 		// is a review at all, which is what makes reopening it land on the
 		// findings instead of on a dead conversation. See tagReviewRepos.
-		if s.prReviews.isReview(entries[i].ID) {
+		if rec, ok := s.prReviews.get(entries[i].ID); ok {
 			entries[i].Review = true
 			if entries[i].Repo == "" {
-				entries[i].Repo = s.prReviews.repoOf(entries[i].ID)
+				entries[i].Repo = rec.RepoDir
 			}
+			// Named from the record rather than from its first prompt, which for a
+			// review is the wrapper kunai drove it with and reads as machinery.
+			entries[i].Title = reviewTitle(rec)
 		}
 		if o, ok := over[entries[i].ID]; ok {
 			if o.Name != "" {
@@ -112,6 +115,21 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, entries)
+}
+
+// ourWrapper reports whether an angle-bracketed prompt is one KUNAI wrapped, as
+// opposed to something the CLI's own harness injected.
+//
+// The distinction decides whether a session appears in Recent at all, and
+// getting it wrong hid two whole classes of session. Every prompt a review is
+// driven by is wrapped in <kunai-review>, and every iteration of a self-prompting
+// run in <loop-iteration>, so both looked exactly like the system boilerplate the
+// "starts with <" rule exists to skip -- and a finished review was therefore
+// unreachable from Recent, on the one screen somebody goes looking for it. They
+// are the opposite of boilerplate: they are what was asked, in the shape kunai
+// asks it.
+func ourWrapper(text string) bool {
+	return strings.HasPrefix(text, "<kunai-review>") || strings.HasPrefix(text, "<loop-iteration")
 }
 
 // scanHistory walks each account's <configDir>/projects/*/<sessionId>.jsonl
@@ -392,7 +410,7 @@ func probeTranscript(path string) transcriptProbe {
 			// Skip harness/system wrappers (<system_instruction>, caveats, …).
 			// They are not somebody asking for something, so they do not make this
 			// a conversation either.
-			if t != "" && !strings.HasPrefix(t, "<") {
+			if t != "" && (!strings.HasPrefix(t, "<") || ourWrapper(t)) {
 				p.Asked = true
 				if firstPrompt == "" {
 					firstPrompt = t

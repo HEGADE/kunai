@@ -708,6 +708,37 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   has yet, and while NOTHING knows, nothing renders: a blank moment is honest
   and the wrong screen is not. Pinned by a smoke test that answers `/review`
   slowly, which is the only way this bug is visible at all.
+  **A finished review can still be asked things** (`prreviewreopen.go`,
+  `POST /api/sessions/{id}/review/reopen`). Its session ends -- Done, or a
+  restart -- and the draft outlives it on purpose, so Ask opened a transcript
+  with a dead composer and a Reopen underneath that answers "cannot tell which
+  folder this session ran in": a review runs in a throwaway checkout that is
+  swept when it ends, so the transcript's own cwd is gone and the ordinary
+  reopen cannot work. Everything needed is on the record, and one fact makes it
+  cheap: **a resumed session keeps its id** (`manager.go`: `id := opts.Resume`),
+  so the record needs no rekeying and the draft, the verdicts and the posted URL
+  still point at the same place. The checkout is remade at the commit that was
+  READ, at the same deterministic path -- which is load-bearing rather than
+  tidy, since a conversation lives in a folder named after the directory it
+  happened in (`~/.claude/projects/-home-ninja--kunai-nightly-worktrees-kunai-review-6`),
+  so a checkout remade anywhere else resumes nothing. It comes back under the
+  same withheld tools it ran under, or a reopened review would quietly be a
+  different thing wearing the same name. `Ask` calls it unconditionally (it is
+  idempotent: a live review answers with its own id) and then SWAPS THE
+  CONNECTION, because this tab's socket gave up the moment it 404'd and never
+  retries by design. `prReview.CLI` records the account, since the transcript
+  lives in that account's config dir and the reviewing account may have changed
+  since. Proven end to end against a real CLI: a swept checkout, reopened, its
+  model still answering from the conversation it had before.
+  Reviews were also **invisible in Recent**, which is where somebody goes
+  looking for a finished one. `probeTranscript` drops a session nobody ever
+  asked anything, and skips a first prompt starting with `<` as harness
+  boilerplate -- but every review prompt is wrapped in `<kunai-review>` and every
+  loop iteration in `<loop-iteration>`, so both whole classes were filtered out
+  as machinery (`ourWrapper` is the exception). A review row then opens the
+  FINDINGS rather than resuming: the draft is what somebody came back for, and
+  resuming would spend a CLI boot to reach the same screen and fail anyway on a
+  cwd that is no longer there.
   **A pull request that moved is re-anchored, not refused** (`reanchor.go`).
   Posting used to stop dead with "#5 has moved on since this review (now
   8c802e4d); review it again before posting", throwing away a review that cost

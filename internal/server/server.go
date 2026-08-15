@@ -367,6 +367,10 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/github/review", s.handleStartReview)
 	mux.HandleFunc("GET /api/sessions/{id}/review", s.handleReviewDraft)
 	mux.HandleFunc("POST /api/sessions/{id}/review/post", s.handlePostReview)
+	// Bringing a finished review's session back so it can be asked something. Its
+	// checkout is swept when it ends, so the ordinary reopen cannot work: see
+	// prreviewreopen.go.
+	mux.HandleFunc("POST /api/sessions/{id}/review/reopen", s.handleReopenReview)
 
 	mux.HandleFunc("GET /api/failover", s.handleFailover)
 	mux.HandleFunc("POST /api/failover", s.handleFailover)

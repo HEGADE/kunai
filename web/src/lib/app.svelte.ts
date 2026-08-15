@@ -8,6 +8,7 @@ import {
   listMachines,
   listSessions,
   removeMachine as apiRemoveMachine,
+  reopenReview,
   setEffort as apiSetEffort,
   setAccount as apiSetAccount,
   setProviderModel as apiSetProviderModel,
@@ -241,15 +242,6 @@ class AppStore {
     if (live) return live.review === true
     const past = this.history.find((h) => h.machineId === machineId && h.id === id)
     if (past) return past.review === true
-    return undefined
-  }
-
-  // Whether a session is still running, when anything on hand knows. The same
-  // three answers as isReviewSession and for the same reason: "not in the live
-  // list" and "known to be over" are different, and only one of them is a fact.
-  isLiveSession(machineId: string, id: string): boolean | undefined {
-    if (this.sessions.some((s) => s.machineId === machineId && s.id === id)) return true
-    if (this.history.some((h) => h.machineId === machineId && h.id === id)) return false
     return undefined
   }
 
@@ -1228,6 +1220,20 @@ class AppStore {
     await next.whenReady()
     this.conns.set(key, next)
     this.connsVersion++
+  }
+
+  // wakeReview brings a finished review's session back so it can be asked
+  // something, and reattaches this tab to it.
+  //
+  // Both halves are needed. The server can recreate the session under the SAME
+  // id (a resume keeps it), but this tab's socket gave up the moment it 404'd
+  // and never retries by design, so without the swap the conversation goes on
+  // saying the session has ended while it is running again.
+  async wakeReview(machineId: string, id: string) {
+    await reopenReview(this.baseForMachine(machineId), id)
+    const t = this.tabs.find((x) => x.machineId === machineId && x.id === id)
+    if (t) await this.swapConnection(t, () => {})
+    this.refresh()
   }
 
   // switchAccount moves the active session to a different Claude account, keeping

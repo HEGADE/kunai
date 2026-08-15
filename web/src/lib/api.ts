@@ -914,6 +914,20 @@ export function postReview(
   }).then((r) => json<{ url: string }>(r))
 }
 
+// reopenReview brings a finished review's session back so it can be asked
+// something. Idempotent: a review that is still live answers with its own id and
+// changes nothing, so a caller never has to work out which it is.
+//
+// It exists because the ordinary reopen cannot do this. A review runs in a
+// throwaway checkout that is swept when it ends, so resuming it needs the
+// commit that was read and the repository it came from, and only the review
+// record has those.
+export function reopenReview(base: string, sessionId: string): Promise<{ id: string }> {
+  return fetch(at(base, `/api/sessions/${sessionId}/review/reopen`), { method: 'POST' }).then((r) =>
+    json<{ id: string }>(r),
+  )
+}
+
 // ReviewConfig is which account and model reviews run on. Its own setting
 // because a review is chunky and unattended: pointed at a second account or a
 // provider, it can never wall the session you are working in. Empty means the

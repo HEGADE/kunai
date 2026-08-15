@@ -202,7 +202,7 @@ func (s *Server) startReview(ctx context.Context, repoDir string, number int, re
 			SessionID: sess.ID, Owner: repo.Owner, Repo: repo.Name, Number: number,
 			Title: pr.Title, HeadSHA: sha, BaseRef: pr.Base.Ref, FromFork: fromFork,
 			RepoDir: repoRoot, Worktree: wt.Path,
-			Requester: requester, CreatedAt: time.Now(),
+			Requester: requester, CLI: cli.Name, CreatedAt: time.Now(),
 			Phase:    string(run.Phase),
 			Surveyed: run.Phase == review.PhaseSurvey,
 			// What is under review, so the screen somebody watches while it runs
