@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/hegade/kunai/internal/review"
+	"github.com/hegade/kunai/internal/session"
 	"github.com/hegade/kunai/internal/worktree"
 )
 
@@ -237,6 +238,9 @@ func TestADraftSaysWhetherItIsStillWorking(t *testing.T) {
 	s := &Server{
 		prReviews:  newPRReviewStore(filepath.Join(dir, "p.json")),
 		reviewRuns: newReviewRunners(),
+		// A real manager, because the handler asks it whether either session is
+		// sitting on a permission ask.
+		mgr: session.NewManager(),
 	}
 	s.prReviews.put(prReview{SessionID: "s1", Owner: "o", Repo: "r", Number: 7, Phase: "verify"})
 
