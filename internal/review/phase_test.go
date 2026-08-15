@@ -416,3 +416,38 @@ func TestResumingVerifyWithNoCandidatesFindsInstead(t *testing.T) {
 		t.Error("an unfinished phase was not resumable")
 	}
 }
+
+// The hunt is delegated when there is something to delegate, and not otherwise.
+//
+// Cost is roughly (what a session reads) x (how many steps come after), so the
+// reading belongs in subagents whose context dies with them: measured, the find
+// phase was 56 calls at a 240k average context, $9.49 of a $24.95 review, having
+// been told in as many words to keep it bounded. Telling it harder is not the
+// fix; making the unit smaller is.
+func TestTheFindPhaseDelegatesOnlyWhenThereAreAreas(t *testing.T) {
+	req := Request{Repo: "o/r", Number: 7, Title: "t", DiffDir: ".kunai-review/diff"}
+
+	fanned := FindPrompt(req, Survey{Areas: []Area{{What: "the guard", Files: []string{"a.go"}}}})
+	if !strings.Contains(fanned, "Task tool") {
+		t.Error("a surveyed review does not delegate the hunt")
+	}
+	if !strings.Contains(fanned, "a JSON\n     array of objects") {
+		t.Error("the subagent is not told what shape to answer in, so nothing can be merged")
+	}
+	// The orchestrator keeps the judgement; a fan-out that relays is worse than
+	// no fan-out, because nobody is accountable for the list.
+	if !strings.Contains(fanned, "Judge what comes back") {
+		t.Error("the orchestrator was turned into a relay")
+	}
+
+	// A change small enough to skip the survey is small enough to read directly:
+	// three subagents for three files pays the fixed cost three times to save
+	// nothing.
+	direct := FindPrompt(req, Survey{})
+	if strings.Contains(direct, "Task tool") {
+		t.Error("a small change delegates anyway, which costs more than it saves")
+	}
+	if !strings.Contains(direct, "Keep the reading BOUNDED") {
+		t.Error("the direct method lost its own advice")
+	}
+}

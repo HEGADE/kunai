@@ -705,6 +705,26 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   session of its OWN, so the ask lands where this screen is not attached -- the
   draft names the session holding it (`blocked_session`) and the view offers to
   go there, rather than showing a review that looks like it is working.
+  **The hunt is DELEGATED, one question per subagent** (`findMethod`). Cost in a
+  session is roughly (what it reads) x (how many steps come after), because
+  everything opened stays in front of it and is re-billed on every later call.
+  Measured on one real review: the find phase made **56 tool calls against a
+  240k average context -- 13.42M cache-read tokens, $9.49 of a $24.95 review**,
+  having been told in as many words to keep its reading bounded. Telling it
+  harder is not the fix; the unit has to be smaller. A subagent's context dies
+  with it, so the same file costs 1.25x ONCE rather than 0.1x on every remaining
+  step, and the verification phase already demonstrates the shape at ~$2 per
+  subagent. So the finder stops being a reader and becomes an orchestrator: one
+  narrow Task per survey area, the reading where it is cheap, and it reads
+  directly only where no area covers or an answer does not add up. Two things
+  are load-bearing. It **keeps the judgement** -- it drops duplicates and
+  anything whose failure the subagent could not name, because a fan-out that
+  relays has nobody accountable for the list. And it fans out **only when there
+  are areas**: a change small enough to have skipped the survey is small enough
+  to read directly, where paying the fixed cost of a fresh context per file
+  would cost more than it saves. Each phase now prices itself
+  (`phaseStart.SpentUSD`), so the next version of this paragraph can be written
+  from the product rather than from a script over the transcripts.
   **A review that stopped is picked up, not repeated** (`review.Resumed`,
   `prreviewresume.go`). The measurement that bought this: one evening, one pull
   request, four attempts at #7 costing **$45.72, of which $20.77 bought

@@ -124,7 +124,14 @@ func FindPrompt(r Request, survey Survey) string {
 	b.WriteString(stayQuiet)
 
 	b.WriteString("\n## How to work\n\n")
-	b.WriteString(findMethod)
+	// Fan out only when there is something to fan out over. A change small enough
+	// to have skipped the survey is small enough to read directly, and paying for
+	// a fresh context per file would cost more than it saves.
+	if len(survey.Areas) > 0 {
+		b.WriteString(findMethod)
+	} else {
+		b.WriteString(findMethodDirect)
+	}
 
 	if len(r.PriorNotes) > 0 {
 		b.WriteString("\n## Already said by a human on this pull request\n\n")
@@ -151,18 +158,69 @@ func FindPrompt(r Request, survey Survey) string {
 // was right when whatever survived went straight onto somebody's pull request,
 // and it is wrong now: an independent pass does the deleting, and it does it
 // better, so suppressing a real suspicion here only means nothing ever checks it.
-const findMethod = `1. Read the diffs of the files that carry the risk, not all of them. The list
-   above is how you choose; a review that reads everything costs far more than the
-   bugs it finds are worth.
+// findMethod: the hunt is DELEGATED, one question per subagent.
+//
+// This replaced an instruction to read carefully and stop when you have enough,
+// which is the right advice and does not work, because the incentive it fights
+// is structural rather than a matter of discipline. Everything a session opens
+// stays in front of it and is billed again on every later step, so cost is
+// roughly (what you read) x (how many steps come after). Measured on one real
+// review: the find phase made 56 tool calls against an average context of 240k,
+// which is 13.42M cache-read tokens and $9.49 -- more than a third of the whole
+// review, and the model had been told in as many words to keep it bounded.
+//
+// A subagent's context dies with it, so the same file read inside one costs
+// 1.25x once instead of 0.1x on every remaining step of a long session. The
+// verification phase already works this way and its subagents come in around
+// $2 each for a dozen calls. So the finder stops being a reader and becomes an
+// orchestrator: it asks one narrow question per area, and the reading happens
+// where it is cheap.
+//
+// The orchestrator keeps the judgement. It is not a relay: it decides what is
+// worth reporting, drops duplicates, and can go and look itself when an answer
+// does not add up. That is the part a fan-out must not give away.
+const findMethod = `1. Work through the areas above ONE AT A TIME, and delegate each one to a
+   subagent with the Task tool rather than reading it yourself. A subagent's
+   reading is thrown away when it answers; yours stays in front of you and is
+   paid for again at every step you take afterwards, so a hunt you run yourself
+   costs several times the same hunt delegated, and is not better for it.
+
+   Give each subagent, in its prompt: the area and why it matters, the files it
+   covers and where their diffs are, that it is checked out in a worktree at the
+   commit under review and may read anything in it, and this instruction --
+
+     Read the diff, then read the code around it. Say what is WRONG and how it
+     fails: the input or the state, and what happens then. Answer with a JSON
+     array of objects with the keys file, line, end_line, side, severity,
+     confidence, category, title, short, body, grounds, impact, fix_title,
+     suggestion. Return [] if you find nothing. Do not pad it.
+
+2. Read a diff yourself only where no area covers it, or where a subagent's
+   answer does not add up and you need to see the code to judge it. Two or three
+   files, not forty.
+3. Judge what comes back rather than relaying it. Drop the duplicates, drop
+   anything whose failure the subagent could not actually name, and keep the
+   claim in the words that make it checkable. You are the one accountable for
+   the list.
+4. Report what you found, and be HONEST about how sure you are rather than quiet.
+   A suspicion costs little, because everything here is independently re-examined
+   before it can be posted. A suppressed one costs everything: nothing else is
+   going to go looking for it.`
+
+// findMethodDirect is the method when there is no survey to fan out over.
+//
+// A change small enough to skip the survey (see worthSurveying) is small enough
+// to read directly: delegating three files to three subagents pays the fixed
+// cost of a fresh context three times over to save nothing.
+const findMethodDirect = `1. Read the diffs of the files that carry the risk, not all of them.
 2. For each thing you suspect, go and look at the file in the worktree. The diff
    alone does not show you the function a line sits in, its callers, or the
    invariant it breaks. That context is why you are checked out here.
 3. Keep the reading BOUNDED. Everything you open stays in front of you for the
-   rest of this pass and is paid for again at every step after it, so a hunt that
-   opens forty files costs many times one that opens eight and is not usually
-   better. Grep for the specific caller rather than reading the whole file, and
-   read the part of a file you need rather than all of it. When you have enough to
-   judge the change, stop and write it up.
+   rest of this pass and is paid for again at every step after it. Grep for the
+   specific caller rather than reading the whole file, and read the part of a
+   file you need rather than all of it. When you have enough to judge the change,
+   stop and write it up.
 4. Report what you found, and be HONEST about how sure you are rather than quiet.
    A suspicion costs little, because everything here is independently re-examined
    before it can be posted. A suppressed one costs everything: nothing else is
