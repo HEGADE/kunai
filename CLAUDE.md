@@ -1485,6 +1485,29 @@ Behavioral invariants that were bugs before (do not regress):
   kunai has no login, so any device that can reach the port can drive the agent.
   The guard stops hostile web pages, not a machine on your wifi making the request
   itself. Turning it on means trusting the network.
+- **An uploaded image is made sendable, or refused where you can see it**
+  (`internal/imageprep`). kunai inlined anything whose media type began with
+  `image/`, and the Messages API accepts exactly four formats -- JPEG, PNG, GIF,
+  WebP -- with a 10MB per-image cap on the BASE64 (so ~7.5MB raw) and 8000x8000
+  pixels. So an iPhone photo (HEIC), an AVIF from a website, a BMP, or simply a
+  large photo went up and came back as "an image in the conversation could not
+  be processed and was removed": minutes into a turn, with nothing saying which
+  image or why, and the turn already paid for. The declared type is **never**
+  trusted -- it is whatever the browser guessed from an extension or a sender
+  chose to write, which is the same lesson the share gate learned when a guest
+  could relabel its own upload -- so the bytes are sniffed (`Sniff`, magic
+  numbers, which is also how a refusal can NAME the format). What is already
+  fine passes through untouched, because re-encoding a screenshot costs quality
+  exactly where the text is. What is merely too big is downscaled to a 2576px
+  long edge, which is the API's own high-resolution target: nothing is lost that
+  the model would have seen, and the upload, the tokens and the wait all shrink
+  (a 5000x3000 JPEG: 1.7MB -> 426KB). What cannot be converted is refused at
+  UPLOAD time with a sentence naming the format and what to do about it, and the
+  client shows it rather than swallowing it as it used to. Stdlib only,
+  deliberately: JPEG, PNG and GIF are what real uploads are, and a library to
+  convert the tail would cost a dependency and still not decode HEIC (cgo).
+  `guestImageTypes` lost `avif` and `bmp` for the same reason -- neither is one
+  of the four, and a guest has no way to work out why their picture vanished.
 - `web/src/lib/clipboard.ts` (`copyText`) exists because `navigator.clipboard` is
   not merely unreliable off a secure context, it is **undefined**. Every Copy
   button therefore did nothing on a LAN address, and `Markdown.svelte`'s

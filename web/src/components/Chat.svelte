@@ -340,8 +340,13 @@
     for (const f of files) {
       try {
         attachments = [...attachments, await uploadFile(chat.origin, f)]
-      } catch {
-        /* skip */
+      } catch (e) {
+        // Said, not swallowed. The server refuses what the API cannot read -- a
+        // HEIC photo, an AVIF, something too large -- with a sentence that names
+        // the format and what to do about it, and this used to drop that on the
+        // floor: the file simply never appeared, and sending it again did the
+        // same nothing.
+        toasts.error(`Could not attach ${f.name}`, (e as Error).message)
       }
     }
     uploading = false
@@ -768,6 +773,7 @@
           {#each attachments as a (a.id)}
             <span class="chip">
               <span class="cn mono">{a.name}</span>
+              {#if a.note}<span class="cnote">{a.note}</span>{/if}
               <button class="cx" onclick={() => removeAttachment(a.id)} aria-label="Remove">✕</button>
             </span>
           {/each}
@@ -1489,6 +1495,12 @@
     flex-wrap: wrap;
     gap: 6px;
     padding: 2px 0 8px;
+  }
+  /* What was done to make it sendable, beside the name. Quiet: it is a fact to
+     have, not a warning. */
+  .cnote {
+    color: var(--text-4);
+    font-size: 11px;
   }
   .chip {
     display: inline-flex;

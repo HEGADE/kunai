@@ -55,13 +55,15 @@ const maxGuestFiles = 40
 // guestImageTypes is what may be sent. Deliberately the same raster set the file
 // route serves rather than "anything image/*", so a guest cannot hand the model
 // an SVG (a scriptable document) or a format nothing here can show.
+// Exactly what the API accepts, and no more. AVIF and BMP were on this list and
+// are not among the four: an upload in either was taken, staged, inlined, and
+// dropped by the API with "an image in the conversation could not be processed
+// and was removed". A guest has no way to work that out. See internal/imageprep.
 var guestImageTypes = map[string]bool{
 	"image/png":  true,
 	"image/jpeg": true,
 	"image/gif":  true,
 	"image/webp": true,
-	"image/avif": true,
-	"image/bmp":  true,
 }
 
 // guestUploads is the narrow slice of the server the gate needs to stage a file,

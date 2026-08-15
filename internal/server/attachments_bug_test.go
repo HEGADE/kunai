@@ -14,6 +14,12 @@ import (
 // Attachment ids must have the shape hexID mints, so the tests use real ones
 // rather than "img1". A short label would now be refused before it is read, which
 // is the point of stagedID.
+// fakePNG is the PNG signature and nothing else. It has to be the real eight
+// bytes: buildContent now decides from the CONTENT rather than from the media
+// type on the record, because a label that said image/png over HEIC bytes is
+// exactly what the API kept refusing.
+var fakePNG = []byte("\x89PNG\r\n\x1a\n" + "fake")
+
 const (
 	testID1       = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
 	testIDMissing = "ffffffffffffffffffffffffffffffff"
@@ -25,7 +31,7 @@ const (
 func TestBuildContent_ImageWithNoText(t *testing.T) {
 	dir := t.TempDir()
 	s := &Server{uploadsDir: dir}
-	os.WriteFile(filepath.Join(dir, testID1), []byte("\x89PNG fake"), 0o600)
+	os.WriteFile(filepath.Join(dir, testID1), fakePNG, 0o600)
 
 	got := s.buildContent(t.TempDir(), "", []session.Attachment{{ID: testID1, Name: "shot.png", MediaType: "image/png"}})
 	blocks, ok := got.([]claude.ContentBlock)
@@ -40,7 +46,7 @@ func TestBuildContent_ImageWithNoText(t *testing.T) {
 	if len(blocks) != 1 || blocks[0].Type != "image" {
 		t.Fatalf("image-only message should be just the image block, got %+v", blocks)
 	}
-	if blocks[0].Source == nil || blocks[0].Source.Data != base64.StdEncoding.EncodeToString([]byte("\x89PNG fake")) {
+	if blocks[0].Source == nil || blocks[0].Source.Data != base64.StdEncoding.EncodeToString(fakePNG) {
 		t.Error("image data not inlined correctly")
 	}
 }
@@ -49,7 +55,7 @@ func TestBuildContent_ImageWithNoText(t *testing.T) {
 func TestBuildContent_ImageWithText(t *testing.T) {
 	dir := t.TempDir()
 	s := &Server{uploadsDir: dir}
-	os.WriteFile(filepath.Join(dir, testID1), []byte("png"), 0o600)
+	os.WriteFile(filepath.Join(dir, testID1), fakePNG, 0o600)
 
 	got := s.buildContent(t.TempDir(), "what is this?", []session.Attachment{{ID: testID1, MediaType: "image/png"}})
 	blocks := got.([]claude.ContentBlock)

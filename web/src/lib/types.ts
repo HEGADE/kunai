@@ -339,6 +339,11 @@ export interface Attachment {
   id: string
   name: string
   media_type: string
+  // What the server had to do to make it sendable ("resized"), when it did.
+  // Said rather than done quietly: these are not the bytes that were handed
+  // over, and somebody sending a screenshot to be read closely should know it
+  // was scaled. See internal/imageprep.
+  note?: string
 }
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'auto' | 'plan' | 'bypassPermissions'
