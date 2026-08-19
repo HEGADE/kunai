@@ -1046,6 +1046,9 @@ export interface PreviewServer {
   local: boolean
   url?: string
   forwarding: boolean
+  // Dismissed for this session. Sent rather than filtered away, so the card can
+  // say how many rows it is holding back and give them back.
+  hidden?: boolean
 }
 
 export function listPreviews(base: string, id: string): Promise<PreviewServer[]> {
@@ -1060,6 +1063,22 @@ export function openPreview(base: string, id: string, port: number): Promise<Pre
 export function closePreview(base: string, id: string, port: number): Promise<unknown> {
   return fetch(at(base, `/api/sessions/${id}/previews/${port}`), { method: 'DELETE' })
     .then((r) => json<unknown>(r))
+}
+
+// Dismiss a discovered server, or bring it back. Hiding a shared one stops the
+// forwarding first, server-side, so a port cannot stay published with no row
+// left to turn it off.
+export function hidePreview(
+  base: string,
+  id: string,
+  port: number,
+  hidden: boolean,
+): Promise<unknown> {
+  return fetch(at(base, `/api/sessions/${id}/previews/${port}`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hidden }),
+  }).then((r) => json<unknown>(r))
 }
 
 // Spend, priced from the transcripts. The whole history arrives in one payload

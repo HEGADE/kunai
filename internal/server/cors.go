@@ -31,7 +31,13 @@ func cors(next http.Handler, crossMachine bool) http.Handler {
 		if r.Method == http.MethodOptions {
 			// Preflight: our routes are method-scoped, so an OPTIONS reaches no
 			// handler — answer it here.
-			h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+			//
+			// PATCH and PUT are on this list because routes use them (renaming a
+			// session, replacing a schedule, dismissing a preview) and a method the
+			// preflight does not name is refused by the browser before the request
+			// is made. They were missing, so every one of those calls worked on the
+			// machine serving the app and failed silently on a peer.
+			h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
 			h.Set("Access-Control-Allow-Headers", "Content-Type")
 			h.Set("Access-Control-Max-Age", "600")
 			w.WriteHeader(http.StatusNoContent)

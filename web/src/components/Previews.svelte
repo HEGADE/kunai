@@ -1,5 +1,11 @@
 <script lang="ts">
-  import { listPreviews, openPreview, closePreview, type PreviewServer } from '../lib/api'
+  import {
+    listPreviews,
+    openPreview,
+    closePreview,
+    hidePreview,
+    type PreviewServer,
+  } from '../lib/api'
 
   // What the agent is running, and a way to look at it.
   //
@@ -10,11 +16,25 @@
   // "Open" is a deliberate act rather than something kunai does on discovery,
   // because opening puts a dev server on the tailnet. Finding it is free and
   // private; exposing it is a decision, so it is a tap.
+  //
+  // A row can also be DISMISSED, because attribution answers a different
+  // question from the one a reader has: kunai proves a port belongs to this
+  // session, and that says nothing about whether anybody wants to look at it. A
+  // language server, a database, a dev server whose address you already know are
+  // all correctly found and all noise sitting above the composer.
   let { base = '', sessionId }: { base?: string; sessionId: string } = $props()
 
   let servers = $state<PreviewServer[]>([])
   let busy = $state(0)
   let err = $state('')
+
+  // Split rather than filtered at the source, because a dismissal must be
+  // reversible and the count is the only thing that can say so. Hiding
+  // everything and rendering nothing would leave no way back and no tell that a
+  // later dev server on the same port is being swallowed -- the same reason the
+  // sidebar names how many quiet folders it is holding.
+  const shown = $derived(servers.filter((s) => !s.hidden))
+  const hiddenCount = $derived(servers.length - shown.length)
 
   async function load() {
     try {
@@ -49,11 +69,32 @@
       busy = 0
     }
   }
+
+  // Dismiss one, or bring every dismissed row back. The server stops forwarding
+  // a shared port before it hides it, so this can never strand a listener.
+  async function setHidden(port: number, hidden: boolean) {
+    busy = port
+    err = ''
+    try {
+      await hidePreview(base, sessionId, port, hidden)
+      await load()
+    } catch (e) {
+      err = (e as Error).message
+    } finally {
+      busy = 0
+    }
+  }
+
+  async function showAll() {
+    for (const s of servers.filter((x) => x.hidden)) await setHidden(s.port, false)
+  }
 </script>
 
 {#if servers.length}
-  <div class="card">
-    {#each servers as s (s.port)}
+  <!-- No chrome once every row is dismissed: what is left is a one-line receipt,
+       not a card. The point of dismissing was to get the space back. -->
+  <div class="card" class:bare={!shown.length}>
+    {#each shown as s (s.port)}
       <div class="row">
         <span class="k">
           <span class="name mono">:{s.port}</span>
@@ -81,8 +122,28 @@
             {busy === s.port ? 'Sharing…' : 'Share'}
           </button>
         {/if}
+        <button
+          class="dismiss"
+          onclick={() => setHidden(s.port, true)}
+          disabled={busy === s.port}
+          aria-label="Remove :{s.port} from this card"
+          title="Remove this from the card. Sharing stops."
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+            <path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" />
+          </svg>
+        </button>
       </div>
     {/each}
+    <!-- Always said, never merely absent. It is the way back, and it is also the
+         only thing that can tell you a dev server started later on a dismissed
+         port is being held back rather than missing. -->
+    {#if hiddenCount}
+      <div class="held">
+        <span>{hiddenCount} hidden</span>
+        <button class="plain" onclick={showAll} disabled={busy > 0}>Show</button>
+      </div>
+    {/if}
     {#if err}<p class="err">{err}</p>{/if}
   </div>
 {/if}
@@ -101,6 +162,10 @@
     border: 1px solid var(--border);
     border-radius: var(--r-lg);
     overflow: hidden;
+  }
+  .card.bare {
+    background: none;
+    border-color: transparent;
   }
   .row {
     display: flex;
@@ -175,6 +240,43 @@
   .plain:hover:not(:disabled) {
     color: var(--text);
     background: var(--panel-3);
+  }
+  /* Quiet enough to be furniture and always present rather than revealed on
+     hover: a control that only exists under a pointer does not exist on a
+     phone, which is most of where kunai is read. */
+  .dismiss {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    margin-right: -4px;
+    border-radius: 7px;
+    background: none;
+    color: var(--text-4);
+  }
+  .dismiss svg {
+    width: 15px;
+    height: 15px;
+  }
+  .dismiss:hover:not(:disabled) {
+    color: var(--text-2);
+    background: var(--panel-3);
+  }
+  .dismiss:disabled {
+    opacity: 0.4;
+  }
+  .held {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    padding: 4px 9px;
+    font-size: 11px;
+    color: var(--text-4);
+  }
+  .row + .held {
+    border-top: 1px solid var(--border);
   }
   .err {
     margin: 0;
