@@ -16,7 +16,13 @@
   // scoped to the selected machine. The list reads like a small credential
   // roster: a status dot, the name, and its role; a signed-out account is dimmed
   // because you cannot switch a session onto it.
-  let machineId = $state(app.activeMachineId ?? app.machines[0]?.id ?? '')
+  //
+  // A section of Settings rather than a page of its own. It was both for a
+  // while, and that was the worst of the two: this UI, with the real sign-in
+  // flow, AND a second list of the same accounts inside Settings that linked
+  // across to here. The machine now comes from Settings, which is also what
+  // stops two machine pickers from disagreeing on screen.
+  let { machineId }: { machineId: string } = $props()
   const base = $derived(app.baseForMachine(machineId))
   const machine = $derived(app.machines.find((m) => m.id === machineId) ?? null)
 
@@ -41,8 +47,19 @@
   // instant it opens, with status still resolving. The names ship in /api/stats
   // only when the machine has a real choice (>1 account); a single-account
   // machine has none cached, so it falls through to the skeleton.
+  //
+  // PROVIDERS ARE FILTERED OUT, and that is a correctness fix rather than
+  // tidiness. `stats.clis` is what a New Session picker offers, which is
+  // accounts AND providers (cliNames on the server appends providerList);
+  // /api/accounts is accounts alone. Seeded raw, this listed Codex and Grok as
+  // Claude subscriptions for the second before the fetch landed, and then
+  // dropped them, so the section both said something false and jumped as it
+  // corrected itself. provider_models is keyed by provider name, which is
+  // exactly the set to remove.
   function seedFromCache() {
-    const names = machine?.stats?.clis ?? []
+    const stats = machine?.stats
+    const providers = new Set(Object.keys(stats?.provider_models ?? {}))
+    const names = (stats?.clis ?? []).filter((n) => !providers.has(n))
     accounts = names.map((n, i) => ({ name: n, default: i === 0 }))
   }
 
@@ -153,72 +170,54 @@
     a.ready === undefined ? 'checking' : a.ready ? '' : 'signed out'
 </script>
 
-<div class="backdrop" onclick={() => app.closeAccounts()} role="presentation">
-<section class="sheet" role="dialog" aria-label="Claude accounts" onclick={(e) => e.stopPropagation()}>
-  <header class="top">
-    <button class="back" onclick={() => app.closeAccounts()} aria-label="Back">
-      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
-    </button>
-    <h1>Claude accounts</h1>
-    {#if app.machines.length > 1}
-      <label class="mpick">
-        <select bind:value={machineId} aria-label="Machine">
-          {#each app.machines as m (m.id)}
-            <option value={m.id}>{m.label}{m.self ? ' · this machine' : ''}</option>
-          {/each}
-        </select>
-        <svg class="mchev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-      </label>
-    {/if}
-  </header>
-
-  <p class="lede">
-    Run more than one Claude on {machine ? machine.label : 'this machine'} (a personal
-    and a work subscription, say) and choose which one each session runs on. When one
-    hits its limit, switch a session to the other.
-  </p>
 
   {#if error}
-    <p class="state err">{error}</p>
-  {:else if loading}
-    <div class="roster" aria-hidden="true">
-      {#each [0, 1] as i (i)}
-        <div class="row"><span class="dot checking"></span><span class="skname"></span></div>
-      {/each}
-    </div>
+    <p class="st-note bad">{error}</p>
   {:else}
-    <div class="roster">
-      {#each accounts as a (a.name)}
-        <div class="row" class:off={a.ready === false}>
-          <span
-            class="dot"
-            class:on={a.ready === true}
-            class:hollow={a.ready === false}
-            class:checking={a.ready === undefined}></span>
-          <span class="nm">{a.name}</span>
-          {#if a.default}<span class="tag">default</span>{/if}
-          {#if statusText(a)}<span class="status">{statusText(a)}</span>{/if}
-          {#if !a.default}
-            <button class="rm" onclick={() => remove(a)} aria-label="Remove {a.name}" title="Remove {a.name}">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" /><path d="M6 6l1 14a2 2 0 002 2h6a2 2 0 002-2l1-14" /></svg>
-            </button>
-          {/if}
+    <!-- The accounts and the way to add one live in ONE card. They were two
+         containers with two different borders, one of them dashed, which made a
+         list of two things look like two unrelated widgets. -->
+    <div class="st-card">
+      {#if loading}
+        <div class="st-row" aria-hidden="true">
+          <span class="st-dot"></span><span class="skname"></span>
         </div>
-      {/each}
+      {:else}
+        {#each accounts as a (a.name)}
+          <div class="st-row" class:off={a.ready === false}>
+            <span
+              class="st-dot"
+              class:on={a.ready === true}
+              class:checking={a.ready === undefined}></span>
+            <span class="st-k">
+              <span class="st-name">{a.name}</span>
+              {#if statusText(a)}<span class="st-sub-text">{statusText(a)}</span>{/if}
+            </span>
+            {#if a.default}<span class="st-badge">default</span>{/if}
+            {#if !a.default}
+              <button class="st-btn ghost danger" onclick={() => remove(a)} aria-label="Remove {a.name}">
+                Remove
+              </button>
+            {/if}
+          </div>
+        {/each}
+      {/if}
+
+      {#if step === 'idle'}
+        <button class="st-row add" onclick={() => (step = 'name')}>
+          <span class="plus" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+          </span>
+          <span class="st-k">
+            <span class="st-name">Add account</span>
+            <span class="st-sub-text">Sign in another Claude subscription</span>
+          </span>
+        </button>
+      {/if}
     </div>
   {/if}
 
-  {#if step === 'idle'}
-    <button class="add" onclick={() => (step = 'name')}>
-      <span class="plus">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
-      </span>
-      <span class="addtext">
-        <span class="at">Add account</span>
-        <span class="as">Sign in another Claude subscription</span>
-      </span>
-    </button>
-  {:else}
+  {#if step !== 'idle'}
     <div class="flow">
       {#if step === 'name'}
         <div class="fhead"><span class="fstep">New account</span><span class="fnum">Step 1 of 2</span></div>
@@ -273,254 +272,54 @@
       {/if}
     </div>
   {/if}
-</section>
-</div>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-    background: rgba(0, 0, 0, 0.6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
+  /* A column rather than a sheet. The width is what a sheet was giving for free
+     and a full-width page is not: prose and forms stop being readable past
+     about this, so the constraint stays even though the modal that imposed it
+     is gone. */
+  /* The roster and the add row come from settings.css. What stays here is only
+     what is specific to this section: the skeleton, the dimming of a signed-out
+     account, and the add row's plus. */
+  .off {
+    opacity: 0.55;
   }
-  .sheet {
-    width: 100%;
-    max-width: 500px;
-    max-height: min(90dvh, 800px);
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-raised, var(--bg));
-    border: 1px solid var(--border-2);
-    border-radius: 20px;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.8);
-    padding: 20px 22px 24px;
-  }
-
-  .top {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .back {
-    flex: none;
-    width: 34px;
-    height: 34px;
-    margin-left: -6px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 10px;
-    color: var(--text-3);
-  }
-  .back:hover {
-    background: var(--panel);
-    color: var(--text);
-  }
-  .top h1 {
-    flex: 1;
-    min-width: 0;
-    margin: 0;
-    font-size: 19px;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-  }
-  .mpick {
-    flex: none;
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-  }
-  .mpick select {
-    appearance: none;
-    -webkit-appearance: none;
-    height: 32px;
-    padding: 0 28px 0 12px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 100px;
-    color: var(--text-2);
-    font-size: 12.5px;
-    max-width: 150px;
-  }
-  .mchev {
-    position: absolute;
-    right: 10px;
-    color: var(--text-4);
-    pointer-events: none;
-  }
-  .lede {
-    margin: 13px 2px 18px;
-    font-size: 13px;
-    line-height: 1.6;
-    color: var(--text-3);
-  }
-
-  /* The roster: one framed panel, hairline-divided rows. A single account reads
-     as one line, not a card, so a machine's whole identity list is legible in a
-     glance. */
-  .roster {
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    background: var(--panel);
-    overflow: hidden;
-  }
-  .row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 16px;
-    min-height: 52px;
-  }
-  .row + .row {
-    border-top: 1px solid var(--border);
-  }
-  .row.off .nm {
-    color: var(--text-3);
-  }
-
-  /* The status dot is the whole signal: filled green when signed in, a hollow
-     ring when signed out, a soft pulse while the check is still in flight. */
-  .dot {
-    flex: none;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    box-sizing: border-box;
-  }
-  .dot.on {
-    background: var(--live);
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--live) 16%, transparent);
-  }
-  .dot.hollow {
-    border: 1.5px solid var(--text-4);
-  }
-  .dot.checking {
-    background: var(--text-3);
-    animation: pulse 1.1s ease-in-out infinite;
-  }
-  @keyframes pulse {
-    0%,
-    100% {
-      opacity: 0.3;
-    }
-    50% {
-      opacity: 1;
-    }
-  }
-  .nm {
-    flex: 1;
-    min-width: 0;
-    font-size: 14.5px;
-    font-weight: 550;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .tag {
-    flex: none;
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
-    color: var(--text-4);
-    padding: 3px 7px;
-    border: 1px solid var(--border-2);
-    border-radius: 6px;
-  }
-  .status {
-    flex: none;
-    font-family: var(--mono);
-    font-size: 11.5px;
-    color: var(--text-3);
-  }
-  .rm {
-    flex: none;
-    width: 30px;
-    height: 30px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 8px;
-    color: var(--text-4);
-    transition: color 0.12s, background 0.12s;
-  }
-  .rm:hover,
-  .rm:active {
-    color: var(--alert);
-    background: var(--panel-2);
+  .st-dot.checking {
+    background: var(--text-4);
+    opacity: 0.5;
   }
   .skname {
+    flex: 1;
     height: 11px;
-    width: 96px;
+    max-width: 120px;
     border-radius: 4px;
-    background: var(--panel-3);
-    animation: pulse 1.1s ease-in-out infinite;
+    background: var(--panel-2);
   }
-
-  .state {
-    font-size: 13px;
-    color: var(--text-4);
-    padding: 14px 4px;
-  }
-  .state.err {
-    color: var(--alert);
-  }
-
-  /* Add is a distinct dashed slot below the list, not a row in it. */
+  /* The add row is a row of the same card, not a dashed slot beside it: two
+     containers with two different borders made a list of two things look like
+     two unrelated widgets. */
   .add {
-    display: flex;
-    align-items: center;
-    gap: 12px;
     width: 100%;
-    text-align: left;
-    margin-top: 12px;
-    padding: 13px 16px;
-    border: 1px dashed var(--border-2);
-    border-radius: var(--r-lg);
-    color: var(--text-2);
-    transition: border-color 0.12s, background 0.12s;
+    background: none;
   }
   .add:hover {
-    border-color: var(--text-4);
-    background: var(--panel);
+    background: var(--panel-2);
   }
   .plus {
     flex: none;
-    width: 30px;
-    height: 30px;
+    width: 24px;
+    height: 24px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 9px;
-    border: 1px solid var(--border-2);
+    border-radius: 7px;
+    border: 1px solid var(--border);
     color: var(--text-3);
   }
   .add:hover .plus {
     color: var(--text-2);
-    border-color: var(--text-4);
+    border-color: var(--border-2);
   }
-  .addtext {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-  }
-  .at {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .as {
-    font-size: 11.5px;
-    color: var(--text-4);
-  }
-
   /* The two-step add flow. Numbering is real here: name, then sign in. */
   .flow {
     margin-top: 12px;

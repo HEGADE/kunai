@@ -36,6 +36,10 @@ type spawnSpec struct {
 	// claims, which would make it look like a stale share to the share reconciler.
 	disallowedTools []string
 	toolsOwner      string
+	// unattended is the toolset a session with nobody watching may use, carried
+	// for exactly the reason disallowedTools is: a restriction an effort change
+	// silently dropped would let a review park on a question again.
+	unattended []string
 
 	// The context meter's state, so a respawn does not reset it to zero and
 	// mislead until the next turn corrects it.
@@ -60,6 +64,7 @@ func specOf(s *Session) spawnSpec {
 		appendPrompt:    s.appendPrompt,
 		disallowedTools: s.disallowedTools,
 		toolsOwner:      s.toolsOwner,
+		unattended:      s.unattended,
 		contextTokens:   s.contextTokens,
 		overhead:        s.overhead,
 	}
@@ -120,6 +125,7 @@ func (sp spawnSpec) apply(opts *CreateOptions) {
 	opts.AppendSystemPrompt = sp.appendPrompt
 	opts.DisallowedTools = sp.disallowedTools
 	opts.ToolsOwner = sp.toolsOwner
+	opts.Unattended = sp.unattended
 	opts.ContextTokens = sp.contextTokens
 	opts.Overhead = sp.overhead
 }

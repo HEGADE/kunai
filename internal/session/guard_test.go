@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/hegade/kunai/internal/claude"
@@ -220,5 +221,39 @@ func TestSharedSessionRefusesBypass(t *testing.T) {
 	}
 	if got := s.Mode(); got != BypassPermissionMode {
 		t.Errorf("mode = %q after allowing bypass, want %q", got, BypassPermissionMode)
+	}
+}
+
+// A session nobody is watching answers its own asks, and never parks.
+//
+// The bug: a pull-request review withheld Bash, Write and Edit, the CLI grew
+// `Monitor` (which also runs shell commands), and a review reached for it. The
+// gate stopped to ask, nobody was attached to a review by design, and it sat
+// there for the life of the process while its screen reported no findings
+// because none had arrived. A denylist protecting something unattended goes
+// stale in silence every time somebody else ships a tool; this is the same rule
+// from the other side.
+func TestAnUnattendedSessionAnswersItsOwnAsks(t *testing.T) {
+	s := &Session{unattended: []string{"Read", "Grep", "Task"}}
+
+	allow, _, on := s.answerUnattended(&claude.PermissionAsk{ToolName: "Read"})
+	if !on || !allow {
+		t.Errorf("Read: allow=%v unattended=%v, want both true", allow, on)
+	}
+	allow, why, on := s.answerUnattended(&claude.PermissionAsk{ToolName: "Monitor"})
+	if !on || allow {
+		t.Fatalf("Monitor: allow=%v unattended=%v, want a refusal", allow, on)
+	}
+	// The refusal has to be usable: the model reads it and picks another way.
+	if !strings.Contains(why, "Monitor") {
+		t.Errorf("reason %q does not name the tool", why)
+	}
+	// A tool nobody has heard of yet is refused too, which is the whole point.
+	if allow, _, on := s.answerUnattended(&claude.PermissionAsk{ToolName: "SomeToolShippedNextMonth"}); !on || allow {
+		t.Error("an unknown tool was allowed through")
+	}
+	// And an ordinary session is untouched: its asks go to a person as before.
+	if _, _, on := (&Session{}).answerUnattended(&claude.PermissionAsk{ToolName: "Bash"}); on {
+		t.Error("an ordinary session answered its own permission ask")
 	}
 }

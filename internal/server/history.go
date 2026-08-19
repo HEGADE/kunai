@@ -44,6 +44,11 @@ type HistoryEntry struct {
 	Project string `json:"project,omitempty"`
 	// Branch is that worktree's branch, which outlives its directory name.
 	Branch string `json:"branch,omitempty"`
+	// Review marks a past pull-request review, so reopening one lands on its
+	// findings rather than on a transcript of the reviewer talking to itself.
+	// The draft outlives the session, which is the whole reason a finished review
+	// is worth reopening. See Meta.Review.
+	Review bool `json:"review,omitempty"`
 	// SnoozedUntil and SnoozedAt (unix ms) park this session on the snoozed
 	// shelf, merged from the metadata store the same way Pinned is: a snooze set
 	// while the session ran must still hold once it is a transcript.
@@ -85,6 +90,20 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		// A past session in a worktree still groups under its repository, so long
 		// as the worktree is still there to say so.
 		entries[i].Repo, entries[i].Branch = s.worktrees.identify(entries[i].Cwd)
+		// A review is one the worktree store can never identify: the checkout it
+		// read is swept when the review ends, so by the time it is history there
+		// is nothing on disk left to ask. The record knows, and it also knows this
+		// is a review at all, which is what makes reopening it land on the
+		// findings instead of on a dead conversation. See tagReviewRepos.
+		if rec, ok := s.prReviews.get(entries[i].ID); ok {
+			entries[i].Review = true
+			if entries[i].Repo == "" {
+				entries[i].Repo = rec.RepoDir
+			}
+			// Named from the record rather than from its first prompt, which for a
+			// review is the wrapper kunai drove it with and reads as machinery.
+			entries[i].Title = reviewTitle(rec)
+		}
 		if o, ok := over[entries[i].ID]; ok {
 			if o.Name != "" {
 				entries[i].Title = o.Name
@@ -96,6 +115,21 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, entries)
+}
+
+// ourWrapper reports whether an angle-bracketed prompt is one KUNAI wrapped, as
+// opposed to something the CLI's own harness injected.
+//
+// The distinction decides whether a session appears in Recent at all, and
+// getting it wrong hid two whole classes of session. Every prompt a review is
+// driven by is wrapped in <kunai-review>, and every iteration of a self-prompting
+// run in <loop-iteration>, so both looked exactly like the system boilerplate the
+// "starts with <" rule exists to skip -- and a finished review was therefore
+// unreachable from Recent, on the one screen somebody goes looking for it. They
+// are the opposite of boilerplate: they are what was asked, in the shape kunai
+// asks it.
+func ourWrapper(text string) bool {
+	return strings.HasPrefix(text, "<kunai-review>") || strings.HasPrefix(text, "<loop-iteration")
 }
 
 // scanHistory walks each account's <configDir>/projects/*/<sessionId>.jsonl
@@ -376,7 +410,7 @@ func probeTranscript(path string) transcriptProbe {
 			// Skip harness/system wrappers (<system_instruction>, caveats, …).
 			// They are not somebody asking for something, so they do not make this
 			// a conversation either.
-			if t != "" && !strings.HasPrefix(t, "<") {
+			if t != "" && (!strings.HasPrefix(t, "<") || ourWrapper(t)) {
 				p.Asked = true
 				if firstPrompt == "" {
 					firstPrompt = t

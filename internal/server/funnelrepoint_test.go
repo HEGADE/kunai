@@ -19,6 +19,9 @@ func withShare(t *testing.T, gatePort int) *Server {
 	}
 	s := &Server{shares: store, gate: newShareGate(store, noSessions{}, testPWA{}, "", "", nil)}
 	s.gate.port = gatePort
+	// In memory: an empty path means nothing is persisted, which is what a test
+	// wants and is the same shape a machine with no data dir gets.
+	s.funnelOurs = newFunnelOurs("")
 	return s
 }
 
@@ -28,6 +31,7 @@ func withShare(t *testing.T, gatePort int) *Server {
 // wrong while every public link is dead.
 func TestAStaleFunnelIsReAimedAtTheGate(t *testing.T) {
 	s := withShare(t, 43671)
+	s.funnelOurs.add(443) // this machine opened it, which is what makes it ours to move
 	s.funnelStatusFn = func(int) funnelState {
 		// 443 is served but points at a loopback port with nothing behind it.
 		return funnelState{Available: true, Port: 0, Free: []int{443}, Stale: []int{443}}
@@ -121,5 +125,69 @@ func TestTheStalePortChoiceIsStable(t *testing.T) {
 	}
 	if _, ok := (funnelState{}).StaleLoopback(); ok {
 		t.Error("an empty state claimed a stale port")
+	}
+}
+
+// The owner's own Funnel is not kunai's to take.
+//
+// staleLoopback is true of ANY funnel pointing at a loopback port nothing
+// answers on, and that is exactly what an owner's mapping to their own app looks
+// like while the app is stopped, restarting or being rebuilt. Adopting it would
+// rewrite somebody's public surface to the share gate with nobody watching, and
+// it would not come back when their service did. Only a port this machine
+// recorded funnelling is repointed.
+func TestAFunnelThisMachineDidNotMakeIsLeftAlone(t *testing.T) {
+	s := withShare(t, 43671)
+	// 10000 -> 127.0.0.1:3000, the owner's own app, currently down.
+	s.funnelStatusFn = func(int) funnelState {
+		return funnelState{Available: true, Port: 0, Free: []int{10000}, Stale: []int{10000}}
+	}
+	var ran []string
+	prev := execOut
+	execOut = func(name string, args ...string) (string, error) {
+		ran = append(ran, name+" "+strings.Join(args, " "))
+		return "", nil
+	}
+	defer func() { execOut = prev }()
+
+	s.reopenPublicPortIfStale()
+	if len(ran) != 0 {
+		t.Fatalf("kunai took over a mapping it did not make: %v", ran)
+	}
+
+	// And once kunai has opened that port itself, the same state IS its to fix.
+	s.funnelOurs.add(10000)
+	s.reopenPublicPortIfStale()
+	if len(ran) != 1 {
+		t.Fatalf("ran %d commands after recording the port, want 1: %v", len(ran), ran)
+	}
+}
+
+// Closing the port forgets it, so a port the owner later funnels for their own
+// app is not still remembered as kunai's.
+func TestClosingAPublicPortForgetsIt(t *testing.T) {
+	f := newFunnelOurs("")
+	f.add(443)
+	if !f.has(443) {
+		t.Fatal("a port kunai opened was not recorded")
+	}
+	f.drop(443)
+	if f.has(443) {
+		t.Error("a closed port is still claimed")
+	}
+}
+
+// The record outlives a restart, because the repoint it guards runs unattended
+// and a reboot must not turn a recorded fact back into a guess.
+func TestTheRecordSurvivesARestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "funnel-ours.json")
+	newFunnelOurs(path).add(8443)
+	if !newFunnelOurs(path).has(8443) {
+		t.Error("the port kunai funnelled was forgotten across a restart")
+	}
+	// A file that is not there at all is safe in the direction that matters: an
+	// unrecorded port is left alone rather than adopted.
+	if newFunnelOurs(filepath.Join(t.TempDir(), "absent.json")).has(8443) {
+		t.Error("a missing record claimed a port anyway")
 	}
 }

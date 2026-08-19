@@ -381,6 +381,10 @@ func (s *Server) handleFunnelOn(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, strings.TrimSpace(out+" "+err.Error()))
 		return
 	}
+	// Written down, because this is the only moment anything KNOWS this port is
+	// kunai's: after it, a mapping to a loopback port is indistinguishable from
+	// one the owner made for their own app. See funnelours.go.
+	s.funnelOurs.add(body.Port)
 	s.forgetFunnel()
 	writeJSON(w, http.StatusOK, s.funnelStatus(s.gate.Port()))
 }
@@ -397,6 +401,7 @@ func (s *Server) handleFunnelOff(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, strings.TrimSpace(out+" "+err.Error()))
 		return
 	}
+	s.funnelOurs.drop(port)
 	s.forgetFunnel()
 	writeJSON(w, http.StatusOK, s.funnelStatus(s.gate.Port()))
 }

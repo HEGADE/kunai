@@ -181,4 +181,6 @@ export const keys = {
   setup: (base: string, repo: string) => `wt:setup:${base}:${repo}`,
   isRepo: (base: string, path: string) => `wt:isrepo:${base}:${path}`,
   providerModels: (base: string, cli: string) => `provider:models:${base}:${cli}`,
+  githubApp: (base: string) => `gh:app:${base}`,
+  pulls: (base: string, repo: string) => `gh:pulls:${base}:${repo}`,
 }

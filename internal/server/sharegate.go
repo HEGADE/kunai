@@ -488,3 +488,13 @@ func gatePortFile(dataDir string) string {
 	}
 	return filepath.Join(dataDir, "gate-port")
 }
+
+// funnelOursFile is where the ports this machine funnelled are remembered, so
+// the unattended repoint can tell one of ours from one of the owner's. See
+// funnelours.go.
+func funnelOursFile(dataDir string) string {
+	if dataDir == "" {
+		return ""
+	}
+	return filepath.Join(dataDir, "funnel-ours.json")
+}

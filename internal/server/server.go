@@ -24,6 +24,7 @@ import (
 	"github.com/hegade/kunai/internal/awake"
 	"github.com/hegade/kunai/internal/cliproxy/codex"
 	"github.com/hegade/kunai/internal/fsbrowse"
+	"github.com/hegade/kunai/internal/ghapp"
 	"github.com/hegade/kunai/internal/lanauth"
 	"github.com/hegade/kunai/internal/push"
 	"github.com/hegade/kunai/internal/schedule"
@@ -120,6 +121,24 @@ type Server struct {
 	worktrees     *worktreeStore           // git worktrees, so several agents share one repo safely
 	fleet         *fleetHub                // pushes the session list to clients instead of them polling for it
 	usageStats    *usagestats.Collector    // what every session cost, read back out of the transcripts
+	// Pull-request review. gh is built lazily from the credentials on disk, and
+	// prReviews binds a review session to the pull request and COMMIT it is a
+	// review of, which the transcript cannot say and posting cannot do without.
+	ghMu      sync.Mutex
+	gh        *ghapp.App
+	prReviews *prReviewStore
+	// reviewRuns holds the phase machine of every review currently working. In
+	// memory only: a review's progression is meaningless without the session
+	// executing it, and that does not survive a restart either, so persisting it
+	// would only create a state nothing could resume. What is persisted is the
+	// outcome, on prReviews.
+	reviewRuns *reviewRunners
+	// diffs remembers a commit's changed files, so opening a finished review does
+	// not wait on a GitHub round trip for a diff that cannot have changed.
+	diffs *diffCache
+	// reviewCfg is which account and model reviews run on, kept apart from the
+	// session defaults so a review can never spend the window you are working in.
+	reviewCfg *reviewConfigStore
 	// shares and gate are session sharing: a link worth one conversation, served
 	// on a listener of its own so a guest can never reach the routes above. See
 	// sharegate.go for why that is a separate mux rather than a middleware.
@@ -132,6 +151,7 @@ type Server struct {
 	// network address, so you can look at it from the phone. See preview.go.
 	previews   *previewForwarder
 	gate       *shareGate
+	funnelOurs *funnelOurs // the public ports this machine funnelled; see funnelours.go
 	funnelMu   sync.Mutex
 	funnelAt   time.Time // when the funnel port was last read (it shells out)
 	funnelPort int
@@ -207,6 +227,7 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	s.cliproxyLogin = newCLIProxyLoginManager(s.cliproxy)
 	s.codexUC = &codexUsageCache{}
 	s.grokUC = &grokUsageCache{}
+	s.reviewCfg = newReviewConfigStore(cfg.DataDir)
 	s.failover = newFailoverController(s)
 	s.failover.load()            // re-apply the persisted opt-in on boot (default off)
 	go s.discoverModelVersions() // warm the model-version cache off the request path
@@ -216,11 +237,21 @@ func New(cfg Config, mgr *session.Manager) *Server {
 	// never started when there is nothing to serve.
 	s.shares = share.NewStore(shareStorePath(cfg.DataDir))
 	s.gate = newShareGate(s.shares, mgr, s.pwa, gatePortFile(cfg.DataDir), s.images.path(), s)
+	// Which public ports kunai itself opened. Read at boot, because the repoint
+	// it guards runs unattended and a restart must not turn a recorded fact back
+	// into a guess.
+	s.funnelOurs = newFunnelOurs(funnelOursFile(cfg.DataDir))
 	// The lock on the network listener. Constructed always so the owner can set a
 	// PIN before turning -lan on; the listener refuses to start without one.
 	s.lanAuth = lanauth.Open(filepath.Join(cfg.DataDir, "lanauth.json"))
+	// Always constructed, with or without a data dir: a review can run without
+	// anywhere to persist its outcome, and a nil map here would panic the answer
+	// hook rather than degrade.
+	s.reviewRuns = newReviewRunners()
+	s.diffs = newDiffCache()
 	if cfg.DataDir != "" {
 		s.sessionMeta = newSessionMetaStore(filepath.Join(cfg.DataDir, "sessionmeta.json"))
+		s.prReviews = newPRReviewStore(filepath.Join(cfg.DataDir, "prreviews.json"))
 		// New accounts log in with the same binary as the default profile, into a
 		// fresh config dir under the data dir. The register callback saves a
 		// completed account, called once from the login's finalize, so it lands
@@ -330,6 +361,34 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/lid", s.handleLid)
 	mux.HandleFunc("GET /api/thermal", s.handleThermal)
 	mux.HandleFunc("POST /api/thermal", s.handleThermal)
+	// Pull-request review. Owner-only, and deliberately absent from the share
+	// gate: these read the machine's repositories and can write to GitHub as the
+	// bot, which is the last thing a public link should reach.
+	mux.HandleFunc("GET /api/github/app", s.handleGitHubStatus)
+	mux.HandleFunc("POST /api/github/app", s.handleSetGitHubApp)
+	mux.HandleFunc("GET /api/github/pulls", s.handlePullRequests)
+	mux.HandleFunc("GET /api/github/review-config", s.handleReviewConfig)
+	mux.HandleFunc("POST /api/github/review-config", s.handleReviewConfig)
+	mux.HandleFunc("POST /api/github/review", s.handleStartReview)
+	mux.HandleFunc("GET /api/sessions/{id}/review", s.handleReviewDraft)
+	mux.HandleFunc("POST /api/sessions/{id}/review/post", s.handlePostReview)
+	// Bringing a finished review's session back so it can be asked something. Its
+	// checkout is swept when it ends, so the ordinary reopen cannot work: see
+	// prreviewreopen.go.
+	mux.HandleFunc("POST /api/sessions/{id}/review/reopen", s.handleReopenReview)
+	// Stopping a review that is still working. Not the same as interrupting its
+	// turn, which the engine simply follows with the next phase: see
+	// prreviewstop.go.
+	mux.HandleFunc("POST /api/sessions/{id}/review/stop", s.handleStopReview)
+	// Picking a stopped review up at the phase that did not finish, instead of
+	// paying for the survey and the find phase a second time. See
+	// prreviewresume.go for what that was costing.
+	mux.HandleFunc("POST /api/sessions/{id}/review/resume", s.handleResumeReview)
+	// Writing one finding's suggested change into the checkout the review read.
+	// Owner-only like every /api route that is not on the share gate's allowlist,
+	// which is what makes it safe to write files at all: see prreviewapply.go.
+	mux.HandleFunc("POST /api/sessions/{id}/review/apply", s.handleApplyReviewFix)
+
 	mux.HandleFunc("GET /api/failover", s.handleFailover)
 	mux.HandleFunc("POST /api/failover", s.handleFailover)
 	mux.HandleFunc("GET /api/clis", s.handleCLIs)
@@ -459,6 +518,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// and doing it here means the Usage page has an answer before anyone opens it
 	// rather than showing a spinner on its first visit after every upgrade.
 	go s.usageStats.Refresh()
+	s.startReviewSweeper() // throw away the checkouts of reviews nobody is reading
 	s.startTelegram(ctx)   // opt-in: drive a session from a Telegram chat
 	go func() {
 		<-ctx.Done()
@@ -509,6 +569,7 @@ func (s *Server) explainBind(err error) error {
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	metas := s.mgr.List()
 	s.worktrees.tagRepos(metas)
+	s.tagReviewRepos(metas)
 	if s.sessionMeta != nil {
 		mergeMeta(metas, s.sessionMeta.all())
 	}

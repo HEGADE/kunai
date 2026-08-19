@@ -35,11 +35,10 @@ func TestOnlyASharesOwnRestrictionIsLifted(t *testing.T) {
 			want: false,
 		},
 		{
-			// The regression. Another feature restricted the session for its whole
-			// life and has no share at all, so every condition but the owner said
-			// "restore me" and the reconciler handed the tools back.
-			name:   "another feature's restriction is not ours to restore",
-			denied: []string{"Bash", "Write", "Edit"}, owner: "some-other-feature", shareLive: false,
+			// The regression. A review is restricted for its whole life and has no
+			// share at all, so every condition but the owner said "restore me".
+			name:   "a pull request review is not ours to restore",
+			denied: reviewToolset, owner: reviewToolsOwner, shareLive: false,
 			want: false,
 		},
 		{
@@ -60,5 +59,16 @@ func TestOnlyASharesOwnRestrictionIsLifted(t *testing.T) {
 		if got := shareShouldRestore(c.denied, c.owner, c.shareLive); got != c.want {
 			t.Errorf("%s: restore = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// The reviewer has to claim its restriction, or the case above never fires: the
+// two halves are only correct together, and they live in different files.
+func TestAReviewClaimsItsOwnRestriction(t *testing.T) {
+	if reviewToolsOwner == "" {
+		t.Fatal("a review leaves its restriction unclaimed, so the share reconciler will lift it")
+	}
+	if reviewToolsOwner == share.ToolsOwner {
+		t.Fatal("a review claims its restriction as a share's, which is what the owner exists to distinguish")
 	}
 }

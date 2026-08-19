@@ -173,3 +173,88 @@ func TestAGateWithNoUploaderTakesNoFiles(t *testing.T) {
 		t.Error("a gate with no uploader accepted a file")
 	}
 }
+
+// The hole the images-only rule had: it was enforced on the upload's
+// Content-Type, and the value that decides what happens to the bytes is the one
+// on the PROMPT FRAME, which the guest writes. buildContent branches on it, and
+// anything not an image is copied into the owner's working directory with the
+// agent told where it is. So: upload as image/png, attach as text/plain.
+func TestAGuestCannotRelabelItsUploadOnThePrompt(t *testing.T) {
+	g, token, up := uploadGate(t, share.TierWork, true)
+	if rec := postImage(g, token, "image/png", []byte("not really a png"), "dev-1"); rec.Code != http.StatusCreated {
+		t.Fatalf("upload failed: %d", rec.Code)
+	}
+	relabelled := []session.Attachment{{
+		ID: "guest-file-a", Name: "../../../notes.txt", MediaType: "text/plain",
+	}}
+	atts, content, err := g.guestAttachments(token, "/tmp", "look", relabelled)
+	if err != nil {
+		t.Fatalf("its own file was refused outright: %v", err)
+	}
+	if content == nil || len(atts) != 1 {
+		t.Fatalf("got %v %v", atts, content)
+	}
+	// What reaches buildContent is what the GATE staged, not what the frame said.
+	if len(up.built) != 1 {
+		t.Fatalf("built %d attachments", len(up.built))
+	}
+	if up.built[0].MediaType != "image/png" {
+		t.Errorf("media type = %q, want the one the upload was checked as", up.built[0].MediaType)
+	}
+	if up.built[0].Name != "shot.png" {
+		t.Errorf("name = %q, want the one the upload was stored under", up.built[0].Name)
+	}
+	// And the metadata shown to everyone is the same record, so a guest cannot
+	// dress its own upload up as something else in the conversation either.
+	if atts[0].MediaType != "image/png" || atts[0].Name != "shot.png" {
+		t.Errorf("shown attachment = %+v, want the staged record", atts[0])
+	}
+}
+
+// The cap is spent BEFORE the bytes are written. It used to be checked after
+// StageUpload returned, so a refused upload had already put its file in the
+// uploads directory with its id recorded nowhere: nothing referenced it, nothing
+// swept it, and a paired guest could keep posting past the cap for ever. Filling
+// somebody's disk a few megabytes at a time is the precise thing the cap is for.
+func TestAnOverCapUploadIsNeverWritten(t *testing.T) {
+	g, token, up := uploadGate(t, share.TierWork, true)
+	for i := 0; i < maxGuestFiles; i++ {
+		if rec := postImage(g, token, "image/png", []byte("x"), "dev-1"); rec.Code != http.StatusCreated {
+			t.Fatalf("upload %d failed: %d", i, rec.Code)
+		}
+	}
+	rec := postImage(g, token, "image/png", []byte("x"), "dev-1")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("over-cap upload = %d, want 429", rec.Code)
+	}
+	if len(up.staged) != maxGuestFiles {
+		t.Errorf("staged %d files, want the cap: the refused one was written anyway", len(up.staged))
+	}
+	// And the refusal is not a one-off: the orphan cannot be used to creep past
+	// the cap on the next attempt either.
+	if rec := postImage(g, token, "image/png", []byte("x"), "dev-1"); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("second over-cap upload = %d, want 429", rec.Code)
+	}
+	if len(up.staged) != maxGuestFiles {
+		t.Errorf("staged %d files after two refusals", len(up.staged))
+	}
+}
+
+// A slot taken for a write that then fails must come back, or a machine with a
+// full disk would permanently consume the guest's allowance.
+func TestAFailedWriteGivesTheSlotBack(t *testing.T) {
+	var f guestFiles
+	if !f.reserve("t") {
+		t.Fatal("the first slot was refused")
+	}
+	f.release("t")
+	for i := 0; i < maxGuestFiles; i++ {
+		if !f.reserve("t") {
+			t.Fatalf("slot %d was refused, so the released one was never given back", i)
+		}
+		f.commit("t", session.Attachment{ID: string(rune('a' + i))})
+	}
+	if f.reserve("t") {
+		t.Error("the cap did not hold")
+	}
+}

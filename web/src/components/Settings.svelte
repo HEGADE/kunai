@@ -2,11 +2,96 @@
   import { app } from '../lib/app.svelte'
   import { updateAvailable } from '../lib/update'
   import { enablePush, disablePush, isSubscribed, pushState } from '../lib/push'
-  import { setKeepAwake, setThermal, setLid, setFailover, getCLIs, setCLIs } from '../lib/api'
-  import type { Machine, CLIProfile } from '../lib/types'
+  import { setKeepAwake, setThermal, setLid, setFailover } from '../lib/api'
+  import type { Machine } from '../lib/types'
+  import { SETTINGS_SECTIONS, type SettingsSection } from '../lib/app.svelte'
+  import GitHubApp from './GitHubApp.svelte'
   import LanAccess from './LanAccess.svelte'
+  import Accounts from './Accounts.svelte'
+  import Providers from './Providers.svelte'
+  import Channels from './Channels.svelte'
+  import Page from './Page.svelte'
 
-  const st = $derived(app.stats)
+  // Settings, as a place rather than a sheet.
+  //
+  // It was a 720px modal holding one scrolling column of everything, and the
+  // clutter was structural rather than visual: it tangled two different scopes
+  // into that column. Notifications belong to the BROWSER you are holding.
+  // Everything under them belongs to ONE MACHINE, chosen by a chip picker
+  // halfway down, after which the rest of the page silently re-scoped. Nothing
+  // on screen said which switches followed that picker, so the answer to "is
+  // this setting global?" was to read the source.
+  //
+  // The rail fixes that by making scope the organising principle: its group
+  // headings say whose settings each section changes, and the machine group is
+  // headed by the machine's own name. Picking a different machine renames it,
+  // and everything under it is exactly what follows.
+  //
+  // Accounts, Providers and Channels are sections here rather than pages of
+  // their own. Accounts existing in both was the worst of it: the page had the
+  // real sign-in flow, and Settings had a second list of the same accounts with
+  // a link across to the page. Two surfaces for one idea is a question the
+  // reader has to answer before they can do anything.
+  const section = $derived(app.settingsSection)
+  const go = (s: SettingsSection) => app.setSettingsSection(s)
+
+  // On a phone the rail is a horizontal strip, so the open section can be
+  // scrolled off the right-hand end: arriving at /settings/unattended showed a
+  // strip starting at Notifications with nothing marked, which reads as no
+  // section being open at all. Only ever scrolls SIDEWAYS (inline), and only
+  // when the strip actually scrolls, so the desktop rail is untouched.
+  let rail = $state<HTMLElement | null>(null)
+  $effect(() => {
+    void section
+    const el = rail
+    if (!el || el.scrollWidth <= el.clientWidth) return
+    el.querySelector('.rlink.on')?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' })
+  })
+
+  // What each section is, said once. The blurb is not decoration: a settings
+  // page that lists only nouns makes you open every one to find the switch you
+  // came for.
+  const SECTIONS: Record<SettingsSection, { title: string; blurb: string }> = {
+    notifications: {
+      title: 'Notifications',
+      blurb: 'Whether this browser is told when a session finishes or needs you.',
+    },
+    machines: {
+      title: 'Machines',
+      blurb: 'Every machine running kunai on your tailnet, and what each one is running.',
+    },
+    accounts: {
+      title: 'Accounts',
+      blurb: 'The Claude subscriptions this machine can run sessions on.',
+    },
+    providers: {
+      title: 'Providers',
+      blurb: 'Non-Claude models this machine can run the same agent on.',
+    },
+    channels: {
+      title: 'Channels',
+      blurb: 'Ways to reach this machine other than the app.',
+    },
+    network: {
+      title: 'Network',
+      blurb: 'Who on your network can reach this machine, and how they prove it.',
+    },
+    unattended: {
+      title: 'Unattended',
+      blurb: 'What this machine may do while nobody is watching it.',
+    },
+    reviews: {
+      title: 'Reviews',
+      blurb: 'The GitHub App this machine posts pull request reviews as.',
+    },
+  }
+  // Which sections belong to a machine rather than to this browser. Drives the
+  // rail's grouping, so the split is stated once instead of being implied by
+  // whatever order things happen to appear in.
+  const MACHINE_SECTIONS = SETTINGS_SECTIONS.filter(
+    (s) => s !== 'notifications' && s !== 'machines',
+  )
+
   const supported = pushState() !== 'unsupported'
 
   let on = $state(false)
@@ -20,13 +105,13 @@
   let discovering = $state(false)
   let machErr = $state('')
   // Adding a machine or an account is a once-a-year job, so the forms stay shut
-  // until asked for. Left open they are permanent clutter in a panel you came to
+  // until asked for. Left open they are permanent clutter in a page you came to
   // flip one switch in.
   let showAddMachine = $state(false)
   let showAddAcct = $state<Record<string, boolean>>({})
 
-  // Which machine's settings are on screen. Defaults to this one, the same way
-  // the dashboard's stats picker does.
+  // Which machine the machine-scoped sections are about. Defaults to this one,
+  // the same way the dashboard's stats picker does.
   let pickedM = $state('')
   const selM = $derived(
     app.machines.find((m) => m.id === pickedM) ??
@@ -44,6 +129,7 @@
       await app.addMachine(newLabel.trim(), url)
       newLabel = ''
       newUrl = ''
+      showAddMachine = false
     } catch (e) {
       machErr = (e as Error).message
     } finally {
@@ -68,18 +154,15 @@
   // it left a machine unable to offer the update that would fix it -- which is
   // exactly what happened. Settings is where you go to act on a machine, so an
   // update control belongs here regardless.
-  const selOutdated = $derived(
-    updateAvailable(selM?.stats?.kunai_version, app.latestVersion, selM?.stats?.channel),
-  )
-  const selUpdating = $derived(selM ? !!app.updating[selM.id] : false)
-  const selUpdateErr = $derived(selM ? (app.updateError[selM.id] ?? '') : '')
-  const selUpdateProg = $derived(selM ? (app.updateProgress[selM.id] ?? -1) : -1)
-  const selUpdateLabel = $derived.by(() => {
-    if (!selUpdating) return selUpdateErr ? 'Retry' : 'Update'
-    if (selUpdateProg >= 1) return 'Restarting…'
-    if (selUpdateProg >= 0) return `${Math.round(selUpdateProg * 100)}%`
+  const outdated = (m: Machine) =>
+    updateAvailable(m.stats?.kunai_version, app.latestVersion, m.stats?.channel)
+  const updateLabel = (m: Machine) => {
+    const progress = app.updateProgress[m.id] ?? -1
+    if (!app.updating[m.id]) return app.updateError[m.id] ? 'Retry' : 'Update'
+    if (progress >= 1) return 'Restarting…'
+    if (progress >= 0) return `${Math.round(progress * 100)}%`
     return 'Updating…'
-  })
+  }
 
   // Per-machine account auto-failover (opt-in). Rolls a rate-limited session onto
   // the account with the most headroom.
@@ -166,48 +249,12 @@
     }
   }
 
-  // Per-machine Claude accounts. Loaded lazily, edited live (no restart). The
-  // first account is the default and can't be removed.
-  let accounts = $state<Record<string, CLIProfile[]>>({})
-  let acctBusy = $state<Record<string, boolean>>({})
-  let newName = $state<Record<string, string>>({})
-  let newDir = $state<Record<string, string>>({})
-  $effect(() => {
-    for (const m of app.machines) if (m.online && !accounts[m.id]) loadAccounts(m)
-  })
-  async function loadAccounts(m: Machine) {
-    try {
-      accounts = { ...accounts, [m.id]: await getCLIs(m.url) }
-    } catch {
-      /* offline or old build without the endpoint: leave it unset */
-    }
-  }
-  async function commitAccounts(m: Machine, list: CLIProfile[]) {
-    if (acctBusy[m.id]) return
-    acctBusy = { ...acctBusy, [m.id]: true }
-    machErr = ''
-    try {
-      accounts = { ...accounts, [m.id]: await setCLIs(m.url, list) }
-      await app.refresh() // so the New Session picker updates immediately
-    } catch (e) {
-      machErr = (e as Error).message
-    } finally {
-      const b = { ...acctBusy }
-      delete b[m.id]
-      acctBusy = b
-    }
-  }
-  async function addAccount(m: Machine) {
-    const name = (newName[m.id] || '').trim()
-    const dir = (newDir[m.id] || '').trim()
-    if (!name || !dir) return
-    await commitAccounts(m, [...(accounts[m.id] ?? []), { name, bin: 'claude', dir }])
-    newName = { ...newName, [m.id]: '' }
-    newDir = { ...newDir, [m.id]: '' }
-  }
-  function removeAccount(m: Machine, name: string) {
-    commitAccounts(m, (accounts[m.id] ?? []).filter((c) => c.name !== name))
-  }
+  // The list of Claude accounts, adding one, and removing one all used to live
+  // here as a second implementation: a raw roster of names and config folders,
+  // plus a form that asked you to type a path. Accounts.svelte already does all
+  // of that with a real sign-in flow, so this section renders THAT and keeps
+  // only the one thing that is genuinely a setting rather than a credential:
+  // what happens when an account hits its wall.
 
   // Reflect the real subscription state, not just permission: a device can be
   // "granted" yet turned off.
@@ -233,747 +280,571 @@
       busy = false
     }
   }
+
+  // The subtitle names what the open section changes, which is the same job the
+  // rail's group headings do and the only one that survives a phone, where the
+  // rail is a strip of chips with no room for a heading above them.
+  const scopeSub = $derived(
+    section === 'notifications'
+      ? 'This device'
+      : section === 'machines'
+        ? `${app.machines.length} machine${app.machines.length === 1 ? '' : 's'}`
+        : (selM?.label ?? ''),
+  )
 </script>
 
-<div class="backdrop" onclick={() => app.closeSettings()} role="presentation">
-  <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-    <div class="grab" aria-hidden="true"></div>
-    <header>
-      <h2>Settings</h2>
-      <button class="close" onclick={() => app.closeSettings()} aria-label="Close">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+  <!-- One glyph per section, in the same hand as the app's own nav icons: 24
+       viewBox, 1.7 stroke, round caps. Eight text labels in a column is a list
+       rather than a navigation; the icon is what makes a section findable
+       without reading, and it is the only thing that gives the rail a left edge
+       to align to. -->
+  {#snippet icon(s: SettingsSection)}
+    {#if s === 'notifications'}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 10-12 0c0 6-2.5 7.5-2.5 7.5h17S18 14 18 8z" /><path d="M13.7 19a2 2 0 01-3.4 0" /></svg>
+    {:else if s === 'machines'}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2" /><rect x="3" y="13" width="18" height="7" rx="2" /><path d="M7 7.5h.01M7 16.5h.01" /></svg>
+    {:else if s === 'accounts'}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5" /><path d="M5 20c0-3.6 3.1-6 7-6s7 2.4 7 6" /></svg>
+    {:else if s === 'providers'}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6.4" y="6.4" width="11.2" height="11.2" rx="2.2" /><path d="M9.9 2.9v3.5M14.1 2.9v3.5M9.9 17.6v3.5M14.1 17.6v3.5M2.9 9.9h3.5M2.9 14.1h3.5M17.6 9.9h3.5M17.6 14.1h3.5" /></svg>
+    {:else if s === 'channels'}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2" /><path d="M7.8 7.8a6 6 0 000 8.4M16.2 16.2a6 6 0 000-8.4" /><path d="M4.9 4.9a10 10 0 000 14.2M19.1 19.1a10 10 0 000-14.2" /></svg>
+    {:else if s === 'network'}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 9.5a15 15 0 0119 0" /><path d="M5.5 13a10.5 10.5 0 0113 0" /><path d="M8.5 16.5a6 6 0 017 0" /><path d="M12 20h.01" /></svg>
+    {:else if s === 'unattended'}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8.5 8.5 0 019.5 4a8.5 8.5 0 1010.5 10.5z" /></svg>
+    {:else}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h9M4 12h9M4 18.5h5" /><path d="M15.5 17.5l2 2 4-4.5" /></svg>
+    {/if}
+  {/snippet}
+
+<Page title="Settings">
+
+  <div class="layout">
+    <nav class="rail" aria-label="Settings sections" bind:this={rail}>
+      <!-- The group headings are the point: they say whose settings the links
+           under them change. Without that, a page of switches cannot tell you
+           which ones follow the machine picker, which is what made the old
+           column unreadable. -->
+      <div class="rgroup">This device</div>
+      <button class="rlink" class:on={section === 'notifications'} onclick={() => go('notifications')}>
+        <span class="ric">{@render icon('notifications')}</span>
+        <span class="rlbl">Notifications</span>
       </button>
-    </header>
 
-    <div class="body">
-      <div class="row">
-        <div class="rmeta">
-          <span class="rname">Push notifications</span>
-          <span class="rsub">
-            {#if !supported}
-              Not supported in this browser.
-            {:else}
-              No content leaves the tailnet.
-            {/if}
-          </span>
-        </div>
-        {#if supported}
-          <button
-            class="switch"
-            class:on
-            onclick={toggle}
-            disabled={busy}
-            role="switch"
-            aria-checked={on}
-            aria-label="Toggle notifications"
-          >
-            <span class="knob"></span>
-          </button>
-        {/if}
-      </div>
-      {#if hint}<p class="hint">{hint}</p>{/if}
-
-      <!-- One machine's settings at a time. Every machine's controls stacked
-           made a wall that got taller with the fleet; you are here to change one
-           machine, so pick it. Same chips as the dashboard's stats picker. -->
-      <div class="sec">
-        Machines
-        <button class="discover" onclick={discover} disabled={discovering}>
-          {discovering ? 'Scanning…' : 'Discover'}
-        </button>
-      </div>
-      <div class="mchips">
-        {#each app.machines as m (m.id)}
-          <button class="mchip" class:on={selM?.id === m.id} onclick={() => (pickedM = m.id)}>
-            <span class="mdot" class:live={m.online}></span>
-            {m.label}
-          </button>
-        {/each}
-        <button class="mchip ghost" onclick={() => (showAddMachine = !showAddMachine)} aria-label="Add a machine by URL">+</button>
-      </div>
-      {#if showAddMachine}
-        <div class="addrow">
-          <input class="min" placeholder="Label" bind:value={newLabel} autocomplete="off" />
-          <input
-            class="min mono"
-            placeholder="https://host.tailnet.ts.net:8443"
-            bind:value={newUrl}
-            autocomplete="off"
-            autocapitalize="off"
-            spellcheck="false"
-            onkeydown={(e) => e.key === 'Enter' && addMachine()}
-          />
-          <button class="add" onclick={addMachine} disabled={adding || !newUrl.trim()}>Add</button>
-        </div>
-      {/if}
-      {#if machErr}<p class="hint">{machErr}</p>{/if}
+      <div class="rgroup">Fleet</div>
+      <button class="rlink" class:on={section === 'machines'} onclick={() => go('machines')}>
+        <span class="ric">{@render icon('machines')}</span>
+        <span class="rlbl">Machines</span>
+        <span class="rcount mono">{app.machines.length}</span>
+      </button>
 
       {#if selM}
-        <!-- What "Server" used to be, folded into the machine it describes: it
-             only ever showed the hub's build while sitting under a list of
-             machines, so on a peer it was quietly the wrong answer. -->
-        <div class="mid">
-          <span class="murl mono">{selM.url || 'this machine'}</span>
-          {#if selM.stats}
-            <span class="mbuild mono">
-              claude {selM.stats.claude_version || '—'} · kunai {selM.stats.kunai_version || '—'}{selM
-                .stats.arch
-                ? ` · ${selM.stats.os}/${selM.stats.arch}`
-                : ''}
+        <!-- The machine's own name as the heading. A static word like "Machine"
+             would be one more thing that does not say which one.
+             It sits on the group-label line and above a hairline, because as a
+             plain dot-and-name row at link height it read as a nav item that
+             happened to be disabled. -->
+        <div class="rgroup mach">
+          <span class="rdot" class:live={selM.online}></span>
+          <span class="rmach">{selM.label}</span>
+        </div>
+        {#each MACHINE_SECTIONS as s (s)}
+          <button class="rlink" class:on={section === s} onclick={() => go(s)}>
+            <span class="ric">{@render icon(s)}</span>
+            <span class="rlbl">{SECTIONS[s].title}</span>
+          </button>
+        {/each}
+      {/if}
+    </nav>
+
+    <div class="panel">
+      <!-- Every section opens the same way: what it is, and one line saying what
+           it decides. A settings page that lists only nouns makes you open all
+           of them to find the switch you came for. -->
+      <header class="shead">
+        <h2>{SECTIONS[section].title}</h2>
+        <p>{SECTIONS[section].blurb}</p>
+      </header>
+
+      {#if machErr}<p class="err">{machErr}</p>{/if}
+
+      {#if section === 'notifications'}
+        <div class="st-card">
+          <div class="st-row">
+            <span class="st-k">
+              <span class="st-name">Push notifications</span>
+              <span class="st-sub-text">
+                {#if !supported}
+                  This browser cannot receive them.
+                {:else}
+                  A wake-up only. No part of a conversation leaves your tailnet.
+                {/if}
+              </span>
             </span>
+            {#if supported}
+              <button
+                class="switch"
+                class:on
+                onclick={toggle}
+                disabled={busy}
+                role="switch"
+                aria-checked={on}
+                aria-label="Toggle notifications"
+              >
+                <span class="knob"></span>
+              </button>
+            {/if}
+          </div>
+        </div>
+        {#if hint}<p class="st-note">{hint}</p>{/if}
+        <p class="st-note">
+          Notifications are per device, so turning them on here does not turn them on
+          anywhere else you use kunai.
+        </p>
+
+      {:else if section === 'machines'}
+        <div class="st-card">
+          {#each app.machines as m (m.id)}
+            <!-- Selecting a machine is what everything under its name in the
+                 rail then follows, so the row says so rather than leaving you
+                 to infer it from a highlight. -->
+            <!-- Only marked as chosen when there is something to choose between:
+                 on a one-machine fleet a highlighted row is a band of fill
+                 answering a question nobody asked. -->
+            <div class="st-row mrow" class:sel={selM?.id === m.id && app.machines.length > 1}>
+              <button class="mpick" onclick={() => (pickedM = m.id)} aria-label="Settings for {m.label}">
+                <span class="st-k">
+                  <span class="mtop">
+                    <span class="rdot" class:live={m.online}></span>
+                    <span class="st-name">{m.label}</span>
+                    {#if m.self}<span class="tag">this one</span>{/if}
+                    {#if selM?.id === m.id && app.machines.length > 1}<span class="tag on">showing</span>{/if}
+                  </span>
+                  <span class="st-sub-text mono">
+                    {#if m.stats}
+                      kunai {m.stats.kunai_version || '—'} · claude {m.stats.claude_version || '—'}{m.stats.arch ? ` · ${m.stats.os}/${m.stats.arch}` : ''}
+                    {:else if !m.online}
+                      Offline
+                    {:else}
+                      {m.url || 'this machine'}
+                    {/if}
+                  </span>
+                </span>
+              </button>
+              <span class="macts">
+                {#if outdated(m)}
+                  <button class="st-btn solid" disabled={app.updating[m.id]} onclick={() => app.updateMachine(m.id)}>
+                    {updateLabel(m)}
+                  </button>
+                {/if}
+                {#if !m.self}
+                  <button class="st-btn ghost" onclick={() => app.removeMachine(m.id)}>Remove</button>
+                {/if}
+              </span>
+              {#if app.updateError[m.id]}
+                <p class="err small">Update failed: {app.updateError[m.id]}</p>
+              {/if}
+            </div>
+          {/each}
+        </div>
+
+        <!-- Finding and adding machines is fleet management rather than a
+             setting, so it sits under the list it changes instead of among the
+             switches. -->
+        <div class="st-actions foot">
+          <button class="st-btn quiet" onclick={discover} disabled={discovering}>
+            {discovering ? 'Scanning the tailnet…' : 'Find machines'}
+          </button>
+          <button class="st-btn" onclick={() => (showAddMachine = !showAddMachine)}>
+            {showAddMachine ? 'Cancel' : 'Add by address'}
+          </button>
+        </div>
+        {#if showAddMachine}
+          <div class="st-form">
+            <div class="st-pair">
+              <label class="st-field">
+                <span class="st-label">Label</span>
+                <input class="st-input" placeholder="Studio Mac" bind:value={newLabel} autocomplete="off" />
+              </label>
+              <label class="st-field">
+                <span class="st-label">Address</span>
+                <input
+                  class="st-input mono"
+                  placeholder="https://host.tailnet.ts.net:8443"
+                  bind:value={newUrl}
+                  autocomplete="off"
+                  autocapitalize="off"
+                  spellcheck="false"
+                  onkeydown={(e) => e.key === 'Enter' && addMachine()}
+                />
+              </label>
+            </div>
+            <div class="st-actions">
+              <button class="st-btn solid" onclick={addMachine} disabled={adding || !newUrl.trim()}>
+                {adding ? 'Adding…' : 'Add machine'}
+              </button>
+            </div>
+          </div>
+        {/if}
+        <p class="st-note">
+          Machines on your tailnet are found on their own. Adding by address is for one
+          that discovery cannot see.
+        </p>
+
+      {:else if !selM}
+        <p class="st-note">No machines yet.</p>
+      {:else if !selM.online}
+        <p class="st-note">{selM.label} is offline. Nothing here can be changed until it is back.</p>
+
+      {:else if section === 'accounts'}
+        <!-- The accounts themselves, with their real sign-in flow. Settings used
+             to carry a second, worse copy of this list beside a link to it. -->
+        <Accounts machineId={selM.id} />
+        {#if selM.stats?.clis && selM.stats.clis.length > 1}
+          <div class="st-card">
+            <div class="st-row">
+              <span class="st-k">
+                <span class="st-name">Move to another account at the limit</span>
+                <span class="st-sub-text">
+                  When one hits its 5-hour or weekly wall, carry on from the account with
+                  the most left, Claude or provider.
+                </span>
+              </span>
+              <button
+                class="switch"
+                class:on={selM.stats.failover}
+                onclick={() => toggleFailover(selM)}
+                disabled={foBusy[selM.id]}
+                role="switch"
+                aria-checked={selM.stats.failover ?? false}
+                aria-label="Toggle account auto-failover"
+              >
+                <span class="knob"></span>
+              </button>
+            </div>
+          </div>
+        {/if}
+
+      {:else if section === 'providers'}
+        <Providers machineId={selM.id} />
+
+      {:else if section === 'channels'}
+        <Channels machineId={selM.id} />
+
+      {:else if section === 'network'}
+        <LanAccess base={selM.url} label={selM.label} />
+
+      {:else if section === 'unattended'}
+        <div class="st-card">
+          {#if selM.stats?.keep_awake_supported}
+            <div class="st-row">
+              <span class="st-k">
+                <span class="st-name">Stay awake while locked</span>
+                <span class="st-sub-text">Needs the lid open and power.</span>
+              </span>
+              <button
+                class="switch"
+                class:on={selM.stats.keep_awake}
+                onclick={() => toggleAwake(selM)}
+                disabled={awBusy[selM.id]}
+                role="switch"
+                aria-checked={selM.stats.keep_awake}
+                aria-label="Toggle keep awake"
+              >
+                <span class="knob"></span>
+              </button>
+            </div>
           {/if}
-          {#if !selM.self}
-            <button class="mremove" onclick={() => app.removeMachine(selM.id)}>Remove machine</button>
+          {#if selM.stats?.keep_lid_supported}
+            <div class="st-row">
+              <span class="st-k">
+                <span class="st-name">Keep working with the lid closed</span>
+                <span class="st-sub-text" class:warn={!selM.stats.thermal_privileged}>
+                  {#if selM.stats.thermal_privileged}
+                    The machine will not sleep when you shut it.
+                  {:else}
+                    Needs the admin setup from install.
+                  {/if}
+                </span>
+              </span>
+              <button
+                class="switch"
+                class:on={selM.stats.keep_lid}
+                onclick={() => toggleLid(selM)}
+                disabled={lidBusy[selM.id]}
+                role="switch"
+                aria-checked={selM.stats.keep_lid}
+                aria-label="Toggle lid-closed hold"
+              >
+                <span class="knob"></span>
+              </button>
+            </div>
+          {/if}
+          {#if selM.stats}
+            <div class="st-row">
+              <span class="st-k">
+                <span class="st-name">Stop everything if it overheats</span>
+                <span class="st-sub-text">
+                  {#if selM.stats.cpu_temp_c > 0}
+                    Running at {Math.round(selM.stats.cpu_temp_c)}°C now.
+                  {:else if selM.stats.thermal_pressure}
+                    Thermal pressure is {selM.stats.thermal_pressure} now.
+                  {:else}
+                    This machine reports no temperature, so the time limit is the guard.
+                  {/if}
+                </span>
+              </span>
+              <button
+                class="switch"
+                class:on={selM.stats.thermal_guard}
+                onclick={() => saveThermal(selM, { enabled: !selM.stats?.thermal_guard })}
+                disabled={thBusy[selM.id]}
+                role="switch"
+                aria-checked={selM.stats.thermal_guard}
+                aria-label="Toggle thermal guard"
+              >
+                <span class="knob"></span>
+              </button>
+            </div>
+            {#if selM.stats.thermal_guard}
+              <!-- The limits belong to the switch above, so they are inside the
+                   same card and indented under it rather than floating as their
+                   own group. -->
+              <div class="st-row sub">
+                <div class="limits">
+                  {#if selM.stats.cpu_temp_c > 0}
+                    <label class="lim">
+                      <span class="limk">Stop at</span>
+                      <input
+                        class="num mono"
+                        type="number"
+                        min="50"
+                        max="105"
+                        value={selM.stats.thermal_soft_c}
+                        disabled={thBusy[selM.id]}
+                        onchange={(e) => saveThermal(selM, { soft_c: +e.currentTarget.value })}
+                      />
+                      <span class="limu">°C</span>
+                    </label>
+                  {/if}
+                  <label class="lim">
+                    <span class="limk">Or after</span>
+                    <input
+                      class="num mono"
+                      type="number"
+                      min="0"
+                      max="72"
+                      value={selM.stats.thermal_max_hours}
+                      disabled={thBusy[selM.id]}
+                      onchange={(e) => saveThermal(selM, { max_hours: +e.currentTarget.value })}
+                    />
+                    <span class="limu">hours awake (0 = never)</span>
+                  </label>
+                </div>
+                {#if selM.stats.cpu_temp_c > 0 || selM.stats.thermal_pressure}
+                  <label class="check">
+                    <input
+                      type="checkbox"
+                      checked={selM.stats.thermal_action === 'poweroff'}
+                      disabled={thBusy[selM.id]}
+                      onchange={(e) =>
+                        saveThermal(selM, {
+                          action: e.currentTarget.checked ? 'poweroff' : 'sleep',
+                          hard_c: e.currentTarget.checked ? selM.stats?.thermal_hard_c || 100 : 0,
+                        })}
+                    />
+                    <span class="checkk">
+                      <span class="st-name sm">Power off if it keeps climbing</span>
+                      <span class="st-sub-text" class:warn={!selM.stats.thermal_privileged}>
+                        {#if selM.stats.thermal_privileged}
+                          A last resort, once stopping the work was not enough.
+                        {:else}
+                          Needs the admin setup from install.
+                        {/if}
+                      </span>
+                    </span>
+                  </label>
+                  {#if selM.stats.thermal_action === 'poweroff' && selM.stats.cpu_temp_c > 0}
+                    <label class="lim">
+                      <span class="limk">Power off at</span>
+                      <input
+                        class="num mono"
+                        type="number"
+                        min="50"
+                        max="105"
+                        value={selM.stats.thermal_hard_c}
+                        disabled={thBusy[selM.id]}
+                        onchange={(e) => saveThermal(selM, { hard_c: +e.currentTarget.value })}
+                      />
+                      <span class="limu">°C</span>
+                    </label>
+                  {/if}
+                {/if}
+              </div>
+            {/if}
           {/if}
         </div>
 
-        {#if !selM.online}
-          <p class="hint">Offline — nothing to change here until it is back.</p>
-        {:else}
-          <div class="grp">Version</div>
-          <div class="info">
-            <div class="irow awrow">
-              <span class="awk">
-                <span class="awname">
-                  {selOutdated ? 'Update available' : 'Up to date'}
-                </span>
-                <span class="awsub mono">
-                  {selM.stats?.kunai_version ?? 'unknown'}{selOutdated && app.latestVersion ? ` → ${app.latestVersion}` : ''}
-                </span>
-                {#if selUpdateErr}
-                  <span class="awsub warn" title={selUpdateErr}>update failed: {selUpdateErr}</span>
-                {/if}
-              </span>
-              {#if selOutdated}
-                <button class="upbtn" disabled={selUpdating} onclick={() => selM && app.updateMachine(selM.id)}>
-                  {selUpdateLabel}
-                </button>
-              {/if}
-            </div>
-          </div>
-
-          <!-- The lock on this machine's network listener. Its own component:
-               it carries real state and Settings is long enough already. -->
-          <LanAccess base={selM.url} label={selM.label} />
-
-          {#if selM.stats?.clis && selM.stats.clis.length > 1}
-            <div class="grp">Accounts</div>
-            <div class="info">
-              <div class="irow awrow">
-                <span class="awk">
-                  <span class="awname">Auto-failover on limit</span>
-                  <span class="awsub">When an account hits its 5-hour or weekly wall, roll to the account with the most headroom (Claude or provider) and continue.</span>
-                </span>
-                <button
-                  class="switch"
-                  class:on={selM.stats.failover}
-                  onclick={() => toggleFailover(selM)}
-                  disabled={foBusy[selM.id]}
-                  role="switch"
-                  aria-checked={selM.stats.failover ?? false}
-                  aria-label="Toggle account auto-failover"
-                >
-                  <span class="knob"></span>
-                </button>
-              </div>
-            </div>
-          {/if}
-          {#if selM.stats?.keep_awake_supported || selM.stats?.keep_lid_supported || selM.stats}
-            <div class="grp">Unattended</div>
-            <div class="info">
-              {#if selM.stats?.keep_awake_supported}
-                <div class="irow awrow">
-                  <span class="awk">
-                    <span class="awname">Keep awake while locked</span>
-                    <span class="awsub">Needs the lid open and power.</span>
-                  </span>
-                  <button
-                    class="switch"
-                    class:on={selM.stats.keep_awake}
-                    onclick={() => toggleAwake(selM)}
-                    disabled={awBusy[selM.id]}
-                    role="switch"
-                    aria-checked={selM.stats.keep_awake}
-                    aria-label="Toggle keep awake"
-                  >
-                    <span class="knob"></span>
-                  </button>
-                </div>
-              {/if}
-              {#if selM.stats?.keep_lid_supported}
-                <div class="irow awrow">
-                  <span class="awk">
-                    <span class="awname">Keep working with the lid closed</span>
-                    {#if !selM.stats.thermal_privileged}
-                      <span class="awsub warn">Needs the admin setup from install.</span>
-                    {/if}
-                  </span>
-                  <button
-                    class="switch"
-                    class:on={selM.stats.keep_lid}
-                    onclick={() => toggleLid(selM)}
-                    disabled={lidBusy[selM.id]}
-                    role="switch"
-                    aria-checked={selM.stats.keep_lid}
-                    aria-label="Toggle lid-closed hold"
-                  >
-                    <span class="knob"></span>
-                  </button>
-                </div>
-              {/if}
-              {#if selM.stats}
-                <div class="irow awrow">
-                  <span class="awk">
-                    <span class="awname">Stop everything if it overheats</span>
-                    <span class="awsub">
-                      {#if selM.stats.cpu_temp_c > 0}
-                        {Math.round(selM.stats.cpu_temp_c)}°C now
-                      {:else if selM.stats.thermal_pressure}
-                        {selM.stats.thermal_pressure} pressure now
-                      {:else}
-                        No temperature here — the time limit is the guard.
-                      {/if}
-                    </span>
-                  </span>
-                  <button
-                    class="switch"
-                    class:on={selM.stats.thermal_guard}
-                    onclick={() => saveThermal(selM, { enabled: !selM.stats?.thermal_guard })}
-                    disabled={thBusy[selM.id]}
-                    role="switch"
-                    aria-checked={selM.stats.thermal_guard}
-                    aria-label="Toggle thermal guard"
-                  >
-                    <span class="knob"></span>
-                  </button>
-                </div>
-                {#if selM.stats.thermal_guard}
-                  <div class="irow thwrap">
-                    <div class="thlimits">
-                      {#if selM.stats.cpu_temp_c > 0}
-                        <label class="thlim">
-                          <span class="thk">Trip at</span>
-                          <input
-                            class="thin mono"
-                            type="number"
-                            min="50"
-                            max="105"
-                            value={selM.stats.thermal_soft_c}
-                            disabled={thBusy[selM.id]}
-                            onchange={(e) => saveThermal(selM, { soft_c: +e.currentTarget.value })}
-                          />
-                          <span class="thu">°C</span>
-                        </label>
-                      {/if}
-                      <label class="thlim">
-                        <span class="thk">Time limit</span>
-                        <input
-                          class="thin mono"
-                          type="number"
-                          min="0"
-                          max="72"
-                          value={selM.stats.thermal_max_hours}
-                          disabled={thBusy[selM.id]}
-                          onchange={(e) => saveThermal(selM, { max_hours: +e.currentTarget.value })}
-                        />
-                        <span class="thu">hours awake (0 = off)</span>
-                      </label>
-                    </div>
-                    {#if selM.stats.cpu_temp_c > 0 || selM.stats.thermal_pressure}
-                      <label class="thcheck">
-                        <input
-                          type="checkbox"
-                          checked={selM.stats.thermal_action === 'poweroff'}
-                          disabled={thBusy[selM.id]}
-                          onchange={(e) =>
-                            saveThermal(selM, {
-                              action: e.currentTarget.checked ? 'poweroff' : 'sleep',
-                              hard_c: e.currentTarget.checked ? selM.stats?.thermal_hard_c || 100 : 0,
-                            })}
-                        />
-                        <span class="thck">
-                          <span class="thcname">Power off if it keeps climbing</span>
-                          <span class="thcsub" class:warn={!selM.stats.thermal_privileged}>
-                            {#if selM.stats.thermal_privileged}
-                              Last resort, once stopping everything was not enough.
-                            {:else}
-                              Needs the admin setup from install.
-                            {/if}
-                          </span>
-                        </span>
-                      </label>
-                      {#if selM.stats.thermal_action === 'poweroff' && selM.stats.cpu_temp_c > 0}
-                        <label class="thlim">
-                          <span class="thk">Power off at</span>
-                          <input
-                            class="thin mono"
-                            type="number"
-                            min="50"
-                            max="105"
-                            value={selM.stats.thermal_hard_c}
-                            disabled={thBusy[selM.id]}
-                            onchange={(e) => saveThermal(selM, { hard_c: +e.currentTarget.value })}
-                          />
-                          <span class="thu">°C</span>
-                        </label>
-                      {/if}
-                    {/if}
-                  </div>
-                {/if}
-              {/if}
-            </div>
-          {/if}
-
-          {#if accounts[selM.id]}
-            <div class="grp">Claude accounts</div>
-            <div class="info">
-              {#each accounts[selM.id] as c, i (c.name)}
-                <div class="irow acctrow">
-                  <span class="acctname">{c.name}{#if i === 0}<span class="acctdef">default</span>{/if}</span>
-                  <span class="acctdir mono">{c.dir || c.bin}</span>
-                  {#if i > 0}
-                    <button
-                      class="acctx"
-                      onclick={() => removeAccount(selM, c.name)}
-                      disabled={acctBusy[selM.id]}
-                      aria-label="Remove account"
-                    >
-                      <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1 1l8 8M9 1l-8 8" /></svg>
-                    </button>
-                  {/if}
-                </div>
-              {/each}
-            </div>
-            {#if showAddAcct[selM.id]}
-              <div class="acctadd">
-                <input class="min" placeholder="Name (e.g. Work)" bind:value={newName[selM.id]} autocomplete="off" />
-                <input class="min mono" placeholder="Config folder, e.g. /Users/you/.claude-work" bind:value={newDir[selM.id]} autocomplete="off" autocapitalize="off" spellcheck="false" />
-                <button class="add" onclick={() => addAccount(selM)} disabled={acctBusy[selM.id] || !(newName[selM.id] || '').trim() || !(newDir[selM.id] || '').trim()}>Add</button>
-              </div>
-              <p class="acctnote">
-                Log in once first: <span class="mono">CLAUDE_CONFIG_DIR=&lt;folder&gt; claude</span>
-              </p>
-            {:else}
-              <button class="more" onclick={() => (showAddAcct[selM.id] = true)}>+ Add account</button>
-            {/if}
-          {/if}
-        {/if}
+      {:else if section === 'reviews'}
+        <GitHubApp machineId={selM.id} />
       {/if}
     </div>
   </div>
-</div>
+</Page>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 50;
-    background: rgba(0, 0, 0, 0.55);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-    animation: fade 0.14s ease-out;
+  /* The card, row, button and field come from settings.css, shared by every
+     section. What is left here is the page's own frame: the rail, the section
+     header, and the handful of things only this page has. */
+
+  /* Rail beside panel, the pair centred as one block. Centring the LAYOUT and
+     not the panel is what stops the content stranding itself against the left
+     edge of a wide screen with a lake of empty to its right. */
+  .layout {
+    display: grid;
+    grid-template-columns: 190px minmax(0, 1fr);
+    gap: 34px;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 22px 20px calc(56px + var(--safe-bottom));
   }
-  @keyframes fade {
-    from {
-      opacity: 0;
-    }
-  }
-  .modal {
-    width: 100%;
-    max-width: 480px;
-    max-height: min(78dvh, 620px);
-    background: var(--panel);
-    border: 1px solid var(--border-2);
-    border-radius: var(--r-lg);
+  .rail {
     display: flex;
     flex-direction: column;
-    overflow: hidden;
-    box-shadow: 0 24px 70px -24px rgba(0, 0, 0, 0.75);
-    animation: pop 0.16s ease-out;
+    align-items: stretch;
+    gap: 1px;
+    position: sticky;
+    top: 0;
+    align-self: start;
   }
-  @keyframes pop {
-    from {
-      transform: translateY(10px);
-      opacity: 0;
-    }
-  }
-  .grab {
-    display: none;
-  }
-  header {
+  .rgroup {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 18px 20px 12px;
-  }
-  h2 {
-    font-size: 16px;
+    gap: 7px;
+    padding: 16px 10px 5px;
+    font-size: 10px;
     font-weight: 600;
-    letter-spacing: -0.01em;
-    margin: 0;
-  }
-  .close {
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    color: var(--text-3);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .close:hover {
-    color: var(--text);
-  }
-  .body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 4px 20px 20px;
-  }
-  .sec {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-size: 11.5px;
-    font-weight: 550;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--text-4);
-    padding: 16px 2px 10px;
-  }
-  .discover {
-    text-transform: none;
-    letter-spacing: 0;
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text-2);
-    padding: 4px 10px;
-    border-radius: 100px;
-    border: 1px solid var(--border);
-    background: var(--panel-2);
-  }
-  .discover:hover {
-    color: var(--text);
-    border-color: var(--border-2);
-  }
-  .discover:disabled {
-    opacity: 0.55;
-  }
-  .awrow {
-    gap: 14px;
-    padding-left: 34px;
-  }
-  .awk {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-  .awname {
-    font-size: 13px;
-    color: var(--text-2);
-  }
-  .awsub {
-    font-size: 11px;
-    color: var(--text-4);
-    line-height: 1.45;
-  }
-  .thlimits {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 18px;
-    padding: 2px 8px 8px 34px;
-  }
-  .thlim {
-    display: flex;
-    align-items: baseline;
-    gap: 7px;
-    font-size: 12px;
-    color: var(--text-3);
-  }
-  .thin {
-    width: 56px;
-    padding: 4px 7px;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text);
-    font-size: 12.5px;
-    text-align: right;
-  }
-  .thin:focus-visible {
-    outline: none;
-    border-color: var(--border-2);
-  }
-  .thin::-webkit-outer-spin-button,
-  .thin::-webkit-inner-spin-button {
-    appearance: none;
-    margin: 0;
-  }
-  .thu {
-    font-size: 11px;
-    color: var(--text-4);
-  }
-  /* A warning subline earns the one status colour reserved for "be careful". */
-  .awsub.warn {
-    color: color-mix(in srgb, var(--busy) 80%, var(--text-3));
-  }
-  .acctrow {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12.5px;
-  }
-  .acctname {
-    flex: none;
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    color: var(--text-2);
-  }
-  .acctdef {
-    font-size: 9.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--text-4);
-  }
-  .acctdir {
-    flex: 1;
-    min-width: 0;
-    font-size: 11px;
-    color: var(--text-4);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    direction: rtl;
-    unicode-bidi: plaintext;
-    text-align: left;
-  }
-  .acctx {
-    flex: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    border-radius: 4px;
-    color: var(--text-4);
-  }
-  .acctx:hover {
-    color: var(--text);
-    background: var(--panel-3);
-  }
-  .acctadd {
-    display: flex;
-    gap: 6px;
-    margin-top: 2px;
-  }
-  .acctadd .min {
-    min-width: 0;
-  }
-  .acctadd .min:first-child {
-    flex: 0 0 34%;
-  }
-  .acctadd .min:nth-child(2) {
-    flex: 1;
-  }
-  .acctnote {
-    margin: 0;
-    font-size: 11px;
-    line-height: 1.5;
-    color: var(--text-4);
-  }
-  /* The way into a form you rarely want: present, but not taking up the room a
-     form would. */
-  /* Machine picker: the settings panel's spine. */
-  .mchips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .mchip {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    padding: 6px 11px;
-    border: 1px solid var(--border);
-    border-radius: 100px;
-    font-size: 12.5px;
-    color: var(--text-2);
-  }
-  .mchip:hover {
-    color: var(--text);
-    border-color: var(--border-2);
-  }
-  .mchip.on {
-    color: var(--text);
-    background: var(--panel-2);
-    border-color: var(--border-2);
-  }
-  .mchip.ghost {
-    color: var(--text-4);
-    padding: 6px 10px;
-  }
-  .mid {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding: 9px 2px 0;
-  }
-  .murl,
-  .mbuild {
-    font-size: 11px;
-    color: var(--text-4);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .mremove {
-    align-self: flex-start;
-    margin-top: 4px;
-    font-size: 11.5px;
-    color: var(--text-4);
-  }
-  .mremove:hover {
-    color: var(--alert);
-  }
-  /* Sub-heading inside a machine, quieter than a section eyebrow: these group
-     rows, they do not start a new part of the panel. */
-  .grp {
-    font-size: 10.5px;
     letter-spacing: 0.09em;
     text-transform: uppercase;
     color: var(--text-4);
-    /* Same vertical rhythm as .sec, one step quieter: these group rows inside a
-       machine rather than starting a new part of the panel. */
-    padding: 16px 2px 8px;
   }
-  .thwrap {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
+  .rgroup:first-child {
+    padding-top: 2px;
   }
-  .more {
-    align-self: flex-start;
-    padding: 5px 0;
-    font-size: 12px;
-    color: var(--text-3);
+  /* The machine's name is a value, not a label, so it keeps its own case and
+     takes the mono voice this app gives data everywhere else. The rule above it
+     is what stops it reading as a nav item that happens to be disabled: a
+     heading needs to sit on something, and a dot plus a word at link height
+     sits on nothing. */
+  .rgroup.mach {
+    text-transform: none;
+    letter-spacing: 0;
+    margin-top: 10px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
   }
-  .more:hover {
-    color: var(--text);
-  }
-  .thcheck {
-    display: flex;
-    align-items: flex-start;
-    gap: 9px;
-    cursor: pointer;
-  }
-  .thcheck input {
-    margin-top: 2px;
-    accent-color: var(--alert);
-  }
-  .thck {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .thcname {
-    font-size: 12.5px;
-    color: var(--text-2);
-  }
-  .thcsub {
+  .rmach {
+    font-family: var(--mono, monospace);
     font-size: 11px;
-    line-height: 1.45;
-    color: var(--text-4);
+    font-weight: 500;
+    color: var(--text-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .mdot {
+  .rdot {
     flex: none;
-    width: 7px;
-    height: 7px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
     background: var(--text-4);
   }
-  .mdot.live {
+  .rdot.live {
     background: var(--live);
   }
-  .murl {
-    font-size: 11px;
-    color: var(--text-4);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .addrow {
-    display: flex;
-    gap: 7px;
-    margin-top: 8px;
-  }
-  .min {
-    min-width: 0;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    padding: 9px 11px;
-    font-size: 12.5px;
-    color: var(--text);
-    outline: none;
-  }
-  .min:first-child {
-    flex: 0 0 88px;
-  }
-  .min:nth-child(2) {
-    flex: 1;
-  }
-  .min:focus {
-    border-color: var(--border-2);
-  }
-  .add {
-    flex: none;
-    padding: 0 14px;
-    border-radius: var(--r-sm);
-    background: var(--white);
-    color: #0b0b0c;
-    font-size: 13px;
-    font-weight: 550;
-  }
-  .add:disabled {
-    opacity: 0.45;
-  }
-  .row {
+  .rlink {
     display: flex;
     align-items: center;
-    gap: 14px;
-    padding: 14px 16px;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    color: var(--text-3);
+    font-size: 13px;
+    text-align: left;
   }
-  .rmeta {
+  .rlbl {
     flex: 1;
     min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
   }
-  .rname {
-    font-size: 14px;
-    font-weight: 500;
+  /* The icon is dimmer than its label at rest and comes up with it on hover, so
+     a row reads as one thing rather than as a glyph next to a word. */
+  .ric {
+    flex: none;
+    width: 17px;
+    height: 17px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-4);
+    transition: color 0.12s;
+  }
+  .ric :global(svg) {
+    width: 17px;
+    height: 17px;
+  }
+  .rlink:hover {
+    background: var(--panel);
     color: var(--text);
   }
-  .rsub {
-    font-size: 12px;
+  .rlink:hover .ric {
     color: var(--text-3);
-    line-height: 1.5;
   }
+  .rlink.on {
+    background: var(--panel-2);
+    color: var(--text);
+    font-weight: 550;
+  }
+  .rlink.on .ric {
+    color: var(--text);
+  }
+  .rcount {
+    flex: none;
+    font-size: 11px;
+    color: var(--text-4);
+  }
+
+  .panel {
+    min-width: 0;
+  }
+  /* Every section states itself. This is also what gives the top of the panel
+     something to be: a page whose content is three switches used to open with
+     three switches floating against nothing. */
+  .shead {
+    margin: 0 0 14px;
+  }
+  .shead h2 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    color: var(--text);
+  }
+  .shead p {
+    margin: 4px 0 0;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--text-4);
+    max-width: 56ch;
+  }
+
+  /* The switch. The one control this page owns that settings.css does not,
+     because nothing else in the app uses one. */
   .switch {
     flex: none;
     position: relative;
-    width: 44px;
-    height: 26px;
+    width: 40px;
+    height: 23px;
     border-radius: 100px;
     background: var(--panel-3);
     border: 1px solid var(--border);
@@ -990,93 +861,183 @@
     position: absolute;
     top: 2px;
     left: 2px;
-    width: 20px;
-    height: 20px;
+    width: 17px;
+    height: 17px;
     border-radius: 50%;
     background: var(--text-3);
     transition: transform 0.15s, background 0.15s;
   }
   .switch.on .knob {
-    transform: translateX(18px);
+    transform: translateX(17px);
     background: #0b0b0c;
   }
-  .hint {
-    margin: 10px 2px 0;
-    font-size: 12.5px;
-    color: var(--text-3);
-    line-height: 1.5;
+
+  /* A machine row: the whole left side is the target, because picking a machine
+     is the point of this list. */
+  /* The row's own padding moves onto the button, so the whole left side is the
+     target rather than just the words in it. The numbers have to match the
+     shared row exactly or the machine list sits off the page's left edge. */
+  .mrow {
+    padding: 0;
   }
-  .info {
+  .mrow.sel {
+    background: var(--panel);
+  }
+  .mpick {
+    flex: 1;
+    min-width: 0;
     display: flex;
-    flex-direction: column;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    overflow: hidden;
+    padding: 13px 10px;
+    background: none;
   }
-  .irow {
+  .mpick:hover :global(.st-name) {
+    color: var(--text);
+  }
+  .mtop {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 12px 16px;
+    gap: 8px;
   }
-  .irow + .irow {
-    border-top: 1px solid var(--border);
-  }
-
-  /* Phone: bottom sheet. */
-  @media (max-width: 640px) {
-    .backdrop {
-      align-items: flex-end;
-      padding: 0;
-    }
-    .modal {
-      max-width: none;
-      max-height: 86dvh;
-      border-radius: 20px 20px 0 0;
-      border-left: none;
-      border-right: none;
-      border-bottom: none;
-      animation: rise 0.2s ease-out;
-    }
-    @keyframes rise {
-      from {
-        transform: translateY(24px);
-        opacity: 0;
-      }
-    }
-    .grab {
-      display: block;
-      width: 38px;
-      height: 4px;
-      border-radius: 3px;
-      background: var(--border-2);
-      margin: 10px auto 0;
-      flex: none;
-    }
-    header {
-      padding-top: 10px;
-    }
-    .body {
-      padding-bottom: calc(var(--safe-bottom) + 20px);
-    }
-  }
-
-  /* Update is the one action in Settings that changes the running binary, so it is
-     the only filled button here. */
-  .upbtn {
+  .macts {
     flex: none;
-    height: 28px;
-    padding: 0 13px;
-    border-radius: 8px;
-    background: var(--text);
-    color: #0b0b0c;
-    font-size: 12.5px;
-    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-right: 10px;
   }
-  .upbtn:disabled {
-    background: var(--panel-3);
+  .tag {
+    font-size: 9.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-4);
+  }
+  .tag.on {
     color: var(--text-3);
+  }
+
+  /* Settings that only exist while the switch above them is on. Indented and
+     hung off a single vertical hairline, which says "these belong to the thing
+     above" with one line rather than by putting a box around them. */
+  .st-row.sub {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    margin-left: 2px;
+    padding-left: 16px;
+    border-top: none;
+    border-left: 1px solid var(--border);
+    border-radius: 0;
+  }
+  .limits {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+  }
+  .lim {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+  .num {
+    width: 58px;
+    padding: 5px 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text);
+    font-size: 12.5px;
+    text-align: right;
+  }
+  .num:focus-visible {
+    outline: none;
+    border-color: var(--border-2);
+  }
+  .num::-webkit-outer-spin-button,
+  .num::-webkit-inner-spin-button {
+    appearance: none;
+    margin: 0;
+  }
+  .limu {
+    font-size: 11px;
+    color: var(--text-4);
+  }
+  .check {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    cursor: pointer;
+  }
+  .checkk {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .foot {
+    margin-top: 14px;
+  }
+  .err {
+    margin: 0 0 12px;
+    font-size: 12px;
+    color: var(--alert);
+  }
+  .err.small {
+    flex-basis: 100%;
+    margin: 0;
+    padding: 0 10px 12px;
+    font-size: 11px;
+  }
+
+  /* Phone: the rail becomes a scrolling strip of chips above the panel. A
+     drill-down would be the other option and is worse here, since it puts a
+     second back button inside a page that already has one. */
+  @media (max-width: 760px) {
+    .layout {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 16px;
+      padding: 14px 12px calc(48px + var(--safe-bottom));
+    }
+    .rail {
+      position: static;
+      flex-direction: row;
+      gap: 6px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      padding-bottom: 2px;
+    }
+    .rail::-webkit-scrollbar {
+      display: none;
+    }
+    /* The headings cannot come with it, so the machine chip carries the scope:
+       it is the one that says which machine everything after it belongs to. */
+    .rgroup {
+      display: none;
+    }
+    .rgroup.mach {
+      display: inline-flex;
+      flex: none;
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+    }
+    .rlink {
+      flex: none;
+      padding: 8px 13px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .rlink.on {
+      border-color: var(--border-2);
+    }
+    .mpick {
+      padding: 12px 8px;
+    }
+    .macts {
+      padding: 0 8px 12px;
+    }
   }
 </style>

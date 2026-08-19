@@ -126,6 +126,10 @@ export interface Meta {
   // branch is that worktree's branch. Shown rather than the directory name,
   // which goes stale when a worktree names itself from its first prompt.
   branch?: string
+  // review marks a pull-request review, so opening one renders its findings at
+  // first paint instead of asking the server and showing the transcript in the
+  // meantime. See internal/session Meta.Review.
+  review?: boolean
   id: string
   cwd: string
   model: string
@@ -335,6 +339,11 @@ export interface Attachment {
   id: string
   name: string
   media_type: string
+  // What the server had to do to make it sendable ("resized"), when it did.
+  // Said rather than done quietly: these are not the bytes that were handed
+  // over, and somebody sending a screenshot to be read closely should know it
+  // was scaled. See internal/imageprep.
+  note?: string
 }
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'auto' | 'plan' | 'bypassPermissions'
@@ -370,6 +379,7 @@ export interface HistoryEntry {
   // says the work went into. See projectDir in internal/server/history.go.
   project?: string
   branch?: string // that worktree's branch, which outlives its directory name
+  review?: boolean // a past pull-request review, which reopens on its findings
   snoozed_until?: number // parked on the snoozed shelf until this time (unix ms)
   snoozed_at?: number // when the snooze was set
 }

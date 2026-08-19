@@ -1,0 +1,415 @@
+package server
+
+// Reviewing a pull request: the one place a review is born.
+//
+// Structurally this mirrors channelsessions.go. A review is not a subsystem with
+// its own idea of how an agent runs; it is an ORDINARY SESSION, created through
+// the same machinery as any other, which is why it appears in the sidebar, speaks
+// over the same socket, and can be interrupted and argued with once the findings
+// are in. Everything specific to reviewing lives in what it is given: a detached
+// worktree at the pull request's head, a prompt (internal/review), and a toolset
+// narrowed when the code came from a fork.
+//
+// Nothing here polls. A review happens because a person clicked, which is what
+// keeps this small: no schedule, no webhook, no coordination between machines
+// beyond asking GitHub whether this commit has already been reviewed.
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"strings"
+	"time"
+
+	"github.com/hegade/kunai/internal/ghapp"
+	"github.com/hegade/kunai/internal/review"
+	"github.com/hegade/kunai/internal/session"
+	"github.com/hegade/kunai/internal/worktree"
+)
+
+// reviewToolset is withheld from every review, its own pull request or a
+// stranger's.
+//
+// Reading is untouched, and reading is the whole job: Read, Grep and Glob are how
+// a review earns its keep over a diff read in isolation, and none of them execute
+// anything or need permission.
+//
+// Bash is withheld even on your own team's code, which is a change of mind and
+// worth recording. It was allowed there so a review could run the tests, which is
+// a real gain in quality. But a permission mode that runs safe work still stops
+// to ask about a risky command, and a review is watched by nobody by design: the
+// dashboard sends you away from it deliberately. So the first unusual command
+// parked the whole review on a question nobody was there to answer, and the view
+// reported "nothing worth reporting" because no findings had arrived. A reviewer
+// that hangs silently is worth less than one that cannot run tests, and this is
+// the same trade the loop already makes when it borrows acceptEdits.
+//
+// The happy consequence is that the toolset no longer depends on trust: a fork
+// and your own branch get exactly the same one, so there is no second list to
+// keep in step and no way to hand a stranger's diff more than it should have.
+//
+// Task is deliberately NOT withheld any more, and it is what makes the
+// verification phase worth having. A subagent starts with a fresh context: it
+// sees the claim it was given and nothing of the reasoning that produced it,
+// which is precisely the independence the phase exists to buy, and it gets that
+// independence in parallel and for free. Running the checks in this session
+// instead would mean asking the model that just wrote the findings whether the
+// findings are right, which is the failure the phase was added to fix. A
+// subagent inherits these same restrictions, so it can read and nothing else.
+// The withheld list is BELT, and reviewReadable below is BRACES. Keeping both
+// is the lesson from a real hang: this list named the tools that ran commands in
+// the CLI of the day, the CLI then grew `Monitor` (which also runs a shell), and
+// a review reached for it, was stopped at kunai's gate, and sat on that question
+// for the life of the process while the screen said no findings had arrived. A
+// denylist protecting something unattended goes stale in silence, every time
+// somebody else ships a tool.
+var reviewToolset = []string{
+	"Bash", "BashOutput", "KillShell", "KillBash", "Monitor",
+	"Write", "Edit", "MultiEdit", "NotebookEdit",
+}
+
+// reviewReadable is what a review may actually use, and it is the rule that
+// holds: everything else is refused by kunai itself the moment it is asked for,
+// so an unattended review can never park on a permission prompt no matter what
+// the CLI learns to do next. See session.CreateOptions.Unattended.
+//
+// Task is here and it is what makes verification worth having: a subagent starts
+// with a fresh context, sees the claim and none of the reasoning that produced
+// it, and inherits these same restrictions.
+var reviewReadable = []string{
+	"Read", "Grep", "Glob", "Task", "Agent", "TodoWrite",
+	"NotebookRead", "WebSearch", "WebFetch", "Skill", "ToolSearch",
+}
+
+// reviewToolsOwner marks a review's restriction as the review's own, so nothing
+// else lifts it. See session.CreateOptions.ToolsOwner.
+const reviewToolsOwner = "pr-review"
+
+// startReview creates the worktree and the session for one pull request review.
+func (s *Server) startReview(ctx context.Context, repoDir string, number int, requester string) (*session.Session, error) {
+	app, err := s.githubApp()
+	if err != nil {
+		return nil, err
+	}
+	repo, err := s.repoAt(repoDir)
+	if err != nil {
+		return nil, err
+	}
+
+	// A review still WORKING on this pull request is handed back rather than
+	// joined by a second one. Clicking Review twice otherwise started another
+	// whole run: two sessions with the same name in the sidebar, two worktrees,
+	// two lots of quota, and two drafts of which only one can ever be posted.
+	//
+	// Bounded to a review that has not finished, which is narrower than it was
+	// and had to be. It used to reuse any review whose SESSION was live, and a
+	// finished review's session stays live by design (it is an ordinary
+	// conversation you can argue with), so asking for a fresh review after a push
+	// handed back the old draft at the old commit. That is precisely when
+	// somebody wants a new one.
+	if s.prReviews != nil {
+		for _, rec := range s.prReviews.all() {
+			if rec.Number != number || !strings.EqualFold(rec.Owner, repo.Owner) || !strings.EqualFold(rec.Repo, repo.Name) {
+				continue
+			}
+			if !reviewInFlight(rec) {
+				continue // it has an answer; a new click means a new reading
+			}
+			if sess, live := s.mgr.Get(rec.SessionID); live {
+				log.Printf("pr review: %s#%d is already being reviewed in session %s; reusing it", repo, number, rec.SessionID)
+				return sess, nil
+			}
+		}
+	}
+
+	pr, err := app.PullRequest(ctx, repo, number)
+	if err != nil {
+		return nil, err
+	}
+	files, err := app.PullRequestFiles(ctx, repo, number)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("%s#%d changes nothing that can be reviewed", repo, number)
+	}
+
+	// Fetched from the base repository's refs/pull/<n>/head, which is the one
+	// place a fork's commits are reachable without adding a remote.
+	ref := fmt.Sprintf("refs/pull/%d/head", number)
+	if err := worktree.FetchRef(repoDir, "origin", ref); err != nil {
+		return nil, err
+	}
+	sha, err := worktree.ResolveRef(repoDir, "refs/kunai/pull/"+fmt.Sprint(number)+"/head")
+	if err != nil {
+		return nil, fmt.Errorf("could not resolve the head of %s#%d after fetching it: %w", repo, number, err)
+	}
+	if pr.Head.SHA != "" && !strings.EqualFold(sha, pr.Head.SHA) {
+		// The pull request moved between reading it and fetching it. Reviewing the
+		// commit we actually have is correct; recording that commit is what keeps
+		// the eventual comments attached to the code that was read.
+		log.Printf("pr review: %s#%d moved while fetching (%s -> %s); reviewing what was fetched", repo, number, pr.Head.SHA, sha)
+	}
+
+	wt, err := worktree.CreateReview(worktree.ReviewOptions{
+		Repo: repoDir, Root: s.worktreeRoot(), Name: fmt.Sprint(number), SHA: sha,
+	})
+	if err != nil {
+		return nil, err
+	}
+	// The repository's main checkout, not the directory the request named, which
+	// may itself have been a worktree. This is what the review session reports as
+	// its repo so it groups under the codebase rather than under its own
+	// throwaway directory.
+	repoRoot := wt.Repo
+
+	fromFork := pr.FromFork(repo)
+	// Written into the worktree rather than pasted into the prompt, and written
+	// one file at a time so the parts worth reading are addressable. See
+	// prreviewdiff.go for what that is worth in tokens.
+	diff, err := writeDiff(wt.Path, number, files)
+	if err != nil {
+		_ = worktree.RemoveReview(wt)
+		return nil, err
+	}
+	// The review as a sequence of phases rather than one question. NewRun decides
+	// for itself whether this change is big enough to be worth surveying first.
+	run := review.NewRun(review.Request{
+		Repo: repo.String(), Number: number, Title: pr.Title, Author: pr.User.Login,
+		BaseRef: pr.Base.Ref, HeadSHA: sha, FromFork: fromFork,
+		DiffPath:   diff.Whole,
+		DiffDir:    diff.Dir,
+		Files:      diff.Files,
+		PriorNotes: priorNotes(ctx, app, repo, number),
+	})
+
+	// The account and model reviews run on, which is deliberately its own choice:
+	// a review is chunky and unattended, so spending the window you are working in
+	// is the wrong default once you review more than occasionally.
+	rc := s.reviewCfg.get()
+	cli := s.resolveCLI(rc.CLI)
+	model := rc.Model
+	if model == "" {
+		model = s.model()
+	}
+	// One spec, used for this session and for any a later phase is given of its
+	// own, so a borrowed session cannot end up on a different account or with a
+	// looser toolset than the review it belongs to.
+	spawn := session.CreateOptions{
+		Cwd:     wt.Path,
+		Title:   fmt.Sprintf("Review #%d %s", number, pr.Title),
+		Model:   model,
+		Effort:  s.effort(),
+		CLIName: cli.Name, Bin: cli.Bin, Env: cli.effectiveEnv(),
+		// A review never needs to approve a tool call: everything it may do is
+		// safe by construction once the dangerous tools are withheld, and stopping
+		// to ask would strand a review nobody is watching.
+		Mode:            session.LoopPermissionMode,
+		DisallowedTools: reviewToolset,
+		// Nobody is watching a review, so it answers its own asks rather than
+		// stopping on one. See CreateOptions.Unattended.
+		Unattended: reviewReadable,
+		// Claimed, so the share reconciler leaves it alone. Without this it read a
+		// review's withheld tools as an expired share and respawned the session
+		// about a minute in, which ended the running turn and looked from the
+		// outside like the review stopping by itself.
+		ToolsOwner: reviewToolsOwner,
+	}
+	sess, err := s.mgr.Create(ctx, spawn)
+	if err != nil {
+		_ = worktree.RemoveReview(wt)
+		return nil, err
+	}
+	s.armSession(sess)
+
+	if s.prReviews != nil {
+		s.prReviews.put(prReview{
+			SessionID: sess.ID, Owner: repo.Owner, Repo: repo.Name, Number: number,
+			Title: pr.Title, HeadSHA: sha, BaseRef: pr.Base.Ref, FromFork: fromFork,
+			RepoDir: repoRoot, Worktree: wt.Path,
+			Requester: requester, CLI: cli.Name, CreatedAt: time.Now(),
+			Phase:    string(run.Phase),
+			Surveyed: run.Phase == review.PhaseSurvey,
+			// What is under review, so the screen somebody watches while it runs
+			// can say so. It costs a few hundred bytes on the record and it is the
+			// difference between a progress line and a page.
+			Files:    diff.Files,
+			Timeline: []phaseStart{{Phase: string(run.Phase), At: time.Now()}},
+		})
+	}
+	s.reviewRuns.put(sess.ID, &reviewRun{
+		run: run, files: files,
+		owner: sess.ID, worktree: wt.Path, spawn: spawn,
+	})
+
+	// Collected from inside the session rather than by subscribing to it. A
+	// subscriber is dropped when its buffer fills (emitLocked), which is right for
+	// a phone that cannot keep up and fatal here: a review streams for minutes, the
+	// watcher was routinely dropped part-way, and it then saved nothing and logged
+	// nothing because from its side the conversation had simply ended. Three real
+	// reviews produced neither a draft nor a parse error before this was found.
+	//
+	// Every turn now feeds the phase machine, which asks the next question or
+	// finishes. See prreviewrun.go.
+	sess.SetAnswerHook(func(text string) { s.advanceReview(sess.ID, text) })
+
+	// Sent as a brief rather than as a prompt: the instructions and the whole diff
+	// are context the model must read, not something the user said, and printing
+	// them into the chat buried the review under several screens of schema.
+	prompt, brief, ok := run.Next()
+	if !ok {
+		return nil, fmt.Errorf("internal: a new review had nothing to ask")
+	}
+	if err := sess.PromptBrief(prompt, brief); err != nil {
+		return nil, fmt.Errorf("the review session was created but would not start: %w", err)
+	}
+	return sess, nil
+}
+
+// reviewInFlight reports whether a review is still working on its answer, which
+// is the only state in which a second click should join it rather than start a
+// new reading.
+//
+// Deliberately not "is its session alive". A finished review's session stays
+// alive on purpose, because it is a conversation you can argue with, so that
+// test made a completed draft block re-reviewing the same pull request for as
+// long as the tab stayed open. Asking again after a push is exactly when a fresh
+// reading is wanted, and it is the one moment that rule refused it.
+func reviewInFlight(rec prReview) bool {
+	if rec.Draft != nil || rec.ParseError != "" {
+		return false // it produced an answer, good or bad
+	}
+	// An empty phase is a record from before phases existed, which cannot be in
+	// flight: nothing is driving it any more.
+	return rec.Phase != "" && rec.Phase != string(review.PhaseDone)
+}
+
+// tagReviewRepos points a review session at the repository it is reviewing.
+//
+// A review runs in a detached worktree that is deliberately NOT registered as
+// work in progress, so nothing else can say which codebase it belongs to. Left
+// untagged, its directory (.../worktrees/kunai/review/4) was taken for a
+// repository in its own right: the sidebar gave it a heading called "4", and the
+// dashboard listed every pull request twice, once under the real repo and once
+// under the phantom. An in-memory lookup, because this runs for every session on
+// every listing.
+func (s *Server) tagReviewRepos(metas []session.Meta) {
+	if s.prReviews == nil {
+		return
+	}
+	for i := range metas {
+		// Whether this session IS a review, which the client needs to know before
+		// it can render anything. It used to have to ask, one request per session,
+		// and until that answer came back the app showed the ordinary transcript:
+		// so opening a finished review flashed a dead conversation ("this session
+		// has ended") for as long as the round trip took, and only then became the
+		// review. The answer was already here, on a map this loop was walking
+		// anyway.
+		//
+		// Only a session with a record of its OWN. A session a phase borrowed is
+		// part of a review but is not one, and has no draft to open on.
+		metas[i].Review = s.prReviews.isReview(metas[i].ID)
+
+		if metas[i].Repo != "" {
+			continue // already known to be a worktree of something
+		}
+		if dir := s.prReviews.repoOf(metas[i].ID); dir != "" {
+			metas[i].Repo = dir
+			continue
+		}
+		// A session a phase borrowed has no record of its own (it is a second
+		// name for a review, not a review), so it has to be resolved through the
+		// review it belongs to. Without this the verification session brings back
+		// the exact bug this function exists to prevent, for as long as it runs:
+		// its directory (.../worktrees/kunai/review/5) is taken for a repository
+		// and the sidebar grows a heading called "5".
+		if owner := s.reviewRuns.ownerOf(metas[i].ID); owner != "" {
+			metas[i].Repo = s.prReviews.repoOf(owner)
+		}
+	}
+}
+
+// worktreeRoot is where review checkouts are made, shared with the worktree
+// store so one repository's reviews and its work sit under the same directory.
+func (s *Server) worktreeRoot() string {
+	if s.worktrees == nil {
+		return ""
+	}
+	return s.worktrees.root
+}
+
+// reviewAccount is which account a review runs on. Empty means the default, and
+// it is a seam rather than a setting today: reviews are chunky, so pointing them
+// at a second account or a provider is the obvious next control, and having the
+// call site already ask for one means adding it does not touch this file.
+func (s *Server) reviewAccount() string { return "" }
+
+// repoAt reads the GitHub repository a local checkout belongs to.
+func (s *Server) repoAt(dir string) (ghapp.Repo, error) {
+	root, err := worktree.Root(dir)
+	if err != nil {
+		return ghapp.Repo{}, fmt.Errorf("%s is not a git repository", dir)
+	}
+	remote, err := worktree.RemoteURL(root, "origin")
+	if err != nil {
+		return ghapp.Repo{}, err
+	}
+	return ghapp.ParseRemote(remote)
+}
+
+// githubApp returns the configured App, or an error saying what is missing.
+func (s *Server) githubApp() (*ghapp.App, error) {
+	s.ghMu.Lock()
+	defer s.ghMu.Unlock()
+	if s.gh != nil {
+		return s.gh, nil
+	}
+	creds, err := loadGitHubCredentials(s.cfg.DataDir)
+	if err != nil {
+		if errors.Is(err, ghapp.ErrNoCredentials) {
+			return nil, fmt.Errorf("kunai has no GitHub App on this machine yet: add one in Settings to review pull requests")
+		}
+		return nil, err
+	}
+	s.gh = ghapp.New(creds)
+	return s.gh, nil
+}
+
+// priorNotes gathers what humans have already said, so a review adds to the
+// conversation instead of restating it. Best effort: a review is still worth
+// running when this cannot be read.
+func priorNotes(ctx context.Context, app *ghapp.App, repo ghapp.Repo, number int) []string {
+	reviews, err := app.Reviews(ctx, repo, number)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, r := range reviews {
+		if r.ByBot() || strings.TrimSpace(r.Body) == "" {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s: %s", r.User.Login, collapse(r.Body)))
+	}
+	return out
+}
+
+// collapse flattens a comment to one line and caps it, because these are context
+// for the prompt rather than the material being reviewed.
+func collapse(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > 400 {
+		return s[:400] + "..."
+	}
+	return s
+}
+
+// toReviewFiles converts the wire shape to the logic package's. The duplication
+// is deliberate: internal/review must not depend on GitHub's JSON.
+func toReviewFiles(files []ghapp.FileDiff) []review.FileDiff {
+	out := make([]review.FileDiff, 0, len(files))
+	for _, f := range files {
+		out = append(out, review.FileDiff{Filename: f.Filename, Status: f.Status, Patch: f.Patch})
+	}
+	return out
+}

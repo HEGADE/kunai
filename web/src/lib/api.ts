@@ -634,6 +634,409 @@ export function closeFunnel(base: string, port: number): Promise<FunnelState> {
   )
 }
 
+// --- pull-request review -----------------------------------------------------
+
+// PullRequest is one open pull request on a repository this machine has checked
+// out. reviewed_at is set when kunai has already reviewed THIS commit, which is
+// what turns the Review button into "reviewed 2h ago" rather than spending
+// somebody's quota on a review that already exists.
+export interface PullRequest {
+  number: number
+  title: string
+  author: string
+  base_ref: string
+  head_sha: string
+  draft: boolean
+  from_fork: boolean
+  additions: number
+  deletions: number
+  reviewed_at?: string
+  // The review THIS machine holds, if any. Distinct from reviewed_at, which
+  // comes from GitHub and only knows about reviews that were posted. Without it
+  // a row knew about a review only while the tab that started it stayed open, so
+  // a refresh offered "Review" again on a pull request that already had one and
+  // clicking it spent a fresh quota.
+  review?: PullRequestReview
+}
+
+export interface PullRequestReview {
+  session_id: string
+  phase?: ReviewPhase
+  running: boolean
+  // Never produced an answer, and nothing is working on it any more: stopped by
+  // hand, or a restart caught it mid-phase. Distinct from running, which the
+  // record alone cannot tell it from -- reading it as running left the row
+  // saying "Reviewing" against a review stopped minutes earlier.
+  stopped?: boolean
+  findings: number
+  posted: boolean
+  failed: boolean
+  // The review read a commit that is no longer the head.
+  stale: boolean
+}
+
+// How bad a finding is if it is true. Mirrors internal/review/severity.go, and
+// the two must be changed together.
+export type Severity = 'blocker' | 'major' | 'minor'
+
+// How sure the review is that the finding is true at all, which is a separate
+// question from how much it matters. Anything below 'high' was independently
+// re-examined before it could reach here.
+export type Confidence = 'high' | 'medium' | 'low'
+
+// ReviewFinding is one row of the draft. `inline` is the promise the card makes:
+// whether this lands on the line itself or in the summary, and `why` explains a
+// demotion in words meant for a person.
+// One row of what checked a claim. Labelled rather than prose, because the
+// labels are the same three questions every time and a reader comparing two
+// findings can only do that when both answer in the same shape.
+export interface Ground {
+  key: string
+  value: string
+}
+
+// Who can reach a finding, what it reaches, and what fixing it costs. Together
+// they are what turns a list of true statements into an order to work in.
+export interface Impact {
+  who?: string
+  radius?: string
+  size?: string
+}
+
+export interface PatchLine {
+  sign: string
+  text: string
+}
+
+// The fix as a diff. Built server-side from the lines the finding is anchored
+// to and the suggestion it produced, so it is never a second opinion about
+// itself; only the title is the model's.
+export interface Patch {
+  title: string
+  lines: PatchLine[]
+}
+
+export interface ReviewFinding {
+  hunk?: HunkLine[]
+  index: number
+  // The claim in a handful of words, for the queue rail.
+  short?: string
+  patch?: Patch | null
+  grounds?: Ground[]
+  impact?: Impact | null
+  file: string
+  line: number
+  end_line?: number
+  side: string
+  title: string
+  body: string
+  severity: Severity
+  confidence: Confidence
+  category?: string
+  // What the finding rests on, in the reviewer's own words. Shown so a claim can
+  // be overruled quickly rather than taken on trust.
+  evidence?: string
+  // True when an independent pass tried to refute this and failed. Its absence
+  // is not a black mark: a finding can skip verification by being demonstrated
+  // in the first place. But "this was checked" and "this was asserted" must be
+  // distinguishable, and only this can say which.
+  verified?: boolean
+  suggestion?: string
+  inline: boolean
+  why?: string
+}
+
+// severityRank moved to lib/severity.ts, which is where the rest of the severity
+// vocabulary lives. It is also what makes lib/review.ts testable under plain
+// node: this module imports fetch and a value imported from here would drag the
+// whole API surface into the unit suite.
+
+// A candidate the verification pass refuted, kept with its reason. Shown so the
+// filtering can be audited: three findings from a reviewer that dropped four is
+// a different thing from three findings from a reviewer that only found three.
+export interface DroppedFinding {
+  file: string
+  line: number
+  title: string
+  severity: Severity
+  why: string
+}
+
+// How far a review has got. Mirrors internal/review/phase.go.
+export type ReviewPhase = 'survey' | 'find' | 'verify' | 'done'
+
+export interface ReviewDraft {
+  owner: string
+  repo: string
+  number: number
+  title: string
+  head_sha: string
+  base_ref?: string
+  from_fork: boolean
+  requester?: string
+  posted_url?: string
+  parse_error?: string
+  phase?: ReviewPhase
+  // Whether this review has a survey step. A small change skips it, and the
+  // progress display must not draw a step that will never light.
+  surveyed?: boolean
+  // Whether it is still working, and whether it stopped without finishing.
+  //
+  // Both answered by the server, because neither can be inferred here. The
+  // verification phase runs in a session of its own, so the session this screen
+  // is attached to is idle throughout it: reading "still reviewing" off that
+  // made a review three minutes into verifying announce "Nothing worth
+  // reporting" and offer to post it. See handleReviewDraft.
+  running?: boolean
+  stopped?: boolean
+  // Whether there is a phase left to ask, so a stopped review can be picked up
+  // where it left off rather than started again. See review.Resumable.
+  resumable?: boolean
+  // How many candidates resuming would keep, so the offer names what it saves
+  // rather than asking for trust.
+  candidates_kept?: number
+  // The session holding a permission question, when one is. It may not be this
+  // review's own: a phase can run in a session of its own, and that is where the
+  // ask lands, so a review can be stuck on something its own session knows
+  // nothing about.
+  blocked_session?: string
+  // What the reviewer decided to look at, before it looked. The only account of
+  // where it thought the risk was, and the thing to read during the minutes the
+  // find phase takes.
+  survey?: ReviewSurvey
+  // The change under review.
+  files?: ReviewFile[]
+  // When each phase began, so a wait has a shape rather than just a length.
+  // When each phase began and what it cost, so a wait has a shape and a price.
+  // The cost is the CLI's own accounting, differenced across the phase.
+  timeline?: { phase: ReviewPhase; at: string; spent_usd?: number }[]
+  // What the survey said to check that produced nothing. The other half of a
+  // review: a reviewer that only ever lists problems is one you cannot tell
+  // from a reviewer that stopped looking.
+  clean?: string[]
+  summary?: string
+  findings?: ReviewFinding[]
+  dropped?: DroppedFinding[]
+  total?: number
+  inline?: number
+  summary_count?: number
+}
+
+// What the reviewer decided to look at, before it looked.
+export interface ReviewSurvey {
+  intent?: string
+  areas?: { what: string; files?: string[]; why?: string }[]
+}
+
+// One changed file, as the running screen lists the change.
+export interface ReviewFile {
+  path: string
+  status?: string
+  additions?: number
+  deletions?: number
+}
+
+// What each phase is called on screen, and what it is actually doing. A phased
+// review takes longer than the single-shot one did, so a bare "Reviewing 4m"
+// reads as a hang; naming the phase is what makes the wait legible.
+export const PHASE_LABEL: Record<ReviewPhase, string> = {
+  survey: 'Reading the change',
+  find: 'Looking for problems',
+  verify: 'Checking what it found',
+  done: 'Done',
+}
+
+// What GitHub said when kunai asked whether the App actually works. Not a
+// boolean: "the key is wrong", "the App is installed nowhere" and "GitHub did
+// not answer" need three different sentences and lead to three different
+// actions, and collapsing them is what made a broken setup report Configured.
+export interface GitHubCheck {
+  name?: string
+  install_url?: string
+  orgs?: string[]
+  // The App covers only selected repositories somewhere, which is the setting
+  // behind the confusing failure: everything reports configured and one
+  // repository still refuses because it was never ticked.
+  partial?: boolean
+  warning?: string
+}
+
+export interface GitHubAppState {
+  configured: boolean
+  app_id?: string
+  check?: GitHubCheck
+  // Credentials that were fine when saved and are not any more: a revoked key,
+  // a deleted App.
+  error?: string
+}
+
+// `check` costs two round trips to github.com, so it is asked for only where
+// somebody is looking at the setup, never by the dashboard's poll.
+export function githubApp(base: string, check = false): Promise<GitHubAppState> {
+  return fetch(at(base, `/api/github/app${check ? '?check=1' : ''}`)).then((r) =>
+    json<GitHubAppState>(r),
+  )
+}
+
+export function setGitHubApp(
+  base: string,
+  patch: { app_id?: string; private_key?: string; clear?: boolean },
+): Promise<GitHubAppState> {
+  return fetch(at(base, '/api/github/app'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).then((r) => json<GitHubAppState>(r))
+}
+
+export function listPullRequests(base: string, repo: string): Promise<PullRequest[]> {
+  return fetch(at(base, `/api/github/pulls?repo=${encodeURIComponent(repo)}`)).then((r) =>
+    json<PullRequest[]>(r),
+  )
+}
+
+// startReview creates the review session. The caller opens it: from that moment
+// it is an ordinary session you can watch and interrupt.
+export function startReview(
+  base: string,
+  repo: string,
+  number: number,
+  requester: string,
+): Promise<Meta> {
+  return fetch(at(base, '/api/github/review'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ repo, number, requester }),
+  }).then((r) => json<Meta>(r))
+}
+
+export function reviewDraft(base: string, sessionId: string): Promise<ReviewDraft> {
+  return fetch(at(base, `/api/sessions/${sessionId}/review`)).then((r) => json<ReviewDraft>(r))
+}
+
+// One finding as the user rewrote it. Only the words: the file and line decide
+// which line of somebody's pull request a comment lands on, and the server keeps
+// those to itself rather than accepting them back from here.
+export interface ReviewEdit {
+  index: number
+  title?: string
+  body?: string
+  severity?: Severity
+}
+
+// postReview sends the draft. `keep` is the findings the user did not drop: a
+// nil list means all of them, an EMPTY list means they read everything and
+// dropped it all, and the server tells those two apart.
+export function postReview(
+  base: string,
+  sessionId: string,
+  keep: number[],
+  edits: ReviewEdit[] = [],
+  summary = '',
+): Promise<{ url: string }> {
+  return fetch(at(base, `/api/sessions/${sessionId}/review/post`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keep, edits, summary }),
+  }).then((r) => json<{ url: string }>(r))
+}
+
+// What applying a suggested change did, so the report can name the file and the
+// size of the edit rather than saying "done".
+export interface AppliedFix {
+  file: string
+  path: string
+  line: number
+  removed: number
+  added: number
+}
+
+// applyReviewFix writes one finding's suggestion into the checkout the review
+// read. The file is echoed back as a check on the index, because an index is a
+// fragile way to name a finding and the failure it guards against writes to the
+// wrong file in silence.
+export function applyReviewFix(
+  base: string,
+  sessionId: string,
+  index: number,
+  file: string,
+): Promise<AppliedFix> {
+  return fetch(at(base, `/api/sessions/${sessionId}/review/apply`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ index, file }),
+  }).then((r) => json<AppliedFix>(r))
+}
+
+// stopReview ends a review that is still working.
+//
+// Not the same as interrupting its turn, which is what Stop in the conversation
+// does and why that appeared to do nothing: the engine feeds the next phase in
+// at the end of every turn, so a stopped turn is followed by another one. This
+// cancels the run itself.
+export function stopReview(base: string, sessionId: string): Promise<{ stopped: boolean }> {
+  return fetch(at(base, `/api/sessions/${sessionId}/review/stop`), { method: 'POST' }).then((r) =>
+    json<{ stopped: boolean }>(r),
+  )
+}
+
+// resumeReview picks a stopped review up at the phase that did not finish.
+//
+// Not the same as reviewing again. The survey and the candidates are on the
+// record, so what gets asked is only the question that never got an answer: on
+// the measured run that is roughly $11 instead of $25, and the reading already
+// done is kept rather than repeated.
+export function resumeReview(base: string, sessionId: string): Promise<{ id: string; phase: string }> {
+  return fetch(at(base, `/api/sessions/${sessionId}/review/resume`), { method: 'POST' }).then((r) =>
+    json<{ id: string; phase: string }>(r),
+  )
+}
+
+// reopenReview brings a finished review's session back so it can be asked
+// something. Idempotent: a review that is still live answers with its own id and
+// changes nothing, so a caller never has to work out which it is.
+//
+// It exists because the ordinary reopen cannot do this. A review runs in a
+// throwaway checkout that is swept when it ends, so resuming it needs the
+// commit that was read and the repository it came from, and only the review
+// record has those.
+export function reopenReview(base: string, sessionId: string): Promise<{ id: string }> {
+  return fetch(at(base, `/api/sessions/${sessionId}/review/reopen`), { method: 'POST' }).then((r) =>
+    json<{ id: string }>(r),
+  )
+}
+
+// ReviewConfig is which account and model reviews run on. Its own setting
+// because a review is chunky and unattended: pointed at a second account or a
+// provider, it can never wall the session you are working in. Empty means the
+// machine's default.
+export interface ReviewConfig {
+  cli?: string
+  model?: string
+}
+
+export function reviewConfig(base: string): Promise<ReviewConfig> {
+  return fetch(at(base, '/api/github/review-config')).then((r) => json<ReviewConfig>(r))
+}
+
+export function setReviewConfig(base: string, cfg: ReviewConfig): Promise<ReviewConfig> {
+  return fetch(at(base, '/api/github/review-config'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg),
+  }).then((r) => json<ReviewConfig>(r))
+}
+
+// One line of diff evidence carried with a finding, so a card can show the code
+// it is about without a second round trip.
+export interface HunkLine {
+  kind: string // " " | "+" | "-"
+  old?: number
+  new?: number
+  text: string
+  focus?: boolean
+}
+
 // Servers the agent started in a session, and forwarding one so another device
 // can reach it. See internal/preview.
 export interface PreviewServer {
@@ -643,6 +1046,9 @@ export interface PreviewServer {
   local: boolean
   url?: string
   forwarding: boolean
+  // Dismissed for this session. Sent rather than filtered away, so the card can
+  // say how many rows it is holding back and give them back.
+  hidden?: boolean
 }
 
 export function listPreviews(base: string, id: string): Promise<PreviewServer[]> {
@@ -657,6 +1063,22 @@ export function openPreview(base: string, id: string, port: number): Promise<Pre
 export function closePreview(base: string, id: string, port: number): Promise<unknown> {
   return fetch(at(base, `/api/sessions/${id}/previews/${port}`), { method: 'DELETE' })
     .then((r) => json<unknown>(r))
+}
+
+// Dismiss a discovered server, or bring it back. Hiding a shared one stops the
+// forwarding first, server-side, so a port cannot stay published with no row
+// left to turn it off.
+export function hidePreview(
+  base: string,
+  id: string,
+  port: number,
+  hidden: boolean,
+): Promise<unknown> {
+  return fetch(at(base, `/api/sessions/${id}/previews/${port}`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hidden }),
+  }).then((r) => json<unknown>(r))
 }
 
 // Spend, priced from the transcripts. The whole history arrives in one payload

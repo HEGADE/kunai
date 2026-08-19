@@ -6,6 +6,14 @@
     "module": "esnext",
     "types": ["svelte", "vite/client"],
     "allowArbitraryExtensions": true,
+    /**
+     * So a module can be imported with its `.ts` extension spelled out. The unit
+     * suite (web/tests/units.mjs) runs the pure helpers under plain node, which
+     * strips types but will not resolve an extensionless relative path, and the
+     * point of writing those helpers as pure was to be able to exercise them.
+     * Safe here because vite does the resolving and nothing is emitted.
+     */
+    "allowImportingTsExtensions": true,
     "noEmit": true,
     /**
      * Typecheck JS in `.svelte` and `.js` files by default.

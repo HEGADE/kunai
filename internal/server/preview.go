@@ -14,6 +14,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -43,6 +44,7 @@ func (s *Server) previewRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sessions/{id}/previews", s.handleListPreviews)
 	mux.HandleFunc("POST /api/sessions/{id}/previews/{port}", s.handleOpenPreview)
 	mux.HandleFunc("DELETE /api/sessions/{id}/previews/{port}", s.handleClosePreview)
+	mux.HandleFunc("PATCH /api/sessions/{id}/previews/{port}", s.handleHidePreview)
 }
 
 // previewView is one server, plus what kunai can do about it.
@@ -53,6 +55,12 @@ type previewView struct {
 	URL string `json:"url,omitempty"`
 	// Forwarding is true when kunai is holding a listener for this port.
 	Forwarding bool `json:"forwarding"`
+	// Hidden is true when this row has been dismissed for this session. Sent
+	// rather than filtered out, because a dismissal has to be reversible: the
+	// client shows the count it is holding back and can ask for them, which is
+	// the same rule the sidebar's quiet folders follow. A card that silently
+	// swallowed a row would leave a shared port with nothing to turn it off.
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 // sessionServers finds the listening ports belonging to one session.
@@ -139,9 +147,13 @@ func (s *Server) handleListPreviews(w http.ResponseWriter, r *http.Request) {
 
 // decorate says, for each server, whether it is already reachable and where.
 func (s *Server) decorate(id string, servers []preview.Server) []previewView {
+	var hidden sessionMeta
+	if s.sessionMeta != nil {
+		hidden = s.sessionMeta.get(id)
+	}
 	out := make([]previewView, 0, len(servers))
 	for _, srv := range servers {
-		v := previewView{Server: srv}
+		v := previewView{Server: srv, Hidden: hidden.hidesPreview(srv.Port)}
 		switch {
 		case s.previews != nil && s.previews.forwarding(id, srv.Port):
 			v.Forwarding = true
@@ -205,6 +217,46 @@ func (s *Server) handleClosePreview(w http.ResponseWriter, r *http.Request) {
 		s.previews.close(r.PathValue("id"), port)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"forwarding": false})
+}
+
+// handleHidePreview dismisses a discovered server from this session's card, or
+// brings it back. Body: {"hidden": true}.
+//
+// Finding a port is a fact about processes and says nothing about whether
+// anybody wants to look at it: a language server, a database, a dev server whose
+// address you already know are all correctly attributed and all noise. So the
+// card needs a way to be told, and it has to be a dismissal rather than a
+// filter, because kunai cannot know which of a session's servers is the one you
+// meant.
+//
+// Hiding a SHARED port stops the forwarding first, and that is the load-bearing
+// half. The row is the only thing that can turn a forward off (Stop lives on
+// it), so hiding one while kunai still held the listener would leave a port
+// published on the tailnet with nothing on screen that could take it back --
+// exactly the failure servesPort's comment records from the other direction.
+func (s *Server) handleHidePreview(w http.ResponseWriter, r *http.Request) {
+	if s.sessionMeta == nil {
+		writeErr(w, http.StatusServiceUnavailable, "no data dir configured")
+		return
+	}
+	id := r.PathValue("id")
+	port, err := strconv.Atoi(r.PathValue("port"))
+	if err != nil || port <= 0 || port > 65535 {
+		writeErr(w, http.StatusBadRequest, "bad port")
+		return
+	}
+	var req struct {
+		Hidden bool `json:"hidden"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.Hidden && s.previews != nil {
+		s.previews.close(id, port)
+	}
+	s.sessionMeta.setPreviewHidden(id, port, req.Hidden)
+	writeJSON(w, http.StatusOK, map[string]any{"port": port, "hidden": req.Hidden})
 }
 
 // previewURL is where a preview answers: this machine's hostname with the port

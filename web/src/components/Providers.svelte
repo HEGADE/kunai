@@ -24,7 +24,9 @@
   // The lede used to promise a local CLIProxyAPI, which stopped being true for
   // the two providers anybody actually picks -- and was an implementation
   // detail either way.
-  let machineId = $state(app.activeMachineId ?? app.machines[0]?.id ?? '')
+  // A section of Settings. The machine comes from there, so two pickers can
+  // never disagree about which machine is on screen.
+  let { machineId }: { machineId: string } = $props()
   const base = $derived(app.baseForMachine(machineId))
   const machine = $derived(app.machines.find((m) => m.id === machineId) ?? null)
 
@@ -205,57 +207,52 @@
   const modelOf = (p: Provider): string => p.models?.opus ?? Object.values(p.models ?? {})[0] ?? ''
 </script>
 
-<div class="backdrop" onclick={() => app.closeProviders()} role="presentation">
-<section class="sheet" role="dialog" aria-label="Model providers" onclick={(e) => e.stopPropagation()}>
-  <header class="top">
-    <button class="back" onclick={() => app.closeProviders()} aria-label="Back">
-      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
-    </button>
-    <h1>Model providers</h1>
-    {#if app.machines.length > 1}
-      <label class="mpick">
-        <select bind:value={machineId} aria-label="Machine">
-          {#each app.machines as m (m.id)}
-            <option value={m.id}>{m.label}{m.self ? ' · this machine' : ''}</option>
-          {/each}
-        </select>
-        <svg class="mchev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-      </label>
-    {/if}
-  </header>
-
-  <p class="lede">
-    Run non-Claude models (Codex, Grok, Kimi) on {machine ? machine.label : 'this machine'}.
-    Sign in once and kunai talks to the provider for you. The agent (tools, edits,
-    commands) is unchanged — only the model behind it differs.
+<!-- The section header says what providers are. This says the one thing it
+     cannot fit and that people get wrong: the agent is unchanged, only the model
+     behind it differs. -->
+<p class="lede">
+    Sign in once and kunai talks to the provider for you. Tools, edits and
+    commands work exactly as they do on Claude; only the model behind them
+    changes.
   </p>
 
   {#if error}
-    <p class="state err">{error}</p>
-  {:else if loading}
-    <div class="roster" aria-hidden="true"><div class="row"><span class="nm skname"></span></div></div>
-  {:else if providers.length}
-    <div class="roster">
-      {#each providers as p (p.name)}
-        <div class="row">
-          <span class="nm">{p.name}</span>
-          {#if modelOf(p)}<span class="model mono">{modelOf(p)}</span>{/if}
-          <button class="rm" onclick={() => remove(p)} aria-label="Remove {p.name}" title="Remove {p.name}">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" /><path d="M6 6l1 14a2 2 0 002 2h6a2 2 0 002-2l1-14" /></svg>
-          </button>
-        </div>
-      {/each}
-    </div>
+    <p class="st-note bad">{error}</p>
   {:else}
-    <p class="state">No providers yet. Add one below to run another model.</p>
+    <!-- The providers and the way to add one in ONE card, the same shape the
+         accounts list uses: they are the same kind of list. -->
+    <div class="st-card">
+      {#if loading}
+        <div class="st-row" aria-hidden="true"><span class="skname"></span></div>
+      {:else}
+        {#each providers as p (p.name)}
+          <div class="st-row">
+            <span class="st-k">
+              <span class="st-name">{p.name}</span>
+            </span>
+            {#if modelOf(p)}<span class="st-val">{modelOf(p)}</span>{/if}
+            <button class="st-btn ghost danger" onclick={() => remove(p)} aria-label="Remove {p.name}">
+              Remove
+            </button>
+          </div>
+        {/each}
+      {/if}
+
+      {#if step === 'idle'}
+        <button class="st-row add" onclick={() => (step = 'type')}>
+          <span class="plus" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+          </span>
+          <span class="st-k">
+            <span class="st-name">Add provider</span>
+            <span class="st-sub-text">Sign in to Codex, Grok or Kimi</span>
+          </span>
+        </button>
+      {/if}
+    </div>
   {/if}
 
-  {#if step === 'idle'}
-    <button class="add" onclick={() => (step = 'type')}>
-      <span class="plus"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg></span>
-      <span class="addtext"><span class="at">Add provider</span><span class="as">Sign in to Codex, Grok or Kimi</span></span>
-    </button>
-  {:else}
+  {#if step !== 'idle'}
     <div class="flow">
       {#if step === 'type'}
         <div class="fhead"><span class="fstep">Choose a provider</span></div>
@@ -314,85 +311,16 @@
       {/if}
     </div>
   {/if}
-</section>
-</div>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-    background: rgba(0, 0, 0, 0.6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-  }
-  .sheet {
-    width: 100%;
-    max-width: 500px;
-    max-height: min(90dvh, 800px);
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-raised, var(--bg));
-    border: 1px solid var(--border-2);
-    border-radius: 20px;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.8);
-    padding: 20px 22px 24px;
-  }
-  .top {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .back {
-    flex: none;
-    width: 34px;
-    height: 34px;
-    margin-left: -6px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 10px;
-    color: var(--text-3);
-  }
-  .back:hover {
-    background: var(--panel);
-    color: var(--text);
-  }
-  .top h1 {
-    flex: 1;
-    min-width: 0;
-    margin: 0;
-    font-size: 19px;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-  }
-  .mpick {
-    flex: none;
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-  }
-  .mpick select {
-    appearance: none;
-    -webkit-appearance: none;
-    height: 32px;
-    padding: 0 28px 0 12px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 100px;
-    color: var(--text-2);
-    font-size: 12.5px;
-    max-width: 150px;
-  }
-  .mchev {
-    position: absolute;
-    right: 10px;
-    color: var(--text-4);
-    pointer-events: none;
+  /* A column rather than a sheet. The width is the one thing the sheet was
+     giving for free that a full-width page does not: prose and forms stop being
+     readable much past this, so the constraint stays even though the modal that
+     imposed it is gone. */
+  .wrap {
+    max-width: 620px;
+    margin: 0 auto;
+    padding: 20px 16px calc(40px + var(--safe-bottom));
   }
   .lede {
     margin: 13px 2px 18px;
@@ -400,129 +328,36 @@
     line-height: 1.6;
     color: var(--text-3);
   }
-  .roster {
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    background: var(--panel);
-    overflow: hidden;
-  }
-  .row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 16px;
-    min-height: 52px;
-  }
-  .row + .row {
-    border-top: 1px solid var(--border);
-  }
-  .nm {
+  /* The roster and the add row come from settings.css. What stays is the
+     skeleton and the add row's plus, as in Accounts: they are the same list. */
+  .skname {
     flex: 1;
-    min-width: 0;
-    font-size: 14.5px;
-    font-weight: 550;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .model {
-    flex: none;
-    font-size: 11.5px;
-    color: var(--text-3);
-    background: var(--panel-3);
-    border-radius: 6px;
-    padding: 2px 8px;
-    max-width: 45%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .rm {
-    flex: none;
-    width: 30px;
-    height: 30px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 8px;
-    color: var(--text-4);
-    transition: color 0.12s, background 0.12s;
-  }
-  .rm:hover,
-  .rm:active {
-    color: var(--alert);
+    height: 11px;
+    max-width: 120px;
+    border-radius: 4px;
     background: var(--panel-2);
   }
-  .skname {
-    height: 11px;
-    width: 120px;
-    border-radius: 4px;
-    background: var(--panel-3);
-    animation: pulse 1.1s ease-in-out infinite;
-  }
-  @keyframes pulse {
-    0%,
-    100% {
-      opacity: 0.3;
-    }
-    50% {
-      opacity: 1;
-    }
-  }
-  .state {
-    font-size: 13px;
-    color: var(--text-4);
-    padding: 14px 4px;
-  }
-  .state.err {
-    color: var(--alert);
-  }
   .add {
-    display: flex;
-    align-items: center;
-    gap: 12px;
     width: 100%;
-    text-align: left;
-    margin-top: 12px;
-    padding: 13px 16px;
-    border: 1px dashed var(--border-2);
-    border-radius: var(--r-lg);
-    color: var(--text-2);
-    transition: border-color 0.12s, background 0.12s;
+    background: none;
   }
   .add:hover {
-    border-color: var(--text-4);
-    background: var(--panel);
+    background: var(--panel-2);
   }
   .plus {
     flex: none;
-    width: 30px;
-    height: 30px;
+    width: 24px;
+    height: 24px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 9px;
-    border: 1px solid var(--border-2);
+    border-radius: 7px;
+    border: 1px solid var(--border);
     color: var(--text-3);
   }
   .add:hover .plus {
     color: var(--text-2);
-    border-color: var(--text-4);
-  }
-  .addtext {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-  }
-  .at {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .as {
-    font-size: 11.5px;
-    color: var(--text-4);
+    border-color: var(--border-2);
   }
   .flow {
     margin-top: 12px;

@@ -3,7 +3,7 @@
   import { createSession } from '../lib/api'
   import { enablePush, pushState } from '../lib/push'
   import type { TaggedHistoryEntry, TaggedMeta } from '../lib/types'
-  import { groupSessions, groupStartTarget } from '../lib/grouping'
+  import { groupSessions, groupStartTarget, visibleGroups } from '../lib/grouping'
   import { shortAgo } from '../lib/reltime'
   import { hasWork, isAwaiting, isUnreadDone, isWorking, needsAttention, recedes, summarise, workedFor } from '../lib/sidebar'
   import { isSnoozed, isWoke, snoozeIn } from '../lib/snooze'
@@ -296,7 +296,20 @@
     project?: string
   }
   const rowId = (r: Row) => (r.kind === 'live' ? r.m.id : r.h.id)
-  const sessionGroups = $derived(
+  // How many folders that hold nothing but PAST work the sidebar will show.
+  //
+  // A folder with a live session is never counted against it and never dropped:
+  // the sidebar's job is to show what is happening, and hiding a running agent
+  // to make room for a folder somebody last opened on Tuesday would be the
+  // wrong way round. Pinned work is not affected either, since a pin lifts a
+  // session out of the groups and into its own flat section above them.
+  //
+  // So the limit only bites on quiet folders, and everything it cuts is one tap
+  // away under "View all sessions", which is searchable and paginated. Without
+  // it the list grew with every codebase ever opened until the nav at the
+  // bottom was scrolled off the screen.
+  const QUIET_GROUP_MAX = 3
+  const allGroups = $derived(
     groupSessions<GroupedRow>([
       ...activeUnpinned.map((m) => ({
         kind: 'live' as const,
@@ -319,6 +332,16 @@
       })),
     ]),
   )
+  // The rule itself lives in grouping.ts, pure, because "a folder with
+  // something live in it is never hidden" is the half that would regress
+  // silently and the half a test can hold.
+  const visible = $derived(
+    visibleGroups(allGroups, (r) => r.kind === 'live', QUIET_GROUP_MAX),
+  )
+  const sessionGroups = $derived(visible.shown)
+  // What the limit is holding back, so "View all sessions" can say so rather
+  // than leaving somebody to wonder where a folder went.
+  const hiddenGroups = $derived(visible.hidden)
   // Ask about each heading's folder as the headings appear, so the worktree
   // button is only ever offered where it can work. Once per folder, guarded by
   // `probed`, so re-rendering the list costs nothing.
@@ -386,6 +409,17 @@
   }
   async function resume(h: TaggedHistoryEntry) {
     if (resuming) return
+    // A past REVIEW opens on its findings, and opens without starting anything.
+    //
+    // The draft is what somebody comes back for, and it is on disk: resuming the
+    // session first would spend a CLI boot to arrive at the same screen, and it
+    // cannot even do that, since a review's checkout is swept when it ends and
+    // the create fails on a cwd that is no longer there. The reviewer is woken
+    // only if you actually ask it something. See ReviewView.
+    if (h.review) {
+      app.open(h.machineId, h.id)
+      return
+    }
     resuming = h.id
     try {
       const meta = await createSession(app.baseForMachine(h.machineId), {
@@ -816,10 +850,19 @@
       <!-- No icon: the gutter is 14px wide and holds row state marks, so an icon
            here would have to sit outside the text column and make a fourth left
            edge out of a link. The words are the affordance. -->
-      <button class="viewall" onclick={() => app.openAllSessions()}>View all sessions →</button>
+      <!-- Names what is being held back when the folder limit is biting, so a
+           folder that was on this list yesterday does not simply go missing. -->
+      <button class="viewall" onclick={() => app.openAllSessions()}>
+        {hiddenGroups > 0 ? `View all sessions · ${hiddenGroups} more folder${hiddenGroups > 1 ? 's' : ''} →` : 'View all sessions →'}
+      </button>
     {/if}
 
-    {#if activeList.length === 0 && recentList.length === 0 && !app.listError}
+    <!-- app.listed is what makes this honest rather than merely quiet: sessions
+         and history arrive over the network, so without it a machine full of
+         work opened on "No sessions yet" and an invitation to go and start
+         something. Nothing is shown until a round has finished; an empty
+         sidebar for a moment says nothing, which is the truth at that point. -->
+    {#if app.listed && activeList.length === 0 && recentList.length === 0 && !app.listError}
       <div class="empty">
         <p class="e1">{query ? 'No matches' : 'No sessions yet'}</p>
         <p class="e2">
@@ -887,7 +930,17 @@
         title="Channels"
         body="Reach a session from somewhere that is not this app. Telegram is set up here: pair a chat, and you can drive an agent from your phone without kunai open."
       >
-        <button class="navitem" onclick={() => app.openChannels()} aria-label="Channels">
+        <!-- These three are doors into Settings rather than places of their own,
+             so each marks itself current when its section is the one open. A nav
+             item that opens a page and then claims nothing is open is how you end
+             up building the same page twice. -->
+        <button
+          class="navitem"
+          class:on={app.showSettings && app.settingsSection === 'channels'}
+          aria-current={app.showSettings && app.settingsSection === 'channels' ? 'page' : undefined}
+          onclick={() => app.openChannels()}
+          aria-label="Channels"
+        >
           <!-- Signal, not a speech bubble: a channel is a way IN to a session
                from outside, and the bubble already belongs to the sessions
                themselves. Deliberately generic rather than Telegram's plane,
@@ -902,7 +955,13 @@
         title="Accounts"
         body="The Claude logins this machine can run a session on. Add another and you can work on two subscriptions at once, or hand a session to whichever one still has quota."
       >
-        <button class="navitem" onclick={() => app.openAccounts()} aria-label="Accounts">
+        <button
+          class="navitem"
+          class:on={app.showSettings && app.settingsSection === 'accounts'}
+          aria-current={app.showSettings && app.settingsSection === 'accounts' ? 'page' : undefined}
+          onclick={() => app.openAccounts()}
+          aria-label="Accounts"
+        >
           <!-- Claude's own mark, in Claude's own colour. These are Claude logins
                and nothing else, so the most direct thing the icon can say is the
                name of the thing. It is the only warm pixel in the sidebar, which
@@ -917,7 +976,13 @@
         title="Providers"
         body="Run the agent on a model that is not Claude. A Codex or Grok subscription is authorised here, and every tool, edit and permission keeps working; only the model answering changes."
       >
-        <button class="navitem" onclick={() => app.openProviders()} aria-label="Providers">
+        <button
+          class="navitem"
+          class:on={app.showSettings && app.settingsSection === 'providers'}
+          aria-current={app.showSettings && app.settingsSection === 'providers' ? 'page' : undefined}
+          onclick={() => app.openProviders()}
+          aria-label="Providers"
+        >
           <!-- A chip: which brain answers. The whole idea of a provider is that
                everything else about the session is unchanged and only the thing
                doing the thinking is swapped, so the icon is the part being
@@ -957,7 +1022,17 @@
         title="Settings"
         body="Machines on your tailnet, the thermal guard that stops unattended work before a closed laptop cooks, notifications, and updates."
       >
-        <button class="navitem" onclick={() => app.openSettings()} aria-label="Settings">
+        <!-- Current only for the sections the three shortcuts above do not
+             claim, or two nav items would light up for one page. -->
+        {@const ownSection =
+          app.showSettings && !['accounts', 'providers', 'channels'].includes(app.settingsSection)}
+        <button
+          class="navitem"
+          class:on={ownSection}
+          aria-current={ownSection ? 'page' : undefined}
+          onclick={() => app.openSettings()}
+          aria-label="Settings"
+        >
           <span class="nic">{@render gear()}</span>
           <span class="nlbl">Settings</span>
         </button>

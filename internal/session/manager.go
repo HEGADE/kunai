@@ -116,6 +116,22 @@ type CreateOptions struct {
 	// ToolsOwner names what withheld them, so a feature that reconciles its own
 	// restrictions cannot lift somebody else's. See Session.toolsOwner.
 	ToolsOwner string
+	// Unattended is the toolset a session may use when NOBODY IS GOING TO BE
+	// ASKED, and setting it makes the session answer its own permission asks: a
+	// call to one of these tools is allowed, anything else is denied with a
+	// reason the model can act on.
+	//
+	// It exists because withholding tools is a denylist, and a denylist protecting
+	// something unattended goes stale in silence. A pull-request review withheld
+	// Bash, Write and Edit; the CLI then grew `Monitor`, which also runs shell
+	// commands, so a review reached for it, kunai's gate stopped to ask, and the
+	// review sat on that question for as long as the process lived -- with the
+	// screen reporting no findings, because none had arrived. The next tool
+	// anybody adds would do it again. This is the same rule from the other side:
+	// say what may run, answer everything else here, and never park.
+	//
+	// Spawn-time and carried by spawnSpec, for the same reason DisallowedTools is.
+	Unattended []string
 }
 
 // Create registers a new claude session and returns immediately; the CLI boots
@@ -173,6 +189,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	s.appendPrompt = opts.AppendSystemPrompt
 	s.disallowedTools = opts.DisallowedTools
 	s.toolsOwner = opts.ToolsOwner
+	s.unattended = opts.Unattended
 	s.contextTokens = opts.ContextTokens
 	s.overhead = opts.Overhead
 	s.histBefore = opts.HistBefore

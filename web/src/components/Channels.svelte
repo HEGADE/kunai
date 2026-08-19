@@ -13,7 +13,9 @@
   // With two or three of these, a list that expands beats tabs or a grid of
   // cards, because the answer you usually want ("is it on, is anyone waiting")
   // is readable without opening anything.
-  let machineId = $state(app.activeMachineId ?? app.machines[0]?.id ?? '')
+  // A section of Settings. The machine comes from there, so two pickers can
+  // never disagree about which machine is on screen.
+  let { machineId }: { machineId: string } = $props()
   const base = $derived(app.baseForMachine(machineId))
   const machine = $derived(app.machines.find((m) => m.id === machineId) ?? null)
 
@@ -116,29 +118,11 @@
     p.name || (p.username ? '@' + p.username : p.id || 'Someone')
 </script>
 
-<div class="backdrop" onclick={() => app.closeChannels()} role="presentation">
-<section class="sheet" role="dialog" aria-label="Channels" onclick={(e) => e.stopPropagation()}>
-  <header class="top">
-    <button class="back" onclick={() => app.closeChannels()} aria-label="Back">
-      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
-    </button>
-    <h1>Channels</h1>
-    {#if app.machines.length > 1}
-      <label class="mpick">
-        <select bind:value={machineId} aria-label="Machine">
-          {#each app.machines as m (m.id)}
-            <option value={m.id}>{m.label}{m.self ? ' · this machine' : ''}</option>
-          {/each}
-        </select>
-        <svg class="mchev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-      </label>
-    {/if}
-  </header>
-
-  <p class="lede">
-    Reach {machine ? machine.label : 'this machine'} from somewhere other than this
-    app. Your files and command output stay here; a channel carries the
-    conversation and the buttons, nothing else.
+<!-- The section header says what channels are. This says the part that decides
+     whether you want one: what does and does not leave the machine. -->
+<p class="lede">
+    Your files and command output stay here. A channel carries the conversation
+    and the buttons, nothing else.
   </p>
 
   {#if waitingCount > 0}
@@ -256,85 +240,16 @@
       {/each}
     </div>
   {/if}
-</section>
-</div>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-    background: rgba(0, 0, 0, 0.6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-  }
-  .sheet {
-    width: 100%;
-    max-width: 520px;
-    max-height: min(90dvh, 820px);
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-raised, var(--bg));
-    border: 1px solid var(--border-2);
-    border-radius: 20px;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.8);
-    padding: 20px 22px 24px;
-  }
-  .top {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .back {
-    flex: none;
-    width: 34px;
-    height: 34px;
-    margin-left: -6px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 10px;
-    color: var(--text-3);
-  }
-  .back:hover {
-    background: var(--panel);
-    color: var(--text);
-  }
-  .top h1 {
-    flex: 1;
-    min-width: 0;
-    margin: 0;
-    font-size: 19px;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-  }
-  .mpick {
-    flex: none;
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-  }
-  .mpick select {
-    appearance: none;
-    -webkit-appearance: none;
-    height: 32px;
-    padding: 0 28px 0 12px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 100px;
-    color: var(--text-2);
-    font-size: 12.5px;
-    max-width: 150px;
-  }
-  .mchev {
-    position: absolute;
-    right: 10px;
-    color: var(--text-4);
-    pointer-events: none;
+  /* A column rather than a sheet. The width is the one thing the sheet was
+     giving for free that a full-width page does not: prose and forms stop being
+     readable much past this, so the constraint stays even though the modal that
+     imposed it is gone. */
+  .wrap {
+    max-width: 620px;
+    margin: 0 auto;
+    padding: 20px 16px calc(40px + var(--safe-bottom));
   }
   .lede {
     margin: 13px 2px 16px;

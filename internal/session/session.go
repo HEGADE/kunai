@@ -81,6 +81,9 @@ type Session struct {
 	// appendPrompt, and carried by spawnSpec for the same reason with a much
 	// sharper edge: losing it hands a guest the tools the share exists to withhold.
 	disallowedTools []string
+	// unattended, when non-empty, is the toolset this session may use with nobody
+	// to ask. See CreateOptions.Unattended.
+	unattended []string
 	// toolsOwner names the feature that withheld them, and exists because more
 	// than one now does. A share reconciles restrictions against its own store and
 	// gives back the toolset of any session whose share has ended; with no owner to
@@ -548,6 +551,19 @@ func (s *Session) onPermission(ask *claude.PermissionAsk) {
 			Message:   v.reason,
 			ToolUseID: ask.ToolUseID,
 		})
+		return
+	} else if allow, reason, unattended := s.answerUnattended(ask); unattended {
+		// Nobody is going to be asked, so the session answers itself rather than
+		// parking on a question for ever. See CreateOptions.Unattended: this is
+		// what stopped a pull-request review sitting on a `Monitor` call it was
+		// never meant to have, with the screen reporting no findings because none
+		// had arrived. Deliberately after the guard, which is a boundary rather
+		// than a policy and must still be able to refuse first.
+		r := claude.PermissionResult{Behavior: "deny", Message: reason, ToolUseID: ask.ToolUseID}
+		if allow {
+			r = claude.PermissionResult{Behavior: "allow", UpdatedInput: ask.Input, ToolUseID: ask.ToolUseID}
+		}
+		_ = s.drv.Resolve(ask.RequestID, r)
 		return
 	} else if s.Mode() == BypassPermissionMode {
 		// Yolo, answered here rather than by the CLI, and that is what makes it a
@@ -1201,6 +1217,14 @@ type Meta struct {
 	// directory alone (a live process is running in it), so the directory goes
 	// stale and the branch is the identity.
 	Branch string `json:"branch,omitempty"`
+	// Review marks a session that is a pull-request review, so the client can
+	// open it on its findings straight away. Merged in by the server like Repo:
+	// the session itself has no idea what it was started for.
+	//
+	// It exists because "is this a review" decides which whole screen renders,
+	// and a question the client had to ask over the network is a question it
+	// cannot answer at first paint. See tagReviewRepos.
+	Review bool `json:"review,omitempty"`
 }
 
 func (s *Session) Meta() Meta {
@@ -1342,3 +1366,16 @@ func shortDuration(ms int64) string {
 // Exposed so a listening port can be attributed to the session responsible for
 // it: whatever the agent started is a descendant of this process.
 func (s *Session) PID() int { return s.drv.PID() }
+
+// SpentUSD is what this session has cost so far, as the CLI reports it.
+//
+// The running total rather than a per-turn number, so a caller that samples it
+// at two moments gets what happened between them by subtracting. That is how a
+// review prices its own phases: nothing has to be threaded through the phase
+// machine, which stays pure, and the arithmetic is the same one the loop already
+// does against its own starting total.
+func (s *Session) SpentUSD() float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastCostUSD
+}

@@ -588,6 +588,23 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   to have somebody else's screenshot inlined and read back. `redactEvent` keeps a
   guest's own attachments and still strips the owner's, or the message they just
   sent comes back without the picture that was the point of it.
+  Two of those rules were enforced on the wrong thing, and a review of the merge
+  caught both. **The frame is read for its ids and nothing else**: what decides
+  whether bytes are inlined or WRITTEN INTO THE PROJECT is the media type
+  `buildContent` branches on, and that one arrives on the prompt frame, which the
+  guest writes -- so checking the upload's `Content-Type` and then trusting the
+  frame meant images-only was enforced on a field nobody consults. Upload as
+  `image/png`, attach as `text/plain`, and the else branch copies the bytes into
+  the owner's repository under a name of the guest's choosing and tells the agent
+  where they are. `guestFiles` therefore records the whole staged `Attachment`
+  and `guestAttachments` rebuilds every one from that record, re-checking the
+  type it will actually be read with. And **the cap is spent before the bytes**:
+  `g.files.add` used to run after `StageUpload` returned, so a refused upload was
+  already on disk with its id recorded nowhere -- nothing referenced it, nothing
+  sweeps `uploadsDir` (unlike generated-images), and a paired guest could post
+  8MB files past the cap for ever, which is the precise thing `maxGuestFiles`
+  exists to prevent. `reserve`/`commit`/`release` take the slot first and give it
+  back if the write fails.
   The directory is swept to `imageKeep` oldest-first, because pictures are ~800KB
   and nothing else would ever delete one. `SetImageSaver` is the whole switch:
   with no saver the tool is never offered, so the capability is gated on being
@@ -595,6 +612,399 @@ PWA (web/) <--wss /ws/app/:id--> internal/server <--> internal/session <--stdio 
   reality. Proven end to end through the real app on a real Codex session --
   generate, and edit of an uploaded PNG -- each rendering inline in the chat at
   1254x1254.
+- `internal/review`, `internal/ghapp`, `internal/server/prreview*.go`: **reviewing a
+  pull request**. A review is an ORDINARY SESSION (same manager, same socket, same
+  sidebar) given a detached worktree at the pull request's head, a prompt, and a
+  toolset narrowed to reading. Nothing polls: a review happens because somebody
+  clicked. Reviews post through a **GitHub App** so they appear as a bot rather than
+  under whoever ran kunai, which is why shelling `gh` was rejected: it authenticates
+  as the human. The App has **no webhook** (kunai exposes nothing inbound).
+  The engine runs in **phases**, and that is a rewrite of a single-shot design whose
+  failure is worth keeping: it asked for everything in one prompt and ended by
+  telling the model to "delete the findings you cannot demonstrate", which is the
+  author of a claim marking its own homework. The characteristic failure of machine
+  review is confident nonsense, and asking harder does not catch it. So:
+  **Survey** (what is this change for, where is the risk) -> **Find** (hunt, and be
+  generous, because recall is the half that cannot be recovered later) ->
+  **Verify** (hand every claim to a `Task` subagent and ask it to REFUTE the thing,
+  defaulting to refuted when it cannot be demonstrated) -> **Rank**. `internal/review/phase.go`
+  is the state machine and is pure: it takes the text an agent replied with and says
+  what to ask next, so the whole progression is testable against fixtures rather than
+  a live CLI. `prreviewrun.go` turns the handle.
+  Only ONE skip answers the cost objection now: a small change (`worthSurveying`)
+  goes straight to Find. There used to be a second, and removing it is the most
+  important fix this engine has had. Verify was skipped when every candidate came
+  back marked `high` confidence, which asks the finder whether the finder needs
+  checking -- the same circularity the single-shot prompt was replaced FOR -- and
+  `severityRules` then said the quiet part out loud ("a finding you mark high is
+  posted without further checking"), which is an instruction on how to skip it.
+  The finder took it: across every review completed under that rule, **5 findings
+  out of 5 came back `high` and the verify phase never ran once**, so every card
+  in the UI read "Not independently checked" and no reader could tell that from a
+  reviewer nobody had asked to check. Confidence is now a report to the reader and
+  nothing else, and `needsVerification` is just "is there anything to verify".
+  **Verify runs in a session of its OWN** (`startVerifySession`), and that is a
+  correctness fix before it is a cost one. Independence is the entire reason the
+  phase exists, and running it in the session that produced the findings does not
+  have it: that context still holds the reasoning that wrote them, so the model
+  orchestrating the check is the same one being checked, agreeing with itself.
+  Only the `Task` subagents were ever really independent. The borrowed session
+  reads the same worktree on the same account (one `spawnSpec` shared by both, so
+  it cannot end up on a different account or with a looser toolset), is
+  registered against the SAME `reviewRun` so its answer routes back to the
+  review, and is closed the moment it answers. Everything is recorded against
+  `reviewRun.owner`, the review's own session: the one `prReviews` is keyed by,
+  the one the sidebar shows and the one the view opens. Two consequences are
+  load-bearing. `VerifyPrompt` takes the `Request` now, because a fresh context
+  has never seen the pull request and the prompt opened with "A review of this
+  pull request", which names nothing at all. And `tagReviewRepos` resolves a
+  borrowed session through `reviewRuns.ownerOf`, because it has no record of its
+  own and would otherwise bring back the phantom-repo bug that function exists to
+  prevent, giving the sidebar a heading called "5" for as long as the check runs.
+  A session that cannot be created falls back to checking in place: that must
+  cost a weaker check, never the whole phase.
+  An answer that cannot be PARSED is asked for again once (`Run.repair`,
+  `RepairPrompt`, `maxRepairs`) before the review is given up on, because it was
+  being thrown away whole over a missing fence: one real run died on "the reply
+  contains no review block" after 32 model calls, with the reading done and the
+  findings written up in a shape the parser would not take. The repair asks for
+  the block ALONE and explicitly does not invite a reconsideration, or the model
+  revises its conclusions to satisfy a formatting complaint.
+  The diff is written **one file per changed file** at a path mirroring the
+  file's own (`prreviewdiff.go`), plus the combined file only when the change is
+  under `smallDiffLines`. A single blob can only be read from the top, so on a
+  41-file, 9,800-line pull request the reviewer read it four times at byte
+  offsets 2020, 3019, 7623 and 9836, and every chunk then sat in context and was
+  re-billed on all eighty-odd later model calls: **18.25M cache-read tokens for
+  two findings**. Addressable per-file diffs let it read the two files that
+  matter and never see the lockfile. The rule for constructing the path is stated
+  once in the prompt rather than repeated per row, and `findMethod` now says
+  plainly that everything opened is paid for again at every later step.
+  The answer hook fires at the end of EVERY turn including
+  ones a person typed, so the driver **stops consuming answers once the phases are
+  done**, or asking the reviewer a follow-up would be read as a malformed phase reply
+  and replace a good draft with a parse error.
+  `Task` is deliberately NOT withheld, and allowing it widens nothing: probed against
+  a real CLI with `--disallowedTools "Bash,Write,Edit"`, a subagent reported its own
+  toolset as Agent, Glob, Grep, Read, Skill, ToolSearch, with no permission denials.
+  Bash IS withheld even on your own team's code (a permission mode that runs safe work
+  still stops to ask about a risky command, and nobody watches a review by design).
+  The withheld list is belt; `reviewReadable` is braces, and the braces are what
+  hold. `session.CreateOptions.Unattended` names what a review may use and makes
+  the session **answer its own permission asks** -- allow if listed, refuse with a
+  reason if not -- so it can never park on a question nobody is there to answer.
+  That was not theoretical: `reviewToolset` named the command-running tools of
+  the CLI of the day, the CLI grew `Monitor` (which also runs a shell), and a
+  review reached for it, was stopped at kunai's gate and sat there for the life
+  of the process while the screen reported no findings, because none had
+  arrived. **A denylist protecting something unattended goes stale in silence**
+  every time somebody else ships a tool, so the rule is stated from the other
+  side and the withheld list is now only a way to keep the offer out of the
+  model's toolset. Carried by `spawnSpec` like the withheld list, or an effort
+  change would drop it. And when something still does block -- a phase runs in a
+  session of its OWN, so the ask lands where this screen is not attached -- the
+  draft names the session holding it (`blocked_session`) and the view offers to
+  go there, rather than showing a review that looks like it is working.
+  **The hunt is DELEGATED, one question per subagent** (`findMethod`). Cost in a
+  session is roughly (what it reads) x (how many steps come after), because
+  everything opened stays in front of it and is re-billed on every later call.
+  Measured on one real review: the find phase made **56 tool calls against a
+  240k average context -- 13.42M cache-read tokens, $9.49 of a $24.95 review**,
+  having been told in as many words to keep its reading bounded. Telling it
+  harder is not the fix; the unit has to be smaller. A subagent's context dies
+  with it, so the same file costs 1.25x ONCE rather than 0.1x on every remaining
+  step, and the verification phase already demonstrates the shape at ~$2 per
+  subagent. So the finder stops being a reader and becomes an orchestrator: one
+  narrow Task per survey area, the reading where it is cheap, and it reads
+  directly only where no area covers or an answer does not add up. Two things
+  are load-bearing. It **keeps the judgement** -- it drops duplicates and
+  anything whose failure the subagent could not name, because a fan-out that
+  relays has nobody accountable for the list. And it fans out **only when there
+  are areas**: a change small enough to have skipped the survey is small enough
+  to read directly, where paying the fixed cost of a fresh context per file
+  would cost more than it saves. Each phase now prices itself
+  (`phaseStart.SpentUSD`), so the next version of this paragraph can be written
+  from the product rather than from a script over the transcripts.
+  **A review that stopped is picked up, not repeated** (`review.Resumed`,
+  `prreviewresume.go`). The measurement that bought this: one evening, one pull
+  request, four attempts at #7 costing **$45.72, of which $20.77 bought
+  nothing**, because every interruption -- a permission ask nobody answered, a
+  restart, somebody pressing stop -- threw the survey and the whole find phase
+  away with the phase that actually stopped. Nothing about that was necessary.
+  The phase machine is a pure reducer, so a run IS its phase plus what the
+  phases before it produced; the survey was already on the record, and the
+  CANDIDATES are now written at the phase boundary rather than held in the
+  in-memory run (which is the same "unify execution state and business state"
+  the 12-factor agents write-up names, and the reason this was impossible
+  before). A review that stopped in `verify` therefore resumes by asking exactly
+  one question, in a session that never needed the find phase's context anyway:
+  measured against the same pull request, ~$11 instead of ~$25, with the earlier
+  reading kept. Deliberately a BUTTON and never automatic on boot: a resumed
+  review spends real money unattended, and one that stopped may have stopped
+  because it was going wrong. The offer NAMES what it keeps
+  (`candidates_kept`), because "resume" alone asks to be trusted about the one
+  thing somebody is worried about. The diffs are written into the checkout again
+  first, since they are files in a worktree that may have been swept, not state
+  of their own.
+  **Stopping a review is a property of the RUN, not of a turn**
+  (`prreviewstop.go`). There was no way to stop one at all, and the obvious move
+  -- open the conversation and press Stop -- looks like it should work and does
+  not: that interrupts the running TURN, and the answer hook fires at the end of
+  every turn and feeds the next phase in, so the review carries on with the Stop
+  button apparently doing nothing. So `reviewRun.cancelled` is set first, under
+  the run's own lock, and checked at the one place that decides whether to ask
+  for another phase; only then is anything interrupted. Both halves are needed:
+  without the flag the next phase starts anyway, and without the interrupt the
+  turn in flight burns quota to the end. What was found so far is deliberately
+  NOT kept, because unverified candidates presented as a review is the exact
+  thing the engine exists to prevent, and the conversation still holds them for
+  a reader who wants them.
+  A finding carries **severity and confidence as two fields**, because they answer
+  different questions -- how bad if true, how likely to be true -- and one score can
+  only lie about one of them. Severity is what gives the review a shape; without it a
+  reader faces a dozen identical cards in emission order with nothing saying which is
+  the data-loss bug. A verdict may **lower** a severity or confidence and never raise
+  either, so verification restrains claims instead of giving each a second chance to
+  inflate. An unrecognised severity sorts LAST and normalises to `major` (the middle
+  rung); an unrecognised confidence normalises to `medium`, never `high`, because
+  `high` is what SKIPS verification.
+  Two index-mapping hazards are pinned by tests, both silent and both posting the
+  wrong thing: a verdict echoes its claim's `file`, so one that has drifted onto the
+  wrong claim is discarded rather than refuting an unrelated finding, and edits are
+  applied BEFORE the keep-filter, since filtering first shifts every edit onto its
+  neighbour. Editing may change only the words and the severity: the anchor decides
+  which line of somebody's pull request a comment lands on and stays server-side.
+  What verification refuted is **kept and shown**, collapsed, with reasons
+  (`DroppedList.svelte`). Three findings from a reviewer that dropped four is a
+  different thing from three findings from one that only found three, and nothing
+  else can tell them apart. This was lost when the surface was rebuilt as the
+  three-column workspace -- `ReviewDraft.svelte` had rendered it and nothing took
+  it over -- and the case where it matters most is the one with NO findings: a
+  real run over 127 files found three things, the check refuted all three, and
+  the screen said "Nothing worth reporting" and dropped the summary too. Ten
+  minutes of reading, a summary that named the one thing it would fix before
+  merging, and three refutations, reduced to two lines that read as a clean bill
+  of health. So the empty state now carries the summary and the dropped list, and
+  `emptyHeadline` refuses to call three refuted candidates "nothing".
+  `ReviewView.svelte` is the only review surface (`ReviewDraft.svelte` is gone: two
+  implementations of one thing is how they drift, and these had). **The server
+  says whether a review is running**, on the draft (`running`, `stopped`), and
+  the client must never infer it from the session, in either direction: a
+  finished review reopened later reports `starting` while it resumes, and the
+  verification phase runs in a session of its OWN, so the session this screen is
+  attached to is IDLE for the whole of it. Reading that idle session made a
+  review three minutes into checking a 122-file pull request render the empty
+  state -- "Nothing worth reporting", with a button offering to post that to
+  GitHub as the review. A clean bill of health is the one answer a reviewer must
+  never give by accident, so there are three states and not two: `reviewInFlight`
+  says the record never produced an answer, the runner registry says something is
+  actually driving it, and a review with the first and not the second (kunai
+  restarted mid-phase) is neither running nor a review of anything. It says so,
+  and it cannot be posted. The running screen also explains its own quiet during
+  the check, since nothing streams from a session that is not doing the work.
+  The verdict counts the EDITED severity, or overruling the only blocker still
+  announces a blocker.
+  Whether a session IS a review rides on the session list (`Meta.Review`,
+  `HistoryEntry.Review`, both tagged in `tagReviewRepos`/`handleHistory` off the
+  map those loops already walk), because it decides which whole SCREEN renders
+  and a question the client has to ask over the network is one it cannot answer
+  at first paint. It used to probe `/review` per session and default to "not a
+  review" while it waited, so opening a finished one showed a dead transcript --
+  "this session has ended", offering a Reopen that cannot work, since the
+  checkout a review reads is swept when it finishes -- and became the review a
+  round trip later. The probe stays as the fallback for a session neither list
+  has yet, and while NOTHING knows, nothing renders: a blank moment is honest
+  and the wrong screen is not. Pinned by a smoke test that answers `/review`
+  slowly, which is the only way this bug is visible at all.
+  **A finished review can still be asked things** (`prreviewreopen.go`,
+  `POST /api/sessions/{id}/review/reopen`). Its session ends -- Done, or a
+  restart -- and the draft outlives it on purpose, so Ask opened a transcript
+  with a dead composer and a Reopen underneath that answers "cannot tell which
+  folder this session ran in": a review runs in a throwaway checkout that is
+  swept when it ends, so the transcript's own cwd is gone and the ordinary
+  reopen cannot work. Everything needed is on the record, and one fact makes it
+  cheap: **a resumed session keeps its id** (`manager.go`: `id := opts.Resume`),
+  so the record needs no rekeying and the draft, the verdicts and the posted URL
+  still point at the same place. The checkout is remade at the commit that was
+  READ, at the same deterministic path -- which is load-bearing rather than
+  tidy, since a conversation lives in a folder named after the directory it
+  happened in (`~/.claude/projects/-home-ninja--kunai-nightly-worktrees-kunai-review-6`),
+  so a checkout remade anywhere else resumes nothing. It comes back under the
+  same withheld tools it ran under, or a reopened review would quietly be a
+  different thing wearing the same name. `Ask` calls it unconditionally (it is
+  idempotent: a live review answers with its own id) and then SWAPS THE
+  CONNECTION, because this tab's socket gave up the moment it 404'd and never
+  retries by design. `prReview.CLI` records the account, since the transcript
+  lives in that account's config dir and the reviewing account may have changed
+  since. Proven end to end against a real CLI: a swept checkout, reopened, its
+  model still answering from the conversation it had before.
+  Reviews were also **invisible in Recent**, which is where somebody goes
+  looking for a finished one. `probeTranscript` drops a session nobody ever
+  asked anything, and skips a first prompt starting with `<` as harness
+  boilerplate -- but every review prompt is wrapped in `<kunai-review>` and every
+  loop iteration in `<loop-iteration>`, so both whole classes were filtered out
+  as machinery (`ourWrapper` is the exception). A review row then opens the
+  FINDINGS rather than resuming: the draft is what somebody came back for, and
+  resuming would spend a CLI boot to reach the same screen and fail anyway on a
+  cwd that is no longer there.
+  **A pull request that moved is re-anchored, not refused** (`reanchor.go`).
+  Posting used to stop dead with "#5 has moved on since this review (now
+  8c802e4d); review it again before posting", throwing away a review that cost
+  minutes and dollars over a commit that in the ordinary case touched no line any
+  finding was about. A finding is about a line of CODE; the line NUMBER is only
+  how GitHub is told where to put the comment, and it is the only part a push
+  invalidates. So `finishReview` records `Finding.Quote`, the text of the lines
+  each finding anchors to, captured from the diff that was READ (the only moment
+  it is still in hand), and posting finds that text again in the current diff and
+  moves the comment onto it. A rebase that shifts everything by twelve lines then
+  costs nothing. Ambiguous text takes the nearest match, since lines shift by a
+  few rather than teleport. Only a finding whose code has genuinely changed is
+  held back (`Finding.Stale`), demoted to the summary saying so rather than
+  posted onto whatever now occupies its old line, which is the one case the
+  refusal was really protecting against and is a property of one finding rather
+  than of the whole review. Permalinks still point at the commit that was read,
+  because that is where the code a finding describes actually is, while
+  `CommitID` becomes the CURRENT head, because that is the diff the line numbers
+  now refer to. A review whose head moved says so in its body (`MovedNote`): the
+  author is entitled to know an older commit was read, since that is the one
+  thing that could make an otherwise correct finding wrong.
+  A second click **joins a review only while it is still working**
+  (`reviewInFlight`). It used to join any review whose SESSION was live, and a
+  finished review's session stays live by design, so asking for a fresh review
+  after a push handed back the old draft at the old commit -- exactly when a new
+  reading is most wanted.
+  The dashboard row reads its review state from the SERVER
+  (`prSummary.Review`, from `prReviewStore.latestFor`), never from state the
+  component holds. It used to remember a review only in a local map, so it knew
+  about one just while that tab stayed open: a refresh, or opening a session and
+  coming back, put "Review" back on a pull request that already had one, and
+  clicking it started another whole reading. That is minutes of work and real
+  quota spent because a button forgot. The row says what a finished review FOUND
+  ("3 findings", "Nothing found") rather than "ready", since the count is the
+  only thing that says whether it is worth opening, and a review of an older
+  commit offers a fresh reading instead of pointing at a stale draft. The card
+  follows a running review on a 5s poll and stops the moment none is running;
+  it used to say "Reviewing" for ever, because the list was re-read only when the
+  repositories changed. Every request goes through `fetchQuery` (`keys.pulls`,
+  `keys.githubApp`), because **Home is mounted twice** (the dashboard and the
+  sidebar's compact copy) and each fetch was therefore firing twice against
+  somebody's GitHub rate limit -- the same trap the usage meters hit, with the
+  same fix. Measured after: 1 App call and 1 listing per repo at first paint, 0
+  over the next 20 idle seconds.
+  The surface is a **three-column workspace**, implemented from a design in the
+  owner's Claude Design project rather than invented here, and it is the one
+  screen in kunai with a register of its own. Its tokens live in
+  `web/src/review.css` scoped to `.rvx`, NOT in the app palette: the review
+  earns an accent (`#ff6a3d`) because it is a workspace rather than a
+  conversation, and scoping is what keeps that accent out of the sidebar and the
+  composer. The accent is spent narrowly -- the mark, the active queue edge, the
+  lines a claim is anchored to, the severity chip -- and blue (`#6e9bff`) means
+  ACCEPTED and means a patch, which are the same idea: something you are going to
+  do. Type is Inter + JetBrains Mono (the design asks for Inter Tight; the
+  condensed cut is not vendored and -0.02em of tracking buys most of it).
+  Each column answers a different question. `QueueRail` says where you are in a
+  fixed list and collapses to numbered STUBS rather than to nothing, because
+  losing your place costs more than the 272px; it also carries **checked and
+  clean** (`review.CleanAreas`: survey areas that produced no finding), which is
+  the half of a review that normally goes unsaid and the only thing that tells a
+  thorough reviewer from one that stopped. `FindingPane` is the reading, stacked
+  rather than one-at-a-time, with the active finding chosen by SCROLL POSITION
+  (topmost past a reading line -- nearest-to-centre flickers on a finding taller
+  than the window). `DetailRail` answers the four questions a reader has once
+  they believe a claim, in order: what would I change, what checked it, who can
+  reach it, what do I do.
+  Three of those four are new on the wire. `Finding.Grounds` is labelled rows
+  (TRACE / CALLERS / TESTS) rather than a paragraph, because two findings can
+  only be compared when both answer in the same shape; `Finding.Impact` is who
+  can reach it, what it reaches and what fixing it costs, which is what turns a
+  list of true statements into an order to work in; `Finding.Short` is the claim
+  in a handful of words, ASKED FOR rather than truncated, since a title cut at 40
+  characters loses its verb as often as not. The **patch is computed, not asked
+  for** (`review.PatchFor`): the lines a finding is anchored to are the before
+  and the suggestion it already produced is the after, so only `FixTitle` is a
+  new ask. Asking a model for a diff it could derive pays twice for one fact and
+  gives it a second chance to disagree with itself.
+  A patch shows only what CHANGED (`trimCommon`), and that is the difference
+  between a patch and a restatement: a model asked to replace lines 196 to 202
+  hands back all seven with one line different, so the naive version printed
+  seven removals and seven near-identical additions, thirty wrapped lines in a
+  344px rail with the reader left to spot the difference a diff exists to point
+  at. The trim is whitespace-insensitive at the edges, because a suggestion is
+  often the same code re-indented and a diff reporting eight changed lines when
+  only the tabs moved is worse than none. Past `maxPatchLines` there is no
+  patch at all: a suggestion that large is not the small, local, unambiguous fix
+  the prompt asks for. Likewise a grounds row is a PHRASE (`maxGroundValue`),
+  not a paragraph -- a 400-word value in a 344px panel with a 70px label column
+  is a forty-line ribbon that makes the rows beside it unfindable, and long
+  prose belongs in the pane behind the disclosure, which is gated on the prose
+  existing and NOT on the rail having rows. And the margin the whole patch
+  shares is stripped (`stripCommonIndent`, mirrored client-side in
+  `reviewDeck.dedent` for a suggestion shown as text): code four levels deep
+  spends a quarter of a 344px line on indentation before it says anything, and
+  the relative indentation inside the patch is the only part carrying meaning,
+  so the longest common WHITESPACE prefix goes, compared character by character
+  so a tab is never taken for a space.
+  Every panel answers from **whatever the record holds, and none of them may
+  report a missing FIELD as a missing ANSWER**. The rail used to give up when a
+  finding had no patch, no grounds and no impact, and print "no suggested
+  change, nothing recorded about what checked it" into an otherwise empty
+  column -- about a finding an independent pass had tried to refute and failed
+  to, carrying a thousand words of evidence and a confidence the rail showed
+  nowhere at all. Three of the four questions had answers under other names. So
+  `checkRows` always reports whether verification ran (the single most useful
+  thing about a claim, and the one thing prose cannot say) and the finding's own
+  confidence, which is half its judgement and had no home on screen; a
+  suggestion the server could not turn into a diff is shown AS TEXT (`fixOf`)
+  rather than vanishing, since it is the answer to the panel's own question; and
+  only a finding that genuinely offers no fix says so, in one line. **Ask is on
+  every finding**, in the decision area rather than inside the patch panel,
+  because a finding with no suggested fix is if anything the one most worth
+  arguing with, and those were exactly the ones that had no way to.
+    The patch can be **applied**, with copy beside it (`review.ApplyTo`,
+  `prreviewapply.go`). This replaced a "copied, never applied" rule whose
+  reasoning is worth recording as a mistake: a review runs with Write, Edit and
+  Bash withheld, and a button that writes to the tree looked like a hole in
+  that. Wrong ACTOR. Those tools stop the MODEL editing on its own initiative in
+  a job nobody is watching; this is a person who has read the finding, read the
+  diff and pressed a button, and refusing them on the model's behalf left the
+  one screen whose entire job is deciding what to do about code unable to do
+  anything about it. What does have to hold is that the change lands on the code
+  the finding is about and NOWHERE else, and a line number cannot promise that,
+  because the file has moved on since the commit that was read. So it is matched
+  on TEXT, the same way posting is: `Finding.Quote` is found again in the file
+  (nearest occurrence wins, trailing whitespace ignored) and a file that no
+  longer contains it is refused with that as the reason, rather than written at
+  a stale number. It writes to the working checkout, not the review's throwaway
+  one (which is deleted), and it does **not commit**, so `git diff` is the whole
+  record of what the button did and undoing it is one command somebody already
+  knows. The path goes through `pathguard` and a finding whose file resolves
+  outside the repository is refused, which is what makes writing files from a
+  model's output acceptable at all; the client echoes the finding's file back
+  with its index, so a stale page cannot apply one finding's fix under another's
+  name.
+  Verdicts are **accept / dismiss / undecided**, and the load-bearing rule is that
+  an UNDECIDED finding is SENT. Silence is not a dismissal: a reviewer that
+  quietly dropped everything you had not got to would be worse than one that
+  posted too much, because you would never learn what it found. Dismissing is the
+  deliberate act and the only thing that removes a finding. All of that
+  arithmetic is `web/src/lib/reviewDeck.ts`, pure and unit-tested, because these
+  numbers choose what lands publicly under a shared bot identity.
+  Fetching goes through `DraftResource` (`lib/reviewQuery.svelte.ts`) on the
+  shared cache: deduped in flight (the view re-reads when the session goes idle,
+  which is exactly when the session poll fires), kept across a visit, and able to
+  tell `pending` from `stale` -- a skeleton belongs on "nothing yet" and never on
+  "refreshing behind what you can already see", which is what makes a poll
+  flicker.
+  **Setup is verified against GitHub before anything is written** (`githubverify.go`).
+  Checking only that the PEM parses passes for a key from a different App, for the
+  right key with the wrong id, and for an App installed nowhere, so all three reported
+  "Configured" and failed later as a raw error on the dashboard. `Whoami` proves the
+  id and key belong together; `Installations` answers the step everybody misses, since
+  registering an App and installing it are separate actions. The three outcomes need
+  three sentences: a pair GitHub refuses is refused while the fields are still on
+  screen, an App installed nowhere saves with a link to install it, and an unreachable
+  GitHub saves too and says so, because refusing there sends somebody to re-paste a key
+  that was always correct.
 - `internal/project`: reads a directory into the description a session hands a model
   (`Scan` -> `Info`, `Info.Brief()`): layout, language mix, git head from `.git`,
   the files that name it. It never opens the code, and the walk skips `.git`,
@@ -941,12 +1351,19 @@ Behavioral invariants that were bugs before (do not regress):
   the service manager restarts it unattended, which is precisely when nobody is
   watching a link they handed out. `funnelStatus` already RECOGNISED the stale
   mapping (`staleLoopback`) and offered the port back; only a human clicking
-  "make public" ever acted on it. It is narrow on purpose: it repoints only a
-  funnel port already served and pointing at a loopback address with nothing
-  behind it, so a Funnel the owner made for their own app is untouched, the same
-  rule the close path follows. Every caller now reads the config through
-  `askFunnel`, or a new one silently shells out in a test that thought it had
-  stubbed the answer.
+  "make public" ever acted on it. It repoints **only a port this machine
+  recorded funnelling itself** (`funnelOurs`, persisted beside the gate's port
+  file), and that fact replaced an inference that was not safe unattended:
+  `staleLoopback` is true of ANY funnel pointing at a loopback port nothing
+  answers on, which is exactly what the owner's own mapping to their own app
+  looks like while that app is stopped, restarting or being rebuilt. Adopting it
+  would rewrite somebody's public surface to the share gate with nobody
+  watching, and it would not come back when their service did. The guess was
+  survivable while a person clicked "make public" with the port list in front of
+  them; automatic, it is not. Losing the record is safe in the direction that
+  matters, since an unrecorded port is left alone rather than claimed. Every
+  caller reads the config through `askFunnel`, or a new one silently shells out
+  in a test that thought it had stubbed the answer.
 - A **Funnel mapping outlives the process that made it**, and on kunai's own port
   that is fatal rather than untidy. `tailscale funnel --https=<port>` is written
   into tailscaled, so it survives every restart and every reinstall; if it lands
@@ -1003,6 +1420,28 @@ Behavioral invariants that were bugs before (do not regress):
   offline. `app.svelte.ts` now uses `location.origin` for the `self` entry, on the
   grounds that the origin which just served the app is the one address proven
   reachable. Peers are untouched; their published URL is the only way to them.
+- The **guest page follows the conversation**, which it did not do at all: there
+  was no scrolling logic in `Share.svelte`, so a shared link opened at the TOP of
+  the transcript and a streaming reply grew below the fold while the reader
+  watched a stationary screen. That is the one thing a share is for -- somebody
+  opens it to see what is happening now. Two attempts got it wrong the same way
+  before the third worked, and the reason is worth keeping: scroll POSITION
+  cannot tell you whether the reader moved. The column grows under them
+  constantly (a picture finishing its download long after the markup that holds
+  it, a reply streaming), so every position-based heuristic read "the content got
+  taller" as "they scrolled up" and unpinned itself the instant after it pinned.
+  Intent therefore comes only from things that unambiguously are intent (wheel,
+  touchmove, keydown), growth is handled by a `ResizeObserver` on the column, and
+  each programmatic jump SPENDS the `scrollend` it causes (`ownScrolls`) so the
+  browser's own event cannot be mistaken for a person. The "Latest" pill is
+  anchored to the footer's top edge rather than a fixed offset, because that
+  footer is a composer for one guest, a join box for another and one line for a
+  third, and a guessed offset landed the pill on top of whichever was tallest.
+  On a phone (`max-width: 560px`) the picture cap drops to 300px (460 is over
+  half an 844px screen), the send controls take a 40px tap target, the composer
+  bar wraps so the owner's-approval caveat keeps its own line rather than being
+  squeezed out, and the join box stops taking a sixth of the screen from somebody
+  who may only ever want to watch.
 - **The network listener is locked** (`internal/lanauth` for the rules,
   `internal/server/lanauth.go` for the wire, `lanauthadmin.go` for managing it).
   kunai is open source, so the whole scheme is public to an attacker; nothing here
@@ -1046,6 +1485,29 @@ Behavioral invariants that were bugs before (do not regress):
   kunai has no login, so any device that can reach the port can drive the agent.
   The guard stops hostile web pages, not a machine on your wifi making the request
   itself. Turning it on means trusting the network.
+- **An uploaded image is made sendable, or refused where you can see it**
+  (`internal/imageprep`). kunai inlined anything whose media type began with
+  `image/`, and the Messages API accepts exactly four formats -- JPEG, PNG, GIF,
+  WebP -- with a 10MB per-image cap on the BASE64 (so ~7.5MB raw) and 8000x8000
+  pixels. So an iPhone photo (HEIC), an AVIF from a website, a BMP, or simply a
+  large photo went up and came back as "an image in the conversation could not
+  be processed and was removed": minutes into a turn, with nothing saying which
+  image or why, and the turn already paid for. The declared type is **never**
+  trusted -- it is whatever the browser guessed from an extension or a sender
+  chose to write, which is the same lesson the share gate learned when a guest
+  could relabel its own upload -- so the bytes are sniffed (`Sniff`, magic
+  numbers, which is also how a refusal can NAME the format). What is already
+  fine passes through untouched, because re-encoding a screenshot costs quality
+  exactly where the text is. What is merely too big is downscaled to a 2576px
+  long edge, which is the API's own high-resolution target: nothing is lost that
+  the model would have seen, and the upload, the tokens and the wait all shrink
+  (a 5000x3000 JPEG: 1.7MB -> 426KB). What cannot be converted is refused at
+  UPLOAD time with a sentence naming the format and what to do about it, and the
+  client shows it rather than swallowing it as it used to. Stdlib only,
+  deliberately: JPEG, PNG and GIF are what real uploads are, and a library to
+  convert the tail would cost a dependency and still not decode HEIC (cgo).
+  `guestImageTypes` lost `avif` and `bmp` for the same reason -- neither is one
+  of the four, and a guest has no way to work out why their picture vanished.
 - `web/src/lib/clipboard.ts` (`copyText`) exists because `navigator.clipboard` is
   not merely unreliable off a secure context, it is **undefined**. Every Copy
   button therefore did nothing on a LAN address, and `Markdown.svelte`'s
@@ -1519,7 +1981,54 @@ kunai's own furniture stays on the gray ramp. Fonts: Geist (UI), Geist Mono
 (paths and code), Source Serif 4 (Claude's rendered markdown only). Paths use the
 rtl-ellipsis trick and need `unicode-bidi: plaintext` to keep the leading slash from
 jumping to the end.
+**Ligatures are off** (`font-variant-ligatures: none` on `:root`, restated on
+`code`/`pre`/`.mono`), because the code shown must BE the code. Geist Mono ships
+coding ligatures on by default, so `!=` painted as one glyph and `args[1:]...)`
+painted as `args[1:].)`: a reader judging a pull-request finding against its hunk
+was reading characters the file does not contain, with no way to know. Set on the
+root rather than per surface because the property inherits and the font is
+switched in thirty-odd scoped stylesheets, so any list of selectors would be one
+component behind for ever. The cost is fi/fl in sans prose at 12-13px, which is
+not perceptible; the serif Claude's markdown is set in gets them back, where the
+type is large enough to tell.
 
+**An icon is drawn, never typed.** Every control in kunai is a 24-box inline SVG
+at stroke 1.7, and the review workspace briefly broke that by using APL quad
+characters for its two panel toggles. JetBrains Mono does not carry them, so the
+browser fell back and the two controls in the top corners of the screen rendered
+as empty boxes: literally tofu, on the newest surface in the app. A glyph is only
+as portable as the font behind it, and the fonts here are chosen for text.
+
+- **A failed action is a toast, never a line in the scroll area**
+  (`lib/toast.svelte.ts`, `components/Toast.svelte`, one mounted per entry
+  point beside `<Lightbox />` and for the same reason). Three surfaces were
+  appending errors to the end of a scrolling column: the review (Post is a
+  button in the bar at the BOTTOM, so the reason it failed rendered above it,
+  after however many findings there were, styled like a footnote), the chat
+  (`chat.errorLine`, which was also never cleared, so a refusal stayed at the
+  end of the conversation long after it stopped being true), and the guest page.
+  Toasts sit at the TOP centre, which is chosen for this app rather than copied:
+  kunai's primary actions are all at the bottom, so a sticky error in the usual
+  bottom corner would sit on top of the button you press to try again. An ERROR
+  does not auto-dismiss, because it is the answer to something you asked for and
+  usually names what to do next; anything else does. Identical messages collapse
+  rather than stack, since pressing a failing button three times is one problem.
+  Four things the first version got wrong, all of them the same mistake -- a
+  toast is an ANSWER, and an answer has to be readable without being read.
+  It sat 12px from the top, which on every screen with a header put a floating
+  panel across the row holding the title and the actions, so it read as
+  something having gone wrong rather than as a reply; it clears the chrome now.
+  The kind was a 2px inset shadow down the left edge, invisible at a glance and
+  indistinguishable between the three; it is an ICON in the colour that already
+  means that thing here. The text was a paragraph -- "Applied to
+  internal/server/shareupload.go:196 (-1 +2). Not committed." is two sentences
+  in a 560px box -- so a toast is now a title plus an optional quieter `detail`
+  line, and the copy was rewritten to fit. And an auto-dismissing toast shows
+  its own dwell as a hairline that burns down, because a message that vanishes
+  with no warning reads as a glitch the first time it happens; the close button
+  is only on the errors, which are the only ones that wait.
+  An error next to the FIELD that caused it (a dialog, a form) stays where it is:
+  that is validation, and a toast is worse for it.
 - The composer floats on the canvas with no full-width divider or band; the
   field's own edge defines it. The chat header is the exception: it is short and
   ghost-buttoned (no chrome at rest, a panel fill on hover) and sits on a hairline
@@ -1607,7 +2116,14 @@ jumping to the end.
   no duration, which is the honest answer rather than a clock started at reopen.
   The client prefers an open tab's socket over the polled list for both the
   state and the start time (`liveState`, `liveTurnStart`), because the poll is a
-  cycle behind by design.
+  cycle behind by design -- but ONLY once that socket has actually heard the
+  state (`ChatConnection.heard`). Its seed is `idle`, which is a real value and a
+  plausible one, so before the fix a tab that had just opened answered "idle"
+  with total confidence for a session that was mid-turn, and a socket that never
+  connected answered it for ever. That is not a blink: opening a running review
+  made the review view announce "this review stopped and never finished", and it
+  drops the sidebar's own `Working 17s` for the same reason. Caught by giving the
+  review smoke test a running fixture, which is the state nothing had covered.
 - Open sessions live in a tab strip (`Tabs.svelte`), terminal-style, rendered as
   the **left of the header's top row** so the session actions ride the same line
   to its right (Chat.svelte's `.toprow`); the path sits on a quieter second row

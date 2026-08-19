@@ -2,9 +2,19 @@ import { mount } from 'svelte'
 import '@fontsource-variable/geist'
 import '@fontsource-variable/geist-mono'
 import '@fontsource-variable/source-serif-4'
+// The review workspace's own two faces. Loaded here rather than in the view so
+// they are in the bundle before the screen opens: a review is read, and type
+// swapping under a paragraph mid-read is worse than a moment of Geist.
+import '@fontsource-variable/inter/index.css'
+import '@fontsource-variable/jetbrains-mono/index.css'
+import './review.css'
 import './app.css'
 import './hljs-theme.css'
 import './image-frame.css'
+// One card, one row, one button, one field, shared by every settings section.
+// Global for the reason the file says: scoped styles are what let six sections
+// each describe a different row.
+import './settings.css'
 import App from './App.svelte'
 import { startUpdatePolling, reloadWhenSafe } from './lib/updater'
 

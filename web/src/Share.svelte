@@ -12,6 +12,8 @@
   import BlockView from './components/BlockView.svelte'
   import Spinner from './components/Spinner.svelte'
   import Lightbox from './components/Lightbox.svelte'
+  import Toast from './components/Toast.svelte'
+  import { toasts } from './lib/toast.svelte'
   import { FILE_BASE, sharedImageBase } from './lib/filebase'
   import FileChips from './components/FileChips.svelte'
   import type { Attachment } from './lib/types'
@@ -42,6 +44,18 @@
 
   const running = $derived(g.sessionState === 'running')
   const awaiting = $derived(g.sessionState === 'awaiting_permission')
+
+  // Raised where the guest is looking rather than appended to the transcript.
+  // This column pins itself to the bottom and grows constantly, so a red line at
+  // the end of it is the one place a message can be both present and missed.
+  // A link that has expired is a different thing and stays a full-page message
+  // (see g.gone): that is the end of the session, not a failed action.
+  $effect(() => {
+    const line = g.errorLine
+    if (!line) return
+    g.errorLine = ''
+    toasts.error(line)
+  })
 
   async function askToJoin() {
     asking = true
@@ -113,6 +127,77 @@
     }
   }
 
+  // Following the conversation, without racing the layout.
+  //
+  // There was no scrolling logic here at all, which failed the one thing a shared
+  // link is for: somebody opens it to see what is happening NOW and landed at the
+  // top of the transcript, then had to scroll a whole conversation to find the
+  // live end of it. A streaming reply did the same in reverse, growing below the
+  // fold while they watched a stationary screen.
+  //
+  // Scroll POSITION cannot decide whether the reader has moved away, which is
+  // what two earlier attempts here got wrong. The column grows under them
+  // constantly -- a picture finishing its download long after the markup that
+  // holds it, a reply streaming -- and every scroll-event heuristic ended up
+  // reading "the content got taller" as "they scrolled up", so the page opened
+  // halfway through its own transcript with a Latest button already showing.
+  //
+  // So intent comes only from things that unambiguously are intent (a wheel, a
+  // drag, a key), and growth is handled separately by watching the column resize.
+  let scroller = $state<HTMLElement | null>(null)
+  let column = $state<HTMLElement | null>(null)
+  let pinned = $state(true)
+
+  // Generous: a momentum scroll rarely stops exactly at the end, and being a few
+  // pixels short must not read as "they went to look at something".
+  const NEAR_BOTTOM = 64
+
+  function atBottom(): boolean {
+    const el = scroller
+    return !el || el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM
+  }
+
+  // Called only from real input, so a reflow can never be mistaken for a reader.
+  function readerMoved() {
+    pinned = atBottom()
+  }
+
+  // scrollend fires for a programmatic scroll too, so each jump we make is
+  // counted and the matching event is spent rather than read as the reader
+  // moving. Without this the sequence was: jump to the end, an image finishes
+  // and grows the column, scrollend arrives, position is no longer the bottom,
+  // and the page unpins itself the instant after it pinned.
+  let ownScrolls = 0
+
+  function scrollSettled() {
+    if (ownScrolls > 0) {
+      ownScrolls--
+      return
+    }
+    readerMoved()
+  }
+
+  function toBottom(smooth = false) {
+    const el = scroller
+    if (!el) return
+    ownScrolls++
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
+    pinned = true
+  }
+
+  // The column resizing covers every way content arrives, including the one that
+  // defeated the earlier versions: an image loading seconds after its markup,
+  // when nothing in the item list has changed for an effect to notice.
+  $effect(() => {
+    const el = column
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => {
+      if (pinned) toBottom()
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  })
+
   function expiry(ts: number): string {
     const s = ts - Math.floor(Date.now() / 1000)
     if (s <= 0) return 'expired'
@@ -126,6 +211,7 @@
      it, clicking to expand would do nothing here while working in the owner's
      view, which is worse than not offering it. -->
 <Lightbox />
+<Toast />
 
 <div class="page">
   <header>
@@ -146,7 +232,17 @@
   {:else if !g.info}
     <div class="center"><Spinner /></div>
   {:else}
-    <main>
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <!-- These listeners read intent, they do not add an interaction: the region
+         is already scrollable and keyboard-reachable as a scroll container. -->
+    <main
+      bind:this={scroller}
+      onwheel={readerMoved}
+      ontouchmove={readerMoved}
+      onkeydown={readerMoved}
+      onscrollend={scrollSettled}
+    >
+      <div class="col" bind:this={column}>
       {#each g.items as item, i (item.seq ?? i)}
         {#if item.role === 'user'}
           <div class="msg user" class:guest={item.from === 'guest'}>
@@ -186,10 +282,21 @@
       {#if awaiting}
         <p class="waiting">Waiting for the owner to approve something.</p>
       {/if}
-      {#if g.errorLine}<p class="err">{g.errorLine}</p>{/if}
+      </div>
     </main>
 
     <footer>
+      <!-- Only while the reader is away from the end, so it is an offer rather
+           than furniture. Anchored to the footer's own top edge rather than a
+           fixed offset from the bottom: the footer is a composer for one guest,
+           a join box for another and one line for a third, and a guessed offset
+           put the pill on top of whichever was tallest. -->
+      {#if !pinned}
+        <button class="jump" onclick={() => toBottom(true)} aria-label="Jump to the latest message">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14" /><path d="M6 13l6 6 6-6" /></svg>
+          Latest
+        </button>
+      {/if}
       {#if g.info.tier === 'view'}
         <p class="ro">You are watching this session. Only its owner can send to it.</p>
       {:else if g.canSend}
@@ -253,6 +360,7 @@
 
 <style>
   .page {
+    position: relative;
     display: flex;
     flex-direction: column;
     height: 100dvh;
@@ -301,10 +409,39 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    /* Momentum scrolling must not drag the page behind it on a phone. */
+    overscroll-behavior: contain;
+  }
+  /* The thing whose height is watched. main's own box never changes, so the
+     observer has to sit on the content inside it. */
+  .col {
     padding: 16px;
     display: flex;
     flex-direction: column;
     gap: 16px;
+  }
+  /* Floats just above the footer rather than sitting in the column, so it never
+     moves the conversation to announce itself. */
+  .jump {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 100%;
+    margin-bottom: 10px;
+    z-index: 5;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 13px;
+    border-radius: 100px;
+    border: 1px solid var(--border-2);
+    background: var(--panel-2);
+    color: var(--text-2);
+    font-size: 12.5px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  }
+  .jump:hover {
+    color: var(--text);
   }
   .center {
     flex: 1;
@@ -340,6 +477,11 @@
   }
   .msg.reply {
     font-family: var(--serif);
+    /* Ligatures are off globally so code renders as the characters it is made
+       of; serif prose at 15.5px is the one place they are large enough to see,
+       so they come back here. Code inside this block sets .mono and turns them
+       off again. */
+    font-variant-ligatures: common-ligatures;
     font-size: 15.5px;
     line-height: 1.62;
   }
@@ -376,12 +518,8 @@
     font-size: 12.5px;
     color: var(--busy);
   }
-  .err {
-    margin: 0;
-    font-size: 12.5px;
-    color: var(--alert);
-  }
   footer {
+    position: relative; /* the jump pill anchors to this edge */
     flex: none;
     padding: 10px 16px calc(var(--safe-bottom) + 14px);
   }
@@ -530,5 +668,69 @@
     background: transparent;
     border-color: var(--border);
     color: var(--text-2);
+  }
+
+  /* Phone. Every change here is about a thumb rather than a cursor.
+     The caveat about the owner's approval is a promise worth keeping, so it moves
+     to its own row rather than being squeezed to nothing or hidden; the controls
+     take the row below it at a real tap size. */
+  @media (max-width: 560px) {
+    .col {
+      padding: 12px;
+      gap: 13px;
+    }
+    .cbar {
+      flex-wrap: wrap;
+      row-gap: 8px;
+    }
+    .hint {
+      order: -1;
+      flex: 1 0 100%;
+    }
+    .spacer {
+      flex: 1;
+    }
+    /* 40px clears the 44px target with the row's own gap around it, and Send
+       stays the widest thing on the row so it is hard to miss. */
+    .go,
+    .ghost {
+      height: 40px;
+      padding: 0 18px;
+      font-size: 13.5px;
+    }
+    .attach {
+      width: 40px;
+      height: 40px;
+    }
+    /* A picture must not take the whole screen. The desktop cap is 460px, which
+       on an 844px phone is more than half of it before the caption. */
+    .page :global(.imgstage img) {
+      max-height: 300px;
+    }
+    /* A user bubble at 88% leaves almost no gutter to read the alignment by. */
+    .msg.user {
+      max-width: 92%;
+    }
+    /* The join box is a one-time action holding a permanent seat. On a phone it
+       was taking a sixth of the screen, every screen, from somebody who may only
+       ever want to watch -- so it gets the room a control needs and no more, and
+       the sentence explaining it drops to one line. */
+    .pairbox {
+      gap: 7px;
+      padding: 10px 11px;
+      border-radius: var(--r-sm);
+    }
+    .pairbox p {
+      font-size: 12.5px;
+      line-height: 1.4;
+    }
+    .askrow input {
+      height: 40px;
+    }
+    /* Read-only and taken notices are one quiet line, not a paragraph block. */
+    .ro {
+      font-size: 12.5px;
+      line-height: 1.45;
+    }
   }
 </style>

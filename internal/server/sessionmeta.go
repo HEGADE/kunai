@@ -37,6 +37,23 @@ type sessionMeta struct {
 	// agent do anything since I parked this": a turn that ended after it is what
 	// wakes the row early.
 	SnoozedAt int64 `json:"snoozed_at,omitempty"`
+	// HiddenPreviews are ports this session has been told not to show on the
+	// preview card. Attribution is a fact about processes, not about what anybody
+	// wants to look at, so a correctly-found server can still be noise: the
+	// editor's own language server, a database, a dev server somebody already
+	// knows the address of. Server-side rather than per-device because the row is
+	// noise on the phone for the same reason it is noise on the laptop.
+	HiddenPreviews []int `json:"hidden_previews,omitempty"`
+}
+
+// hidesPreview reports whether a port has been dismissed for this session.
+func (m sessionMeta) hidesPreview(port int) bool {
+	for _, p := range m.HiddenPreviews {
+		if p == port {
+			return true
+		}
+	}
+	return false
 }
 
 // metaPatch is a partial update: a nil field is left as-is. It exists so adding
@@ -124,13 +141,44 @@ func (s *sessionMetaStore) update(id string, p metaPatch) sessionMeta {
 			m.SnoozedUntil, m.SnoozedAt = 0, 0
 		}
 	}
-	if m.Name == "" && !m.Pinned && m.Workspace == "" && m.SnoozedUntil == 0 {
+	s.putLocked(id, m)
+	return m
+}
+
+// setPreviewHidden dismisses a discovered server, or brings it back.
+//
+// Its own method rather than a metaPatch field, because a patch carrying the
+// whole set would make two devices dismissing two different rows a
+// last-write-wins race that silently un-hides one of them. This is
+// read-modify-write on one port under the store's lock, which is what the
+// operation actually is.
+func (s *sessionMetaStore) setPreviewHidden(id string, port int, hidden bool) sessionMeta {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.data[id]
+	out := m.HiddenPreviews[:0:0]
+	for _, p := range m.HiddenPreviews {
+		if p != port {
+			out = append(out, p)
+		}
+	}
+	if hidden {
+		out = append(out, port)
+	}
+	m.HiddenPreviews = out
+	s.putLocked(id, m)
+	return m
+}
+
+// putLocked stores an entry, or drops it once it holds no override at all, so
+// the file only ever names sessions the user actually customized.
+func (s *sessionMetaStore) putLocked(id string, m sessionMeta) {
+	if m.Name == "" && !m.Pinned && m.Workspace == "" && m.SnoozedUntil == 0 && len(m.HiddenPreviews) == 0 {
 		delete(s.data, id)
 	} else {
 		s.data[id] = m
 	}
 	s.saveLocked()
-	return m
 }
 
 func (s *sessionMetaStore) delete(id string) {

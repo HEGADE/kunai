@@ -10,11 +10,23 @@
 // agents nobody is watching, which is the worst thing to be wrong about quietly.
 
 import { shortAgo, longAgo, secondsSince } from '../src/lib/reltime.ts'
-import { groupSessions, groupStartTarget, projectName } from '../src/lib/grouping.ts'
+import { groupSessions, groupStartTarget, projectName, visibleGroups } from '../src/lib/grouping.ts'
 import { summarise, isAwaiting, isWorking } from '../src/lib/sidebar.ts'
 import {
   chosenCli, isProvider, providerModelChoices, providerModelToSend, showEffort,
 } from '../src/lib/spawnoptions.ts'
+import {
+  ordered,
+  tally,
+  sendLabel,
+  headline,
+  pad,
+  step,
+  fixOf,
+  checkRows,
+  emptyHeadline,
+} from '../src/lib/reviewDeck.ts'
+import { proseHtml } from '../src/lib/prose.ts'
 import { clampTTL, splitDuration, expiryWords, MIN_TTL, MAX_TTL } from '../src/lib/duration.ts'
 import {
   byAgent, byModel, compact, dailyCost, money, percent, pricedShare, totals,
@@ -218,9 +230,226 @@ eq("a tiny share does not round to nothing", percent(0.0004), "<0.1%")
 // the cost-quality panel it claims exactly the completeness being audited.
 eq("an almost-whole share does not round to all", percent(0.9993), ">99.9%")
 eq("a genuinely whole share is whole", percent(1), "100%")
-eq("and nothing is nothing", percent(0), "0.0%")
+// Exactly "0%", not "0.0%": the decimal implies a rounding that did not happen,
+// and this panel's whole job is to be honest about what it could not price.
+eq("and nothing is nothing", percent(0), "0%")
 
 eq("total tokens count every tier", totalTokens(tok({ in: 1, w5: 2, w1: 3, r: 4, out: 5 })), 15)
+
+
+// --- how many folders the sidebar shows -------------------------------------
+// A quiet folder is one holding nothing but past work. Those are capped; a
+// folder with something LIVE in it is never counted against the cap and never
+// dropped, because hiding a running agent to make room for one somebody last
+// opened on Tuesday is the wrong way round.
+const grp = (label, kinds) => ({ key: label, label, named: false, items: kinds.map((k) => ({ kind: k })) })
+const isLive = (r) => r.kind === 'live'
+const quiet = (label) => grp(label, ['recent'])
+const busy = (label) => grp(label, ['live'])
+
+eq(
+  'quiet folders are capped',
+  visibleGroups([quiet('a'), quiet('b'), quiet('c'), quiet('d'), quiet('e')], isLive, 3).shown.map((g) => g.label),
+  ['a', 'b', 'c'],
+)
+eq(
+  'the cut folders are counted, so the link can say so',
+  visibleGroups([quiet('a'), quiet('b'), quiet('c'), quiet('d'), quiet('e')], isLive, 3).hidden,
+  2,
+)
+eq(
+  'a live folder is never dropped, however far down it sits',
+  visibleGroups([quiet('a'), quiet('b'), quiet('c'), quiet('d'), busy('live-one')], isLive, 3).shown.map((g) => g.label),
+  ['a', 'b', 'c', 'live-one'],
+)
+eq(
+  'live folders do not spend the quiet budget',
+  visibleGroups([busy('L1'), busy('L2'), quiet('a'), quiet('b'), quiet('c'), quiet('d')], isLive, 3)
+    .shown.map((g) => g.label),
+  ['L1', 'L2', 'a', 'b', 'c'],
+)
+eq(
+  'a folder holding one live session among past ones stays',
+  visibleGroups([quiet('a'), quiet('b'), quiet('c'), grp('mixed', ['recent', 'live'])], isLive, 3)
+    .shown.map((g) => g.label),
+  ['a', 'b', 'c', 'mixed'],
+)
+eq('nothing hidden when the list is short', visibleGroups([quiet('a')], isLive, 3).hidden, 0)
+
+// --- review deck --------------------------------------------------------------
+// What lands publicly on somebody's pull request, under a shared bot identity.
+// The rule that most needs pinning: an UNDECIDED finding is SENT. Silence is not
+// a dismissal, and a reviewer that quietly dropped everything you had not got to
+// would be worse than one that posted too much, because you would never learn
+// what it had found.
+
+const F = (index, severity, extra = {}) => ({
+  index, severity, file: 'a.go', line: 1, side: 'RIGHT', title: 't', body: 'b',
+  confidence: 'high', inline: true, ...extra,
+})
+const FS = [F(0, 'minor'), F(1, 'blocker'), F(2, 'major'), F(3, 'minor', { inline: false })]
+const NONE = {}
+
+eq('findings are ordered worst first', ordered(FS, NONE).map((f) => f.index), [1, 2, 0, 3])
+// The sort is stable, so an overruled finding keeps its place among its new
+// equals rather than going last.
+eq(
+  'an overruled severity moves the finding immediately',
+  ordered(FS, { 1: { title: 't', body: 'b', severity: 'minor' } }).map((f) => f.index),
+  [2, 0, 1, 3],
+)
+
+eq('nothing decided still sends everything', tally(FS, NONE, NONE).sending, 4)
+eq('and counts none of it resolved', tally(FS, NONE, NONE).resolved, 0)
+eq('accepting resolves without changing what is sent', tally(FS, { 0: 'accept' }, NONE).sending, 4)
+eq('dismissing is the only thing that holds one back', tally(FS, { 1: 'dismiss' }, NONE).sending, 3)
+eq('both count as resolved', tally(FS, { 0: 'accept', 1: 'dismiss' }, NONE).resolved, 2)
+eq('undecided is what is left', tally(FS, { 0: 'accept' }, NONE).undecided, 3)
+
+// The headline is counted at the EDITED severity, or overruling the only blocker
+// still announces one.
+eq('a dismissed blocker leaves the headline', tally(FS, { 1: 'dismiss' }, NONE).blockers, 0)
+eq(
+  'an overruled blocker leaves it too',
+  tally(FS, NONE, { 1: { title: 't', body: 'b', severity: 'minor' } }).blockers,
+  0,
+)
+// An accepted blocker is still a blocker: accepting means you will fix it, not
+// that it stopped being one.
+eq('an accepted blocker is still counted', tally(FS, { 1: 'accept' }, NONE).blockers, 1)
+eq('an unknown severity still counts as something', tally([F(0, 'critical')], NONE, NONE).counts.minor, 1)
+
+eq('the headline is a sentence', headline(tally(FS, NONE, NONE)), 'One thing should block this merge')
+eq('and plural when it should be', headline(tally([F(0,'major'),F(1,'major')], NONE, NONE)), 'Two things worth fixing')
+eq('nothing found says so', headline(tally([], NONE, NONE)), 'Nothing worth reporting')
+
+eq('the send control says what it will send', sendLabel(tally(FS, NONE, NONE), false), 'Post 4 findings')
+eq('one is not pluralised', sendLabel(tally([F(0,'minor')], NONE, NONE), false), 'Post 1 finding')
+eq(
+  'dismissing everything offers the summary',
+  sendLabel(tally(FS, { 0: 'dismiss', 1: 'dismiss', 2: 'dismiss', 3: 'dismiss' }, NONE), false),
+  'Post the summary',
+)
+
+// The queue's gutter must not reflow at ten.
+eq('row numbers are padded', [pad(1), pad(9), pad(10)], ['01', '09', '10'])
+// And the cursor cannot fall off either end.
+eq('step clamps at the top', step(0, -1, 3), 0)
+eq('step clamps at the bottom', step(2, 1, 3), 2)
+eq('step on an empty deck is harmless', step(0, 1, 0), 0)
+
+// --- prose ------------------------------------------------------------------
+// A finding's argument is dense with the things a reader is hunting for, and
+// rendering them flat throws away structure the sentence already has. These
+// rules are guesses about how a model writes; over-matching is the failure that
+// matters, because prose peppered with false code spans reads worse than prose
+// with none.
+
+const P = (s) => proseHtml(s)
+
+eq('a camelCase identifier is code', P('advanceReview cannot tell'), '<code class="code">advanceReview</code> cannot tell')
+eq('a dotted identifier is code', P('calls session.Close now'), 'calls <code class="code">session.Close</code> now')
+eq(
+  'a file and line is a location',
+  P('(internal/session/answer.go:23)'),
+  '(<code class="loc">internal/session/answer.go:23</code>)',
+)
+eq('a line range too', P('at shareupload.go:196-203 it'), 'at <code class="loc">shareupload.go:196-203</code> it')
+eq('a call is code', P('does safeName(a.Name) first'), 'does <code class="code">safeName(a.Name)</code> first')
+// Backticks are the model saying so, and must beat every heuristic.
+eq('backticks win', P('sets `a plain phrase` here'), 'sets <code class="code">a plain phrase</code> here')
+// The failure that matters: ordinary English must come through untouched.
+eq(
+  'plain prose is left alone',
+  P('The file outlives the run and nobody deletes it.'),
+  'The file outlives the run and nobody deletes it.',
+)
+eq('a sentence-initial capital is not an identifier', P('This is fine.'), 'This is fine.')
+// Escaping happens on the way out, after tokenising the raw text: escaping first
+// would run the patterns over &lt; and friends.
+eq('html in prose is escaped', P('the <script> tag'), 'the &lt;script&gt; tag')
+eq(
+  'html inside a code span is escaped too',
+  P('`<img onerror=x>`'),
+  '<code class="code">&lt;img onerror=x&gt;</code>',
+)
+// A /g pattern carries lastIndex between calls, which silently skips matches in
+// every run after the first.
+eq(
+  'every identifier in a sentence is marked, not just the first',
+  P('buildContent calls safeName'),
+  '<code class="code">buildContent</code> calls <code class="code">safeName</code>',
+)
+
+// --- the detail rail ----------------------------------------------------------
+//
+// Every panel answers from whatever the record holds, and none of them may
+// report the absence of a FIELD as the absence of an ANSWER. That was a real
+// bug and a loud one: the rail printed "no suggested change, nothing recorded
+// about what checked it" onto a finding that had been independently verified,
+// carried a thousand words of evidence, and had a confidence the rail showed
+// nowhere at all.
+{
+  const F = (over = {}) => ({
+    index: 0, file: 'a.go', line: 1, side: 'RIGHT', title: 't', body: 'b',
+    severity: 'major', confidence: 'high', inline: true, ...over,
+  })
+
+  // The patch is the best rendering of a fix, and it wins when there is one.
+  eq('a patch is the fix', fixOf(F({ patch: { title: 'x', lines: [{ sign: '+', text: 'a' }] } })).kind, 'patch')
+  // But a suggestion the server could not turn into a diff is still a fix, and
+  // showing nothing was throwing away the answer to the panel's own question.
+  eq('a suggestion with no patch is still a fix', fixOf(F({ suggestion: 'do it this way' })).kind, 'text')
+  eq('and it carries the text', fixOf(F({ suggestion: ' do it this way ' })).text, 'do it this way')
+  // The margin the whole suggestion shares is spent on nothing in a 344px
+  // column, and the relative indentation inside it has to survive exactly. The
+  // same rule the server applies to a patch; see stripCommonIndent.
+  eq(
+    'the shared margin goes and the shape stays',
+    fixOf(F({ suggestion: '\t\tif !ok {\n\t\t\treturn err\n\t\t}' })).text,
+    'if !ok {\n\treturn err\n}',
+  )
+  eq(
+    'mixed indentation is left alone rather than sliced',
+    fixOf(F({ suggestion: '\tif ok {\n  deep()' })).text,
+    '\tif ok {\n  deep()',
+  )
+  // An empty patch is not a patch: a diff with no lines renders as a frame
+  // around nothing, which reads as a rendering fault.
+  eq('an empty patch falls through', fixOf(F({ patch: { title: 'x', lines: [] }, suggestion: 's' })).kind, 'text')
+  eq('nothing at all says so', fixOf(F()).kind, 'none')
+
+  // What checked it is never empty, because two rows are always available.
+  const rows = checkRows(F({ verified: true }))
+  eq('verification is always reported', rows.some((r) => r.key === 'CHECKED'), true)
+  eq(
+    'and it says the refutation failed',
+    rows.find((r) => r.key === 'CHECKED').value.includes('refute'),
+    true,
+  )
+  eq('confidence has somewhere to be at last', rows.some((r) => r.key === 'CONFIDENCE'), true)
+  // An unverified finding is not silently the same as a verified one.
+  eq(
+    'an unchecked claim says it is unchecked',
+    checkRows(F()).find((r) => r.key === 'CHECKED').value.includes('not independently checked'),
+    true,
+  )
+  // The reviewer's own grounds come first, and are uppercased for the label column.
+  const withGrounds = checkRows(F({ grounds: [{ key: 'trace', value: 'a -> b' }] }))
+  eq('grounds lead', withGrounds[0].key, 'TRACE')
+  eq('and the standing rows follow', withGrounds.length, 3)
+  // A row with nothing in it is not a row.
+  eq('an empty ground is dropped', checkRows(F({ grounds: [{ key: 'TESTS', value: '' }] })).length, 2)
+}
+
+// A review that posts no findings is not the same as one that found nothing.
+// Seen on a real run over 127 files: three candidates, all three refuted by the
+// check, and a screen that said "Nothing worth reporting" -- which reads as "I
+// looked and it is fine" when what happened was the opposite of that.
+eq('nothing found says so', emptyHeadline(0), 'Nothing worth reporting')
+eq('one refuted is not nothing', emptyHeadline(1), 'One thing was considered, and it did not hold up')
+eq('three refuted is not nothing', emptyHeadline(3), 'Three things were considered, and none held up')
+eq('and it counts past the words', emptyHeadline(12).startsWith('12 things'), true)
 
 console.log(`${pass}/${pass + fails.length} passed`)
 for (const f of fails) console.log(`FAIL ${f}`)

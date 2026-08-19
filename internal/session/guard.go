@@ -54,6 +54,31 @@ func (s *Session) Guarded() bool {
 	return s.guard != nil
 }
 
+// answerUnattended decides an ask for a session nobody is going to answer for.
+//
+// unattended is false for an ordinary session, and then the ask takes its normal
+// route to a person. Otherwise the answer is here and immediate: a tool on the
+// list runs, anything else is refused with a sentence the model can act on, and
+// in neither case does the session stop.
+//
+// The refusal names the tool rather than apologising, because the model reads it
+// and picks another way: a review told "Monitor is not available in a review" got
+// its answer from Read and Grep, which is what it should have done first.
+func (s *Session) answerUnattended(ask *claude.PermissionAsk) (allow bool, reason string, unattended bool) {
+	s.mu.Lock()
+	list := s.unattended
+	s.mu.Unlock()
+	if len(list) == 0 {
+		return false, "", false
+	}
+	for _, t := range list {
+		if t == ask.ToolName {
+			return true, "", true
+		}
+	}
+	return false, ask.ToolName + " is not available here: this session reads, and nobody is attached to approve anything else. Use the tools you have.", true
+}
+
 // guardVerdict is what the guard decided about an incoming ask.
 type guardVerdict struct {
 	denied  bool

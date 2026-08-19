@@ -8,6 +8,7 @@ import {
   listMachines,
   listSessions,
   removeMachine as apiRemoveMachine,
+  reopenReview,
   setEffort as apiSetEffort,
   setAccount as apiSetAccount,
   setProviderModel as apiSetProviderModel,
@@ -102,10 +103,74 @@ const WARM_TABS = 5
 const RESTART_POLL_MS = 2_000
 const RESTART_WAIT_MS = 45_000
 
-// The one non-session route. Named once so the writer (syncUrl) and the reader
-// (applyPath) cannot drift into disagreeing about a string, which is the classic
-// way a route half-works: it navigates but the back button lands nowhere.
-const USAGE_PATH = '/usage'
+// The views that are PLACES rather than dialogs, and the path each one lives at.
+//
+// Named once so the writer (syncUrl) and the reader (applyPath) cannot drift
+// into disagreeing about a string, which is the classic way a route half-works:
+// it navigates but the back button lands nowhere.
+//
+// They are routes for the reason Usage was made one first. A modal is for a
+// decision you are making on top of what you were doing, and it takes the screen
+// hostage to say so. Settings, your accounts, your providers and your channels
+// are places you go, read, change something and come back to, so being a route
+// buys the back button, a reload that lands where you were, a link you can send,
+// and the full width instead of a 720px sheet with the app greyed out behind it.
+// How long one machine gets to answer a refresh before it is treated as offline
+// for that round.
+//
+// The fan-out assigns its results together, so the slowest machine decides when
+// ANYTHING appears at all: this number is how long the sidebar can be blank
+// because a laptop in the fleet is asleep. Four seconds is well past a healthy
+// tailnet hop, where these answer in tens of milliseconds, and short enough
+// that a dead peer is an inconvenience rather than an empty app. A machine that
+// was merely slow is back on the next round.
+const machineDeadlineMs = 4000
+
+// A promise with a deadline. The underlying fetch is not aborted, because doing
+// that would mean threading a signal through every api function for no gain
+// here: the result of a request nobody is waiting for is simply dropped.
+function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timed out')), ms)
+    p.then(resolve, reject).finally(() => clearTimeout(timer))
+  })
+}
+
+const VIEW_PATHS = {
+  usage: '/usage',
+  settings: '/settings',
+} as const
+
+export type ViewName = keyof typeof VIEW_PATHS
+
+// Reverse lookup, built once. applyPath needs path -> name and syncUrl needs
+// name -> path, and deriving one from the other is what keeps them honest.
+const PATH_VIEWS: Record<string, ViewName> = Object.fromEntries(
+  Object.entries(VIEW_PATHS).map(([name, path]) => [path, name as ViewName]),
+)
+
+// The sections of Settings, which is now the ONE place configuration lives.
+//
+// Accounts, Providers and Channels were separate pages. That was the mistake
+// worth naming: Accounts then existed twice, once as its own page with the real
+// sign-in flow and once as a section listing the same accounts with a link
+// across to the other one. Two surfaces for one idea is not navigation, it is a
+// question the reader has to answer before they can do anything.
+//
+// They are sections here and reachable at /settings/<section>, so the sidebar
+// shortcuts still go straight to them. One surface, several doors.
+export const SETTINGS_SECTIONS = [
+  'notifications',
+  'machines',
+  'accounts',
+  'providers',
+  'channels',
+  'network',
+  'unattended',
+  'reviews',
+] as const
+
+export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
 
 class AppStore {
   machines = $state<Machine[]>([this.selfSeed()])
@@ -151,10 +216,33 @@ class AppStore {
   // for seconds at a time. That was fine while it only drove a small dot; it is
   // not fine now that a folder announces "1 needs you" from it. An open tab's
   // socket knows immediately, so prefer it and fall back to the polled value.
+  // The socket is preferred only once it has actually HEARD the state. Its seed
+  // is `idle`, which is a real value and a plausible one, so a tab that has just
+  // opened (or whose socket never connected) was answering "idle" with total
+  // confidence for a session that was mid-turn. That is not a blink: it lasts
+  // until hello lands, and for ever on a machine that has gone away. It made the
+  // review view announce "this review stopped and never finished" over a running
+  // review, and it drops the sidebar's "Working 17s" for the same reason.
   liveState(m: { machineId: string; id: string; state?: string }): string {
     void this.connsVersion
     const conn = this.conns.get(tabKey(m.machineId, m.id))
-    return conn?.sessionState ?? m.state ?? ''
+    if (conn?.heard) return conn.sessionState
+    return m.state ?? conn?.sessionState ?? ''
+  }
+
+  // Whether a session is a pull-request review, when anything on hand knows.
+  //
+  // undefined means "not on hand", which is a third answer and has to stay one:
+  // this decides which whole screen renders, and defaulting an unknown to `false`
+  // is what made opening a review show a dead transcript first and the review a
+  // round trip later. Both lists carry the flag (the server tags them from the
+  // same map), so the common case is answered before anything is fetched.
+  isReviewSession(machineId: string, id: string): boolean | undefined {
+    const live = this.sessions.find((s) => s.machineId === machineId && s.id === id)
+    if (live) return live.review === true
+    const past = this.history.find((h) => h.machineId === machineId && h.id === id)
+    if (past) return past.review === true
+    return undefined
   }
 
   // liveTurnStart is when the running turn began (unix ms), 0 when none is. The
@@ -178,13 +266,39 @@ class AppStore {
     })
   }
   showNew = $state(false)
-  showSettings = $state(false)
+  // Which place is open, or null for the dashboard or a session. ONE field
+  // rather than five booleans, because "exactly one of these is showing" is an
+  // invariant and five independent flags cannot hold it: every open method used
+  // to have to remember to close the other four by hand, which is a rule you
+  // enforce by copy-paste until somebody adds a sixth.
+  view = $state<ViewName | null>(null)
+  // Which section of Settings is open. Its own state rather than part of `view`
+  // because it survives leaving and coming back, which is what makes the
+  // sidebar shortcuts feel like doors into one room instead of separate rooms.
+  settingsSection = $state<SettingsSection>('machines')
+  get showSettings() {
+    return this.view === 'settings'
+  }
+  get showUsage() {
+    return this.view === 'usage'
+  }
+  // A review session opens on its findings, not on the conversation. The chat is
+  // still there and is one click away, because being able to argue with the
+  // reviewer is the thing kunai has that a CI reviewer does not; it is just not
+  // the room you start in. reviewAsk seeds the composer when you pick a finding
+  // to ask about, so the question arrives with its subject attached.
+  reviewChat = $state(false)
   reviewAsk = $state('')
-  showAccounts = $state(false)
-  showChannels = $state(false)
-  showProviders = $state(false)
   showAllSessions = $state(false)
-  showUsage = $state(false)
+  // Whether a full round of the fan-out has finished, history included.
+  //
+  // "No sessions yet" is a conclusion, and the sidebar was drawing it before it
+  // had looked: sessions and history arrive over the network, history on a
+  // slower beat than the session list, so a machine full of work opened on an
+  // empty sidebar saying to go and start something. The same mistake as a card
+  // that renders while it is still loading, and worse, because this one tells
+  // you a fact about your machine that is not true.
+  listed = $state(false)
   listError = $state('')
   // actionError is why the last thing you asked for did not happen: switching
   // account, changing effort, closing.
@@ -337,7 +451,24 @@ class AppStore {
   // get the lot.
   async refresh(what: { history?: boolean; stats?: boolean } = { history: true, stats: true }) {
     const machines = this.machines
-    const results = await Promise.allSettled(machines.map((m) => this.refreshMachine(m, what)))
+    // Every machine is given a deadline, and that is what stops ONE of them
+    // holding the whole app hostage.
+    //
+    // The round is a Promise.allSettled over the fleet and the results are
+    // assigned together, so until the slowest machine answers there is nothing
+    // to render. Nothing here had a timeout, and a browser fetch to a machine
+    // that is asleep or off the tailnet does not fail quickly: it hangs. So one
+    // unreachable peer left the sidebar empty for as long as the browser was
+    // willing to wait, and reloading "fixed" it only because a fresh attempt
+    // sometimes failed faster.
+    //
+    // A machine that misses the deadline is simply offline for this round,
+    // which is a path that already exists and already does the right thing:
+    // its last known rows are kept and its dot goes out. The next round tries
+    // again, so a machine that was merely slow comes back on its own.
+    const results = await Promise.allSettled(
+      machines.map((m) => withDeadline(this.refreshMachine(m, what), machineDeadlineMs)),
+    )
 
     // A single blipped fetch must not blank a machine's rows: keeping the
     // last-known sessions/history for a machine that failed this tick is what
@@ -376,6 +507,10 @@ class AppStore {
     this.machines = nextMachines
     this.stats = nextMachines.find((m) => m.self)?.stats ?? this.stats
     this.listError = nextMachines.every((m) => !m.online) ? 'No machines reachable' : ''
+    // Only true once a round has actually completed, including the history that
+    // Recent is built from. Until then nothing may claim there are no sessions:
+    // see `listed` for why that claim was being made before anything had looked.
+    if (what.history) this.listed = true
   }
 
   private async refreshMachine(m: Machine, what: { history?: boolean; stats?: boolean }) {
@@ -693,9 +828,9 @@ class AppStore {
     }
     this.activeKey = key
     this.showNew = false
-    // Opening a session leaves Usage, or syncUrl would keep the address bar on
-    // /usage while a conversation is on screen.
-    this.showUsage = false
+    // Opening a session leaves whatever place was open, or syncUrl would keep
+    // the address bar on /settings while a conversation is on screen.
+    this.view = null
     this.syncUrl()
     // Looking at a session is what retires its attention: the unread-Done
     // brightness (per-device) and any snooze or Woke pill (server-side, so the
@@ -765,68 +900,60 @@ class AppStore {
   }
 
   newSession() {
-    this.showSettings = false
+    this.view = null
     this.showNew = true
   }
   closeNew() {
     this.showNew = false
   }
-  openSettings() {
+
+  // openView replaces the five near-identical open methods that each had to
+  // remember to close the other four. Every one of these is a route now, so it
+  // pushes a URL: they survive a reload, the back button works on them, and they
+  // can be sent to somebody.
+  openView(name: ViewName) {
     this.showNew = false
-    this.showSettings = true
+    this.view = name
+    this.syncUrl()
+  }
+  closeView() {
+    this.view = null
+    this.syncUrl()
+  }
+
+  // Settings, optionally straight to a section. The sidebar's Accounts,
+  // Providers and Channels buttons come through here: same room, different door.
+  openSettings(section?: SettingsSection) {
+    if (section) this.settingsSection = section
+    this.openView('settings')
   }
   closeSettings() {
-    this.showSettings = false
+    this.closeView()
+  }
+  // Changing section inside Settings is a navigation, so it takes the URL with
+  // it: a section you are reading is a thing you can link somebody to.
+  setSettingsSection(section: SettingsSection) {
+    this.settingsSection = section
+    this.syncUrl()
   }
   openAccounts() {
-    this.showNew = false
-    this.showSettings = false
-    this.showChannels = false
-    this.showProviders = false
-    this.showAccounts = true
-  }
-  closeAccounts() {
-    this.showAccounts = false
+    this.openSettings('accounts')
   }
   openChannels() {
-    this.showNew = false
-    this.showSettings = false
-    this.showAccounts = false
-    this.showProviders = false
-    this.showChannels = true
-  }
-  closeChannels() {
-    this.showChannels = false
+    this.openSettings('channels')
   }
   openProviders() {
-    this.showNew = false
-    this.showSettings = false
-    this.showAccounts = false
-    this.showChannels = false
-    this.showProviders = true
+    this.openSettings('providers')
   }
-  closeProviders() {
-    this.showProviders = false
-  }
-  // Usage is a route, not a dialog: it survives a reload, the back button works
-  // on it, and it can be linked to. Everything else in this block is an overlay
-  // over whatever you were doing; this one replaces it, so it pushes a URL.
   openUsage() {
-    this.showNew = false
-    this.showSettings = false
-    this.showAccounts = false
-    this.showChannels = false
-    this.showProviders = false
-    this.showUsage = true
-    this.syncUrl()
+    this.openView('usage')
   }
   closeUsage() {
-    this.showUsage = false
-    this.syncUrl()
+    this.closeView()
   }
   openAllSessions() {
     this.showNew = false
-    this.showSettings = false
+    this.view = null
     this.showAllSessions = true
   }
   closeAllSessions() {
@@ -1095,6 +1222,20 @@ class AppStore {
     this.connsVersion++
   }
 
+  // wakeReview brings a finished review's session back so it can be asked
+  // something, and reattaches this tab to it.
+  //
+  // Both halves are needed. The server can recreate the session under the SAME
+  // id (a resume keeps it), but this tab's socket gave up the moment it 404'd
+  // and never retries by design, so without the swap the conversation goes on
+  // saying the session has ended while it is running again.
+  async wakeReview(machineId: string, id: string) {
+    await reopenReview(this.baseForMachine(machineId), id)
+    const t = this.tabs.find((x) => x.machineId === machineId && x.id === id)
+    if (t) await this.swapConnection(t, () => {})
+    this.refresh()
+  }
+
   // switchAccount moves the active session to a different Claude account, keeping
   // its conversation (the server copies the transcript and resumes). Like an
   // effort change, the session respawns under the same id, so the connection is
@@ -1138,20 +1279,22 @@ class AppStore {
     }
   }
 
-  // --- URL routing: /usage, /m/<machineSlug>/<sessionId>, legacy /<sessionId> = self ---
+  // --- URL routing: the VIEW_PATHS places, /m/<machineSlug>/<sessionId>, legacy /<sessionId> = self ---
 
   private navigating = false
   private pendingDeepLink: { machineId: string; id: string } | null = null
 
   private syncUrl() {
     if (this.navigating) return
-    // Usage wins while it is open, because it is what is on screen; the session
-    // it was opened over keeps its tab and comes back with the URL when it
-    // closes. Order matters here rather than being a style choice: the other way
-    // round, opening Usage from inside a session would leave the address bar
-    // pointing at the session and the back button would do nothing.
-    const want = this.showUsage
-      ? USAGE_PATH
+    // An open place wins over the session behind it, because it is what is on
+    // screen; the session keeps its tab and comes back with the URL when the
+    // place closes. Order matters here rather than being a style choice: the
+    // other way round, opening Settings from inside a session would leave the
+    // address bar pointing at the session and the back button would do nothing.
+    const want = this.view
+      ? this.view === 'settings'
+        ? `${VIEW_PATHS.settings}/${this.settingsSection}`
+        : VIEW_PATHS[this.view]
       : this.activeId && this.activeMachineId
         ? `/m/${this.activeMachineId}/${this.activeId}`
         : '/'
@@ -1185,13 +1328,25 @@ class AppStore {
       void this.resumeById(decodeURIComponent(handoff[1]), cwd)
       return
     }
-    // Checked before currentPath, which would otherwise read "usage" as a bare
-    // legacy session id and try to open a session by that name.
-    if (location.pathname.replace(/\/+$/, '') === USAGE_PATH) {
-      this.showUsage = true
+    // Checked before currentPath, which would otherwise read "settings" as a
+    // bare legacy session id and try to open a session by that name.
+    const path = location.pathname.replace(/\/+$/, '')
+    const place = PATH_VIEWS[path]
+    if (place) {
+      this.view = place
       return
     }
-    this.showUsage = false
+    // /settings/<section>. An unknown section falls back rather than 404s: a
+    // link that outlives a rename should still land in Settings.
+    if (path.startsWith(VIEW_PATHS.settings + '/')) {
+      const wanted = path.slice(VIEW_PATHS.settings.length + 1)
+      if ((SETTINGS_SECTIONS as readonly string[]).includes(wanted)) {
+        this.settingsSection = wanted as SettingsSection
+      }
+      this.view = 'settings'
+      return
+    }
+    this.view = null
     const { machineId, id } = this.currentPath()
     this.navigating = true
     try {

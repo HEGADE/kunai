@@ -4,10 +4,81 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/hegade/kunai/internal/preview"
 )
+
+// Dismissing a row must not be able to strand a forward.
+//
+// The row is the only thing carrying Stop, so hiding a shared port while kunai
+// still held the listener would leave a dev server published on the tailnet with
+// nothing on screen that could take it back. That is the same failure servesPort
+// records from the other direction, arrived at through a different door.
+func TestHidingASharedPreviewStopsSharingIt(t *testing.T) {
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s := &Server{
+		sessionMeta: newSessionMetaStore(filepath.Join(dir, "sessions.json")),
+		previews:    newPreviewForwarder(ctx, "127.0.0.1"),
+	}
+
+	// A real forward, so "stopped" means the listener is gone rather than a flag
+	// having been flipped.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, p, _ := net.SplitHostPort(ln.Addr().String())
+	port, _ := strconv.Atoi(p)
+	_ = ln.Close()
+	if err := s.previews.open("sess-a", port); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	r := httptest.NewRequest("PATCH", "/api/sessions/sess-a/previews/"+p, strings.NewReader(`{"hidden":true}`))
+	r.SetPathValue("id", "sess-a")
+	r.SetPathValue("port", p)
+	w := httptest.NewRecorder()
+	s.handleHidePreview(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if s.previews.forwarding("sess-a", port) {
+		t.Error("the port is still forwarded with no row left to stop it")
+	}
+	if !s.sessionMeta.get("sess-a").hidesPreview(port) {
+		t.Error("the dismissal was not recorded")
+	}
+
+	// And it is reported as hidden rather than dropped, because a dismissal has
+	// to be reversible: filtering it away server-side would leave the client
+	// unable to say what it is holding back.
+	views := s.decorate("sess-a", []preview.Server{{Port: port, Command: "node"}})
+	if len(views) != 1 || !views[0].Hidden {
+		t.Errorf("decorate = %+v, want one row marked hidden", views)
+	}
+
+	// Bringing it back clears the record, and the store drops an entry that holds
+	// nothing rather than keeping an empty one for every session ever dismissed in.
+	r2 := httptest.NewRequest("PATCH", "/x", strings.NewReader(`{"hidden":false}`))
+	r2.SetPathValue("id", "sess-a")
+	r2.SetPathValue("port", p)
+	s.handleHidePreview(httptest.NewRecorder(), r2)
+	if s.sessionMeta.get("sess-a").hidesPreview(port) {
+		t.Error("Show did not bring the row back")
+	}
+	if len(s.sessionMeta.all()) != 0 {
+		t.Error("an entry with no override left was kept")
+	}
+}
 
 // The forward is a plain TCP splice, so whatever the dev server speaks passes
 // through untouched: absolute paths, redirects, streaming, websocket upgrades.

@@ -223,7 +223,7 @@ func TestClearingWorkspaceDropsAnOtherwiseEmptyEntry(t *testing.T) {
 	st.update("abc", metaPatch{Workspace: &ws})
 	st.update("abc", metaPatch{Workspace: &blank})
 
-	if got := st.get("abc"); got != (sessionMeta{}) {
+	if got, ok := st.all()["abc"]; ok {
 		t.Fatalf("entry survived as %+v, want it dropped", got)
 	}
 }
@@ -248,7 +248,7 @@ func TestSnoozePersistsAndClears(t *testing.T) {
 	// Clearing (0) drops both fields, and an entry with nothing else set.
 	zero := int64(0)
 	st.update("abc", metaPatch{SnoozedUntil: &zero})
-	if got := st.get("abc"); got != (sessionMeta{}) {
+	if got, ok := st.all()["abc"]; ok {
 		t.Fatalf("after clear: %+v, want the entry dropped", got)
 	}
 }

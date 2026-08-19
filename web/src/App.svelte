@@ -1,19 +1,19 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { app } from './lib/app.svelte'
+  import { reviewDraft } from './lib/api'
   import Sidebar from './components/Sidebar.svelte'
   import Chat from './components/Chat.svelte'
+  import ReviewView from './components/ReviewView.svelte'
   import Home from './components/Home.svelte'
   import NewSession from './components/NewSession.svelte'
   import Settings from './components/Settings.svelte'
-  import Accounts from './components/Accounts.svelte'
-  import Providers from './components/Providers.svelte'
   import Usage from './components/Usage.svelte'
-  import Channels from './components/Channels.svelte'
   import AllSessions from './components/AllSessions.svelte'
   import { applyThemeColor, themeColorFor } from './lib/themeColor'
   import PinGate from './components/PinGate.svelte'
   import Lightbox from './components/Lightbox.svelte'
+  import Toast from './components/Toast.svelte'
   import { lanPin } from './lib/lanpin.svelte'
 
   // Keep the browser's own chrome (the status bar behind the notch, the address
@@ -22,7 +22,7 @@
   // bar above it read as a rendering fault rather than a design.
   $effect(() => {
     applyThemeColor(
-      themeColorFor({ nightly: app.isNightly, fullView: !!app.chat || app.showUsage }),
+      themeColorFor({ nightly: app.isNightly, fullView: !!app.chat || !!app.view }),
     )
   })
 
@@ -35,6 +35,44 @@
     document.addEventListener('visibilitychange', onVis)
     return () => document.removeEventListener('visibilitychange', onVis)
   })
+
+  // Whether the open session is a pull-request review, which decides which whole
+  // screen renders. Never guessed from the title, which a rename would break.
+  //
+  // Answered from the session list first, because the list is already in hand
+  // when the session opens and the server tags it. Asking the server per session
+  // was the only source, and until that round trip came back the app rendered
+  // the ordinary transcript: opening a finished review therefore showed a dead
+  // conversation ("this session has ended", with a Reopen button that cannot
+  // work, since the checkout it read was swept when it finished) and only then
+  // became the review. The probe stays as the fallback for a session neither
+  // list has yet, and while nothing knows, NOTHING renders: a blank moment is
+  // honest, and the wrong screen is not.
+  let reviewOf = $state<Record<string, boolean>>({})
+  const key = $derived(app.chat ? `${app.activeMachineId}:${app.chat.sessionId}` : '')
+  const listed = $derived(
+    app.chat ? app.isReviewSession(app.activeMachineId ?? '', app.chat.sessionId) : undefined,
+  )
+  const probed = $derived(key ? reviewOf[key] : undefined)
+  const isReview = $derived(listed ?? probed ?? false)
+  const settled = $derived(listed !== undefined || probed !== undefined)
+  // The review takes the window. Not while you are arguing with it in the chat:
+  // that is an ordinary conversation and wants the ordinary shell around it.
+  const reviewFull = $derived(isReview && !app.reviewChat)
+  $effect(() => {
+    const k = key
+    const chat = app.chat
+    if (!k || !chat || k in reviewOf || listed !== undefined) return
+    reviewDraft(app.baseForMachine(app.activeMachineId ?? ''), chat.sessionId)
+      .then(() => (reviewOf = { ...reviewOf, [k]: true }))
+      .catch(() => (reviewOf = { ...reviewOf, [k]: false }))
+  })
+  // Opening a different session starts on its findings again, not wherever the
+  // last one was left.
+  $effect(() => {
+    void key
+    app.reviewChat = false
+  })
 </script>
 
 <!-- Over everything, and only once the server has actually refused something. On
@@ -46,22 +84,53 @@
 <!-- One viewer for every picture in the app; see lib/lightbox.svelte.ts for why
      it is not per-message state. Renders nothing until an image asks to be shown. -->
 <Lightbox />
+<Toast />
 
 <!-- data-full marks "the main pane is showing a whole view, not the dashboard",
      which on a phone is what decides whether the sidebar or the pane is on
      screen. A session used to be the only thing that could claim it; Usage is a
      route now, so it claims it too. -->
+<!-- A review takes the whole window.
+     It is a reading surface with two columns of its own and a decision to make
+     at the end of it, and the session list beside it is a list of things you are
+     deliberately not doing right now. Nothing in the sidebar is reachable from
+     inside a review anyway: the way out is the review's own header, which is why
+     that header had to grow one. -->
 <div
   class="shell"
-  data-full={app.chat || app.showUsage ? 'true' : undefined}
-  class:collapsed={!app.sidebarOpen}
+  data-full={app.chat || app.view ? 'true' : undefined}
+  class:collapsed={!app.sidebarOpen || reviewFull}
 >
   <aside class="sidebar"><Sidebar /></aside>
   <main class="main">
+    <!-- The places, each a route. They render in the main pane rather than over
+         it: a modal is for a decision you are making on top of what you were
+         doing, and settings, accounts, providers and channels are none of them.
+         See VIEW_PATHS in lib/app.svelte.ts. -->
     {#if app.showUsage}
       <div class="pane"><Usage /></div>
+    {:else if app.showSettings}
+      <!-- Accounts, Providers and Channels are sections of Settings rather than
+           views of their own. They were pages here, which meant Accounts existed
+           twice: this one with the real sign-in flow, and a second list inside
+           Settings that linked across to it. -->
+      <div class="pane"><Settings /></div>
     {:else if app.chat}
-      <div class="pane"><Chat chat={app.chat} /></div>
+      <!-- A review session opens on its findings rather than on the transcript.
+           The conversation is one click away (the view's Conversation button),
+           because arguing with the reviewer is the thing kunai has that a CI
+           reviewer does not; it is just not where you start. -->
+      {#if isReview && !app.reviewChat}
+        <div class="pane">
+          <ReviewView sessionId={app.chat.sessionId} machineId={app.activeMachineId ?? ''} />
+        </div>
+      {:else if settled || app.reviewChat}
+        <div class="pane"><Chat chat={app.chat} /></div>
+      {:else}
+        <!-- Nothing yet knows which of the two this is. Holding for one round
+             trip beats a transcript that turns into a review under the reader. -->
+        <div class="pane"></div>
+      {/if}
     {:else}
       {#if !app.sidebarOpen}
         <!-- Reopen affordance, shown only while collapsed: when the sidebar is
@@ -76,20 +145,11 @@
   </main>
 </div>
 
+<!-- What is left as an overlay, and it is the right test: New session is a
+     decision you make on top of what you are looking at, and so is the full
+     session list. Both hand you back to where you were. -->
 {#if app.showNew}
   <NewSession />
-{/if}
-{#if app.showSettings}
-  <Settings />
-{/if}
-{#if app.showChannels}
-  <Channels />
-{/if}
-{#if app.showAccounts}
-  <Accounts />
-{/if}
-{#if app.showProviders}
-  <Providers />
 {/if}
 {#if app.showAllSessions}
   <AllSessions />
