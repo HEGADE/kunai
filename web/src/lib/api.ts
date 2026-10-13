@@ -189,13 +189,12 @@ export function fetchAccounts(base: string): Promise<AccountInfo[]> {
   return fetch(at(base, '/api/accounts')).then((r) => json<AccountInfo[]>(r))
 }
 
-// startAccountLogin spawns `claude auth login` for a new account and returns the
-// OAuth URL to open plus a flow id to finish with.
-export function startAccountLogin(base: string, name: string): Promise<{ login_id: string; url: string }> {
+// reauth signs into an existing account's configuration instead of adding one.
+export function startAccountLogin(base: string, name: string, reauth = false): Promise<{ login_id: string; url: string }> {
   return fetch(at(base, '/api/accounts/login/start'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, reauth }),
   }).then((r) => json(r))
 }
 

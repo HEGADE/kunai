@@ -397,6 +397,11 @@ Once you have more than one:
 - Recent lists every account's past sessions and remembers which account each one
   ran on, so reopening it puts it back where it belongs.
 
+If an account's login expires, open **Settings → Accounts** and choose **Sign in
+again** beside that account. Complete the browser sign-in using the same Claude
+account. This renews the existing login without adding an account or moving its
+conversations; the default account can be reconnected this way too.
+
 Accounts live in `~/.kunai/clis.json`. You can edit that by hand if you want a
 different binary per account or extra environment variables, and Settings has a
 manual editor for pointing at a config folder you already signed into elsewhere.

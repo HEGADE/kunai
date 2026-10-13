@@ -1,7 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { app } from '../lib/app.svelte'
-  import type { AccountInfo } from '../lib/types'
   import {
     fetchAccounts,
     startAccountLogin,
@@ -34,7 +33,7 @@
   let loading = $state(true)
   let error = $state('')
 
-  type Step = 'idle' | 'name' | 'link' | 'saving'
+  type Step = 'idle' | 'name' | 'reauth' | 'link' | 'saving'
   let step = $state<Step>('idle')
   let name = $state('')
   let loginId = $state('')
@@ -42,6 +41,10 @@
   let code = $state('')
   let busy = $state(false)
   let flowError = $state('')
+  let reauth = $state(false)
+  let success = $state('')
+  let flowEpoch = 0
+  let loginBase = ''
 
   // Seed rows from the machine's cached account names so the list paints the
   // instant it opens, with status still resolving. The names ship in /api/stats
@@ -79,8 +82,10 @@
     void base
     untrack(() => {
       reset()
+      success = ''
       load()
     })
+    return () => reset()
   })
 
   // A newer CLI can complete the login on its own: if the browser is on this
@@ -95,14 +100,19 @@
   $effect(() => {
     if (step !== 'link' || !loginId) return
     const id = loginId
+    const epoch = flowEpoch
+    const targetBase = loginBase
     pollTimer = setInterval(async () => {
       try {
-        const res = await accountLoginStatus(base, id)
+        const res = await accountLoginStatus(targetBase, id)
+        if (epoch !== flowEpoch) return
         if (res.done) {
           stopPolling()
           loginId = '' // already registered server-side; don't cancel it on reset
+          success = reauth ? `${name} is signed in again. Retry your message or account switch.` : `${name} was added.`
           reset()
           await load()
+          app.refresh()
         }
       } catch {
         // A transient poll failure is harmless; the next tick retries, and the
@@ -113,8 +123,9 @@
   })
 
   function reset() {
+    flowEpoch++
     stopPolling()
-    if (loginId) cancelAccountLogin(base, loginId).catch(() => {})
+    if (loginId) cancelAccountLogin(loginBase, loginId).catch(() => {})
     step = 'idle'
     name = ''
     loginId = ''
@@ -122,21 +133,39 @@
     code = ''
     flowError = ''
     busy = false
+    reauth = false
+  }
+
+  async function signInAgain(a: Row) {
+    reset()
+    success = ''
+    name = a.name
+    reauth = true
+    step = 'reauth'
+    await beginLink()
   }
 
   async function beginLink() {
     if (!name.trim() || busy) return
     busy = true
     flowError = ''
+    success = ''
+    const epoch = flowEpoch
+    const targetBase = base
     try {
-      const res = await startAccountLogin(base, name.trim())
+      const res = await startAccountLogin(targetBase, name.trim(), reauth)
+      if (epoch !== flowEpoch) {
+        cancelAccountLogin(targetBase, res.login_id).catch(() => {})
+        return
+      }
+      loginBase = targetBase
       loginId = res.login_id
       url = res.url
       step = 'link'
     } catch (e) {
-      flowError = (e as Error).message
+      if (epoch === flowEpoch) flowError = (e as Error).message
     } finally {
-      busy = false
+      if (epoch === flowEpoch) busy = false
     }
   }
 
@@ -145,11 +174,17 @@
     busy = true
     flowError = ''
     step = 'saving'
+    const epoch = flowEpoch
     try {
-      await finishAccountLogin(base, loginId, code.trim())
+      await finishAccountLogin(loginBase, loginId, code.trim())
+      if (epoch !== flowEpoch) return
+      loginId = ''
+      success = reauth ? `${name} is signed in again. Retry your message or account switch.` : `${name} was added.`
       reset()
       await load()
+      app.refresh()
     } catch (e) {
+      if (epoch !== flowEpoch) return
       flowError = (e as Error).message
       step = 'link'
       busy = false
@@ -170,6 +205,7 @@
     a.ready === undefined ? 'checking' : a.ready ? '' : 'signed out'
 </script>
 
+  {#if success}<p class="st-note" role="status">{success}</p>{/if}
 
   {#if error}
     <p class="st-note bad">{error}</p>
@@ -194,8 +230,11 @@
               {#if statusText(a)}<span class="st-sub-text">{statusText(a)}</span>{/if}
             </span>
             {#if a.default}<span class="st-badge">default</span>{/if}
+            <button class="st-btn ghost" onclick={() => signInAgain(a)} disabled={step !== 'idle'} aria-label="Sign in again to {a.name}">
+              Sign in again
+            </button>
             {#if !a.default}
-              <button class="st-btn ghost danger" onclick={() => remove(a)} aria-label="Remove {a.name}">
+              <button class="st-btn ghost danger" onclick={() => remove(a)} disabled={step !== 'idle'} aria-label="Remove {a.name}">
                 Remove
               </button>
             {/if}
@@ -204,7 +243,7 @@
       {/if}
 
       {#if step === 'idle'}
-        <button class="st-row add" onclick={() => (step = 'name')}>
+        <button class="st-row add" onclick={() => { success = ''; step = 'name' }}>
           <span class="plus" aria-hidden="true">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
           </span>
@@ -230,14 +269,24 @@
             autofocus />
           <span class="hint">A label only, so you can tell your accounts apart.</span>
         </label>
+        {#if flowError}<p class="flowerr" role="alert">{flowError}</p>{/if}
         <div class="actions">
           <button class="ghost" onclick={reset}>Cancel</button>
           <button class="primary" disabled={!name.trim() || busy} onclick={beginLink}>
             {busy ? 'Preparing…' : 'Continue'}
           </button>
         </div>
+      {:else if step === 'reauth'}
+        <div class="fhead"><span class="fstep">Sign in again to {name}</span></div>
+        <p class="lead">{busy ? 'Preparing the sign-in link…' : 'Sign in to reconnect this account. Your existing conversations stay with it.'}</p>
+        {#if flowError}<p class="flowerr" role="alert">{flowError}</p>{/if}
+        <div class="actions">
+          <button class="ghost" onclick={reset}>Cancel</button>
+          {#if !busy}<button class="primary" onclick={beginLink}>Try again</button>{/if}
+        </div>
       {:else}
-        <div class="fhead"><span class="fstep">Sign in {name}</span><span class="fnum">Step 2 of 2</span></div>
+        <div class="fhead"><span class="fstep">{reauth ? 'Sign in again to' : 'Sign in'} {name}</span>{#if !reauth}<span class="fnum">Step 2 of 2</span>{/if}</div>
+        {#if reauth}<p class="lead">Use the same Claude account to renew its login. Your account name and conversations will stay in place.</p>{/if}
         <p class="lead">
           Open the sign-in page, log in as the account you want <b>{name}</b> to be,
           then paste the code it gives back.

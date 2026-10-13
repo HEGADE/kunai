@@ -65,6 +65,8 @@ type loginFlow struct {
 	tty     *os.File
 	tail    *ptyTail // the CLI's terminal output, for reporting a hang
 	started time.Time
+	target  CLIProfile // the exact account being authenticated, including custom env
+	reauth  bool       // an existing profile must never be registered as a new one
 	// loopbackBase is set when the CLI chose the localhost-loopback login flow
 	// (newer claude CLIs) rather than paste-code: the local callback endpoint the
 	// code must be delivered to, on this machine. Empty means paste-code, where
@@ -91,17 +93,18 @@ type loginFlow struct {
 // it directly), and wakes anyone waiting.
 func (f *loginFlow) finalize(prof CLIProfile, err error, register func(CLIProfile)) {
 	f.fmu.Lock()
+	defer f.fmu.Unlock()
 	if f.finished {
-		f.fmu.Unlock()
 		return
+	}
+	// Publish completion only after registration/cache invalidation. Otherwise
+	// the UI can fetch a stale signed-out status immediately after success.
+	if err == nil && prof.Name != "" && register != nil {
+		register(prof)
 	}
 	f.finished, f.profile, f.ferr = true, prof, err
 	ws := f.waiters
 	f.waiters = nil
-	f.fmu.Unlock()
-	if err == nil && prof.Name != "" && register != nil {
-		register(prof)
-	}
 	for _, ch := range ws {
 		close(ch)
 	}
@@ -172,12 +175,22 @@ func (m *loginManager) start(ctx context.Context, name string) (id, url, dir str
 		return "", "", "", fmt.Errorf("give the account a name")
 	}
 	dir = filepath.Join(m.accounts, slug)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", "", "", fmt.Errorf("could not create the account folder: %w", err)
+	return m.startProfile(ctx, CLIProfile{Name: strings.TrimSpace(name), Bin: m.bin, Dir: dir}, false)
+}
+
+// startProfile signs into the existing profile in place. In particular the
+// default account must use ~/.claude, and a custom profile keeps its binary,
+// config directory and environment instead of getting a new accounts/<slug>.
+func (m *loginManager) startProfile(ctx context.Context, profile CLIProfile, reauth bool) (id, url, dir string, err error) {
+	dir = profile.configDir()
+	if dir != "" {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return "", "", "", fmt.Errorf("could not create the account folder: %w", err)
+		}
 	}
 
-	cmd := exec.Command(m.bin, "auth", "login", "--claudeai")
-	cmd.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+dir)
+	cmd := exec.Command(profile.Bin, "auth", "login", "--claudeai")
+	cmd.Env = accountAuthEnv(profile)
 	tty, err := pty.Start(cmd)
 	if err != nil {
 		return "", "", "", fmt.Errorf("could not start the login: %w", err)
@@ -188,6 +201,7 @@ func (m *loginManager) start(ctx context.Context, name string) (id, url, dir str
 	if err != nil {
 		_ = cmd.Process.Kill()
 		_ = tty.Close()
+		_ = cmd.Wait()
 		return "", "", "", withTail(err.Error(), tail)
 	}
 
@@ -197,10 +211,10 @@ func (m *loginManager) start(ctx context.Context, name string) (id, url, dir str
 	// browser still works and the user's credentials never leave their browser.
 	base, state, loopback := loopbackTarget(url)
 	if loopback {
-		log.Printf("account login %q: CLI uses localhost loopback (%s); kunai will forward the code", name, base)
+		log.Printf("account login %q: CLI uses localhost loopback (%s); kunai will forward the code", profile.Name, base)
 	}
 	f := &loginFlow{
-		id: id, name: name, dir: dir, cmd: cmd, tty: tty, tail: tail, started: time.Now(),
+		id: id, name: profile.Name, dir: dir, target: profile, reauth: reauth, cmd: cmd, tty: tty, tail: tail, started: time.Now(),
 		loopbackBase: base, authState: state,
 	}
 	m.mu.Lock()
@@ -218,9 +232,18 @@ func (m *loginManager) start(ctx context.Context, name string) (id, url, dir str
 func (m *loginManager) watch(f *loginFlow) {
 	defer f.tty.Close()
 	go func() { _, _ = io.Copy(f.tail, f.tty) }() // keep the CLI unblocked, capture output
-	_ = f.cmd.Wait()
-	if ok, why := authStatus(m.bin, f.dir); ok {
-		f.finalize(CLIProfile{Name: f.name, Bin: m.bin, Dir: f.dir}, nil, m.register)
+	if err := f.cmd.Wait(); err != nil {
+		// A cancelled/failed re-login may leave the old credentials in place.
+		// Their presence must not turn the unsuccessful login into success.
+		f.finalize(CLIProfile{}, withTail("the login did not complete: "+err.Error(), f.tail), nil)
+		return
+	}
+	if ok, why := profileAuthStatus(f.target); ok {
+		register := m.register
+		if f.reauth {
+			register = func(CLIProfile) { forgetAuthStatus() }
+		}
+		f.finalize(f.target, nil, register)
 	} else {
 		f.finalize(CLIProfile{}, withTail("the login did not complete: "+why, f.tail), m.register)
 	}
@@ -716,15 +739,16 @@ type authStatusEntry struct {
 const authStatusTTL = 30 * time.Second
 
 // authOKCached is authOK behind the TTL cache, for listing only.
-func authOKCached(bin, dir string) bool {
-	key := bin + "\x00" + dir
+func authOKCached(profile CLIProfile) bool {
+	profileJSON, _ := json.Marshal(profile)
+	key := string(profileJSON)
 	authStatusCache.mu.Lock()
 	e, hit := authStatusCache.m[key]
 	authStatusCache.mu.Unlock()
 	if hit && time.Since(e.at) < authStatusTTL {
 		return e.ok
 	}
-	ok := authOK(bin, dir)
+	ok, _ := profileAuthStatus(profile)
 	authStatusCache.mu.Lock()
 	authStatusCache.m[key] = authStatusEntry{ok: ok, at: time.Now()}
 	authStatusCache.mu.Unlock()
@@ -744,13 +768,33 @@ func forgetAuthStatus() {
 // default account (~/.claude): leave CLAUDE_CONFIG_DIR unset rather than
 // blanking it, which the CLI would not read as "default".
 func authStatus(bin, dir string) (bool, string) {
+	return profileAuthStatus(CLIProfile{Bin: bin, Dir: dir})
+}
+
+// Remove any inherited account directory before applying the selected profile.
+// An empty configDir means the default account, not the server's parent login.
+func accountAuthEnv(profile CLIProfile) []string {
+	env := make(map[string]string)
+	for _, entry := range os.Environ() {
+		key, value, _ := strings.Cut(entry, "=")
+		if key != "CLAUDE_CONFIG_DIR" {
+			env[key] = value
+		}
+	}
+	for key, value := range profile.effectiveEnv() {
+		env[key] = value
+	}
+	if profile.configDir() == "" {
+		delete(env, "CLAUDE_CONFIG_DIR")
+	}
+	return envSlice(env)
+}
+
+func profileAuthStatus(profile CLIProfile) (bool, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "auth", "status", "--json")
-	cmd.Env = os.Environ()
-	if dir != "" {
-		cmd.Env = append(cmd.Env, "CLAUDE_CONFIG_DIR="+dir)
-	}
+	cmd := exec.CommandContext(ctx, profile.Bin, "auth", "status", "--json")
+	cmd.Env = accountAuthEnv(profile)
 	var errb bytes.Buffer
 	cmd.Stderr = &errb
 	out, err := cmd.Output()
@@ -808,17 +852,40 @@ func (s *Server) handleAccountLoginStart(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req struct {
-		Name string `json:"name"`
+		Name   string `json:"name"`
+		Reauth bool   `json:"reauth"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if s.accountNameTaken(req.Name) {
+	req.Name = strings.TrimSpace(req.Name)
+	var id, url string
+	var err error
+	if req.Reauth {
+		// Match accounts only: a provider's authentication lives in Providers.
+		var target *CLIProfile
+		for _, c := range s.cliList() {
+			if strings.EqualFold(c.Name, req.Name) {
+				target = &c
+				break
+			}
+		}
+		if target == nil {
+			writeErr(w, http.StatusNotFound, "account not found; reload Accounts and try again")
+			return
+		}
+		if isProxyProfile(*target) {
+			writeErr(w, http.StatusBadRequest, "this account uses a proxy; update its connection credentials instead")
+			return
+		}
+		id, url, _, err = s.login.startProfile(r.Context(), *target, true)
+	} else if s.accountNameTaken(req.Name) {
 		writeErr(w, http.StatusConflict, "an account with that name already exists")
 		return
+	} else {
+		id, url, _, err = s.login.start(r.Context(), req.Name)
 	}
-	id, url, _, err := s.login.start(r.Context(), req.Name)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -914,7 +981,7 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(i int, c CLIProfile) {
 			defer wg.Done()
-			out[i].Ready = authOKCached(c.Bin, c.configDir()) // distinct index: no shared write
+			out[i].Ready = authOKCached(c) // distinct index: no shared write
 		}(i, c)
 	}
 	wg.Wait()
@@ -988,7 +1055,7 @@ func (s *Server) handleSetAccount(w http.ResponseWriter, r *http.Request) {
 	// A proxy provider has no OAuth login in a config dir -- the token in its env
 	// is the whole auth -- so the sign-in preflight does not apply to it.
 	if !isProxyProfile(target) && !authOK(target.Bin, target.configDir()) {
-		writeErr(w, http.StatusConflict, "The "+target.Name+" account is signed out. Add it again from Accounts, then switch.")
+		writeErr(w, http.StatusConflict, "The "+target.Name+" account is signed out. Choose Sign in again next to it in Settings → Accounts, then retry.")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
